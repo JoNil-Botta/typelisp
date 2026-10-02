@@ -470,31 +470,30 @@
           (owned_view.compiler-owned-shared-view program)
           (ast.ast-decl-path-list-new))
           [(tc_core.ResultTcSourcePolicyDiagnostic.Ok)
-            (match (tc_core.tc-source-expr-policy-ok
-              ctx
-              (tc_core.tc-context-expr-bases ctx)
-              (owned_view.compiler-owned-shared-view expr))
-              [(tc_core.ResultTcUnit.Ok)
-                (let
-                  [top-env : tc_core.TcTypeEnv
-                    (try (tc_core.tc-build-top-env ctx program))]
-                  (match (tc_core.tc-check-decls
+            (let
+              [_
+                (try
+                  (tc_core.tc-source-expr-policy-ok
                     ctx
-                    top-env
-                    decls
-                    (tc_core.CompilerTypecheckSummary 0 0 0))
-                    [(tc_core.ResultCompilerTypecheck.Ok _)
-                      (tc_core.tc-expr ctx top-env expr)]
-                    [(tc_core.ResultCompilerTypecheck.Err diag)
-                      (let
-                        [diagnostics : cdiag.CompilerDiagnosticList
-                          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
-                        [first : cdiag.CompilerDiagnostic
-                          (cdiag.compiler-diagnostic-list-first diagnostics)]
-                        (tc_core.ResultTcType.Err
-                          (cdiag.compiler-diagnostic-message first)))]))]
-              [(tc_core.ResultTcUnit.Err message)
-                (tc_core.ResultTcType.Err message)])]
+                    (tc_core.tc-context-expr-bases ctx)
+                    (owned_view.compiler-owned-shared-view expr)))]
+              [top-env : tc_core.TcTypeEnv
+                (try (tc_core.tc-build-top-env ctx program))]
+              (match (tc_core.tc-check-decls
+                ctx
+                top-env
+                decls
+                (tc_core.CompilerTypecheckSummary 0 0 0))
+                [(tc_core.ResultCompilerTypecheck.Ok _)
+                  (tc_core.tc-expr ctx top-env expr)]
+                [(tc_core.ResultCompilerTypecheck.Err diag)
+                  (let
+                    [diagnostics : cdiag.CompilerDiagnosticList
+                      (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+                    [first : cdiag.CompilerDiagnostic
+                      (cdiag.compiler-diagnostic-list-first diagnostics)]
+                    (tc_core.ResultTcType.Err
+                      (cdiag.compiler-diagnostic-message first)))]))]
           [(tc_core.ResultTcSourcePolicyDiagnostic.Err diag)
             (tc_core.ResultTcType.Err
               (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))))

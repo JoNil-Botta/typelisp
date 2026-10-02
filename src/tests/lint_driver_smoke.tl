@@ -1286,6 +1286,7 @@
           false
           false
           false
+          false
           false)]
       [raw-field-fallbacks : i64
         (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]

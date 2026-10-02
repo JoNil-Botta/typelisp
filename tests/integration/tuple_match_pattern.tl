@@ -18,7 +18,7 @@
   (let
     [borrowed-score : i64
       (match (& pair)
-        [(tuple text number) (+ (string.string-length text) (deref number))])]
+        [(tuple text number) (+ (string.string-length text) number)])]
     ;; The tuple owner remains initialized after the pattern bindings' final use.
     (+ borrowed-score (tuple-ref pair 1))))
 

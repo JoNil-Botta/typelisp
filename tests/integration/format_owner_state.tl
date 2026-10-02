@@ -9,4 +9,4 @@
 (define (to-string [value : (& value State)]) : String
   (match value
     [(Ready) "ready"]
-    [(Count count) (format.format "count={}" (deref count))]))
+    [(Count count) (format.format "count={}" count)]))

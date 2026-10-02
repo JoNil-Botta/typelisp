@@ -24,11 +24,16 @@
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
+;; A value that is not a Box is already the boxed value: a `(Box T)` payload
+;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-ir-box-shared-view [value : Expr]) : Expr
   (let
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(compiler-ir-typed-box-shared-view ,value ,inner-ty)))
+    [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (string-eq (type-kind value-ty) "box")
+      `(compiler-ir-typed-box-shared-view
+        ,value
+        ,(comptime.box-element-type value-ty))
+      value)))
 
 (defmacro (compiler-ir-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let
@@ -1614,21 +1619,30 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) (deref dst)]
-    [(CompilerIrInstr.Alloc dst _) (deref dst)]
-    [(CompilerIrInstr.AddrOf dst _) (deref dst)]
-    [(CompilerIrInstr.Gep dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.Load dst _ _) (deref dst)]
+    [(CompilerIrInstr.Mov dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Alloc dst _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.AddrOf dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Gep dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Load dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
     [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.Bitcast dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.BinOp dst _ _ _ _) (deref dst)]
-    [(CompilerIrInstr.UnOp dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.LaneId dst _ _) (deref dst)]
-    [(CompilerIrInstr.Splat dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Cast dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Bitcast dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.BinOp dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.UnOp dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.LaneId dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Splat dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
@@ -1639,21 +1653,26 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (deref dst)]
-    [(CompilerIrInstr.MaskNot dst _ _) (deref dst)]
-    [(CompilerIrInstr.MaskReduce dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.MaskNot dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.MaskReduce dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _) (deref dst)]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.VectorStore _) -1]
     [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
@@ -1671,16 +1690,26 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.TailMask dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.EntryArgc dst) (deref dst)]
-    [(CompilerIrInstr.EntryArgv dst) (deref dst)]
-    [(CompilerIrInstr.EntryEnvp dst) (deref dst)]
-    [(CompilerIrInstr.CpuId dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.Xgetbv dst _) (deref dst)]
-    [(CompilerIrInstr.Syscall dst _) (deref dst)]
-    [(CompilerIrInstr.Call dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.CallIndirect dst _ _ _) (deref dst)]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryArgc dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryArgv dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryEnvp dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CpuId dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Xgetbv dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Syscall dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Call dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CallIndirect dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.CallCAbiStoreResult _) -1]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
@@ -1696,9 +1725,11 @@
     [(CompilerIrInstr.Branch _ _ _) -1]
     [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
     [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) (deref dst)]
-    [(CompilerIrInstr.Pack dst _ _) (deref dst)]
-    [(CompilerIrInstr.Word dst _ _ _) (deref dst)]
+    [(CompilerIrInstr.Phi dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Pack dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Word dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
     [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
     [(CompilerIrInstr.Switch _ _ _ _) -1]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
@@ -5251,7 +5282,9 @@
     [(ast.AstMaybeNominalKey.None) CompilerIrRepresentationKind.Unknown]))
 
 (defmacro (compiler-ir-block-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrBlockList))
+  (if (string-eq (type-kind (comptime.expr-type value)) "box")
+    `(compiler-ir-typed-box-shared-view ,value CompilerIrBlockList)
+    value))
 
 (define (compiler-ir-value-seq-empty) : CompilerIrValueSeq
   (CompilerIrValueSeq (__tl_make-array CompilerIrValue 0) 0))
@@ -9421,7 +9454,10 @@
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count (deref (deref rest))))]
+      (+
+        1
+        (compiler-ir-block-list-count
+          (owned_view.compiler-owned-pattern-box-ref rest)))]
     [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64

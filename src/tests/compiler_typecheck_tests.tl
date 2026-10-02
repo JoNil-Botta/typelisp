@@ -514,17 +514,17 @@
     (compiler-typecheck-rendered-error-ok?
       "(define (take [value : (& n i64)]) : i64 0)
 (define (main [n : i64]) : i64
-  (take (& (+ n 1))))"
-      "error[E0207]: typecheck: borrow requires a local, parameter, or aggregate place
-  --> :3:9
+  (let [r (& (+ n 1))] (take r)))"
+      "error[E0207]: typecheck: a borrowed temporary must be a direct function-call argument
+  --> :3:11
    |
- 3 |   (take (& (+ n 1))))
-   |         ^^^^^^^^^^
-  --> :3:9
+ 3 |   (let [r (& (+ n 1))] (take r)))
+   |           ^^^^^^^^^^
+  --> :3:11
    |
- 3 |   (take (& (+ n 1))))
-   |         ^^^^^^^^^^ this expression produces a temporary value, not a borrowable place
-   = help: bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate
+ 3 |   (let [r (& (+ n 1))] (take r)))
+   |           ^^^^^^^^^^ this borrow of a temporary is not a call argument
+   = help: pass the borrow directly as a function-call argument, or bind the value to a local before borrowing it
 ")
     (compiler-typecheck-rendered-error-ok?
       "(define (take [value : (& n i64)]) : i64 0)
@@ -539,7 +539,7 @@
    |
  3 |   (take (+ n 1)))
    |         ^^^^^^ this expression produces a temporary value, not a borrowable place
-   = help: bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate
+   = help: bind the value to a local before borrowing it, borrow a field or array element from a local aggregate, or pass a borrowed temporary `(& value)` directly as a call argument
 ")
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-with-alloc-string-helper-source
@@ -4666,12 +4666,17 @@
   (with-arena r
     (let [text : String (string.int->string 41)]
       (take (& r text)))))"))]
+    [temp-call-arg-ok : bool
+      (compiler-typecheck-ok?
+        "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& (+ n 1))))")]
     [temp-error-ok : bool
       (compiler-typecheck-error-ok?
         "(define (take [r : (& n i64)]) : unit unit)
 (define (main [n : i64]) : unit
-  (take (& (+ n 1))))"
-        "typecheck: borrow requires a local, parameter, or aggregate place")]
+  (let [r (& (+ n 1))] (take r)))"
+        "typecheck: a borrowed temporary must be a direct function-call argument")]
     [mismatch-error-ok : bool
       (compiler-typecheck-error-ok?
         "(define (take [r : (& n i64)]) : unit unit)
@@ -4734,7 +4739,7 @@
 (define (main [m : Maybe]) : i64
   (+
     (match (& m)
-      [(Some v) (let [same : (& m i64) v] (take same))]
+      [(Some v) (let [same : i64 v] (take (& same)))]
       [None 0])
     (match m
       [(Some _) 1]
@@ -4749,27 +4754,27 @@
     [Empty 0]))")]
     [borrowed-enum-match-array-ok : bool
       (compiler-typecheck-ok?
-        "(defenum Maybe (None) (Some i64))
-(define (take [v : (& items i64)]) : i64 7)
+        "(defenum Maybe (None) (Some String))
+(define (take [v : (& items str)]) : i64 7)
 (define (main [items : (Array Maybe 2)]) : i64
   (match (& (array-ref items 0))
-    [(Some v) (let [same : (& items i64) v] (take same))]
+    [(Some v) (let [same : (& items str) v] (take same))]
     [None 0]))")]
     [borrowed-enum-match-ref-struct-array-ok : bool
       (compiler-typecheck-ok?
-        "(defenum Slot (Empty) (Occupied i64))
+        "(defenum Slot (Empty) (Occupied String))
 (defstruct Bag (slots (__tl_dyn-array Slot)))
-(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
-(define (take [v : (& bag i64)]) : i64 7)
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag str)))
+(define (take [v : (& bag str)]) : i64 7)
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (slot-found [value : (& bag str)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref bag.slots 0))
-    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [(Occupied v) (let [same : (& bag str) v] (slot-found same))]
     [Empty (slot-missing bag)]))
 (define (score [bag : (& bag Bag)]) : i64
   (match (& (array-ref bag.slots 0))
-    [(Occupied v) (let [same : (& bag i64) v] (take same))]
+    [(Occupied v) (let [same : (& bag str) v] (take same))]
     [Empty 0]))
 (define (main [bag : Bag]) : i64
   (+ (score (& bag))
@@ -4794,23 +4799,23 @@
   (match (& (Some 1))
     [(Some _) 1]
     [None 0]))"
-        "typecheck: borrow requires a local, parameter, or aggregate place")]
+        "typecheck: a borrowed temporary must be a direct function-call argument")]
     [borrowed-enum-match-escape-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source
-          "(defenum Maybe (None) (Some i64))
-(define (main [m : Maybe]) : (& other i64)
+          "(defenum Maybe (None) (Some String))
+(define (main [m : Maybe]) : (& other str)
   (match (& m)
     [(Some v) v]
     [None (io.panic \"none\")]))")
         "typecheck: returned reference lifetime must be tied to a parameter")]
     [returned-borrowed-lookup-assign-error-ok : bool
       (compiler-typecheck-error-ok?
-        "(defenum Slot (Empty) (Occupied i64))
+        "(defenum Slot (Empty) (Occupied String))
 (defstruct Bag (slots (__tl_dyn-array Slot)))
-(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag str)))
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (slot-found [value : (& bag str)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
@@ -4822,11 +4827,11 @@
         "typecheck: cannot assign to borrowed place `bag`")]
     [returned-borrowed-lookup-array-set-error-ok : bool
       (compiler-typecheck-error-ok?
-        "(defenum Slot (Empty) (Occupied i64))
+        "(defenum Slot (Empty) (Occupied String))
 (defstruct Bag (slots (__tl_dyn-array Slot)))
-(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag str)))
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (slot-found [value : (& bag str)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
@@ -4988,6 +4993,7 @@
       str-ok
       str-auto-borrow-ok
       str-region-ok
+      temp-call-arg-ok
       temp-error-ok
       mismatch-error-ok
       return-ok

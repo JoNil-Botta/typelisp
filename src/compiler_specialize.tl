@@ -755,11 +755,9 @@
   (match param
     [(ast.AstParam.Param name _ _) name]))
 
-(define (spec-state-ctfe-env [state : (& state SpecState)]) : (&
-    state
-    ctfe.CtfeEnv)
+(define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(SpecState.State _ _ env _) env]))
+    [(SpecState.State _ _ env _) (owned_view.compiler-owned-pattern-copy env)]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state
@@ -781,8 +779,7 @@
   [expr : ast.AstExpr]
   [fuel : i64]) : ctfe.ResultCtfe
   (let
-    [ctfe-env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-shared-view (spec-state-ctfe-env state))]
+    [ctfe-env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
     (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
@@ -4008,139 +4005,105 @@
   [state : SpecState]
   [value : ctfe.CompilerCtfeValue]
   [ty : ast.AstType]) : bool
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (match value
-      [(ctfe.CompilerCtfeValue.I64 _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.I64))]
-      [(ctfe.CompilerCtfeValue.F64 _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.F64))]
-      [(ctfe.CompilerCtfeValue.F32 _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.F32))]
-      [(ctfe.CompilerCtfeValue.Bool _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Bool))]
-      [(ctfe.CompilerCtfeValue.Char _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Char))]
-      [(ctfe.CompilerCtfeValue.String _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.String))]
-      [(ctfe.CompilerCtfeValue.Name _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.String))]
-      [(ctfe.CompilerCtfeValue.Unit)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Unit))]
-      [(ctfe.CompilerCtfeValue.Type _) false]
-      [(ctfe.CompilerCtfeValue.Expr _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Expr))]
-      [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Expr))]
-      [(ctfe.CompilerCtfeValue.ExprList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.ExprList))]
-      [(ctfe.CompilerCtfeValue.CapturedExprList _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.ExprList))]
-      [(ctfe.CompilerCtfeValue.ExprClause _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(ctfe.CompilerCtfeValue.CapturedExprClause _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(ctfe.CompilerCtfeValue.ExprClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(ctfe.CompilerCtfeValue.CapturedExprClauseList _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(ctfe.CompilerCtfeValue.ExprBindingClause _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
-      [(ctfe.CompilerCtfeValue.ExprBindingClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
-      [(ctfe.CompilerCtfeValue.Pattern _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-Pattern))]
-      [(ctfe.CompilerCtfeValue.PatternList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-PatternList))]
-      [(ctfe.CompilerCtfeValue.MatchArm _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-MatchArm))]
-      [(ctfe.CompilerCtfeValue.MatchArmList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-MatchArmList))]
-      [(ctfe.CompilerCtfeValue.LetBinding _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-LetBinding))]
-      [(ctfe.CompilerCtfeValue.LetBindingList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (ast.AstType.Var cbi.compiler-builtin-id-fix-LetBindingList))]
-      [(ctfe.CompilerCtfeValue.TypeInfo _) false]
-      [(ctfe.CompilerCtfeValue.TypeInfoBox _) false]
-      [(ctfe.CompilerCtfeValue.TypeInfoList _) false]
-      [(ctfe.CompilerCtfeValue.TypeField _ _) false]
-      [(ctfe.CompilerCtfeValue.TypeFieldList _) false]
-      [(ctfe.CompilerCtfeValue.TypeVariantPayload _) false]
-      [(ctfe.CompilerCtfeValue.TypeVariantPayloadList _) false]
-      [(ctfe.CompilerCtfeValue.TypeVariant _ _) false]
-      [(ctfe.CompilerCtfeValue.TypeVariantList _) false])))
+  (let
+    [env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
+    (begin
+      (cbi.compiler-builtin-refresh!)
+      (match value
+        [(ctfe.CompilerCtfeValue.I64 _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.I64))]
+        [(ctfe.CompilerCtfeValue.F64 _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.F64))]
+        [(ctfe.CompilerCtfeValue.F32 _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.F32))]
+        [(ctfe.CompilerCtfeValue.Bool _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.Bool))]
+        [(ctfe.CompilerCtfeValue.Char _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.Char))]
+        [(ctfe.CompilerCtfeValue.String _ _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.String))]
+        [(ctfe.CompilerCtfeValue.Name _ _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.String))]
+        [(ctfe.CompilerCtfeValue.Unit)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.Unit))]
+        [(ctfe.CompilerCtfeValue.Type _) false]
+        [(ctfe.CompilerCtfeValue.Expr _ _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.Expr))]
+        [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.Expr))]
+        [(ctfe.CompilerCtfeValue.ExprList _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.ExprList))]
+        [(ctfe.CompilerCtfeValue.CapturedExprList _ _)
+          (ctfe.ctfe-type-eq-in-env env ty (ast.AstType.ExprList))]
+        [(ctfe.CompilerCtfeValue.ExprClause _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClause))]
+        [(ctfe.CompilerCtfeValue.CapturedExprClause _ _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClause))]
+        [(ctfe.CompilerCtfeValue.ExprClauseList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+        [(ctfe.CompilerCtfeValue.CapturedExprClauseList _ _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+        [(ctfe.CompilerCtfeValue.ExprBindingClause _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
+        [(ctfe.CompilerCtfeValue.ExprBindingClauseList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
+        [(ctfe.CompilerCtfeValue.Pattern _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-Pattern))]
+        [(ctfe.CompilerCtfeValue.PatternList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-PatternList))]
+        [(ctfe.CompilerCtfeValue.MatchArm _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-MatchArm))]
+        [(ctfe.CompilerCtfeValue.MatchArmList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-MatchArmList))]
+        [(ctfe.CompilerCtfeValue.LetBinding _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-LetBinding))]
+        [(ctfe.CompilerCtfeValue.LetBindingList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (ast.AstType.Var cbi.compiler-builtin-id-fix-LetBindingList))]
+        [(ctfe.CompilerCtfeValue.TypeInfo _) false]
+        [(ctfe.CompilerCtfeValue.TypeInfoBox _) false]
+        [(ctfe.CompilerCtfeValue.TypeInfoList _) false]
+        [(ctfe.CompilerCtfeValue.TypeField _ _) false]
+        [(ctfe.CompilerCtfeValue.TypeFieldList _) false]
+        [(ctfe.CompilerCtfeValue.TypeVariantPayload _) false]
+        [(ctfe.CompilerCtfeValue.TypeVariantPayloadList _) false]
+        [(ctfe.CompilerCtfeValue.TypeVariant _ _) false]
+        [(ctfe.CompilerCtfeValue.TypeVariantList _) false]))))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value

@@ -36,18 +36,23 @@
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
+;; A value that is not a Box is already the boxed value: a `(Box T)` payload
+;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-reg-box-shared-view [value : Expr]) : Expr
   (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
+    [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (string-eq (type-kind value-ty) "box")
+      (let
+        ;; Spliced into the generated pointer element type.
+        ;; lint-allow: unused-variable
+        [inner-ty : comptime.Expr (comptime.box-element-type value-ty)]
+        `(let
+          [address : i64
+            (unsafe
+              (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
+          (unsafe
+            (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty))))))
+      value)))
 
 (defmacro (compiler-reg-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let

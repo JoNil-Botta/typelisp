@@ -33023,12 +33023,14 @@
               (tc-context-structural-session ctx)
               name)
             0))
-          (match (tc-expected-bare-variant-retarget!
-            ctx
-            env
-            expr-id
-            name
-            (tc-global-shared-view expected))
+          (match (if (tc-bare-variant-name-gate? ctx name)
+            (tc-expected-bare-variant-retarget!
+              ctx
+              env
+              expr-id
+              name
+              (tc-global-shared-view expected))
+            (ResultTcNameId.Ok name))
             [(ResultTcNameId.Ok resolved-name)
               (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
@@ -54371,6 +54373,12 @@
   -1)
 (define tc-bare-variant-index-arena : i64
   0)
+
+;; The symbol revision and context the index was last validated against.
+(define tc-bare-variant-index-revision : i64
+  -1)
+(define tc-bare-variant-index-shared : u64
+  0)
 (define tc-bare-variant-index-entries : csym.CompilerSymbolMap
   (csym.compiler-symbol-map-with-capacity 16))
 (define tc-bare-variant-index-names : (__tl_dyn-array bool)
@@ -54480,49 +54488,52 @@
         tc-bare-variant-index-ready
         (= tc-bare-variant-index-registry-id registry-id)
         (<= tc-bare-variant-index-decl-count count))]
-    (if (and current (= tc-bare-variant-index-decl-count count))
-      unit
-      (let
-        [prev-arena : i64 (arena.tl_arena_current)]
-        (begin
-          (if current
-            (begin
-              (unsafe
-                (arena.tl_arena_set tc-bare-variant-index-arena))
-              (tc-bare-variant-index-scan!
-                ctx
-                (&mut tc-bare-variant-index-entries)
-                (&mut tc-bare-variant-index-names)
-                tc-bare-variant-index-decl-count
-                count))
-            (let
-              [index-arena : i64 (arena.tl_arena_make)]
-              [_switch : unit
-                (unsafe
-                  (arena.tl_arena_set index-arena))]
-              [entries : csym.CompilerSymbolMap
-                (csym.compiler-symbol-map-with-capacity 256)]
-              [names : (__tl_dyn-array bool)
-                (__tl_make-array bool (ci.intern-capacity))]
+    (begin
+      (if (and current (= tc-bare-variant-index-decl-count count))
+        unit
+        (let
+          [prev-arena : i64 (arena.tl_arena_current)]
+          (begin
+            (if current
               (begin
+                (unsafe
+                  (arena.tl_arena_set tc-bare-variant-index-arena))
                 (tc-bare-variant-index-scan!
                   ctx
-                  (&mut entries)
-                  (&mut names)
-                  0
-                  count)
-                (if (= tc-bare-variant-index-arena 0)
-                  unit
+                  (&mut tc-bare-variant-index-entries)
+                  (&mut tc-bare-variant-index-names)
+                  tc-bare-variant-index-decl-count
+                  count))
+              (let
+                [index-arena : i64 (arena.tl_arena_make)]
+                [_switch : unit
                   (unsafe
-                    (arena.tl_arena_destroy tc-bare-variant-index-arena)))
-                (set! tc-bare-variant-index-entries entries)
-                (set! tc-bare-variant-index-names names)
-                (set! tc-bare-variant-index-registry-id registry-id)
-                (set! tc-bare-variant-index-arena index-arena)
-                (set! tc-bare-variant-index-ready true))))
-          (set! tc-bare-variant-index-decl-count count)
-          (unsafe
-            (arena.tl_arena_set prev-arena)))))))
+                    (arena.tl_arena_set index-arena))]
+                [entries : csym.CompilerSymbolMap
+                  (csym.compiler-symbol-map-with-capacity 256)]
+                [names : (__tl_dyn-array bool)
+                  (__tl_make-array bool (ci.intern-capacity))]
+                (begin
+                  (tc-bare-variant-index-scan!
+                    ctx
+                    (&mut entries)
+                    (&mut names)
+                    0
+                    count)
+                  (if (= tc-bare-variant-index-arena 0)
+                    unit
+                    (unsafe
+                      (arena.tl_arena_destroy tc-bare-variant-index-arena)))
+                  (set! tc-bare-variant-index-entries entries)
+                  (set! tc-bare-variant-index-names names)
+                  (set! tc-bare-variant-index-registry-id registry-id)
+                  (set! tc-bare-variant-index-arena index-arena)
+                  (set! tc-bare-variant-index-ready true))))
+            (set! tc-bare-variant-index-decl-count count)
+            (unsafe
+              (arena.tl_arena_set prev-arena)))))
+      (set! tc-bare-variant-index-revision csym.compiler-symbols-revision)
+      (set! tc-bare-variant-index-shared ctx.shared))))
 
 ;; The declaring-module entry: the variant's registry handle, -1 when no enum of
 ;; `module-id` declares `name-id`, or -2 when two do.
@@ -54555,9 +54566,28 @@
 ;; current module: -1 when no visible enum declares it, -2 when two do.
 ;; Whether any enum declares a variant spelled `name-id`; the cheap gate in
 ;; front of every bare-variant rule.
+;; Inline form of `tc-bare-variant-declared-name?` for the hot lookup paths:
+;; a fresh index answers from the bitset without a call. `name-id` must be a
+;; plain variable, which the expansion reads more than once.
+(defmacro (tc-bare-variant-name-gate? [ctx : Expr] [name-id : Expr]) : Expr
+  `(if (and
+    tc-bare-variant-index-ready
+    (= tc-bare-variant-index-revision csym.compiler-symbols-revision)
+    (= tc-bare-variant-index-shared (__tl-project-field ,ctx shared)))
+    (and
+      (>= ,name-id 0)
+      (< ,name-id (array-length tc-bare-variant-index-names))
+      (array-ref tc-bare-variant-index-names ,name-id))
+    (tc-bare-variant-declared-name? ,ctx ,name-id)))
+
 (define (tc-bare-variant-declared-name? [ctx : TcContext] [name-id : i64]) : bool
   (begin
-    (tc-bare-variant-index-ensure! ctx)
+    (if (and
+      tc-bare-variant-index-ready
+      (= tc-bare-variant-index-revision csym.compiler-symbols-revision)
+      (= tc-bare-variant-index-shared ctx.shared))
+      unit
+      (tc-bare-variant-index-ensure! ctx))
     (and
       (>= name-id 0)
       (< name-id (array-length tc-bare-variant-index-names))
@@ -54738,14 +54768,38 @@
       (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0))
     (tc-name-local-bound-before-module-scan-id? env name-id)))
 
-;; No expected enum: a unique visible variant keeps the ordinary lookup, two
-;; are ambiguous.
+;; Whether `ty` can be an enum (an unresolved nominal may be one). Checked
+;; before any name query, so the common non-enum expected type costs one match.
+(define (tc-enum-shaped-type? [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(ast.AstType.Enum _) true]
+    [(ast.AstType.EnumArgs _ _) true]
+    [(ast.AstType.Var _) true]
+    [(ast.AstType.VarArgs _ _) true]
+    [_ false]))
+
+;; Whether a binding of type `ty` can be a variant constructor: an enum value
+;; (nullary) or a function returning one.
+(define (tc-variant-constructor-shaped-type?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(ast.AstType.Func _ ret-id)
+      (tc-enum-shaped-type? (tc-context-type-get ctx ret-id))]
+    [(ast.AstType.Enum _) true]
+    [(ast.AstType.EnumArgs _ _) true]
+    [_ false]))
+
+;; No expected enum: a bare name bound to a variant constructor keeps the
+;; ordinary lookup when one visible enum declares it; two are ambiguous.
 (define (tc-bare-variant-unexpected-check
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name-id : i64]) : ResultTcUnit
+  [name-id : i64]
+  [ty : ast.AstType]) : ResultTcUnit
   (if (and
     (tc-bare-variant-declared-name? ctx name-id)
+    (tc-variant-constructor-shaped-type? ctx ty)
     (tc-bare-variant-name-id? name-id)
     (= (tc-bare-variant-visible-handle ctx name-id) -2)
     (not (tc-bare-variant-local-binding? env name-id)))
@@ -54853,6 +54907,7 @@
     [enum-id : i64
       (if (and
         (tc-bare-variant-declared-name? ctx name-id)
+        (tc-enum-shaped-type? (tc-global-shared-view expected))
         (tc-bare-variant-name-id? name-id))
         (tc-expected-enum-name-id ctx expected)
         -1)]
@@ -54914,16 +54969,9 @@
   [env : TcTypeEnv]
   [func-id : i64]
   [expected : ast.AstType]) : ResultTcUnit
-  (match (tc-type-strip-region (tc-global-shared-view expected))
-    [(ast.AstType.Enum _)
-      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
-    [(ast.AstType.EnumArgs _ _)
-      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
-    [(ast.AstType.Var _)
-      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
-    [(ast.AstType.VarArgs _ _)
-      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
-    [_ ResultTcUnit.Ok]))
+  (if (tc-enum-shaped-type? (tc-global-shared-view expected))
+    (tc-expected-callee-variant-retarget! ctx env func-id expected)
+    ResultTcUnit.Ok))
 
 (define (tc-expected-callee-variant-retarget!
   [ctx : TcContext]
@@ -54959,11 +55007,10 @@
         [_ -1])]
     [enum-id : i64
       (if (or
-        (< name-id 0)
-        (>= name-id (ci.intern-pool-len))
+        (not (tc-bare-variant-declared-name? ctx name-id))
+        (not (tc-enum-shaped-type? (tc-global-shared-view payload-ty)))
         (ci.intern-macro-global-name-id? name-id)
-        (ci.intern-macro-local-name-id? name-id)
-        (not (tc-bare-variant-declared-name? ctx name-id)))
+        (ci.intern-macro-local-name-id? name-id))
         -1
         (tc-expected-enum-name-id ctx payload-ty))]
     (if (or
@@ -59427,7 +59474,13 @@
           env
           (tc-env-name-key-id (tc-type-env-structural-session env) lookup-id))
           [(ResultTcTypeUnsafe.Ok ty unsafe)
-            (match (tc-bare-variant-unexpected-check ctx env name)
+            (match (if (tc-bare-variant-name-gate? ctx name)
+              (tc-bare-variant-unexpected-check
+                ctx
+                env
+                name
+                (tc-global-shared-view ty))
+              ResultTcUnit.Ok)
               [(ResultTcUnit.Err message) (ResultTcType.Err message)]
               [(ResultTcUnit.Ok)
                 (if unsafe

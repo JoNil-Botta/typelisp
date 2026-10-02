@@ -4803,10 +4803,18 @@
             source-id
             true)
             [(tc_core.TcNameLookup.Ok lookup-name lookup-id)
-              (lower-type-cache-lookup-id
+              ;; `Enum.Variant` resolves to a registry key the type cache
+              ;; never binds; its type is the variant's constructor type.
+              (match (lower-type-cache-lookup-id
                 type-cache
                 (tc_core.tc-env-name-key-id session lookup-id)
-                lookup-name)]
+                lookup-name)
+                [(tc_core.ResultTcType.Ok ty) (tc_core.ResultTcType.Ok ty)]
+                [(tc_core.ResultTcType.Err message)
+                  (tc_core.tc-variant-constructor-type-for-lookup-or-id
+                    definition-ctx
+                    lookup-id
+                    message)])]
             [(tc_core.TcNameLookup.Err message)
               (tc_core.ResultTcType.Err message)])
           (lower-type-cache-lookup-id
@@ -8180,23 +8188,26 @@
         (tc_core.tc-bind-id local-env name-id ty))]
     [(tc_core.ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
 
+;; A module's first enum declaring a variant name owns the module's bare
+;; spelling of it, as in typecheck's module overlay. Only this module's own
+;; bindings decide that: `env` starts from the program environment, where the
+;; entry module binds its variants bare, and an entry-module variant of the same
+;; spelling must not shadow this module's.
 (define (lower-module-local-type-envs-bind-qualified-id-if-free
   [top-env : tc_core.TcTypeEnv]
   [env : tc_core.TcTypeEnv]
   [local-env : tc_core.TcTypeEnv]
   [module : i64]
   [name-id : i64]) : ResultLowerModuleTypeEnvs
-  (match (tc_core.tc-lookup-id
-    top-env
-    (csym.compiler-symbol-module-key-id-by-id module name-id))
-    [(tc_core.ResultTcType.Ok ty)
-      (ResultLowerModuleTypeEnvs.Ok
-        (tc_core.tc-bind-alias-id-if-free
-          env
-          name-id
-          (lower-global-shared-view ty))
-        (tc_core.tc-bind-alias-id-if-free local-env name-id ty))]
-    [(tc_core.ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
+  (match (tc_core.tc-lookup-id local-env name-id)
+    [(tc_core.ResultTcType.Ok _) (ResultLowerModuleTypeEnvs.Ok env local-env)]
+    [(tc_core.ResultTcType.Err _)
+      (lower-module-local-type-envs-bind-qualified
+        top-env
+        env
+        local-env
+        module
+        name-id)]))
 
 (define (lower-module-local-type-envs-add-variants
   [top-env : tc_core.TcTypeEnv]
@@ -37415,8 +37426,8 @@
             result-ty)
           (if (and
             (or
-              (tc_core.tc-constructor-name-id? ctx raw-name-id)
-              (tc_core.tc-constructor-name-id? ctx callable-lookup-id))
+              (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+              (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
             (csym.compiler-symbols-handle-found? struct-handle)
             (=
               (csym.compiler-symbol-handle-kind struct-handle)
@@ -37545,8 +37556,8 @@
             result-ty))
         (if (and
           (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx callable-lookup-id))
+            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+            (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)
@@ -67344,8 +67355,8 @@
             (csym.compiler-symbols-missing-handle))]
         (if (and
           (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx lookup-name-id))
+            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+            (tc_core.tc-constructor-source-name-id? ctx lookup-name-id))
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)

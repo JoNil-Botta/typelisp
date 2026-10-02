@@ -55670,7 +55670,7 @@
   call-memory-dense-scan
   (test.assert-true
     (compiler-optimize-call-memory-dense-scan-self-test)
-    "dense call-memory traversal preserves both root passes, summary accumulation, classification, order, live prefixes and retained linked/dense/mixed inputs"))
+    "dense call-memory traversal preserves both root passes, summary accumulation, classification, order and live prefixes"))
 
 (define (opt-call-memory-test-functions
   [wrapper : i64]

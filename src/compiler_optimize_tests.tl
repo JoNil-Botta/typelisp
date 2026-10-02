@@ -4821,24 +4821,93 @@
         (ir.CompilerIrInstr.Return
           (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))))))
 
-;; NEGATIVE: access:word-type. A sub-word access is not a whole-word move.
-(define (opt-agsplit-subword-blocks) : ir.CompilerIrBlockList
+;; A `bool` store / load at byte `offset` of the aggregate at var 1.
+(define (opt-agsplit-store-bool [ptr : i64] [value : bool]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.StorePtr
+    (ir.CompilerIrValue.Var ptr)
+    (ir.CompilerIrValue.Bool value)
+    (ast.AstType.Bool)))
+
+(define (opt-agsplit-load-bool [dst : i64] [ptr : i64]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.Load dst (ir.CompilerIrValue.Var ptr) (ast.AstType.Bool)))
+
+;; POSITIVE lanes (#8555). An `I64Range`-shaped aggregate: an `i64` word and
+;; two `bool` flags packed into the third word at bytes 16 and 17. Each flag is
+;; a lane of its own, so the split takes the whole object, and the branch on
+;; the first flag folds once SSA and `sccp` see its stored literal.
+(define (opt-agsplit-lanes-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 24)
+        (opt-agsplit-gep 2 1 0)
+        (opt-agsplit-store-literal 2 7)
+        (opt-agsplit-gep 3 1 16)
+        (opt-agsplit-store-bool 3 false)
+        (opt-agsplit-gep 4 1 17)
+        (opt-agsplit-store-bool 4 true)
+        (opt-agsplit-gep 5 1 16)
+        (opt-agsplit-load-bool 6 5)
+        (opt-agsplit-gep 7 1 17)
+        (opt-agsplit-load-bool 8 7)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 6)
+          (ir.compiler-ir-label "flagged")
+          (ir.compiler-ir-label "plain"))))
+    (opt-agsplit-block
+      "flagged"
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 200)))))
+    (opt-agsplit-block
+      "plain"
+      (opt-test-instrs
+        (opt-agsplit-gep 9 1 0)
+        (opt-agsplit-load 10 9)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 8)
+          (ir.compiler-ir-label "done")
+          (ir.compiler-ir-label "flagged"))))
+    (opt-agsplit-block
+      "done"
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 100)))))))
+
+;; NEGATIVE: access:word-type. A word read whole that is also written as an
+;; `i32` lane: a word is one var or a set of lanes, never both.
+(define (opt-agsplit-lane-overlap-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
     (opt-agsplit-block
       "entry"
       (opt-test-instrs
         (opt-agsplit-alloc 1 16)
-        (ir.CompilerIrInstr.Gep
-          2
-          (ir.CompilerIrValue.Var 1)
-          (ir.CompilerIrValue.I64 0)
-          (ast.AstType.U8))
+        (opt-agsplit-gep 2 1 0)
         (ir.CompilerIrInstr.StorePtr
           (ir.CompilerIrValue.Var 2)
           (ir.CompilerIrValue.I64 5)
           (ast.AstType.I32))
         (opt-agsplit-gep 3 1 0)
-        (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I32))
+        (opt-agsplit-load 4 3)
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))))
+
+;; NEGATIVE: access:copy-lanes. A whole-object copy over a word of lanes would
+;; have to carry the bytes no lane names.
+(define (opt-agsplit-copy-lanes-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (ir.CompilerIrInstr.EntryArgv 2)
+        (ir.CompilerIrInstr.CopyBytes
+          (ir.CompilerIrValue.Var 1)
+          (ir.CompilerIrValue.Var 2)
+          16)
+        (opt-agsplit-gep 3 1 8)
+        (opt-agsplit-load-bool 4 3)
         (ir.CompilerIrInstr.Return
           (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))))
 
@@ -4906,8 +4975,14 @@
       (opt-agsplit-split (opt-agsplit-call-arg-blocks) 8)]
     [escape-call : ir.CompilerIrFunction
       (opt-agsplit-split (opt-agsplit-escape-call-blocks) 8)]
-    [subword : ir.CompilerIrFunction
-      (opt-agsplit-split (opt-agsplit-subword-blocks) 6)]
+    [lanes : ir.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-lanes-blocks) 11)]
+    [lanes-opt : ir.CompilerIrFunction
+      (opt-agsplit-optimized (opt-agsplit-lanes-blocks) 11)]
+    [lane-overlap : ir.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-lane-overlap-blocks) 5)]
+    [copy-lanes : ir.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-copy-lanes-blocks) 5)]
     [dynamic-gep : ir.CompilerIrFunction
       (opt-agsplit-split (opt-agsplit-dynamic-gep-blocks) 6)]
     [partial-copy : ir.CompilerIrFunction
@@ -4977,7 +5052,31 @@
       ;; NEGATIVES: every refusal class leaves the memory object alone.
       [(!= (opt-agsplit-count-function escape-call (opt-agsplit-kind-load) 0) 1)
         13]
-      [(!= (opt-agsplit-count-function subword (opt-agsplit-kind-load) 0) 1) 14]
+      ;; POSITIVE lanes: no memory object, no access left, and the folded
+      ;; flag retires the arm that returns 200.
+      [(!= (opt-agsplit-count-function lanes (opt-agsplit-kind-load) 0) 0) 14]
+      [(!= (opt-agsplit-count-function lanes (opt-agsplit-kind-store-ptr) 0) 0)
+        18]
+      [(!= (opt-agsplit-count-function lanes (opt-agsplit-kind-tl-alloc) 0) 0)
+        19]
+      [(!=
+          (opt-agsplit-count-function
+            lanes-opt
+            (opt-agsplit-kind-return-literal)
+            200)
+          0)
+        20]
+      [(!=
+          (opt-agsplit-count-function lane-overlap (opt-agsplit-kind-load) 0)
+          1)
+        21]
+      [(!=
+          (opt-agsplit-count-function
+            copy-lanes
+            (opt-agsplit-kind-copy-bytes)
+            0)
+          1)
+        22]
       [(!= (opt-agsplit-count-function dynamic-gep (opt-agsplit-kind-load) 0) 1)
         15]
       [(!=
@@ -5050,7 +5149,7 @@
               [(= mode 1) (opt-agsplit-copy-blocks)]
               [(= mode 2) (opt-agsplit-call-arg-blocks)]
               [(= mode 3) (opt-agsplit-escape-call-blocks)]
-              [(= mode 4) (opt-agsplit-subword-blocks)]
+              [(= mode 4) (opt-agsplit-lane-overlap-blocks)]
               [(= mode 5) (opt-agsplit-dynamic-gep-blocks)]
               [(= mode 6) (opt-agsplit-partial-copy-blocks)]
               [else (opt-agsplit-stored-pointer-blocks)]))]
@@ -25056,8 +25155,25 @@
 (define (compiler-optimize-inline-multiblock-return-gate-ok?) : bool
   (let
     [direct-params : ir.CompilerIrParamSeq (irt.params "value=%0:i64")]
-    [enum-ty : ast.AstType
-      (ast.AstType.Enum (opt-test-symbol "InlineReturnEnum"))]
+    [enum-name : i64 (opt-test-symbol "InlineReturnEnum")]
+    [enum-ty : ast.AstType (ast.AstType.Enum enum-name)]
+    ;; #8555: a two-word register group, which `group_split` takes apart, is
+    ;; admitted; a group wider than its word limit and an unknown
+    ;; representation are not.
+    [two-word : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-merge-group
+        (ir.compiler-ir-representation-index-empty)
+        (ast.ast-nominal-name-id-key enum-name)
+        2
+        0)]
+    [wide : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-merge-group
+        (ir.compiler-ir-representation-index-empty)
+        (ast.ast-nominal-name-id-key enum-name)
+        9
+        0)]
+    [unknown : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-empty)]
     [sret-params : ir.CompilerIrParamSeq
       (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param
@@ -25076,7 +25192,12 @@
       (opt.opt-inline-multiblock-return-type-ok?
         direct-params
         (ast.AstType.Unit))
-      (opt.opt-inline-multiblock-return-type-ok? sret-params enum-ty))))
+      (opt.opt-inline-multiblock-return-type-ok?
+        sret-params
+        (opt.compiler-opt-global-shared-view enum-ty))
+      (opt.opt-inline-return-representation-ok? (& two-word) (& enum-ty))
+      (not (opt.opt-inline-return-representation-ok? (& wide) (& enum-ty)))
+      (not (opt.opt-inline-return-representation-ok? (& unknown) (& enum-ty))))))
 
 (define (opt-inline-dense-input-shape-ok? [instrs : ir.CompilerIrInstrSeq]) : bool
   (and
@@ -31637,8 +31758,80 @@
      return %2
    }")
 
+;; A join of packs read only through `word`: the result of an inlined
+;; multi-exit callee that the caller matches on (#8555).
+(define (opt-gsplit-join-text) : String
+  "function @gsplit_join(n=%0:i64) -> i64 vars 8 {
+   entry:
+     %1 = lt %0, 10 : i64
+     branch %1, left, right
+   left:
+     %2 = pack [0, 0] : MaybeId
+     jump join
+   right:
+     %3 = pack [1, %0] : MaybeId
+     jump join
+   join:
+     %4 = phi [%2, left], [%3, right] : MaybeId
+     %5 = word %4, 0 : i64
+     %6 = word %4, 1 : i64
+     %7 = add %5, %6 : i64
+     return %7
+   }")
+
+;; The same join also returned whole: a use other than `word` keeps the group.
+(define (opt-gsplit-join-escape-text) : String
+  "function @gsplit_join_escape(n=%0:i64) -> MaybeId vars 6 {
+   entry:
+     %1 = lt %0, 10 : i64
+     branch %1, left, right
+   left:
+     %2 = pack [0, 0] : MaybeId
+     jump join
+   right:
+     %3 = pack [1, %0] : MaybeId
+     jump join
+   join:
+     %4 = phi [%2, left], [%3, right] : MaybeId
+     %5 = word %4, 0 : i64
+     return %4
+   }")
+
+;; The split, then SSA-constructed, join: no group phi and no `word` is left,
+;; the function verifies, and each of the two words reaches the join as an
+;; `i64` phi of its own, which copy propagation turns into `phi [0, 1]` for the
+;; tag.
+(define (opt-gsplit-join-split-ok?) : bool
+  (let
+    [out : ir.CompilerIrFunction
+      (opt-gsplit-ssa (irt.func (opt-gsplit-join-text)) true)]
+    [flat : opt.OptSplitFlat
+      (opt.opt-aggregate-split-flatten (opt.opt-function-blocks out))]
+    [index : i64 0]
+    [group-phis : i64 0]
+    [words : i64 0]
+    [word-phis : i64 0]
+    (begin
+      (while (< index flat.count)
+        (begin
+          (match (opt.opt-aggregate-split-at (& flat) index)
+            [(ir.CompilerIrInstr.Phi _ _ ty)
+              (match ty
+                [(ast.AstType.I64) (set! word-phis (+ word-phis 1))]
+                [_ (set! group-phis (+ group-phis 1))])]
+            [(ir.CompilerIrInstr.Word _ _ _ _) (set! words (+ words 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      (and
+        (opt.opt-verify-ok? (opt.opt-verify-function out))
+        (= group-phis 0)
+        (= words 0)
+        (= word-phis 2)))))
+
 (define (compiler-optimize-group-split-self-test) : i64
   (cond
+    [(not (opt-gsplit-join-split-ok?)) 13]
+    [(not (opt-gsplit-refused? (opt-gsplit-join-escape-text))) 14]
     [(not (opt-gsplit-accepted? (opt-gsplit-loop-text))) 1]
     [(not (opt-gsplit-accepted? (opt-gsplit-three-word-text))) 2]
     [(not (= (opt-gsplit-word-count (opt-gsplit-three-word-text) false) 6)) 3]
@@ -69749,7 +69942,7 @@
     (opt-pcf-block "p" (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "b")))))
 
 (define (opt-pcm-run [blocks : ir.CompilerIrBlockList]) : opt.OptBlockListPassResult
-  (opt.opt-cfg-merge-blocks blocks 16 (opt.opt-cfg-merge-blocks-fuel)))
+  (opt.opt-cfg-merge-blocks blocks 16 true (opt.opt-cfg-merge-blocks-fuel)))
 
 (define (opt-pcm-changed? [blocks : ir.CompilerIrBlockList]) : bool
   (match (opt-pcm-run blocks)
@@ -70087,6 +70280,151 @@
     (compiler-optimize-phi-cmp-fold-chain-self-test)
     42
     "a sentinel phi whose compare sits one block on, or in a run of compares, threads each literal edge to the target its whole run decides and leaves the compares in place; undecided verdicts, readers outside the run and retreating edges are refused; and the cfg stage concatenates a block into its unique predecessor, re-keying the successors' phis"))
+
+;; --- #8555: the cfg stage's two loop-shape merges ---------------------------
+;;
+;; Both run only when the stage is asked for them (`loops?`, which the pipeline
+;; passes outside the inliner's priced run), so every fixture is merged both
+;; ways.
+(define (opt-pcm-run-loops [blocks : ir.CompilerIrBlockList] [loops? : bool]) : ir.CompilerIrBlockList
+  (match (opt.opt-cfg-merge-blocks
+    blocks
+    32
+    loops?
+    (opt.opt-cfg-merge-blocks-fuel))
+    [(opt.OptBlockListPassResult.Result next _) next]))
+
+;; A rotated loop whose advance arrives as a block of its own between the body
+;; and the latch test, as a folded `if flag ...` advance leaves it. `tail` is
+;; appended to the advance block.
+(define (opt-pcm-blocks-loop-tail [tail : String]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      (str_cat.str-cat
+        "h:
+           %10 = phi [0, p], [%12, latch] : i64
+           %11 = add %10, 2 : i64
+           jump step
+         step:
+           %12 = add %10, 1 : i64
+           "
+        tail
+        "
+           jump latch
+         latch:
+           %13 = lt %12, 37 : i64
+           branch %13, h, exit
+         exit:
+           return true"))
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "exit")))
+    (opt-pcf-block "p" (opt-test-instrs (opt-pcf-jump "h")))))
+
+;; The prelude `for` range loop's order: the advance comes first, so the folded
+;; flag leaves an empty block between the header and a latch that holds the
+;; body, a call here.
+(define (opt-pcm-blocks-advance-first) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "h:
+         %10 = phi [0, p], [%12, b] : i64
+         jump t
+       t:
+         jump b
+       b:
+         %12 = add %10, 1 : i64
+         %14 = call side() : i64
+         %13 = lt %12, 37 : i64
+         branch %13, h, exit
+       exit:
+         return true")
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "exit")))
+    (opt-pcf-block "p" (opt-test-instrs (opt-pcf-jump "h")))))
+
+;; A loop whose top test sits one block past its header, behind the dead `mov`
+;; SCCP leaves when it folds the phi of an `if flag live ...` condition.
+(define (opt-pcm-blocks-split-header) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "h:
+         %10 = phi [0, p], [%11, body] : i64
+         %20 = mov true : bool
+         jump t
+       t:
+         %21 = lt %10, 37 : i64
+         branch %21, body, exit
+       body:
+         %11 = add %10, 1 : i64
+         jump h
+       exit:
+         return true")
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "exit")))
+    (opt-pcf-block "p" (opt-test-instrs (opt-pcf-jump "h")))))
+
+;; Whether the block `label` ends in a branch with `target` as one successor.
+(define (opt-pcm-branches-to?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : String]
+  [target : String]) : bool
+  (let
+    [instrs : ir.CompilerIrInstrSeq
+      (match (opt-pcf-block-of blocks label)
+        [(ir.CompilerIrBlock.Block _ instrs) instrs])]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [wanted : i64 (ir.compiler-ir-label target)]
+    (and
+      (> count 0)
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch _ then-label else-label)
+          (or (= then-label wanted) (= else-label wanted))]
+        [_ false]))))
+
+(define (compiler-optimize-cfg-loop-merge-self-test) : i64
+  (let
+    [tail : ir.CompilerIrBlockList
+      (opt-pcm-run-loops (opt-pcm-blocks-loop-tail "") true)]
+    [tail-flat : ir.CompilerIrBlockList
+      (opt-pcm-run-loops (opt-pcm-blocks-loop-tail "") false)]
+    [tail-call : ir.CompilerIrBlockList
+      (opt-pcm-run-loops
+        (opt-pcm-blocks-loop-tail "%14 = call side() : i64")
+        true)]
+    [advance-first : ir.CompilerIrBlockList
+      (opt-pcm-run-loops (opt-pcm-blocks-advance-first) true)]
+    [header : ir.CompilerIrBlockList
+      (opt-pcm-run-loops (opt-pcm-blocks-split-header) true)]
+    [header-flat : ir.CompilerIrBlockList
+      (opt-pcm-run-loops (opt-pcm-blocks-split-header) false)]
+    (cond
+      ;; The scalar tail collapses into the header, back edge included: one
+      ;; self-looping block.
+      [(opt-pcm-has-block? tail "step") 1]
+      [(opt-pcm-has-block? tail "latch") 2]
+      [(not (opt-pcm-branches-to? tail "h" "h")) 3]
+      [(not (opt-pcf-input-is-var? (opt-pcf-phi-inputs tail "h" 0) "h" 12)) 4]
+      ;; Without `loops?` only the adjacency merge of `latch` into `step` is
+      ;; taken, and the loop stays two blocks.
+      [(not (opt-pcm-has-block? tail-flat "step")) 5]
+      [(opt-pcm-has-block? tail-flat "latch") 6]
+      ;; A call between header and latch keeps the run from collapsing.
+      [(not (opt-pcm-has-block? tail-call "step")) 7]
+      [(not (opt-pcm-has-block? tail-call "latch")) 11]
+      ;; An empty block between header and latch does not, whatever the latch
+      ;; holds.
+      [(opt-pcm-has-block? advance-first "t") 12]
+      [(opt-pcm-has-block? advance-first "b") 13]
+      [(not (opt-pcm-branches-to? advance-first "h" "h")) 14]
+      ;; The split-off top test joins its loop header only with `loops?`.
+      [(opt-pcm-has-block? header "t") 8]
+      [(not (opt-pcm-branches-to? header "h" "body")) 9]
+      [(not (opt-pcm-has-block? header-flat "t")) 10]
+      [else 42])))
+
+(test
+  cfg-loop-merge
+  (test.assert-i64-eq
+    (compiler-optimize-cfg-loop-merge-self-test)
+    42
+    "the cfg stage merges a straight-line loop whose blocks between header and latch hold only register arithmetic back into one block, and a split-off top test into its header, only when asked for the loop shapes; a call between header and latch keeps the loop as it is"))
 
 ;; --- GVN-RA: reassociation onto an available sibling ------------------------
 ;;

@@ -772,6 +772,10 @@ lattice_join_split|all|-|tests/integration/lattice_join_split.tl|42|1908610000 1
 lattice_join_split_abort|all|-,2|tests/integration/lattice_join_split.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:48:30: array index out of bounds: index=5 length=5\n
 short_trip_copy|all|-|tests/integration/short_trip_copy.tl|42|7757762194516093604 39\n|5 0|stdlib/io.tl stdlib/string.tl|-
 short_trip_copy_abort|all|-,2|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:115:50: array index out of bounds: index=39 length=39\n
+range_loop_shapes|all|-|tests/integration/range_loop_shapes.tl|42|80 76 77 77 76\n|16 0|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|-
+range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 1|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:35:69: array index out of bounds: index=16 length=16\n
+range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
+range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib

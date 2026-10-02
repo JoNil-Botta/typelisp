@@ -1264,6 +1264,77 @@
   (__tl_make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 intern-generated-map-capacity))
+
+;; Reset empties the two maps above in proportion to what was inserted since the
+;; previous reset, not at full capacity (#8520). Each map's inserts log the slot
+;; they fill in that map's segment of a dirty log: a count cell, then up to
+;; `(intern-map-dirty-limit)` slot indices. Past the limit the count saturates
+;; at limit + 1 and the next reset clears the whole map.
+;;
+;; The log belongs to the map arrays, not to any id counter: a state owns one,
+;; `intern-compat-state-install!` installs it with the maps and
+;; `intern-compat-state-capture-active` shares it, so a slot filled through any
+;; alias is logged where every alias's reset reads it. Id counters cannot serve:
+;; the state path and the installed globals keep separate source cursors.
+(define (intern-map-dirty-limit) : i64
+  ;; An eighth of either map's 262,144 slots.
+  32768)
+
+(define (intern-map-dirty-source-base) : i64
+  0)
+
+(define (intern-map-dirty-generated-base) : i64
+  (+ (intern-map-dirty-limit) 1))
+
+(define (intern-map-dirty-log-length) : i64
+  (* 2 (+ (intern-map-dirty-limit) 1)))
+
+(define intern-map-dirty-log : (__tl_dyn-array i32)
+  (__tl_make-array i32 (intern-map-dirty-log-length)))
+
+;; Log that an insert filled `slot` of the map whose segment starts at `base`.
+;; Every store of a nonempty id into either map is preceded by this. Like the
+;; clear below it is a macro, so it writes through the caller's own array handle,
+;; a state field or the installed global.
+(defmacro (intern-map-dirty-note! [log : Expr] [base : Expr] [slot : Expr]) : unit
+  `(let
+    [dirty-base : i64 ,base]
+    [dirty-count : i64 (cast (array-ref ,log dirty-base) : i64)]
+    (if (< dirty-count (intern-map-dirty-limit))
+      (begin
+        (set!
+          (array-ref ,log (+ dirty-base (+ dirty-count 1)))
+          (cast ,slot : i32))
+        (set! (array-ref ,log dirty-base) (cast (+ dirty-count 1) : i32)))
+      (set!
+        (array-ref ,log dirty-base)
+        (cast (+ (intern-map-dirty-limit) 1) : i32)))))
+
+;; Empty map `slots` and its log segment at `base`. Every nonempty slot was
+;; filled since the previous reset and logged when it was, so clearing the
+;; logged slots leaves the map all-empty, exactly as clearing every slot does.
+(defmacro (intern-map-dirty-clear! [slots : Expr] [log : Expr] [base : Expr]) : unit
+  `(let
+    [dirty-base : i64 ,base]
+    [dirty-count : i64 (cast (array-ref ,log dirty-base) : i64)]
+    [dirty-capacity : i64 (array-length ,slots)]
+    [dirty-index : i64 0]
+    (begin
+      (if (> dirty-count (intern-map-dirty-limit))
+        (while (< dirty-index dirty-capacity)
+          (begin
+            (set! (array-ref ,slots dirty-index) (intern-id-slot-empty))
+            (set! dirty-index (+ dirty-index 1))))
+        (while (< dirty-index dirty-count)
+          (begin
+            (set!
+              (array-ref
+                ,slots
+                (cast (array-ref ,log (+ dirty-base (+ dirty-index 1))) : i64))
+              (intern-id-slot-empty))
+            (set! dirty-index (+ dirty-index 1)))))
+      (set! (array-ref ,log dirty-base) (cast 0 : i32)))))
+
 (define intern-map-ready : bool
   false)
 (define intern-reset-generation : i64
@@ -1295,6 +1366,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
     (persistent-arena (__tl_dyn-array i64))
@@ -1324,6 +1396,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
     (persistent-arena (__tl_dyn-array i64))
@@ -1347,6 +1420,7 @@
   [map-hash-slots : Expr]
   [generated-map-id-slots : Expr]
   [generated-map-hash-slots : Expr]
+  [map-dirty-log : Expr]
   [map-ready : Expr]
   [reset-generation : Expr]
   [persistent-arena : Expr]
@@ -1372,6 +1446,7 @@
       ,map-hash-slots
       ,generated-map-id-slots
       ,generated-map-hash-slots
+      ,map-dirty-log
       ,map-ready
       ,reset-generation
       ,persistent-arena
@@ -1397,6 +1472,7 @@
         ,map-hash-slots
         ,generated-map-id-slots
         ,generated-map-hash-slots
+        ,map-dirty-log
         ,map-ready
         ,reset-generation
         ,persistent-arena
@@ -1552,6 +1628,7 @@
         (__tl_make-array i64 (intern-capacity))
         (__tl_make-array InternSlotId intern-generated-map-capacity)
         (__tl_make-array i64 intern-generated-map-capacity)
+        (__tl_make-array i32 (intern-map-dirty-log-length))
         map-ready
         reset-generation
         persistent-arena
@@ -1613,6 +1690,7 @@
         (intern-global-shared-view intern-map-hash-slots)
         (intern-global-shared-view intern-generated-map-id-slots)
         (intern-global-shared-view intern-generated-map-hash-slots)
+        (intern-global-shared-view intern-map-dirty-log)
         map-ready
         reset-generation
         persistent-arena
@@ -1730,26 +1808,17 @@
         (tl_arena_destroy old-arena))
       (intern-compat-state-persistent-arena-floor-refresh! state))))
 
-(define (intern-compat-state-fill-empty!
-  [state : (&mut state InternCompatState)]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref state.map-id-slots index) (intern-id-slot-empty))
-      (intern-compat-state-fill-empty! state (+ index 1) count))))
-
-(define (intern-compat-state-generated-map-clear!
+(define (intern-compat-state-maps-clear!
   [state : (&mut state InternCompatState)]) : unit
-  (let
-    [slots : (__tl_dyn-array InternSlotId) state.generated-map-id-slots]
-    [index : i64 0]
-    [count : i64 (array-length slots)]
-    (while (< index count)
-      (begin
-        (set! (array-ref slots index) (intern-id-slot-empty))
-        (set! index (+ index 1))))))
+  (begin
+    (intern-map-dirty-clear!
+      state.map-id-slots
+      state.map-dirty-log
+      (intern-map-dirty-source-base))
+    (intern-map-dirty-clear!
+      state.generated-map-id-slots
+      state.map-dirty-log
+      (intern-map-dirty-generated-base))))
 
 (define (intern-compat-state-map-insert-existing-from!
   [state : (&mut state InternCompatState)]
@@ -1764,6 +1833,10 @@
     (while (< probes capacity)
       (if (intern-id-slot-empty? (array-ref state.map-id-slots slot))
         (begin
+          (intern-map-dirty-note!
+            state.map-dirty-log
+            (intern-map-dirty-source-base)
+            slot)
           (set! (array-ref state.map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref state.map-hash-slots slot) hash)
           (return unit))
@@ -1807,8 +1880,7 @@
     (cfg
       (any compile-profile test)
       (intern-profile-note-storage-reset! state.profile-metrics-address 0))
-    (intern-compat-state-fill-empty! state 0 (array-length state.map-id-slots))
-    (intern-compat-state-generated-map-clear! state)
+    (intern-compat-state-maps-clear! state)
     (intern-structural-session-reset! (&mut state.structural-table-cell))
     (if (= (intern-active-table-id) (intern-compat-state-table-id state))
       (intern-active-structural-sync! (& state.structural-table-cell))
@@ -1825,8 +1897,7 @@
     (cfg
       (any compile-profile test)
       (intern-profile-note-storage-reset! state.profile-metrics-address mark))
-    (intern-compat-state-fill-empty! state 0 (array-length state.map-id-slots))
-    (intern-compat-state-generated-map-clear! state)
+    (intern-compat-state-maps-clear! state)
     (intern-structural-session-reset! (&mut state.structural-table-cell))
     (if (= (intern-active-table-id) (intern-compat-state-table-id state))
       (intern-active-structural-sync! (& state.structural-table-cell))
@@ -1974,6 +2045,10 @@
                       (intern-private-string-length name))]
                   (begin
                     (set! (array-ref state.pool-slots id) persistent-name)
+                    (intern-map-dirty-note!
+                      state.map-dirty-log
+                      (intern-map-dirty-source-base)
+                      cursor)
                     (set!
                       (array-ref state.map-id-slots cursor)
                       (intern-id-slot-encode id))
@@ -2078,6 +2153,10 @@
                           intern-profile-slice-miss-metric
                           1))
                       (set! (array-ref state.pool-slots id) persistent-name)
+                      (intern-map-dirty-note!
+                        state.map-dirty-log
+                        (intern-map-dirty-source-base)
+                        cursor)
                       (set!
                         (array-ref state.map-id-slots cursor)
                         (intern-id-slot-encode id))
@@ -2335,6 +2414,7 @@
       (set! intern-map-hash-slots state.map-hash-slots)
       (set! intern-generated-map-id-slots state.generated-map-id-slots)
       (set! intern-generated-map-hash-slots state.generated-map-hash-slots)
+      (set! intern-map-dirty-log state.map-dirty-log)
       (set! intern-map-ready (array-ref state.map-ready 0))
       (set! intern-reset-generation (array-ref state.reset-generation 0))
       (set! intern-name-cache-ready false)
@@ -3098,6 +3178,10 @@
                 module-id
                 base-id)]
             (begin
+              (intern-map-dirty-note!
+                state.map-dirty-log
+                (intern-map-dirty-generated-base)
+                cursor)
               (set!
                 (array-ref state.generated-map-id-slots cursor)
                 (intern-id-slot-encode id))
@@ -3999,6 +4083,10 @@
                   (array-ref intern-pool-base-id-slots id)
                   (intern-id-slot-encode dotted-tail-id)))
               unit)
+            (intern-map-dirty-note!
+              intern-map-dirty-log
+              (intern-map-dirty-generated-base)
+              cursor)
             (set!
               (array-ref intern-generated-map-id-slots cursor)
               (intern-id-slot-encode id))
@@ -4358,21 +4446,16 @@
                 (intern-slice name base-start (- n base-start))))))))))
 
 ;: Clear bucket identities; stale hashes are ignored while the ID lane is zero.
-(define (intern-fill-empty [index : i64] [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref intern-map-id-slots index) (intern-id-slot-empty))
-      (intern-fill-empty (+ index 1) count))))
-
-(define (intern-generated-map-clear! [index : i64]) : unit
-  (if (>= index intern-generated-map-capacity)
-    unit
-    (begin
-      (set!
-        (array-ref intern-generated-map-id-slots index)
-        (intern-id-slot-empty))
-      (intern-generated-map-clear! (+ index 1)))))
+(define (intern-maps-clear!) : unit
+  (begin
+    (intern-map-dirty-clear!
+      intern-map-id-slots
+      intern-map-dirty-log
+      (intern-map-dirty-source-base))
+    (intern-map-dirty-clear!
+      intern-generated-map-id-slots
+      intern-map-dirty-log
+      (intern-map-dirty-generated-base))))
 
 (define (intern-reset-name-cache!) : unit
   (set! intern-name-cache-ready false))
@@ -4394,6 +4477,10 @@
     (while (< probes capacity)
       (if (intern-id-slot-empty? (array-ref intern-map-id-slots slot))
         (begin
+          (intern-map-dirty-note!
+            intern-map-dirty-log
+            (intern-map-dirty-source-base)
+            slot)
           (set! (array-ref intern-map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref intern-map-hash-slots slot) hash)
           (return unit))
@@ -4430,8 +4517,7 @@
       (intern-profile-note-storage-reset!
         intern-active-profile-metrics-address
         0))
-    (intern-fill-empty 0 (array-length intern-map-id-slots))
-    (intern-generated-map-clear! 0)
+    (intern-maps-clear!)
     (intern-structural-session-reset! (&mut intern-structural-table-cell))
     (intern-active-structural-sync! (& intern-structural-table-cell))
     (set! intern-reset-generation (intern-generation-allocate!))
@@ -4446,8 +4532,7 @@
       (intern-profile-note-storage-reset!
         intern-active-profile-metrics-address
         mark))
-    (intern-fill-empty 0 (array-length intern-map-id-slots))
-    (intern-generated-map-clear! 0)
+    (intern-maps-clear!)
     (intern-structural-session-reset! (&mut intern-structural-table-cell))
     (intern-active-structural-sync! (& intern-structural-table-cell))
     (intern-map-rebuild-prefix 0 mark)

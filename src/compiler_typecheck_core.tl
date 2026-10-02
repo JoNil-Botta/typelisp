@@ -77615,7 +77615,9 @@
   [later : (& later ast.AstExprList)]
   [later-index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Set target value-box)
       (let
         [value : ast.AstExpr
@@ -77759,7 +77761,9 @@
     [_
       (let
         [unspanned : ast.AstExpr
-          (ast.ast-expr-unspan (tc-global-shared-view expr))]
+          (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (tc-global-shared-view expr))]
         (cond
           [(>=
               (tc-borrow-check-composite-store-place-id
@@ -77981,7 +77985,8 @@
   [expr : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : bool
   (let
-    [unspanned : ast.AstExpr (ast.ast-expr-unspan expr)]
+    [unspanned : ast.AstExpr
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
     [here : bool
       (match (tc-global-shared-view unspanned)
         [(ast.AstExpr.Set target _)
@@ -78229,7 +78234,8 @@
     (tc-global-shared-view expr))
     (let
       [children : ast.AstExprList
-        (ast.ast-expr-child-ids (ast.ast-expr-unspan expr))]
+        (ast.ast-expr-child-ids
+          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]
       (tc-borrow-check-add-composite-sibling-effects-at
         ctx
         expr-bases
@@ -78573,7 +78579,8 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
   (let
-    [unspanned : ast.AstExpr (ast.ast-expr-unspan expr)]
+    [unspanned : ast.AstExpr
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
     (if (tc-borrow-check-composite-store? (tc-global-shared-view unspanned))
       true
       (let
@@ -78598,7 +78605,8 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
   (let
-    [unspanned : ast.AstExpr (ast.ast-expr-unspan expr)]
+    [unspanned : ast.AstExpr
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
     (match (tc-global-shared-view unspanned)
       [(ast.AstExpr.Break) true]
       [(ast.AstExpr.Continue) true]
@@ -78648,7 +78656,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [name : i64]) : bool
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.Set target value-box)
       (or
         (= target name)
@@ -78909,7 +78917,9 @@
   [later : (& later ast.AstExprList)]
   [later-index : i64]
   [name : i64]) : bool
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Set target value-box)
       (let
         [value : ast.AstExpr
@@ -79014,7 +79024,9 @@
     [_
       (let
         [unspanned : ast.AstExpr
-          (ast.ast-expr-unspan (tc-global-shared-view expr))]
+          (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (tc-global-shared-view expr))]
         [value-id : i64
           (tc-borrow-check-composite-store-value-id
             (tc-global-shared-view unspanned))]
@@ -79873,7 +79885,9 @@
   [binding-id : i64]
   [arg : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.If cond-box then-box else-box)
       (tc-borrow-check-add-composite-if-arg
         ctx

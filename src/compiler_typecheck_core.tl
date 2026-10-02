@@ -27201,6 +27201,60 @@
         (tc-canonicalize-inferred-type ctx a)
         (tc-canonicalize-inferred-type ctx b))]))
 
+;; An `if` typed without an expected type joins its branches the way `match`
+;; joins arms: when their types do not merge, re-check one branch with the
+;; other's type as its expected type. An unconstrained literal branch thereby
+;; adopts the other branch's type, so `(if c 0 n)` with `n : i64` is `i64`, as
+;; `(match b [true 0] [false n])` already was (#8590). The original error stands
+;; when neither re-check merges.
+(define (tc-merge-if-branch-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [then-branch-id : i64]
+  [else-branch-id : i64]
+  [then-ty : ast.AstType]
+  [else-ty : ast.AstType]) : ResultTcType
+  (match (tc-merge-branch-type
+    ctx
+    env
+    (tc-global-shared-view then-ty)
+    (tc-global-shared-view else-ty))
+    [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+    [(ResultTcType.Err message)
+      (match (tc-expr-with-expected-or-actual-id
+        ctx
+        env
+        then-branch-id
+        (tc-global-shared-view else-ty))
+        [(ResultTcType.Ok retyped-then)
+          (match (tc-merge-branch-type
+            ctx
+            env
+            retyped-then
+            (tc-global-shared-view else-ty))
+            [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+            [(ResultTcType.Err _)
+              (tc-merge-if-else-retyped ctx env else-branch-id then-ty message)])]
+        [(ResultTcType.Err _)
+          (tc-merge-if-else-retyped ctx env else-branch-id then-ty message)])]))
+
+(define (tc-merge-if-else-retyped
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [else-branch-id : i64]
+  [then-ty : ast.AstType]
+  [message : String]) : ResultTcType
+  (match (tc-expr-with-expected-or-actual-id
+    ctx
+    env
+    else-branch-id
+    (tc-global-shared-view then-ty))
+    [(ResultTcType.Ok retyped-else)
+      (match (tc-merge-branch-type ctx env then-ty retyped-else)
+        [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+        [(ResultTcType.Err _) (ResultTcType.Err message)])]
+    [(ResultTcType.Err _) (ResultTcType.Err message)]))
+
 (define (tc-match-arm-merge-message
   [previous : ast.AstType]
   [current : ast.AstType]) : String
@@ -59517,7 +59571,13 @@
                 [(ResultTcType.Ok then-ty)
                   (match (tc-expr-id ctx env else-branch-box)
                     [(ResultTcType.Ok else-ty)
-                      (tc-merge-branch-type ctx env then-ty else-ty)]
+                      (tc-merge-if-branch-types
+                        ctx
+                        env
+                        then-branch-box
+                        else-branch-box
+                        then-ty
+                        else-ty)]
                     [(ResultTcType.Err message) (ResultTcType.Err message)])]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]

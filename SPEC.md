@@ -271,7 +271,10 @@ contextual literals are compile-time errors; explicit
 truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
-default. Floating-point literals are always `f64` unless a contextual `f32`
+default. An `if` branch or `match` arm likewise adopts the type of another
+branch or arm when that type does not merge with its own (see §5.6), so an
+unconstrained literal branch takes the other branch's integer type when the
+literal fits it. Floating-point literals are always `f64` unless a contextual `f32`
 expected type is present. Exponent-only forms such as `1e10` are `Float`
 tokens, and exponent/fraction spellings retain their source bytes through
 formatting. An exponent marker must have an optional sign and at least one
@@ -4691,6 +4694,12 @@ All operators are prefix functions (or special forms):
 
 - `cond` must be `bool`.
 - Both branches must have the same type.
+  - When no expected type applies and the two types do not merge, each branch
+    in turn is checked again with the other branch's type as its expected
+    type.
+  - So `(if c 0 n)` with `n : i64` has type `i64`, and a literal that does not
+    fit the other branch's type still fails.
+  - `match` arms join the same way.
 - Returns the value of the taken branch.
 
 `(cond [test expr] ... [else fallback])` is the conditional macro surface
@@ -4981,7 +4990,9 @@ explicit constructors.
 - A bare identifier at the top level of an enum `match` arm resolves as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
-- All arms must return the same type.
+- All arms must return the same type. An arm whose type does not merge with
+  the others is checked again with their type as its expected type, as `if`
+  branches are (§5.6).
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
 

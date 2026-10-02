@@ -792,10 +792,9 @@
                   (set! value (+ (* value 16) digit))
                   (set! j (+ j 1))))))
           (if ok
-            (match (stdlib.json.codepoint-string value)
-              [(OkJsonCodepointString decoded)
-                (OkJsonParseEscape decoded (+ pos 4))]
-              [(ErrJsonCodepointString err) (ErrJsonParseEscape err)])
+            (let
+              [decoded (try (stdlib.json.codepoint-string value))]
+              (OkJsonParseEscape decoded (+ pos 4)))
             (ErrJsonParseEscape message)))))))
 
 ;: Parse a JSON string escape at `pos`.
@@ -1156,9 +1155,9 @@
 ;: The text must be exactly one JSON integer number. Decimal fractions,
 ;: exponents, malformed numbers, and i64 overflow reject.
 (define (number->i64 [text : (& text str)]) : JsonNumberI64Result
-  (match (stdlib.json.number-validated-text text)
-    [(OkJsonNumberText owned) (stdlib.json.number-owned->i64 owned)]
-    [(ErrJsonNumberText message) (ErrJsonNumberI64 message)]))
+  (let
+    [owned (try (stdlib.json.number-validated-text text))]
+    (stdlib.json.number-owned->i64 owned)))
 
 ;: Parse owned JSON integer number text into a u64 with recoverable errors.
 ;:
@@ -1197,9 +1196,9 @@
 ;: Negative numbers (including `-0`), decimal fractions, exponents, malformed
 ;: numbers, and u64 overflow reject.
 (define (number->u64 [text : (& text str)]) : JsonNumberU64Result
-  (match (stdlib.json.number-validated-text text)
-    [(OkJsonNumberText owned) (stdlib.json.number-owned->u64 owned)]
-    [(ErrJsonNumberText message) (ErrJsonNumberU64 message)]))
+  (let
+    [owned (try (stdlib.json.number-validated-text text))]
+    (stdlib.json.number-owned->u64 owned)))
 
 ;: Convert validated JSON number text into a finite f64 result.
 (define (number-decimal-f64-result
@@ -1232,33 +1231,30 @@
 ;:
 ;: The text must be exactly one JSON number; overflow and underflow reject.
 (define (number->f64 [text : (& text str)]) : JsonNumberF64Result
-  (match (stdlib.json.number-validated-text text)
-    [(OkJsonNumberText owned)
-      (match (stdlib.json.number-shape (& owned))
-        [(OkJsonNumberShape decimal-exp significant-digits)
-          (stdlib.json.number-decimal-f64-result
-            owned
-            decimal-exp
-            significant-digits)]
-        [(ErrJsonNumberShape message) (ErrJsonNumberF64 message)])]
-    [(ErrJsonNumberText message) (ErrJsonNumberF64 message)]))
+  (let
+    [owned (try (stdlib.json.number-validated-text text))]
+    (match (stdlib.json.number-shape (& owned))
+      [(OkJsonNumberShape decimal-exp significant-digits)
+        (stdlib.json.number-decimal-f64-result
+          owned
+          decimal-exp
+          significant-digits)]
+      [(ErrJsonNumberShape message) (ErrJsonNumberF64 message)])))
 
 ;: Parse borrowed JSON number text into a finite f32.
 ;:
 ;: Uses the f64 path, then rejects f32 overflow and non-zero underflow.
 (define (number->f32 [text : (& text str)]) : JsonNumberF32Result
-  (match (stdlib.json.number->f64 text)
-    [(OkJsonNumberF64 wide)
-      (let
-        [narrow : f32 (cast wide : f32)]
-        (if (not (io.float-f32-finite? narrow))
-          (ErrJsonNumberF32 "json: number outside finite f32 range")
-          (if (and
-            (io.float-f32-zero-magnitude? narrow)
-            (not (io.float-f64-zero-magnitude? wide)))
-            (ErrJsonNumberF32 "json: number underflows f32")
-            (OkJsonNumberF32 narrow))))]
-    [(ErrJsonNumberF64 message) (ErrJsonNumberF32 message)]))
+  (let
+    [wide (try (stdlib.json.number->f64 text))]
+    [narrow : f32 (cast wide : f32)]
+    (if (not (io.float-f32-finite? narrow))
+      (ErrJsonNumberF32 "json: number outside finite f32 range")
+      (if (and
+        (io.float-f32-zero-magnitude? narrow)
+        (not (io.float-f64-zero-magnitude? wide)))
+        (ErrJsonNumberF32 "json: number underflows f32")
+        (OkJsonNumberF32 narrow)))))
 
 ;: Render a finite f64 as deterministic JSON number text.
 ;:

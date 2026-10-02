@@ -336,28 +336,26 @@
   (tlci-pages-first-error primary (tlci-pages-release region)))
 
 (define (tlci-pages-map-code [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
-  (match (tlci-pages-allocate-code (array-length bytes))
-    [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
-    [(ResultTlciPageRegion.Ok region)
-      (match (tlci-pages-copy-from-array! region bytes)
-        [(ResultTlciPageUnit.Err message)
-          (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
-        [(ResultTlciPageUnit.Ok)
-          (match (tlci-pages-protect-code-executable region)
-            [(ResultTlciPageRegion.Ok executable)
-              (ResultTlciPageRegion.Ok executable)]
-            [(ResultTlciPageRegion.Err message)
-              (ResultTlciPageRegion.Err
-                (tlci-pages-rollback-error region message))])])]))
+  (let
+    [region (try (tlci-pages-allocate-code (array-length bytes)))]
+    (match (tlci-pages-copy-from-array! region bytes)
+      [(ResultTlciPageUnit.Err message)
+        (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
+      [(ResultTlciPageUnit.Ok)
+        (match (tlci-pages-protect-code-executable region)
+          [(ResultTlciPageRegion.Ok executable)
+            (ResultTlciPageRegion.Ok executable)]
+          [(ResultTlciPageRegion.Err message)
+            (ResultTlciPageRegion.Err
+              (tlci-pages-rollback-error region message))])])))
 
 (define (tlci-pages-map-data [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
-  (match (tlci-pages-allocate-data (array-length bytes))
-    [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
-    [(ResultTlciPageRegion.Ok region)
-      (match (tlci-pages-copy-from-array! region bytes)
-        [(ResultTlciPageUnit.Err message)
-          (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
-        [(ResultTlciPageUnit.Ok) (ResultTlciPageRegion.Ok region)])]))
+  (let
+    [region (try (tlci-pages-allocate-data (array-length bytes)))]
+    (match (tlci-pages-copy-from-array! region bytes)
+      [(ResultTlciPageUnit.Err message)
+        (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
+      [(ResultTlciPageUnit.Ok) (ResultTlciPageRegion.Ok region)])))
 
 (define (tlci-pages-read-byte [region : TlciPageRegion] [offset : i64]) : u8
   (unsafe

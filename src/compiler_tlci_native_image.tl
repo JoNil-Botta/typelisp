@@ -880,23 +880,21 @@
       (ResultCompilerTlciNativeBytes.Err
         (str_cat.str-cat "package metadata rejected: " message))]
     [(tlci_core.ResultTlciMetadata.Ok metadata)
-      (match (tlci_core.tlci-emit-native-package-image
-        metadata
-        build-hash
-        host-platform
-        (tlci_core.TlciNativePackageInput
-          rodata
-          code
-          imports
-          fixup-offsets
-          fixup-count
-          identities
-          entry-offsets
-          macro-count))
-        [(tlci_core.ResultTlciBytes.Err message)
-          (ResultCompilerTlciNativeBytes.Err message)]
-        [(tlci_core.ResultTlciBytes.Ok bytes)
-          (ResultCompilerTlciNativeBytes.Ok bytes)])]))
+      (ResultCompilerTlciNativeBytes.Ok
+        (try
+          (tlci_core.tlci-emit-native-package-image
+            metadata
+            build-hash
+            host-platform
+            (tlci_core.TlciNativePackageInput
+              rodata
+              code
+              imports
+              fixup-offsets
+              fixup-count
+              identities
+              entry-offsets
+              macro-count))))]))
 
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]

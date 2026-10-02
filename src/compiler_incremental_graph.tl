@@ -1384,18 +1384,18 @@
                     index
                     -1
                     "root name is invalid"))))
-            (match (compiler-graph-query-from-transcript
-              query-bytes
-              limits
-              scratch
-              index
-              -1)
-              [(ResultCompilerIncrementalGraphQuery.Err error)
-                (return (ResultCompilerIncrementalGraph.Err error))]
-              [(ResultCompilerIncrementalGraphQuery.Ok query)
-                (set!
-                  (array-ref roots index)
-                  (CompilerIncrementalGraphRoot root-name query))])
+            (let
+              [query
+                (try
+                  (compiler-graph-query-from-transcript
+                    query-bytes
+                    limits
+                    scratch
+                    index
+                    -1))]
+              (set!
+                (array-ref roots index)
+                (CompilerIncrementalGraphRoot root-name query)))
             (set! previous-start key-start)
             (set! previous-length key-length)
             (set! index (+ index 1)))))
@@ -1520,32 +1520,31 @@
                             -1
                             index
                             "node stored-result key is invalid"))))
-                    (match (compiler-graph-query-from-transcript
-                      query-bytes
-                      limits
-                      scratch
-                      -1
-                      index)
-                      [(ResultCompilerIncrementalGraphQuery.Err error)
-                        (return (ResultCompilerIncrementalGraph.Err error))]
-                      [(ResultCompilerIncrementalGraphQuery.Ok query)
-                        (match (compiler-graph-read-trace
-                          (& query)
-                          trace-bytes
-                          scratch
-                          index
-                          limits
-                          (&mut edges))
-                          [(ResultCompilerIncrementalGraphTrace.Err error)
-                            (return (ResultCompilerIncrementalGraph.Err error))]
-                          [(ResultCompilerIncrementalGraphTrace.Ok value)
-                            (set!
-                              (array-ref nodes index)
-                              (CompilerIncrementalGraphNode
-                                query
-                                output
-                                stored-key
-                                value))])])
+                    (let
+                      [query
+                        (try
+                          (compiler-graph-query-from-transcript
+                            query-bytes
+                            limits
+                            scratch
+                            -1
+                            index))]
+                      [value
+                        (try
+                          (compiler-graph-read-trace
+                            (& query)
+                            trace-bytes
+                            scratch
+                            index
+                            limits
+                            (&mut edges)))]
+                      (set!
+                        (array-ref nodes index)
+                        (CompilerIncrementalGraphNode
+                          query
+                          output
+                          stored-key
+                          value)))
                     (set! previous-start query-start)
                     (set! previous-length query-length)
                     (set! index (+ index 1)))))

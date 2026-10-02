@@ -1049,11 +1049,9 @@
   [entry : CompilerLoadDependencyCatalogEntry]) : ResultCompilerLoadDependencyCatalogUnit
   (match entry.status
     [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
-      (match (tlci_loader_support.tlci-loader-release loaded)
-        [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
-          ResultCompilerLoadDependencyCatalogUnit.Ok]
-        [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
-          (ResultCompilerLoadDependencyCatalogUnit.Err message)])]
+      (let
+        [_ (try (tlci_loader_support.tlci-loader-release loaded))]
+        ResultCompilerLoadDependencyCatalogUnit.Ok)]
     [_ ResultCompilerLoadDependencyCatalogUnit.Ok]))
 
 (define (compiler-load-dependency-catalog-find-root-slot
@@ -4330,27 +4328,27 @@
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
   (match kind
     [(ast.AstImportKind.ModuleAll)
-      (match (compiler-load-resolve-import-candidate
-        resolver
-        (owned_view.compiler-owned-shared-view import-path)
-        expected-module)
-        [(ResultPkgResolve.Ok resolved)
-          (compiler-load-resolved-import
-            resolved
-            ast.AstImportKind.ModuleAll
-            import-path
-            alias)]
-        [(ResultPkgResolve.Err message)
-          (ResultCompilerLoadResolvedImport.Err message)])]
+      (let
+        [resolved
+          (try
+            (compiler-load-resolve-import-candidate
+              resolver
+              (owned_view.compiler-owned-shared-view import-path)
+              expected-module))]
+        (compiler-load-resolved-import
+          resolved
+          ast.AstImportKind.ModuleAll
+          import-path
+          alias))]
     [(ast.AstImportKind.ModuleItem _)
-      (match (compiler-load-resolve-import-candidate
-        resolver
-        (owned_view.compiler-owned-shared-view import-path)
-        expected-module)
-        [(ResultPkgResolve.Ok resolved)
-          (compiler-load-resolved-import resolved kind import-path alias)]
-        [(ResultPkgResolve.Err message)
-          (ResultCompilerLoadResolvedImport.Err message)])]
+      (let
+        [resolved
+          (try
+            (compiler-load-resolve-import-candidate
+              resolver
+              (owned_view.compiler-owned-shared-view import-path)
+              expected-module))]
+        (compiler-load-resolved-import resolved kind import-path alias))]
     [(ast.AstImportKind.Module)
       (let
         [original : ResultPkgResolve
@@ -9455,23 +9453,23 @@
           (ast.ast-place-shared-view decls)
           fallback-id)
           [(ResultCompilerLoadModuleId.Ok _ module-id)
-            (match (compiler-load-check-dotted-import-aliases
-              (string.copy path)
-              (ast.ast-place-shared-view decls)
-              source-module)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadSurfaceSummary.Ok
-                  (compiler-load-surface-summary-from-decls
-                    path
-                    source-path-id
-                    root-id
-                    module-id
-                    module-id
-                    (compiler-load-decl-list-has-module? decls)
-                    qualified-load
-                    decls))]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadSurfaceSummary.Err diag)])]
+            (let
+              [_
+                (try
+                  (compiler-load-check-dotted-import-aliases
+                    (string.copy path)
+                    (ast.ast-place-shared-view decls)
+                    source-module))]
+              (ResultCompilerLoadSurfaceSummary.Ok
+                (compiler-load-surface-summary-from-decls
+                  path
+                  source-path-id
+                  root-id
+                  module-id
+                  module-id
+                  (compiler-load-decl-list-has-module? decls)
+                  qualified-load
+                  decls)))]
           [(ResultCompilerLoadModuleId.Err diag)
             (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
@@ -10174,133 +10172,133 @@
                         (__tl-box-place span)
                         message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
-            (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.RuntimeString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.RuntimeString
-                  expanded
-                  decls
-                  (string.copy importer-path)
-                  traversal.importer-decl-owner-id
-                  traversal.importer-path-id
-                  importer-source-module-id
-                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                    traversal
-                    rest
+            (let
+              [expanded
+                (try
+                  (compiler-load-expand-include-with-pools
+                    CompilerLoadIncludeKind.RuntimeString
                     (string.copy importer-path)
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy import-root)
-                    cfgs
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.RuntimeString
+                expanded
+                decls
+                (string.copy importer-path)
+                traversal.importer-decl-owner-id
+                traversal.importer-path-id
+                importer-source-module-id
+                (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
+                  rest
+                  (string.copy importer-path)
+                  importer-module
+                  importer-module-id
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy import-root)
+                  cfgs
+                  pools)))]
           [(ast.AstDecl.IncludeStrComptime name include-path)
-            (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.ComptimeString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.ComptimeString
-                  expanded
-                  decls
-                  (string.copy importer-path)
-                  traversal.importer-decl-owner-id
-                  traversal.importer-path-id
-                  importer-source-module-id
-                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                    traversal
-                    rest
+            (let
+              [expanded
+                (try
+                  (compiler-load-expand-include-with-pools
+                    CompilerLoadIncludeKind.ComptimeString
                     (string.copy importer-path)
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy import-root)
-                    cfgs
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.ComptimeString
+                expanded
+                decls
+                (string.copy importer-path)
+                traversal.importer-decl-owner-id
+                traversal.importer-path-id
+                importer-source-module-id
+                (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
+                  rest
+                  (string.copy importer-path)
+                  importer-module
+                  importer-module-id
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy import-root)
+                  cfgs
+                  pools)))]
           [(ast.AstDecl.IncludeStrLzss name include-path)
-            (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.LzssString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.LzssString
-                  expanded
-                  decls
-                  (string.copy importer-path)
-                  traversal.importer-decl-owner-id
-                  traversal.importer-path-id
-                  importer-source-module-id
-                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                    traversal
-                    rest
+            (let
+              [expanded
+                (try
+                  (compiler-load-expand-include-with-pools
+                    CompilerLoadIncludeKind.LzssString
                     (string.copy importer-path)
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy import-root)
-                    cfgs
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.LzssString
+                expanded
+                decls
+                (string.copy importer-path)
+                traversal.importer-decl-owner-id
+                traversal.importer-path-id
+                importer-source-module-id
+                (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
+                  rest
+                  (string.copy importer-path)
+                  importer-module
+                  importer-module-id
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy import-root)
+                  cfgs
+                  pools)))]
           [(ast.AstDecl.IncludeBin name include-path)
-            (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.Binary
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.Binary
-                  expanded
-                  decls
-                  (string.copy importer-path)
-                  traversal.importer-decl-owner-id
-                  traversal.importer-path-id
-                  importer-source-module-id
-                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                    traversal
-                    rest
+            (let
+              [expanded
+                (try
+                  (compiler-load-expand-include-with-pools
+                    CompilerLoadIncludeKind.Binary
                     (string.copy importer-path)
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy import-root)
-                    cfgs
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.Binary
+                expanded
+                decls
+                (string.copy importer-path)
+                traversal.importer-decl-owner-id
+                traversal.importer-path-id
+                importer-source-module-id
+                (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
+                  rest
+                  (string.copy importer-path)
+                  importer-module
+                  importer-module-id
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy import-root)
+                  cfgs
+                  pools)))]
           [_
             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
               (ast.ast-place-shared-view traversal)
@@ -10658,14 +10656,14 @@
       (if (= entry-depth 0)
         (match loaded
           [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
-            (match (compiler-load-check-unqualified-import-collisions
-              source-path
-              (ast.ast-place-shared-view decls)
-              paths)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+            (let
+              [_
+                (try
+                  (compiler-load-check-unqualified-import-collisions
+                    source-path
+                    (ast.ast-place-shared-view decls)
+                    paths))]
+              (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen))]
           [(ResultCompilerLoadWithPaths.Err diag)
             (ResultCompilerLoadWithPaths.Err diag)])
         loaded))))
@@ -10950,37 +10948,33 @@
 (define (compiler-load-cache-program-result
   [key : CompilerLoadProgramCacheKey]
   [result : parser.ResultAstProgramDiagnostic]) : parser.ResultAstProgramDiagnostic
-  (match result
-    [(parser.ResultAstProgramDiagnostic.Ok program)
-      (begin
-        (if (compiler-load-program-cache-store
-          key
-          (ast.ast-place-shared-view program))
-          (compiler-load-session-note-persistent!)
-          unit)
-        (parser.ResultAstProgramDiagnostic.Ok program))]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (parser.ResultAstProgramDiagnostic.Err diag)]))
+  (let
+    [program (try result)]
+    (begin
+      (if (compiler-load-program-cache-store
+        key
+        (ast.ast-place-shared-view program))
+        (compiler-load-session-note-persistent!)
+        unit)
+      (parser.ResultAstProgramDiagnostic.Ok program))))
 
 (define (compiler-load-cache-program-result-with-pools
   [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [result : parser.ResultAstProgramDiagnostic]
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
-  (match result
-    [(parser.ResultAstProgramDiagnostic.Ok program)
-      (begin
-        (if (compiler-load-session-state-program-cache-store
-          (owned_view.compiler-owned-shared-view load-state)
-          key
-          (ast.ast-place-shared-view program))
-          (compiler-load-session-state-note-persistent-with-pools!
-            load-state
-            pools)
-          unit)
-        (parser.ResultAstProgramDiagnostic.Ok program))]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (parser.ResultAstProgramDiagnostic.Err diag)]))
+  (let
+    [program (try result)]
+    (begin
+      (if (compiler-load-session-state-program-cache-store
+        (owned_view.compiler-owned-shared-view load-state)
+        key
+        (ast.ast-place-shared-view program))
+        (compiler-load-session-state-note-persistent-with-pools!
+          load-state
+          pools)
+        unit)
+      (parser.ResultAstProgramDiagnostic.Ok program))))
 
 ;; Carry target-arena-owned cache inputs across `in-arena`'s restoration. Cache
 ;; table growth and persistent-floor bookkeeping deliberately remain in the
@@ -11391,21 +11385,20 @@
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
       (compiler-load-parse-identity (string.copy path) fallback expected-module)]
-    (match (compiler-load-parse-source-diagnostic-escaping
-      (string.copy path)
-      source
-      cfgs)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
-        (compiler-load-program-with-paths-and-roots-expect-cfg
-          path
-          program
-          seen
-          stdlib-roots
-          expected-module
-          cfgs
-          parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+    [program
+      (try
+        (compiler-load-parse-source-diagnostic-escaping
+          (string.copy path)
+          source
+          cfgs))]
+    (compiler-load-program-with-paths-and-roots-expect-cfg
+      path
+      program
+      seen
+      stdlib-roots
+      expected-module
+      cfgs
+      parse-identity)))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
   [load-state : CompilerLoadSessionState]
@@ -11420,24 +11413,23 @@
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     [parse-identity : CompilerLoadParseIdentity
       (compiler-load-parse-identity (string.copy path) fallback expected-module)]
-    (match (compiler-load-parse-source-diagnostic-escaping-with-pools
-      (string.copy path)
-      source
-      cfgs
-      pools)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
-        (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
-          load-state
-          path
-          program
-          seen
-          stdlib-roots
-          expected-module
+    [program
+      (try
+        (compiler-load-parse-source-diagnostic-escaping-with-pools
+          (string.copy path)
+          source
           cfgs
-          pools
-          parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+          pools))]
+    (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
+      load-state
+      path
+      program
+      seen
+      stdlib-roots
+      expected-module
+      cfgs
+      pools
+      parse-identity)))
 
 (define (compiler-load-source
   [path : String]
@@ -11669,61 +11661,61 @@
               cbi.compiler-builtin-id-fix-empty)]
           [parse-cfgs : sym_i64_env.SymI64Env cfgs]
           (if (io.file-exists? (string.copy path))
-            (match (if cache-current
-              (compiler-load-parse-file-diagnostic-session-id
-                (string.copy path)
-                source-path-id
-                (ast.ast-place-shared-view stdlib-roots)
-                parse-cfgs)
-              (compiler-load-parse-file-diagnostic-escaping
-                (string.copy path)
-                parse-cfgs))
-              [(parser.ResultAstProgramDiagnostic.Ok program)
-                (compiler-load-bind-path-dedup
-                  (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                    path
-                    program
-                    seen
-                    stdlib-roots
-                    expected-module
-                    import-root
-                    parse-cfgs
-                    parse-identity)
-                  path-dedup
-                  path-key-id)]
-              [(parser.ResultAstProgramDiagnostic.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])
+            (let
+              [program
+                (try
+                  (if cache-current
+                    (compiler-load-parse-file-diagnostic-session-id
+                      (string.copy path)
+                      source-path-id
+                      (ast.ast-place-shared-view stdlib-roots)
+                      parse-cfgs)
+                    (compiler-load-parse-file-diagnostic-escaping
+                      (string.copy path)
+                      parse-cfgs)))]
+              (compiler-load-bind-path-dedup
+                (compiler-load-program-with-paths-and-roots-expect-cfg-root
+                  path
+                  program
+                  seen
+                  stdlib-roots
+                  expected-module
+                  import-root
+                  parse-cfgs
+                  parse-identity)
+                path-dedup
+                path-key-id))
             (match (compiler-load-embedded-stdlib-source-for-path
               (string.copy path))
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (begin
-                  (compiler-load-note-embedded-module! (string.copy path))
-                  (if cache-current
-                    (compiler-load-parse-embedded-source-diagnostic-session-id
+                (let
+                  [program
+                    (try
+                      (begin
+                        (compiler-load-note-embedded-module! (string.copy path))
+                        (if cache-current
+                          (compiler-load-parse-embedded-source-diagnostic-session-id
+                            (string.copy path)
+                            source-path-id
+                            (string.copy source)
+                            parse-cfgs)
+                          (compiler-load-parse-source-diagnostic-escaping
+                            (string.copy path)
+                            source
+                            parse-cfgs))))]
+                  (compiler-load-bind-path-dedup
+                    (compiler-load-program-with-paths-and-roots-expect-cfg-root
                       (string.copy path)
-                      source-path-id
-                      (string.copy source)
-                      parse-cfgs)
-                    (compiler-load-parse-source-diagnostic-escaping
-                      (string.copy path)
-                      source
-                      parse-cfgs)))
-                  [(parser.ResultAstProgramDiagnostic.Ok program)
-                    (compiler-load-bind-path-dedup
-                      (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                        (string.copy path)
-                        program
-                        seen
-                        stdlib-roots
-                        (clone expected-module)
-                        (string.copy import-root)
-                        parse-cfgs
-                        parse-identity)
-                      path-dedup
-                      path-key-id)]
-                  [(parser.ResultAstProgramDiagnostic.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                      program
+                      seen
+                      stdlib-roots
+                      (clone expected-module)
+                      (string.copy import-root)
+                      parse-cfgs
+                      parse-identity)
+                    path-dedup
+                    path-key-id))]
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
                 (ResultCompilerLoadWithPaths.Err
                   (box
@@ -11820,80 +11812,80 @@
                 (compiler-load-parse-context-name-id source-module-fallback)])]
           [parse-cfgs : sym_i64_env.SymI64Env cfgs]
           (if (io.file-exists? (string.copy path))
-            (match (if cache-current
-              (compiler-load-parse-file-diagnostic-session-id-with-pools
-                (owned_view.compiler-owned-shared-view load-state)
-                (string.copy path)
-                source-path-id
-                (ast.ast-place-shared-view stdlib-roots)
-                parse-cfgs
-                pools)
-              (compiler-load-parse-file-diagnostic-detached-with-pools
-                (owned_view.compiler-owned-shared-view load-state)
-                (string.copy path)
-                parse-cfgs
-                pools))
-              [(parser.ResultAstProgramDiagnostic.Ok program)
-                (compiler-load-bind-path-dedup
-                  (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
-                    load-state
-                    (string.copy path)
-                    program
-                    seen
-                    stdlib-roots
-                    (clone expected-module)
-                    (string.copy import-root)
-                    parse-cfgs
-                    pools
-                    (string.copy module-id-fallback)
-                    (clone parse-identity)
-                    (string.copy source-module-fallback)
-                    source-module-fallback-id)
-                  path-dedup
-                  path-key-id)]
-              [(parser.ResultAstProgramDiagnostic.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])
+            (let
+              [program
+                (try
+                  (if cache-current
+                    (compiler-load-parse-file-diagnostic-session-id-with-pools
+                      (owned_view.compiler-owned-shared-view load-state)
+                      (string.copy path)
+                      source-path-id
+                      (ast.ast-place-shared-view stdlib-roots)
+                      parse-cfgs
+                      pools)
+                    (compiler-load-parse-file-diagnostic-detached-with-pools
+                      (owned_view.compiler-owned-shared-view load-state)
+                      (string.copy path)
+                      parse-cfgs
+                      pools)))]
+              (compiler-load-bind-path-dedup
+                (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+                  load-state
+                  (string.copy path)
+                  program
+                  seen
+                  stdlib-roots
+                  (clone expected-module)
+                  (string.copy import-root)
+                  parse-cfgs
+                  pools
+                  (string.copy module-id-fallback)
+                  (clone parse-identity)
+                  (string.copy source-module-fallback)
+                  source-module-fallback-id)
+                path-dedup
+                path-key-id))
             (match (compiler-load-embedded-stdlib-source-for-path
               (string.copy path))
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (begin
-                  (compiler-load-session-state-note-embedded-module!
-                    load-state
-                    (string.copy path))
-                  (if cache-current
-                    (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
-                      (owned_view.compiler-owned-shared-view load-state)
+                (let
+                  [program
+                    (try
+                      (begin
+                        (compiler-load-session-state-note-embedded-module!
+                          load-state
+                          (string.copy path))
+                        (if cache-current
+                          (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+                            (owned_view.compiler-owned-shared-view load-state)
+                            (string.copy path)
+                            source-path-id
+                            (string.copy source)
+                            parse-cfgs
+                            pools)
+                          (compiler-load-parse-source-diagnostic-escaping-with-pools
+                            (string.copy path)
+                            source
+                            parse-cfgs
+                            pools))))]
+                  (compiler-load-bind-path-dedup
+                    (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+                      load-state
                       (string.copy path)
-                      source-path-id
-                      (string.copy source)
+                      program
+                      seen
+                      stdlib-roots
+                      (clone expected-module)
+                      (string.copy import-root)
                       parse-cfgs
-                      pools)
-                    (compiler-load-parse-source-diagnostic-escaping-with-pools
-                      (string.copy path)
-                      source
-                      parse-cfgs
-                      pools)))
-                  [(parser.ResultAstProgramDiagnostic.Ok program)
-                    (compiler-load-bind-path-dedup
-                      (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
-                        load-state
-                        (string.copy path)
-                        program
-                        seen
-                        stdlib-roots
-                        (clone expected-module)
-                        (string.copy import-root)
-                        parse-cfgs
-                        pools
-                        (string.copy module-id-fallback)
-                        (clone parse-identity)
-                        (string.copy source-module-fallback)
-                        source-module-fallback-id)
-                      path-dedup
-                      path-key-id)]
-                  [(parser.ResultAstProgramDiagnostic.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                      pools
+                      (string.copy module-id-fallback)
+                      (clone parse-identity)
+                      (string.copy source-module-fallback)
+                      source-module-fallback-id)
+                    path-dedup
+                    path-key-id))]
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
                 (ResultCompilerLoadWithPaths.Err
                   (box
@@ -13511,137 +13503,137 @@
                         (__tl-box-place span)
                         message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
-            (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.RuntimeString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              (string.copy manifest-dir)
-              (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.RuntimeString
-                  expanded
-                  decls
+            (let
+              [expanded
+                (try
+                  (compiler-load-package-expand-include
+                    CompilerLoadIncludeKind.RuntimeString
+                    (string.copy importer-path)
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)))]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.RuntimeString
+                expanded
+                decls
+                (string.copy importer-path)
+                importer-path-id
+                importer-path-id
+                importer-module-id
+                (compiler-load-package-decls-with-module-and-roots
+                  rest
                   (string.copy importer-path)
                   importer-path-id
-                  importer-path-id
+                  importer-module
                   importer-module-id
-                  (compiler-load-package-decls-with-module-and-roots
-                    rest
-                    (string.copy importer-path)
-                    importer-path-id
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy manifest-dir)
-                    deps
-                    cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy manifest-dir)
+                  deps
+                  cfgs)))]
           [(ast.AstDecl.IncludeStrComptime name include-path)
-            (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.ComptimeString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              (string.copy manifest-dir)
-              (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.ComptimeString
-                  expanded
-                  decls
+            (let
+              [expanded
+                (try
+                  (compiler-load-package-expand-include
+                    CompilerLoadIncludeKind.ComptimeString
+                    (string.copy importer-path)
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)))]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.ComptimeString
+                expanded
+                decls
+                (string.copy importer-path)
+                importer-path-id
+                importer-path-id
+                importer-module-id
+                (compiler-load-package-decls-with-module-and-roots
+                  rest
                   (string.copy importer-path)
                   importer-path-id
-                  importer-path-id
+                  importer-module
                   importer-module-id
-                  (compiler-load-package-decls-with-module-and-roots
-                    rest
-                    (string.copy importer-path)
-                    importer-path-id
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy manifest-dir)
-                    deps
-                    cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy manifest-dir)
+                  deps
+                  cfgs)))]
           [(ast.AstDecl.IncludeStrLzss name include-path)
-            (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.LzssString
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              (string.copy manifest-dir)
-              (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.LzssString
-                  expanded
-                  decls
+            (let
+              [expanded
+                (try
+                  (compiler-load-package-expand-include
+                    CompilerLoadIncludeKind.LzssString
+                    (string.copy importer-path)
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)))]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.LzssString
+                expanded
+                decls
+                (string.copy importer-path)
+                importer-path-id
+                importer-path-id
+                importer-module-id
+                (compiler-load-package-decls-with-module-and-roots
+                  rest
                   (string.copy importer-path)
                   importer-path-id
-                  importer-path-id
+                  importer-module
                   importer-module-id
-                  (compiler-load-package-decls-with-module-and-roots
-                    rest
-                    (string.copy importer-path)
-                    importer-path-id
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy manifest-dir)
-                    deps
-                    cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy manifest-dir)
+                  deps
+                  cfgs)))]
           [(ast.AstDecl.IncludeBin name include-path)
-            (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.Binary
-              (string.copy importer-path)
-              include-path
-              name
-              (ast.ast-place-shared-view stdlib-roots)
-              (string.copy manifest-dir)
-              (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
-                (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.Binary
-                  expanded
-                  decls
+            (let
+              [expanded
+                (try
+                  (compiler-load-package-expand-include
+                    CompilerLoadIncludeKind.Binary
+                    (string.copy importer-path)
+                    include-path
+                    name
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)))]
+              (compiler-load-prepend-include
+                CompilerLoadIncludeKind.Binary
+                expanded
+                decls
+                (string.copy importer-path)
+                importer-path-id
+                importer-path-id
+                importer-module-id
+                (compiler-load-package-decls-with-module-and-roots
+                  rest
                   (string.copy importer-path)
                   importer-path-id
-                  importer-path-id
+                  importer-module
                   importer-module-id
-                  (compiler-load-package-decls-with-module-and-roots
-                    rest
-                    (string.copy importer-path)
-                    importer-path-id
-                    importer-module
-                    importer-module-id
-                    (string.copy importer-source-module)
-                    importer-source-module-id
-                    seen
-                    stdlib-roots
-                    (string.copy manifest-dir)
-                    deps
-                    cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+                  (string.copy importer-source-module)
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  (string.copy manifest-dir)
+                  deps
+                  cfgs)))]
           [_
             (match (compiler-load-package-decls-with-module-and-roots
               rest
@@ -13802,14 +13794,14 @@
       (if (= entry-depth 0)
         (match loaded
           [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
-            (match (compiler-load-check-unqualified-import-collisions
-              source-path
-              (ast.ast-place-shared-view decls)
-              paths)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+            (let
+              [_
+                (try
+                  (compiler-load-check-unqualified-import-collisions
+                    source-path
+                    (ast.ast-place-shared-view decls)
+                    paths))]
+              (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen))]
           [(ResultCompilerLoadWithPaths.Err diag)
             (ResultCompilerLoadWithPaths.Err diag)])
         loaded))))
@@ -13870,60 +13862,60 @@
           module-id-fallback-id]
         [else (compiler-load-parse-context-name-id source-module-fallback)])]
     (if (io.file-exists? (string.copy path))
-      (match (if cache-current
-        (compiler-load-parse-file-diagnostic-session-id
+      (let
+        [program
+          (try
+            (if cache-current
+              (compiler-load-parse-file-diagnostic-session-id
+                (string.copy path)
+                source-path-id
+                (ast.ast-place-shared-view stdlib-roots)
+                parse-cfgs)
+              (compiler-load-parse-file-diagnostic-escaping
+                (string.copy path)
+                parse-cfgs)))]
+        (compiler-load-package-program-with-paths-and-roots-expect-fallback
           (string.copy path)
-          source-path-id
-          (ast.ast-place-shared-view stdlib-roots)
-          parse-cfgs)
-        (compiler-load-parse-file-diagnostic-escaping
-          (string.copy path)
-          parse-cfgs))
-        [(parser.ResultAstProgramDiagnostic.Ok program)
-          (compiler-load-package-program-with-paths-and-roots-expect-fallback
-            (string.copy path)
-            program
-            seen
-            stdlib-roots
-            (clone expected-module)
-            (string.copy manifest-dir)
-            deps
-            parse-cfgs
-            (string.copy module-id-fallback)
-            (clone parse-identity)
-            (string.copy source-module-fallback)
-            source-module-fallback-id)]
-        [(parser.ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])
+          program
+          seen
+          stdlib-roots
+          (clone expected-module)
+          (string.copy manifest-dir)
+          deps
+          parse-cfgs
+          (string.copy module-id-fallback)
+          (clone parse-identity)
+          (string.copy source-module-fallback)
+          source-module-fallback-id))
       (match (compiler-load-embedded-stdlib-source-for-path (string.copy path))
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
             source)
-          (match (if cache-current
-            (compiler-load-parse-embedded-source-diagnostic-session-id
+          (let
+            [program
+              (try
+                (if cache-current
+                  (compiler-load-parse-embedded-source-diagnostic-session-id
+                    (string.copy path)
+                    source-path-id
+                    (string.copy source)
+                    parse-cfgs)
+                  (compiler-load-parse-source-diagnostic-escaping
+                    (string.copy path)
+                    source
+                    parse-cfgs)))]
+            (compiler-load-package-program-with-paths-and-roots-expect-fallback
               (string.copy path)
-              source-path-id
-              (string.copy source)
-              parse-cfgs)
-            (compiler-load-parse-source-diagnostic-escaping
-              (string.copy path)
-              source
-              parse-cfgs))
-            [(parser.ResultAstProgramDiagnostic.Ok program)
-              (compiler-load-package-program-with-paths-and-roots-expect-fallback
-                (string.copy path)
-                program
-                seen
-                stdlib-roots
-                (clone expected-module)
-                (string.copy manifest-dir)
-                deps
-                parse-cfgs
-                (string.copy module-id-fallback)
-                (clone parse-identity)
-                (string.copy source-module-fallback)
-                source-module-fallback-id)]
-            [(parser.ResultAstProgramDiagnostic.Err diag)
-              (ResultCompilerLoadWithPaths.Err diag)])]
+              program
+              seen
+              stdlib-roots
+              (clone expected-module)
+              (string.copy manifest-dir)
+              deps
+              parse-cfgs
+              (string.copy module-id-fallback)
+              (clone parse-identity)
+              (string.copy source-module-fallback)
+              source-module-fallback-id))]
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
           (ResultCompilerLoadWithPaths.Err
             (box
@@ -14020,23 +14012,22 @@
         (string.copy path)
         (compiler-load-canonical-module-id-from-path path)
         ast.AstMaybeModuleName.No)]
-    (match (compiler-load-parse-source-diagnostic-escaping
-      (string.copy path)
-      source
-      parse-cfgs)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
-        (compiler-load-package-program-with-paths-and-roots-expect
-          path
-          program
-          seen
-          stdlib-roots
-          ast.AstMaybeModuleName.No
-          manifest-dir
-          deps
-          parse-cfgs
-          parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+    [program
+      (try
+        (compiler-load-parse-source-diagnostic-escaping
+          (string.copy path)
+          source
+          parse-cfgs))]
+    (compiler-load-package-program-with-paths-and-roots-expect
+      path
+      program
+      seen
+      stdlib-roots
+      ast.AstMaybeModuleName.No
+      manifest-dir
+      deps
+      parse-cfgs
+      parse-identity)))
 
 (define (compiler-load-package-stdlib-prelude-file-with-roots-cfg
   [path : String]
@@ -14845,16 +14836,15 @@
           alias
           "` path must not be empty"))]
     [else
-      (match (compiler-load-manifest-parse-deps rest)
-        [(ResultCompilerPkgDeps.Err m) (ResultCompilerPkgDeps.Err m)]
-        [(ResultCompilerPkgDeps.Ok tail-deps)
-          (if (compiler-pkg-deps-alias-seen?
-            (ast.ast-place-shared-view tail-deps)
-            (string.copy alias))
-            (ResultCompilerPkgDeps.Err
-              (str_cat.str-cat "duplicate dependency alias `" alias "`"))
-            (ResultCompilerPkgDeps.Ok
-              (compiler-pkg-deps-cons alias path tail-deps)))])]))
+      (let
+        [tail-deps (try (compiler-load-manifest-parse-deps rest))]
+        (if (compiler-pkg-deps-alias-seen?
+          (ast.ast-place-shared-view tail-deps)
+          (string.copy alias))
+          (ResultCompilerPkgDeps.Err
+            (str_cat.str-cat "duplicate dependency alias `" alias "`"))
+          (ResultCompilerPkgDeps.Ok
+            (compiler-pkg-deps-cons alias path tail-deps))))]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : reader.SpannedSexpr]) : ResultCompilerPkgDeps
@@ -14869,12 +14859,12 @@
               (let
                 [alias-text : String
                   (compiler-load-manifest-owned-syntax-text alias)]
-                (match (compiler-load-manifest-dependency-value
-                  etail
-                  (string.copy alias-text))
-                  [(ResultPkgString.Err m) (ResultCompilerPkgDeps.Err m)]
-                  [(ResultPkgString.Ok path)
-                    (compiler-load-manifest-cons-dep alias-text path rest)]))]
+                [path
+                  (try
+                    (compiler-load-manifest-dependency-value
+                      etail
+                      (string.copy alias-text)))]
+                (compiler-load-manifest-cons-dep alias-text path rest))]
             [_
               (ResultCompilerPkgDeps.Err
                 "dependency entries must start with an alias name")])]
@@ -15064,20 +15054,20 @@
         [(reader.SexprView.Cons ehead etail)
           (match (reader.sexpr-view ehead)
             [(reader.SexprView.Sym fname)
-              (match (compiler-load-manifest-link-values
-                etail
-                (compiler-load-symbol-text fname)
-                (fs.string-vector-new))
-                [(ResultPkgStrVec.Err m) (ResultCompilerPkgLink.Err m)]
-                [(ResultPkgStrVec.Ok values)
-                  (match (compiler-load-manifest-link-store
-                    acc
-                    (compiler-load-symbol-text fname)
-                    values)
-                    [(ResultCompilerPkgLink.Err m)
-                      (ResultCompilerPkgLink.Err m)]
-                    [(ResultCompilerPkgLink.Ok acc2)
-                      (compiler-load-manifest-parse-link-into rest acc2)])])]
+              (let
+                [values
+                  (try
+                    (compiler-load-manifest-link-values
+                      etail
+                      (compiler-load-symbol-text fname)
+                      (fs.string-vector-new)))]
+                [acc2
+                  (try
+                    (compiler-load-manifest-link-store
+                      acc
+                      (compiler-load-symbol-text fname)
+                      values))]
+                (compiler-load-manifest-parse-link-into rest acc2))]
             [_
               (ResultCompilerPkgLink.Err
                 "`link` entries must start with a field name")])]
@@ -15168,140 +15158,136 @@
                   (if has-deps
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `dependencies`")
-                    (match (compiler-load-manifest-parse-deps ftail)
-                      [(ResultCompilerPkgDeps.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgDeps.Ok parsed-deps)
-                        (compiler-load-manifest-fields
-                          rest
-                          name
-                          has-name
-                          version
-                          has-version
-                          kind
-                          has-kind
-                          entry
-                          has-entry
-                          true
-                          parsed-deps
-                          has-link
-                          link)]))]
+                    (let
+                      [parsed-deps
+                        (try (compiler-load-manifest-parse-deps ftail))]
+                      (compiler-load-manifest-fields
+                        rest
+                        name
+                        has-name
+                        version
+                        has-version
+                        kind
+                        has-kind
+                        entry
+                        has-entry
+                        true
+                        parsed-deps
+                        has-link
+                        link)))]
                 [(string.eq (compiler-load-symbol-text fname) "link")
                   (if has-link
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `link`")
-                    (match (compiler-load-manifest-parse-link ftail)
-                      [(ResultCompilerPkgLink.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgLink.Ok parsed-link)
-                        (compiler-load-manifest-fields
-                          rest
-                          name
-                          has-name
-                          version
-                          has-version
-                          kind
-                          has-kind
-                          entry
-                          has-entry
-                          has-deps
-                          deps
-                          true
-                          parsed-link)]))]
+                    (let
+                      [parsed-link
+                        (try (compiler-load-manifest-parse-link ftail))]
+                      (compiler-load-manifest-fields
+                        rest
+                        name
+                        has-name
+                        version
+                        has-version
+                        kind
+                        has-kind
+                        entry
+                        has-entry
+                        has-deps
+                        deps
+                        true
+                        parsed-link)))]
                 [(string.eq (compiler-load-symbol-text fname) "name")
                   (if has-name
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `name`")
-                    (match (compiler-load-manifest-string-value
-                      ftail
-                      (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
-                        (compiler-load-manifest-fields
-                          rest
-                          val
-                          true
-                          version
-                          has-version
-                          kind
-                          has-kind
-                          entry
-                          has-entry
-                          has-deps
-                          deps
-                          has-link
-                          link)]))]
+                    (let
+                      [val
+                        (try
+                          (compiler-load-manifest-string-value
+                            ftail
+                            (compiler-load-symbol-text fname)))]
+                      (compiler-load-manifest-fields
+                        rest
+                        val
+                        true
+                        version
+                        has-version
+                        kind
+                        has-kind
+                        entry
+                        has-entry
+                        has-deps
+                        deps
+                        has-link
+                        link)))]
                 [(string.eq (compiler-load-symbol-text fname) "version")
                   (if has-version
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `version`")
-                    (match (compiler-load-manifest-string-value
-                      ftail
-                      (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
-                        (compiler-load-manifest-fields
-                          rest
-                          name
-                          has-name
-                          val
-                          true
-                          kind
-                          has-kind
-                          entry
-                          has-entry
-                          has-deps
-                          deps
-                          has-link
-                          link)]))]
+                    (let
+                      [val
+                        (try
+                          (compiler-load-manifest-string-value
+                            ftail
+                            (compiler-load-symbol-text fname)))]
+                      (compiler-load-manifest-fields
+                        rest
+                        name
+                        has-name
+                        val
+                        true
+                        kind
+                        has-kind
+                        entry
+                        has-entry
+                        has-deps
+                        deps
+                        has-link
+                        link)))]
                 [(string.eq (compiler-load-symbol-text fname) "kind")
                   (if has-kind
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `kind`")
-                    (match (compiler-load-manifest-kind-value ftail)
-                      [(ResultCompilerPkgKind.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgKind.Ok val)
-                        (compiler-load-manifest-fields
-                          rest
-                          name
-                          has-name
-                          version
-                          has-version
-                          val
-                          true
-                          entry
-                          has-entry
-                          has-deps
-                          deps
-                          has-link
-                          link)]))]
+                    (let
+                      [val (try (compiler-load-manifest-kind-value ftail))]
+                      (compiler-load-manifest-fields
+                        rest
+                        name
+                        has-name
+                        version
+                        has-version
+                        val
+                        true
+                        entry
+                        has-entry
+                        has-deps
+                        deps
+                        has-link
+                        link)))]
                 [(string.eq (compiler-load-symbol-text fname) "entry")
                   (if has-entry
                     (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `entry`")
-                    (match (compiler-load-manifest-string-value
-                      ftail
-                      (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
-                        (compiler-load-manifest-fields
-                          rest
-                          name
-                          has-name
-                          version
-                          has-version
-                          kind
-                          has-kind
-                          val
-                          true
-                          has-deps
-                          deps
-                          has-link
-                          link)]))]
+                    (let
+                      [val
+                        (try
+                          (compiler-load-manifest-string-value
+                            ftail
+                            (compiler-load-symbol-text fname)))]
+                      (compiler-load-manifest-fields
+                        rest
+                        name
+                        has-name
+                        version
+                        has-version
+                        kind
+                        has-kind
+                        val
+                        true
+                        has-deps
+                        deps
+                        has-link
+                        link)))]
                 [else
                   (ResultCompilerPkgManifest.Err
                     (str_cat.str-cat

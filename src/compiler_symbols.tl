@@ -1224,18 +1224,22 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
     [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
-    (match (if (compiler-symbol-root-module-id? module-id)
-      (compiler-symbols-add-root-value-id symbols key-id display-name handle)
-      (compiler-symbols-add-value-id symbols key-id display-name handle))
-      [(ResultCompilerSymbols.Ok next)
-        (if (compiler-symbols-comptime-module-id? module-id)
-          (ResultCompilerSymbols.Ok next)
-          (ResultCompilerSymbols.Ok
-            (compiler-symbols-add-value-alias-key-id
-              next
-              (compiler-symbol-name-id-key name-id)
-              handle)))]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+    [next
+      (try
+        (if (compiler-symbol-root-module-id? module-id)
+          (compiler-symbols-add-root-value-id
+            symbols
+            key-id
+            display-name
+            handle)
+          (compiler-symbols-add-value-id symbols key-id display-name handle)))]
+    (if (compiler-symbols-comptime-module-id? module-id)
+      (ResultCompilerSymbols.Ok next)
+      (ResultCompilerSymbols.Ok
+        (compiler-symbols-add-value-alias-key-id
+          next
+          (compiler-symbol-name-id-key name-id)
+          handle)))))
 
 (define (compiler-symbols-comptime-module-id? [module-id : i64]) : bool
   (and
@@ -1250,16 +1254,15 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
     [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
-    (match (compiler-symbols-add-type-id symbols key-id display-name handle)
-      [(ResultCompilerSymbols.Ok next)
-        (if (compiler-symbols-comptime-module-id? module-id)
-          (ResultCompilerSymbols.Ok next)
-          (ResultCompilerSymbols.Ok
-            (compiler-symbols-add-type-alias-key-id
-              next
-              (compiler-symbol-name-id-key name-id)
-              handle)))]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+    [next
+      (try (compiler-symbols-add-type-id symbols key-id display-name handle))]
+    (if (compiler-symbols-comptime-module-id? module-id)
+      (ResultCompilerSymbols.Ok next)
+      (ResultCompilerSymbols.Ok
+        (compiler-symbols-add-type-alias-key-id
+          next
+          (compiler-symbol-name-id-key name-id)
+          handle)))))
 
 (define (compiler-symbols-add-variant-value-key-in-module-id
   [symbols : CompilerSymbols]
@@ -1336,31 +1339,29 @@
           (compiler-symbol-kind-enum-variant)
           enum-index
           variant-index)]
-      (match (compiler-symbols-add-variant-value-key-in-module-id
-        symbols
-        qualified-key-id
-        module-id
-        qualified-name-id
-        handle)
-        [(ResultCompilerSymbols.Ok next)
-          (match (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
+      [next
+        (try
+          (compiler-symbols-add-variant-value-key-in-module-id
+            symbols
+            qualified-key-id
+            module-id
+            qualified-name-id
+            handle))]
+      [with-flat
+        (try
+          (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
             next
             flat-key-id
             module-id
             name-id
-            handle)
-            [(ResultCompilerSymbols.Ok with-flat)
-              (if (compiler-symbols-comptime-module-id? module-id)
-                (ResultCompilerSymbols.Ok with-flat)
-                (ResultCompilerSymbols.Ok
-                  (compiler-symbols-add-value-alias-key-id
-                    with-flat
-                    (compiler-symbol-name-id-key name-id)
-                    handle)))]
-            [(ResultCompilerSymbols.Err message)
-              (ResultCompilerSymbols.Err message)])]
-        [(ResultCompilerSymbols.Err message)
-          (ResultCompilerSymbols.Err message)]))))
+            handle))]
+      (if (compiler-symbols-comptime-module-id? module-id)
+        (ResultCompilerSymbols.Ok with-flat)
+        (ResultCompilerSymbols.Ok
+          (compiler-symbols-add-value-alias-key-id
+            with-flat
+            (compiler-symbol-name-id-key name-id)
+            handle))))))
 
 (define (compiler-symbols-add-variant-values-in-module-id
   [symbols : CompilerSymbols]
@@ -1408,16 +1409,20 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
     [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
-    (match (if (compiler-symbol-root-module-id? module-id)
-      (compiler-symbols-add-root-macro-id symbols key-id display-name handle)
-      (compiler-symbols-add-macro-id symbols key-id display-name handle))
-      [(ResultCompilerSymbols.Ok next)
-        (ResultCompilerSymbols.Ok
-          (compiler-symbols-add-macro-alias-key-id
-            next
-            (compiler-symbol-name-id-key name-id)
-            handle))]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+    [next
+      (try
+        (if (compiler-symbol-root-module-id? module-id)
+          (compiler-symbols-add-root-macro-id
+            symbols
+            key-id
+            display-name
+            handle)
+          (compiler-symbols-add-macro-id symbols key-id display-name handle)))]
+    (ResultCompilerSymbols.Ok
+      (compiler-symbols-add-macro-alias-key-id
+        next
+        (compiler-symbol-name-id-key name-id)
+        handle))))
 
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : (& symbols CompilerSymbols)]
@@ -1585,97 +1590,101 @@
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
-      (match (compiler-symbols-add-type-in-module-id
-        symbols
-        module-id
-        name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
-        [(ResultCompilerSymbols.Ok next)
-          (match (compiler-symbols-add-variant-values-in-module-id
-            next
-            module-id
-            name
-            variants
-            index
-            0)
-            [(ResultCompilerSymbols.Ok with-variants)
-              (compiler-symbols-add-enum-cleanup-in-module-id
-                with-variants
-                module-id
-                cleanup
-                index)]
-            [(ResultCompilerSymbols.Err message)
-              (ResultCompilerSymbols.Err message)])]
-        [(ResultCompilerSymbols.Err message)
-          (ResultCompilerSymbols.Err message)])]
+      (let
+        [next
+          (try
+            (compiler-symbols-add-type-in-module-id
+              symbols
+              module-id
+              name
+              (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index)))]
+        [with-variants
+          (try
+            (compiler-symbols-add-variant-values-in-module-id
+              next
+              module-id
+              name
+              variants
+              index
+              0))]
+        (compiler-symbols-add-enum-cleanup-in-module-id
+          with-variants
+          module-id
+          cleanup
+          index))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
-      (match (compiler-symbols-add-type-in-module-id
-        symbols
-        module-id
-        name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
-        [(ResultCompilerSymbols.Ok next)
-          (match (compiler-symbols-add-variant-values-in-module-id
-            next
-            module-id
-            name
-            variants
-            index
-            0)
-            [(ResultCompilerSymbols.Ok with-variants)
-              (compiler-symbols-add-enum-cleanup-in-module-id
-                with-variants
-                module-id
-                cleanup
-                index)]
-            [(ResultCompilerSymbols.Err message)
-              (ResultCompilerSymbols.Err message)])]
-        [(ResultCompilerSymbols.Err message)
-          (ResultCompilerSymbols.Err message)])]
+      (let
+        [next
+          (try
+            (compiler-symbols-add-type-in-module-id
+              symbols
+              module-id
+              name
+              (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index)))]
+        [with-variants
+          (try
+            (compiler-symbols-add-variant-values-in-module-id
+              next
+              module-id
+              name
+              variants
+              index
+              0))]
+        (compiler-symbols-add-enum-cleanup-in-module-id
+          with-variants
+          module-id
+          cleanup
+          index))]
     [(ast.AstDecl.DefStruct decl-meta name _ cleanup _)
-      (match (compiler-symbols-add-type-in-module-id
-        symbols
-        module-id
-        name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        [(ResultCompilerSymbols.Ok next)
-          (match (compiler-symbols-add-value-in-module-id
-            next
-            module-id
-            name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-            [(ResultCompilerSymbols.Ok with-constructor)
-              (compiler-symbols-add-struct-cleanup-in-module-id
-                with-constructor
-                module-id
-                cleanup
-                index)]
-            [(ResultCompilerSymbols.Err message)
-              (ResultCompilerSymbols.Err message)])]
-        [(ResultCompilerSymbols.Err message)
-          (ResultCompilerSymbols.Err message)])]
+      (let
+        [next
+          (try
+            (compiler-symbols-add-type-in-module-id
+              symbols
+              module-id
+              name
+              (compiler-symbol-make-handle
+                (compiler-symbol-kind-defstruct)
+                index)))]
+        [with-constructor
+          (try
+            (compiler-symbols-add-value-in-module-id
+              next
+              module-id
+              name
+              (compiler-symbol-make-handle
+                (compiler-symbol-kind-defstruct)
+                index)))]
+        (compiler-symbols-add-struct-cleanup-in-module-id
+          with-constructor
+          module-id
+          cleanup
+          index))]
     [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup _)
-      (match (compiler-symbols-add-type-in-module-id
-        symbols
-        module-id
-        name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        [(ResultCompilerSymbols.Ok next)
-          (match (compiler-symbols-add-value-in-module-id
-            next
-            module-id
-            name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-            [(ResultCompilerSymbols.Ok with-constructor)
-              (compiler-symbols-add-struct-cleanup-in-module-id
-                with-constructor
-                module-id
-                cleanup
-                index)]
-            [(ResultCompilerSymbols.Err message)
-              (ResultCompilerSymbols.Err message)])]
-        [(ResultCompilerSymbols.Err message)
-          (ResultCompilerSymbols.Err message)])]
+      (let
+        [next
+          (try
+            (compiler-symbols-add-type-in-module-id
+              symbols
+              module-id
+              name
+              (compiler-symbol-make-handle
+                (compiler-symbol-kind-defstruct)
+                index)))]
+        [with-constructor
+          (try
+            (compiler-symbols-add-value-in-module-id
+              next
+              module-id
+              name
+              (compiler-symbol-make-handle
+                (compiler-symbol-kind-defstruct)
+                index)))]
+        (compiler-symbols-add-struct-cleanup-in-module-id
+          with-constructor
+          module-id
+          cleanup
+          index))]
     [(ast.AstDecl.IncludeStr _ _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.IncludeStrComptime _ _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.IncludeStrLzss _ _) (ResultCompilerSymbols.Ok symbols)]
@@ -2984,21 +2993,20 @@
             (let
               [body : ast.AstDeclList (deref body-box)]
               [body-count : i64 (compiler-decl-list-index-count body)]
-              (match (build-compiler-symbol-list-in-module
-                (ast.ast-place-shared-view all-decls)
-                body
-                symbols
-                index
-                name)
-                [(ResultCompilerSymbols.Ok body-symbols)
+              [body-symbols
+                (try
                   (build-compiler-symbol-list-in-module
-                    all-decls
-                    rest
-                    body-symbols
-                    (+ index body-count)
-                    module-id)]
-                [(ResultCompilerSymbols.Err message)
-                  (ResultCompilerSymbols.Err message)]))]
+                    (ast.ast-place-shared-view all-decls)
+                    body
+                    symbols
+                    index
+                    name))]
+              (build-compiler-symbol-list-in-module
+                all-decls
+                rest
+                body-symbols
+                (+ index body-count)
+                module-id))]
           [(ast.AstDecl.Test _ _ _ _)
             (build-compiler-symbol-list-in-module
               all-decls
@@ -3016,20 +3024,20 @@
                   index
                   module-id
                   cbi.compiler-builtin-id-fix-empty))
-              (match (compiler-symbols-add-decl-in-module
-                symbols
-                module-id
-                decl-for-add
-                index)
-                [(ResultCompilerSymbols.Ok next-symbols)
-                  (build-compiler-symbol-list-in-module
-                    all-decls
-                    rest
-                    next-symbols
-                    (+ index 1)
-                    module-id)]
-                [(ResultCompilerSymbols.Err message)
-                  (ResultCompilerSymbols.Err message)]))]))]))
+              (let
+                [next-symbols
+                  (try
+                    (compiler-symbols-add-decl-in-module
+                      symbols
+                      module-id
+                      decl-for-add
+                      index))]
+                (build-compiler-symbol-list-in-module
+                  all-decls
+                  rest
+                  next-symbols
+                  (+ index 1)
+                  module-id)))]))]))
 
 (define (build-compiler-symbol-list-with-paths-in-module
   [all-decls : ast.AstDeclList]
@@ -3247,26 +3255,23 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        (match (build-compiler-symbol-list
-          (ast.ast-place-shared-view decls)
-          (compiler-symbols-empty-with-decls
-            (compiler-decl-list-index-count decls))
-          0)
-          [(ResultCompilerSymbols.Ok symbols)
-            (let
-              [macro-modules : sym_i64_env.SymI64Env
-                (compiler-symbols-macro-module-set
-                  (ast.ast-place-shared-view decls))]
-              [aliased : CompilerSymbols
-                (build-compiler-symbol-aliases-list
-                  (ast.ast-place-shared-view decls)
-                  decls
-                  symbols
-                  (compiler-symbol-root-module-id)
-                  macro-modules)]
-              (ResultCompilerSymbols.Ok aliased))]
-          [(ResultCompilerSymbols.Err message)
-            (ResultCompilerSymbols.Err message)]))]))
+        [symbols
+          (try
+            (build-compiler-symbol-list
+              (ast.ast-place-shared-view decls)
+              (compiler-symbols-empty-with-decls
+                (compiler-decl-list-index-count decls))
+              0))]
+        [macro-modules : sym_i64_env.SymI64Env
+          (compiler-symbols-macro-module-set (ast.ast-place-shared-view decls))]
+        [aliased : CompilerSymbols
+          (build-compiler-symbol-aliases-list
+            (ast.ast-place-shared-view decls)
+            decls
+            symbols
+            (compiler-symbol-root-module-id)
+            macro-modules)]
+        (ResultCompilerSymbols.Ok aliased))]))
 
 (define (build-compiler-symbols-with-paths-and-capacity
   [program : (& program ast.AstProgram)]
@@ -3279,31 +3284,29 @@
         [module-sets : CompilerSymbolsModuleSets
           (compiler-symbols-module-sets (ast.ast-place-shared-view decls))]
         [decl-count : i64 (compiler-decl-list-index-count decls)]
-        (match (build-compiler-symbol-list-with-paths-in-module
-          (ast.ast-place-shared-view decls)
-          (ast.ast-place-shared-view paths)
-          (ast.ast-place-shared-view decls)
-          paths
-          (compiler-symbols-empty-with-decls-and-capacity
-            decl-count
-            (if (> requested-capacity decl-count)
-              requested-capacity
-              decl-count))
-          module-sets.dotted-modules
-          0
-          (compiler-symbol-root-module-id))
-          [(ResultCompilerSymbols.Ok symbols)
-            (let
-              [aliased : CompilerSymbols
-                (build-compiler-symbol-aliases-list
-                  (ast.ast-place-shared-view decls)
-                  decls
-                  symbols
-                  (compiler-symbol-root-module-id)
-                  module-sets.macro-modules)]
-              (ResultCompilerSymbols.Ok aliased))]
-          [(ResultCompilerSymbols.Err message)
-            (ResultCompilerSymbols.Err message)]))]))
+        [symbols
+          (try
+            (build-compiler-symbol-list-with-paths-in-module
+              (ast.ast-place-shared-view decls)
+              (ast.ast-place-shared-view paths)
+              (ast.ast-place-shared-view decls)
+              paths
+              (compiler-symbols-empty-with-decls-and-capacity
+                decl-count
+                (if (> requested-capacity decl-count)
+                  requested-capacity
+                  decl-count))
+              module-sets.dotted-modules
+              0
+              (compiler-symbol-root-module-id)))]
+        [aliased : CompilerSymbols
+          (build-compiler-symbol-aliases-list
+            (ast.ast-place-shared-view decls)
+            decls
+            symbols
+            (compiler-symbol-root-module-id)
+            module-sets.macro-modules)]
+        (ResultCompilerSymbols.Ok aliased))]))
 
 (define (build-compiler-symbols-with-paths
   [program : ast.AstProgram]
@@ -3453,28 +3456,26 @@
     [added-count : i64 (compiler-decl-list-index-count decls)]
     [grown : CompilerSymbols
       (compiler-symbols-ensure-decl-capacity symbols (+ old-count added-count))]
-    (match (build-compiler-symbol-list-in-module
-      (ast.ast-place-shared-view decls)
-      (ast.ast-place-shared-view decls)
-      grown
-      old-count
-      module-id)
-      [(ResultCompilerSymbols.Ok appended)
-        (let
-          [macro-modules : sym_i64_env.SymI64Env
-            (compiler-symbols-macro-module-set
-              (ast.ast-place-shared-view decls))]
-          [aliased : CompilerSymbols
-            (build-compiler-symbol-aliases-list-with-index-offset
-              (ast.ast-place-shared-view decls)
-              decls
-              appended
-              module-id
-              macro-modules
-              old-count)]
-          (ResultCompilerSymbols.Ok
-            (compiler-symbols-with-decl-count aliased (+ old-count added-count))))]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+    [appended
+      (try
+        (build-compiler-symbol-list-in-module
+          (ast.ast-place-shared-view decls)
+          (ast.ast-place-shared-view decls)
+          grown
+          old-count
+          module-id))]
+    [macro-modules : sym_i64_env.SymI64Env
+      (compiler-symbols-macro-module-set (ast.ast-place-shared-view decls))]
+    [aliased : CompilerSymbols
+      (build-compiler-symbol-aliases-list-with-index-offset
+        (ast.ast-place-shared-view decls)
+        decls
+        appended
+        module-id
+        macro-modules
+        old-count)]
+    (ResultCompilerSymbols.Ok
+      (compiler-symbols-with-decl-count aliased (+ old-count added-count)))))
 
 (define (compiler-registries-lookup-variant-id
   [registries : (& registries CompilerRegistries)]
@@ -4137,23 +4138,22 @@
 (define (build-compiler-registries-for-decls-with-paths
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultCompilerRegistries
-  (match (build-compiler-registry-list-in-module
-    (ast.ast-place-shared-view decls)
-    paths
-    (compiler-registries-empty)
-    0
-    (compiler-symbol-root-module-id))
-    [(ResultCompilerRegistries.Ok registries)
-      (let
-        [aliased : CompilerRegistries
-          (build-compiler-registry-aliases-list
-            (ast.ast-place-shared-view decls)
-            decls
-            registries
-            (compiler-symbol-root-module-id))]
-        (ResultCompilerRegistries.Ok aliased))]
-    [(ResultCompilerRegistries.Err message)
-      (ResultCompilerRegistries.Err message)]))
+  (let
+    [registries
+      (try
+        (build-compiler-registry-list-in-module
+          (ast.ast-place-shared-view decls)
+          paths
+          (compiler-registries-empty)
+          0
+          (compiler-symbol-root-module-id)))]
+    [aliased : CompilerRegistries
+      (build-compiler-registry-aliases-list
+        (ast.ast-place-shared-view decls)
+        decls
+        registries
+        (compiler-symbol-root-module-id))]
+    (ResultCompilerRegistries.Ok aliased)))
 
 (define (build-compiler-registries-with-symbols
   [program : ast.AstProgram]
@@ -4177,22 +4177,22 @@
   [paths : ast.AstDeclPathList]
   [append-index : i64]
   [module-id : i64]) : ResultCompilerRegistries
-  (match (build-compiler-registry-list-in-module
-    (ast.ast-place-shared-view decls)
-    paths
-    registries
-    append-index
-    module-id)
-    [(ResultCompilerRegistries.Ok appended)
-      (ResultCompilerRegistries.Ok
-        (build-compiler-registry-aliases-list-with-index-offset
+  (let
+    [appended
+      (try
+        (build-compiler-registry-list-in-module
           (ast.ast-place-shared-view decls)
-          decls
-          appended
-          module-id
-          append-index))]
-    [(ResultCompilerRegistries.Err message)
-      (ResultCompilerRegistries.Err message)]))
+          paths
+          registries
+          append-index
+          module-id))]
+    (ResultCompilerRegistries.Ok
+      (build-compiler-registry-aliases-list-with-index-offset
+        (ast.ast-place-shared-view decls)
+        decls
+        appended
+        module-id
+        append-index))))
 
 (define (build-compiler-registries-diagnostic-with-symbols-and-paths
   [program : ast.AstProgram]
@@ -4212,12 +4212,11 @@
                 (box (compiler-symbols-last-error-diagnostic message)))]))])))
 
 (define (build-compiler-registries [program : (& program ast.AstProgram)]) : ResultCompilerRegistries
-  (match (build-compiler-symbols program)
-    [(ResultCompilerSymbols.Ok symbols)
-      (build-compiler-registries-with-symbols
-        (compiler-symbols-program-shared-view program)
-        symbols)]
-    [(ResultCompilerSymbols.Err message) (ResultCompilerRegistries.Err message)]))
+  (let
+    [symbols (try (build-compiler-symbols program))]
+    (build-compiler-registries-with-symbols
+      (compiler-symbols-program-shared-view program)
+      symbols)))
 
 (define (compiler-symbols-decl-at-index
   [symbols : (& symbols CompilerSymbols)]
@@ -4275,23 +4274,24 @@
 (define (compiler-registries-variant-fields-indexed
   [symbols : (& symbols CompilerSymbols)]
   [handle : i64]) : parser.ResultAstTypeList
-  (match (compiler-symbols-decl-at-index
-    symbols
-    (compiler-registry-handle-owner-index handle))
-    [(parser.ResultAstDecl.Ok decl)
-      (match decl
-        [(ast.AstDecl.DefEnum decl-meta _ _ variants)
-          (compiler-variant-types-at-index
-            variants
-            (compiler-registry-handle-child-index handle)
-            0)]
-        [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
-          (compiler-variant-types-at-index
-            variants
-            (compiler-registry-handle-child-index handle)
-            0)]
-        [_ (parser.ResultAstTypeList.Err "symbols: variant owner is not enum")])]
-    [(parser.ResultAstDecl.Err message) (parser.ResultAstTypeList.Err message)]))
+  (let
+    [decl
+      (try
+        (compiler-symbols-decl-at-index
+          symbols
+          (compiler-registry-handle-owner-index handle)))]
+    (match decl
+      [(ast.AstDecl.DefEnum decl-meta _ _ variants)
+        (compiler-variant-types-at-index
+          variants
+          (compiler-registry-handle-child-index handle)
+          0)]
+      [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+        (compiler-variant-types-at-index
+          variants
+          (compiler-registry-handle-child-index handle)
+          0)]
+      [_ (parser.ResultAstTypeList.Err "symbols: variant owner is not enum")])))
 
 (define (compiler-registries-variant-name-id-indexed
   [symbols : (& symbols CompilerSymbols)]

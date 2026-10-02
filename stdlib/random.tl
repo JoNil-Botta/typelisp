@@ -249,17 +249,16 @@
   [weights : (& weights (Slice i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightedIndexResult
-  (match (weight-slice-total-prefix weights count empty-message)
-    [(ErrRandomWeightTotal message) (ErrRandomWeightedIndex message)]
-    [(OkRandomWeightTotal total)
-      (if (<= total 0)
-        (ErrRandomWeightedIndex "random: weight total must be positive")
-        (match (bounded state total)
-          [(OkRandomBounded next-state target)
-            (OkRandomWeightedIndex
-              next-state
-              (weight-slice-scan-from weights count target 0))]
-          [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
+  (let
+    [total (try (weight-slice-total-prefix weights count empty-message))]
+    (if (<= total 0)
+      (ErrRandomWeightedIndex "random: weight total must be positive")
+      (match (bounded state total)
+        [(OkRandomBounded next-state target)
+          (OkRandomWeightedIndex
+            next-state
+            (weight-slice-scan-from weights count target 0))]
+        [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))))
 
 ;: Choose an index from `weights`, skipping zero weights.
 ;:
@@ -372,9 +371,9 @@
 ;: Return a system-provided random seed, or a diagnostic when entropy is
 ;: unavailable. The seed is normalized to the valid MINSTD range.
 (define (system-seed) : ResultSystemSeed
-  (match (cfg windows (windows-system-seed) (linux-system-seed))
-    [(OkSystemSeed seed-value) (OkSystemSeed (normalize-seed-value seed-value))]
-    [(ErrSystemSeed err) (ErrSystemSeed err)]))
+  (let
+    [seed-value (try (cfg windows (windows-system-seed) (linux-system-seed)))]
+    (OkSystemSeed (normalize-seed-value seed-value))))
 
 ;: Build a `RandomState` directly from host entropy, or panic when entropy is
 ;: unavailable. This is a convenience wrapper over `system-seed`.

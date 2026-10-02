@@ -1367,23 +1367,24 @@
   [compiler-build-hash : String]
   [host-platform : i64]
   [input : TlciNativePackageInput]) : ResultTlciBytes
-  (match (tlci-emit-image
-    (tlci-make-image
-      host-platform
-      tlci-callback-abi-version
-      compiler-build-hash
-      metadata
-      (clone input.rodata)
-      (tlci-native-package-extend-code input)
-      (tlci-native-package-fixups input)
-      (tlci-native-package-entries input)
-      (tlci-native-package-symbols)
-      (clone input.imports)))
-    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
-    [(ResultTlciBytes.Ok bytes)
-      (begin
-        (tlci-native-package-patch! (&mut bytes) input)
-        (ResultTlciBytes.Ok bytes))]))
+  (let
+    [bytes
+      (try
+        (tlci-emit-image
+          (tlci-make-image
+            host-platform
+            tlci-callback-abi-version
+            compiler-build-hash
+            metadata
+            (clone input.rodata)
+            (tlci-native-package-extend-code input)
+            (tlci-native-package-fixups input)
+            (tlci-native-package-entries input)
+            (tlci-native-package-symbols)
+            (clone input.imports))))]
+    (begin
+      (tlci-native-package-patch! (&mut bytes) input)
+      (ResultTlciBytes.Ok bytes))))
 
 (define (tlci-byte-at [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
@@ -2392,180 +2393,180 @@
                   (if has-abi
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `abi`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          value
-                          true
-                          backend
-                          has-backend
-                          lanes
-                          has-lanes
-                          args
-                          has-args
-                          result
-                          has-result
-                          index-param
-                          has-index-param
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        value
+                        true
+                        backend
+                        has-backend
+                        lanes
+                        has-lanes
+                        args
+                        has-args
+                        result
+                        has-result
+                        index-param
+                        has-index-param
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "backend")
                   (if has-backend
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `backend`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          value
-                          true
-                          lanes
-                          has-lanes
-                          args
-                          has-args
-                          result
-                          has-result
-                          index-param
-                          has-index-param
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        value
+                        true
+                        lanes
+                        has-lanes
+                        args
+                        has-args
+                        result
+                        has-result
+                        index-param
+                        has-index-param
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "lanes")
                   (if has-lanes
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `lanes`")
-                    (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
-                      [(ResultTlciI64.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciI64.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          backend
-                          has-backend
-                          value
-                          true
-                          args
-                          has-args
-                          result
-                          has-result
-                          index-param
-                          has-index-param
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        backend
+                        has-backend
+                        value
+                        true
+                        args
+                        has-args
+                        result
+                        has-result
+                        index-param
+                        has-index-param
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "args")
                   (if has-args
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `args`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          backend
-                          has-backend
-                          lanes
-                          has-lanes
-                          value
-                          true
-                          result
-                          has-result
-                          index-param
-                          has-index-param
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        backend
+                        has-backend
+                        lanes
+                        has-lanes
+                        value
+                        true
+                        result
+                        has-result
+                        index-param
+                        has-index-param
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "result")
                   (if has-result
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `result`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          backend
-                          has-backend
-                          lanes
-                          has-lanes
-                          args
-                          has-args
-                          value
-                          true
-                          index-param
-                          has-index-param
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        backend
+                        has-backend
+                        lanes
+                        has-lanes
+                        args
+                        has-args
+                        value
+                        true
+                        index-param
+                        has-index-param
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "index-param")
                   (if has-index-param
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `index-param`")
-                    (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
-                      [(ResultTlciI64.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciI64.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          backend
-                          has-backend
-                          lanes
-                          has-lanes
-                          args
-                          has-args
-                          result
-                          has-result
-                          value
-                          true
-                          symbol
-                          has-symbol)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        backend
+                        has-backend
+                        lanes
+                        has-lanes
+                        args
+                        has-args
+                        result
+                        has-result
+                        value
+                        true
+                        symbol
+                        has-symbol)))]
                 [(string.eq (tlci-symbol-text fname) "symbol")
                   (if has-symbol
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `symbol`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-specialization-fields
-                          rest
-                          abi
-                          has-abi
-                          backend
-                          has-backend
-                          lanes
-                          has-lanes
-                          args
-                          has-args
-                          result
-                          has-result
-                          index-param
-                          has-index-param
-                          value
-                          true)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-specialization-fields
+                        rest
+                        abi
+                        has-abi
+                        backend
+                        has-backend
+                        lanes
+                        has-lanes
+                        args
+                        has-args
+                        result
+                        has-result
+                        index-param
+                        has-index-param
+                        value
+                        true)))]
                 [else
                   (ResultTlciSpmdSpecialization.Err
                     (str_cat.str-cat
@@ -2629,50 +2630,49 @@
                   (if has-name
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `name`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdCallable.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-helper-fields
-                          rest
-                          value
-                          true
-                          signature
-                          has-signature
-                          specializations)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-spmd-helper-fields
+                        rest
+                        value
+                        true
+                        signature
+                        has-signature
+                        specializations)))]
                 [(string.eq (tlci-symbol-text fname) "signature")
                   (if has-signature
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `signature`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdCallable.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-spmd-helper-fields
-                          rest
-                          name
-                          has-name
-                          value
-                          true
-                          specializations)]))]
-                [(string.eq (tlci-symbol-text fname) "specialization")
-                  (match (tlci-spmd-specialization-from-field ftail)
-                    [(ResultTlciSpmdSpecialization.Err message)
-                      (ResultTlciSpmdCallable.Err message)]
-                    [(ResultTlciSpmdSpecialization.Ok specialization)
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
                       (tlci-spmd-helper-fields
                         rest
                         name
                         has-name
-                        signature
-                        has-signature
-                        (tlci-spmd-specializations-push
-                          specializations
-                          specialization))])]
+                        value
+                        true
+                        specializations)))]
+                [(string.eq (tlci-symbol-text fname) "specialization")
+                  (let
+                    [specialization
+                      (try (tlci-spmd-specialization-from-field ftail))]
+                    (tlci-spmd-helper-fields
+                      rest
+                      name
+                      has-name
+                      signature
+                      has-signature
+                      (tlci-spmd-specializations-push
+                        specializations
+                        specialization)))]
                 [else
                   (ResultTlciSpmdCallable.Err
                     (str_cat.str-cat
@@ -2724,13 +2724,11 @@
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil) (ResultTlciSpmdCallables.Ok items)]
     [(reader.SexprView.Cons item rest)
-      (match (tlci-spmd-helper-from-form item)
-        [(ResultTlciSpmdCallable.Err message)
-          (ResultTlciSpmdCallables.Err message)]
-        [(ResultTlciSpmdCallable.Ok callable)
-          (tlci-spmd-callables-from-fields
-            rest
-            (tlci-spmd-callables-push items callable))])]
+      (let
+        [callable (try (tlci-spmd-helper-from-form item))]
+        (tlci-spmd-callables-from-fields
+          rest
+          (tlci-spmd-callables-push items callable)))]
     [_
       (ResultTlciSpmdCallables.Err
         "tlci metadata: spmd-callables must contain helper lists")]))
@@ -2782,24 +2780,22 @@
                 (if has-name
                   (ResultTlciMetadata.Err
                     "tlci metadata: duplicate package field `name`")
-                  (match (tlci-field-string-value
-                    ftail
-                    (tlci-symbol-text fname))
-                    [(ResultTlciString.Err message)
-                      (ResultTlciMetadata.Err message)]
-                    [(ResultTlciString.Ok value)
-                      (tlci-package-fields rest value true version has-version)]))
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-package-fields rest value true version has-version)))
                 (if (string.eq (tlci-symbol-text fname) "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate package field `version`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-package-fields rest name has-name value true)]))
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-package-fields rest name has-name value true)))
                   (ResultTlciMetadata.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown package field `"
@@ -2861,55 +2857,51 @@
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `version`")
-                    (match (tlci-field-string-value
-                      ftail
-                      (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciString.Ok value)
-                        (tlci-metadata-fields
-                          rest
-                          value
-                          true
-                          package-name
-                          package-version
-                          has-package
-                          spmd-callables
-                          has-spmd-callables)]))]
+                    (let
+                      [value
+                        (try
+                          (tlci-field-string-value
+                            ftail
+                            (tlci-symbol-text fname)))]
+                      (tlci-metadata-fields
+                        rest
+                        value
+                        true
+                        package-name
+                        package-version
+                        has-package
+                        spmd-callables
+                        has-spmd-callables)))]
                 [(string.eq (tlci-symbol-text fname) "package")
                   (if has-package
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `package`")
-                    (match (tlci-package-from-field ftail)
-                      [(ResultTlciMetadata.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciMetadata.Ok parsed)
-                        (tlci-metadata-fields
-                          rest
-                          version
-                          has-version
-                          parsed.package-name
-                          parsed.package-version
-                          true
-                          spmd-callables
-                          has-spmd-callables)]))]
+                    (let
+                      [parsed (try (tlci-package-from-field ftail))]
+                      (tlci-metadata-fields
+                        rest
+                        version
+                        has-version
+                        parsed.package-name
+                        parsed.package-version
+                        true
+                        spmd-callables
+                        has-spmd-callables)))]
                 [(string.eq (tlci-symbol-text fname) "spmd-callables")
                   (if has-spmd-callables
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `spmd-callables`")
-                    (match (tlci-spmd-callables-from-field ftail)
-                      [(ResultTlciSpmdCallables.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciSpmdCallables.Ok parsed)
-                        (tlci-metadata-fields
-                          rest
-                          version
-                          has-version
-                          package-name
-                          package-version
-                          has-package
-                          parsed
-                          true)]))]
+                    (let
+                      [parsed (try (tlci-spmd-callables-from-field ftail))]
+                      (tlci-metadata-fields
+                        rest
+                        version
+                        has-version
+                        package-name
+                        package-version
+                        has-package
+                        parsed
+                        true)))]
                 [else
                   (ResultTlciMetadata.Err
                     (str_cat.str-cat

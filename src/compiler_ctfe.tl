@@ -11689,15 +11689,15 @@
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
       (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env head-expr))
         [(CtfeMaybeLifetimeSyntaxName.Some name)
-          (match (ctfe-expr-list-to-lifetime-list-at
-            exprs
-            (+ index 1)
-            env
-            origin)
-            [(ResultCtfeQuoteLifetimeList.Ok tail)
-              (ResultCtfeQuoteLifetimeList.Ok (ast.ast-lifetime-cons name tail))]
-            [(ResultCtfeQuoteLifetimeList.Err diag)
-              (ResultCtfeQuoteLifetimeList.Err diag)])]
+          (let
+            [tail
+              (try
+                (ctfe-expr-list-to-lifetime-list-at
+                  exprs
+                  (+ index 1)
+                  env
+                  origin))]
+            (ResultCtfeQuoteLifetimeList.Ok (ast.ast-lifetime-cons name tail)))]
         [(CtfeMaybeLifetimeSyntaxName.None)
           (ResultCtfeQuoteLifetimeList.Err
             (box
@@ -11719,19 +11719,18 @@
         (ast.ast-expr-list-tail-from-ref (& args) 1)]
       (match (ctfe-expr-unspan env name-expr)
         [(ast.AstExpr.Var name-id)
-          (match (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin)
-            [(ResultCtfeQuoteLifetimeList.Ok lifetimes)
-              (ResultCtfeQuoteType.Ok
-                (if is-struct
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (ast.AstType.Struct name-id)
-                    (ast.ast-ty-struct-args name-id lifetimes))
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (ast.AstType.Enum name-id)
-                    (ast.ast-ty-enum-args name-id lifetimes)))
-                fuel)]
-            [(ResultCtfeQuoteLifetimeList.Err diag)
-              (ResultCtfeQuoteType.Err diag)])]
+          (let
+            [lifetimes
+              (try (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin))]
+            (ResultCtfeQuoteType.Ok
+              (if is-struct
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (ast.AstType.Struct name-id)
+                  (ast.ast-ty-struct-args name-id lifetimes))
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (ast.AstType.Enum name-id)
+                  (ast.ast-ty-enum-args name-id lifetimes)))
+              fuel))]
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
@@ -12139,10 +12138,9 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (match (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out))
-      [(ResultCtfeQuoteParamsBuild.Ok out-fuel)
-        (ResultCtfeQuoteParams.Ok out out-fuel)]
-      [(ResultCtfeQuoteParamsBuild.Err diag) (ResultCtfeQuoteParams.Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out)))]
+    (ResultCtfeQuoteParams.Ok out out-fuel)))
 
 (define (ctfe-quote-param-list-into
   [params : (& params ast.AstParamList)]
@@ -12233,17 +12231,16 @@
     [out : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity
         (ast.ast-let-binding-list-len (& bindings)))]
-    (match (ctfe-quote-let-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(ResultCtfeQuoteLetBindingsBuild.Ok out-fuel)
-        (ResultCtfeQuoteLetBindings.Ok out out-fuel)]
-      [(ResultCtfeQuoteLetBindingsBuild.Err diag)
-        (ResultCtfeQuoteLetBindings.Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-let-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (ResultCtfeQuoteLetBindings.Ok out out-fuel)))
 
 (define (ctfe-quote-let-binding-list-into
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -12293,17 +12290,16 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity
         (ast.ast-resource-binding-list-len (& bindings)))]
-    (match (ctfe-quote-resource-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(ResultCtfeQuoteResourceBindingsBuild.Ok out-fuel)
-        (ResultCtfeQuoteResourceBindings.Ok out out-fuel)]
-      [(ResultCtfeQuoteResourceBindingsBuild.Err diag)
-        (ResultCtfeQuoteResourceBindings.Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-resource-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (ResultCtfeQuoteResourceBindings.Ok out out-fuel)))
 
 (define (ctfe-quote-resource-binding-list-into
   [bindings : (& bindings ast.AstResourceBindingList)]
@@ -12353,10 +12349,9 @@
   [quasiquote : bool]) : ResultCtfeQuoteArms
   (let
     [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
-    (match (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out))
-      [(ResultCtfeQuoteArmsBuild.Ok out-fuel)
-        (ResultCtfeQuoteArms.Ok out out-fuel)]
-      [(ResultCtfeQuoteArmsBuild.Err diag) (ResultCtfeQuoteArms.Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out)))]
+    (ResultCtfeQuoteArms.Ok out out-fuel)))
 
 (define (ctfe-quote-arm-list-into
   [arms : (& arms ast.AstMatchArmList)]

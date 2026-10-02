@@ -437,34 +437,31 @@
     (tlci-loader-test-success-code-bytes)))
 
 (define (tlci-loader-test-emit-with-code [code : (__tl_dyn-array u8)]) : tlci.ResultTlciBytes
-  (match (tlci.tlci-emit-image (tlci-loader-test-image-with-code 0 code))
-    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
-    [(tlci.ResultTlciBytes.Ok bytes)
-      (let
-        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
-        (begin
-          (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
-          (tlci.tlci-set-u64!
-            (&mut bytes)
-            tlci.tlci-hash-field-offset
-            (tlci.tlci-content-hash bytes))
-          (tlci.ResultTlciBytes.Ok bytes)))]))
+  (let
+    [bytes
+      (try (tlci.tlci-emit-image (tlci-loader-test-image-with-code 0 code)))]
+    [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+    [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
+    (begin
+      (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        tlci.tlci-hash-field-offset
+        (tlci.tlci-content-hash bytes))
+      (tlci.ResultTlciBytes.Ok bytes))))
 
 (define (tlci-loader-test-emit-with-real-fixup) : tlci.ResultTlciBytes
-  (match (tlci.tlci-emit-image (tlci-loader-test-image 0))
-    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
-    [(tlci.ResultTlciBytes.Ok bytes)
-      (let
-        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
-        (begin
-          (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
-          (tlci.tlci-set-u64!
-            (&mut bytes)
-            tlci.tlci-hash-field-offset
-            (tlci.tlci-content-hash bytes))
-          (tlci.ResultTlciBytes.Ok bytes)))]))
+  (let
+    [bytes (try (tlci.tlci-emit-image (tlci-loader-test-image 0)))]
+    [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+    [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
+    (begin
+      (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        tlci.tlci-hash-field-offset
+        (tlci.tlci-content-hash bytes))
+      (tlci.ResultTlciBytes.Ok bytes))))
 
 (define (tlci-loader-test-imports [name : String]) : (__tl_dyn-array u8)
   (let
@@ -503,28 +500,28 @@
     1))
 
 (define (tlci-loader-test-emit-with-import [name : String]) : tlci.ResultTlciBytes
-  (match (tlci.tlci-emit-image
-    (tlci-loader-test-image-with-code-and-imports
-      0
-      (tlci-loader-test-success-code-bytes)
-      (tlci-loader-test-imports name)))
-    [(tlci.ResultTlciBytes.Err message) (tlci.ResultTlciBytes.Err message)]
-    [(tlci.ResultTlciBytes.Ok bytes)
-      (let
-        [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
-        [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
-        [imports-offset : i64 (tlci.tlci-read-u64 bytes 152)]
-        (begin
-          (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
-          (tlci.tlci-set-u64!
-            (&mut bytes)
-            (+ imports-offset tlci.tlci-section-import-header-size)
-            rodata-offset)
-          (tlci.tlci-set-u64!
-            (&mut bytes)
-            tlci.tlci-hash-field-offset
-            (tlci.tlci-content-hash bytes))
-          (tlci.ResultTlciBytes.Ok bytes)))]))
+  (let
+    [bytes
+      (try
+        (tlci.tlci-emit-image
+          (tlci-loader-test-image-with-code-and-imports
+            0
+            (tlci-loader-test-success-code-bytes)
+            (tlci-loader-test-imports name))))]
+    [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
+    [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
+    [imports-offset : i64 (tlci.tlci-read-u64 bytes 152)]
+    (begin
+      (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        (+ imports-offset tlci.tlci-section-import-header-size)
+        rodata-offset)
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        tlci.tlci-hash-field-offset
+        (tlci.tlci-content-hash bytes))
+      (tlci.ResultTlciBytes.Ok bytes))))
 
 ;: Owner arena for the loader's own self-test loads. Every one of them either
 ;: rejects the image or releases it before returning, so the arena that is

@@ -734,13 +734,12 @@
           [name : ci.InternSyntaxId (prefix-symbol t)]
           (begin
             (advance cur)
-            (match (form-spanned-result toks cur)
-              [(ResultSpannedSexpr.Ok form)
-                (form-spanned-suffix-result
-                  toks
-                  cur
-                  (prefix-spanned-form name span form))]
-              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])))]
+            (let
+              [form (try (form-spanned-result toks cur))]
+              (form-spanned-suffix-result
+                toks
+                cur
+                (prefix-spanned-form name span form)))))]
       [(= t (token.tag-rparen))
         (ResultSpannedSexpr.Err
           (token.SourceError "reader: unexpected ')'" span))]
@@ -842,10 +841,9 @@
         (if (projection-suffix-symbol? text)
           (begin
             (advance cur)
-            (match (spanned-projection-suffix-at base text span 1)
-              [(ResultSpannedSexpr.Ok projected)
-                (form-spanned-suffix-result toks cur projected)]
-              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
+            (let
+              [projected (try (spanned-projection-suffix-at base text span 1))]
+              (form-spanned-suffix-result toks cur projected)))
           (ResultSpannedSexpr.Ok base)))
       (ResultSpannedSexpr.Ok base))))
 
@@ -853,9 +851,9 @@
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (&mut cur (__tl_dyn-array i64))]
   [result : ResultSpannedSexpr]) : ResultSpannedSexpr
-  (match result
-    [(ResultSpannedSexpr.Ok form) (form-spanned-suffix-result toks cur form)]
-    [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
+  (let
+    [form (try result)]
+    (form-spanned-suffix-result toks cur form)))
 
 (define (list-spanned-items-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -882,15 +880,14 @@
         (ResultSpannedSexpr.Err
           (token.SourceError (mismatched-close-message close-tag t span) span))]
       [else
-        (match (form-spanned-result toks cur)
-          [(ResultSpannedSexpr.Ok head)
-            (list-spanned-items-result
-              toks
-              cur
-              open-span
-              close-tag
-              (spanned-sexpr-builder-push builder head))]
-          [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])])))
+        (let
+          [head (try (form-spanned-result toks cur))]
+          (list-spanned-items-result
+            toks
+            cur
+            open-span
+            close-tag
+            (spanned-sexpr-builder-push builder head)))])))
 
 (define (list-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]

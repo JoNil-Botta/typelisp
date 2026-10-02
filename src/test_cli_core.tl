@@ -426,20 +426,12 @@
             (ResultTestConfig.Err
               "test: cannot combine input paths with --batch")]
           [else
-            (match (tltest-batch-paths list-path)
-              [(ResultTestBatchPaths.Ok paths)
-                (if (cli_svec.is-empty? (& paths))
-                  (ResultTestConfig.Err "test: --batch list is empty")
-                  (ResultTestConfig.Ok
-                    (TestConfig.Batch
-                      paths
-                      target
-                      mode
-                      roots
-                      opt-level
-                      test-mode)))]
-              [(ResultTestBatchPaths.Err message)
-                (ResultTestConfig.Err message)])])]
+            (let
+              [paths (try (tltest-batch-paths list-path))]
+              (if (cli_svec.is-empty? (& paths))
+                (ResultTestConfig.Err "test: --batch list is empty")
+                (ResultTestConfig.Ok
+                  (TestConfig.Batch paths target mode roots opt-level test-mode))))])]
       [(TestMaybeString.No)
         (if tltest-prefix-cache-stats
           (ResultTestConfig.Err "test: --prefix-cache-stats requires --batch")

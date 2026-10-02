@@ -213,32 +213,28 @@
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file
                 (owned_view.compiler-owned-shared-view path))]
-            (match (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
-              (owned_view.compiler-owned-shared-view load-state)
-              job-state
-              path
-              docs
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              pools
-              (owned_view.compiler-owned-shared-view intern-state))
-              [(doc_expand.ResultDocExpandedModules.Ok head-modules)
-                (match (doc-generated-modules-from-source-paths-into
+            [head-modules
+              (try
+                (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
+                  (owned_view.compiler-owned-shared-view load-state)
+                  job-state
+                  path
+                  docs
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  pools
+                  (owned_view.compiler-owned-shared-view intern-state)))]
+            [tail-modules
+              (try
+                (doc-generated-modules-from-source-paths-into
                   load-state
                   job-state
                   pools
                   intern-state
                   rest
                   seen
-                  stdlib-roots)
-                  [(doc_expand.ResultDocExpandedModules.Ok tail-modules)
-                    (doc_expand.ResultDocExpandedModules.Ok
-                      (doc_render.doc-module-list-append
-                        head-modules
-                        tail-modules))]
-                  [(doc_expand.ResultDocExpandedModules.Err message)
-                    (doc_expand.ResultDocExpandedModules.Err message)])]
-              [(doc_expand.ResultDocExpandedModules.Err message)
-                (doc_expand.ResultDocExpandedModules.Err message)]))
+                  stdlib-roots))]
+            (doc_expand.ResultDocExpandedModules.Ok
+              (doc_render.doc-module-list-append head-modules tail-modules)))
           (doc-generated-modules-from-source-paths-into
             load-state
             job-state
@@ -694,14 +690,12 @@
         (if (not (doc_svec.is-empty? (& input-paths)))
           (ResultDocTestCliConfig.Err
             "doc: cannot combine input paths with --batch")
-          (match (doc-test-batch-paths list-path)
-            [(ResultDocTestBatchPaths.Ok paths)
-              (if (doc_svec.is-empty? (& paths))
-                (ResultDocTestCliConfig.Err "doc: --batch list is empty")
-                (ResultDocTestCliConfig.Ok
-                  (DocTestCliConfig.File paths stdlib-roots)))]
-            [(ResultDocTestBatchPaths.Err message)
-              (ResultDocTestCliConfig.Err message)])))]
+          (let
+            [paths (try (doc-test-batch-paths list-path))]
+            (if (doc_svec.is-empty? (& paths))
+              (ResultDocTestCliConfig.Err "doc: --batch list is empty")
+              (ResultDocTestCliConfig.Ok
+                (DocTestCliConfig.File paths stdlib-roots))))))]
     [(DocMaybeString.No)
       (cond
         [doc-test-prefix-cache-stats

@@ -3082,29 +3082,29 @@
                       package-imports
                       next))])))]
         [(ast.AstDecl.ModuleBody _ body-box)
-          (match (selfhost-lint-package-dead-import-paths-from-decls
-            (ast.ast-decl-list-box-shared-view body-box)
-            (owned_view.compiler-owned-shared-view importer-path)
-            (owned_view.compiler-owned-shared-view import-root)
-            (owned_view.compiler-owned-shared-view source-set)
-            (owned_view.compiler-owned-shared-view root-sources)
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            pools
-            package-imports
-            items)
-            [(ResultSelfhostLintDeadImportList.Err diag)
-              (ResultSelfhostLintDeadImportList.Err diag)]
-            [(ResultSelfhostLintDeadImportList.Ok nested)
-              (selfhost-lint-package-dead-import-paths-from-decls
-                rest
-                importer-path
-                import-root
-                source-set
-                root-sources
-                stdlib-roots
-                pools
-                package-imports
-                nested)])]
+          (let
+            [nested
+              (try
+                (selfhost-lint-package-dead-import-paths-from-decls
+                  (ast.ast-decl-list-box-shared-view body-box)
+                  (owned_view.compiler-owned-shared-view importer-path)
+                  (owned_view.compiler-owned-shared-view import-root)
+                  (owned_view.compiler-owned-shared-view source-set)
+                  (owned_view.compiler-owned-shared-view root-sources)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  pools
+                  package-imports
+                  items))]
+            (selfhost-lint-package-dead-import-paths-from-decls
+              rest
+              importer-path
+              import-root
+              source-set
+              root-sources
+              stdlib-roots
+              pools
+              package-imports
+              nested))]
         [_
           (selfhost-lint-package-dead-import-paths-from-decls
             rest
@@ -3183,37 +3183,36 @@
   [package-imports : bool]) : ResultSelfhostLintDeadSourceList
   (if (>= index (lint_svec.len (& queue)))
     (ResultSelfhostLintDeadSourceList.Ok queue)
-    (match (selfhost-lint-package-dead-file-imports-in-scratch
-      (lint_svec.get (& queue) index "")
-      (owned_view.compiler-owned-shared-view import-root)
-      (owned_view.compiler-owned-shared-view source-set)
-      (owned_view.compiler-owned-shared-view root-sources)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      package-imports)
-      [(ResultSelfhostLintDeadImportList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadImportList.Ok imports)
-        (let
-          [next : lint_svec.Vec queue]
-          [_append : unit
-            (begin
-              (let
-                [import-index : i64 0]
-                (while (< import-index (lint_svec.len (& imports)))
-                  (begin
-                    (selfhost-lint-dead-root-add!
-                      (&mut next)
-                      (lint_svec.get (& imports) import-index ""))
-                    (set! import-index (+ import-index 1)))))
-              unit)]
-          (selfhost-lint-package-dead-path-closure-from
-            next
-            (+ index 1)
-            import-root
-            source-set
-            root-sources
-            stdlib-roots
-            package-imports))])))
+    (let
+      [imports
+        (try
+          (selfhost-lint-package-dead-file-imports-in-scratch
+            (lint_svec.get (& queue) index "")
+            (owned_view.compiler-owned-shared-view import-root)
+            (owned_view.compiler-owned-shared-view source-set)
+            (owned_view.compiler-owned-shared-view root-sources)
+            (owned_view.compiler-owned-shared-view stdlib-roots)
+            package-imports))]
+      [next : lint_svec.Vec queue]
+      [_append : unit
+        (begin
+          (let
+            [import-index : i64 0]
+            (while (< import-index (lint_svec.len (& imports)))
+              (begin
+                (selfhost-lint-dead-root-add!
+                  (&mut next)
+                  (lint_svec.get (& imports) import-index ""))
+                (set! import-index (+ import-index 1)))))
+          unit)]
+      (selfhost-lint-package-dead-path-closure-from
+        next
+        (+ index 1)
+        import-root
+        source-set
+        root-sources
+        stdlib-roots
+        package-imports))))
 
 (define (selfhost-lint-package-dead-merge-paths-from
   [items : lint_svec.Vec]
@@ -3244,19 +3243,18 @@
         root-sources
         (owned_view.compiler-owned-shared-view stdlib-roots))]
     [import-root : String (compiler_load.compiler-load-dirname entry-path)]
-    (match (selfhost-lint-package-dead-path-closure-from
-      start
-      0
-      import-root
-      source-set
-      root-sources
-      stdlib-roots
-      package-imports)
-      [(ResultSelfhostLintDeadSourceList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadSourceList.Ok paths)
-        (ResultSelfhostLintDeadSourceList.Ok
-          (selfhost-lint-package-dead-merge-paths-from items paths 0))])))
+    [paths
+      (try
+        (selfhost-lint-package-dead-path-closure-from
+          start
+          0
+          import-root
+          source-set
+          root-sources
+          stdlib-roots
+          package-imports))]
+    (ResultSelfhostLintDeadSourceList.Ok
+      (selfhost-lint-package-dead-merge-paths-from items paths 0))))
 
 (define (selfhost-lint-package-dead-closure-sources
   [entry-path : String]
@@ -3294,21 +3292,21 @@
   [index : i64]) : ResultSelfhostLintDeadSourceList
   (if (>= index (lint_svec.len (& root-sources)))
     (ResultSelfhostLintDeadSourceList.Ok items)
-    (match (selfhost-lint-package-dead-root-file-closure-sources
-      (lint_svec.get (& root-sources) index "")
-      (owned_view.compiler-owned-shared-view source-set)
-      (owned_view.compiler-owned-shared-view root-sources)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      items)
-      [(ResultSelfhostLintDeadSourceList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadSourceList.Ok next-sources)
-        (selfhost-lint-package-dead-root-closure-sources-from
-          root-sources
-          source-set
-          stdlib-roots
-          next-sources
-          (+ index 1))])))
+    (let
+      [next-sources
+        (try
+          (selfhost-lint-package-dead-root-file-closure-sources
+            (lint_svec.get (& root-sources) index "")
+            (owned_view.compiler-owned-shared-view source-set)
+            (owned_view.compiler-owned-shared-view root-sources)
+            (owned_view.compiler-owned-shared-view stdlib-roots)
+            items))]
+      (selfhost-lint-package-dead-root-closure-sources-from
+        root-sources
+        source-set
+        stdlib-roots
+        next-sources
+        (+ index 1)))))
 
 (define (selfhost-lint-package-dead-root-closure-sources
   [root-sources : lint_svec.Vec]
@@ -3343,29 +3341,27 @@
         [root-sources : lint_svec.Vec
           (selfhost-lint-package-dead-repository-test-roots
             (owned_view.compiler-owned-shared-view source-set))]
-        (match (selfhost-lint-package-dead-closure-sources
-          entry-path
-          (owned_view.compiler-owned-shared-view source-set)
-          (owned_view.compiler-owned-shared-view root-sources)
-          (owned_view.compiler-owned-shared-view package-roots)
-          (lint_svec.new))
-          [(ResultSelfhostLintDeadSourceList.Err diag)
-            (ResultSelfhostLintDeadSources.Err diag)]
-          [(ResultSelfhostLintDeadSourceList.Ok entry-sources)
-            (match (selfhost-lint-package-dead-root-closure-sources
+        [entry-sources
+          (try
+            (selfhost-lint-package-dead-closure-sources
+              entry-path
+              (owned_view.compiler-owned-shared-view source-set)
+              (owned_view.compiler-owned-shared-view root-sources)
+              (owned_view.compiler-owned-shared-view package-roots)
+              (lint_svec.new)))]
+        [graph-sources
+          (try
+            (selfhost-lint-package-dead-root-closure-sources
               (owned_view.compiler-owned-shared-view root-sources)
               (owned_view.compiler-owned-shared-view source-set)
               package-roots
-              entry-sources)
-              [(ResultSelfhostLintDeadSourceList.Err diag)
-                (ResultSelfhostLintDeadSources.Err diag)]
-              [(ResultSelfhostLintDeadSourceList.Ok graph-sources)
-                (ResultSelfhostLintDeadSources.Ok
-                  (SelfhostLintDeadSourceSet
-                    graph-sources
-                    root-sources
-                    source-set.sources
-                    explicit-roots))])]))
+              entry-sources))]
+        (ResultSelfhostLintDeadSources.Ok
+          (SelfhostLintDeadSourceSet
+            graph-sources
+            root-sources
+            source-set.sources
+            explicit-roots)))
       (ResultSelfhostLintDeadSources.Ok
         (SelfhostLintDeadSourceSet
           (owned_view.compiler-owned-shared-view source-set.sources)

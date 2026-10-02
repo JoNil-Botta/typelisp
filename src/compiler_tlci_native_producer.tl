@@ -8658,44 +8658,33 @@
                 "object emission failed: "
                 (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
           [(compiler_backend.ResultCompilerBackendObject.Ok image)
-            (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
-              (owned_view.compiler-owned-shared-view image))
-              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Err
-                  message)
-                (ResultProducerBytes.Err message)]
-              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Ok
-                  layout)
+            (let
+              [layout
+                (try
+                  (compiler_tlci_native_image.compiler-tlci-native-layout-image
+                    (owned_view.compiler-owned-shared-view image)))]
+              [entry-offsets : (__tl_dyn-array i64)
+                (embedded-native-entry-offsets image (array-length names))]
+              (if (not (= (array-length entry-offsets) (array-length names)))
+                (ResultProducerBytes.Err "entry count does not match catalog")
                 (let
-                  [entry-offsets : (__tl_dyn-array i64)
-                    (embedded-native-entry-offsets image (array-length names))]
-                  (if (not
-                    (= (array-length entry-offsets) (array-length names)))
-                    (ResultProducerBytes.Err
-                      "entry count does not match catalog")
-                    (match (compiler_tlci_native_image.compiler-tlci-native-emit-imports
-                      (& layout))
-                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Err
-                          message)
-                        (ResultProducerBytes.Err message)]
-                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Ok
-                          imports)
-                        (match (compiler_tlci_native_image.compiler-tlci-native-package
-                          metadata-text
-                          build-hash
-                          (if windows-target
-                            tlci_core.tlci-host-platform-x86-64-windows
-                            tlci_core.tlci-host-platform-x86-64-linux)
-                          rodata
-                          layout.bytes
-                          imports
-                          layout.fixup-offsets
-                          layout.fixup-count
-                          (owned_view.compiler-owned-shared-view names)
-                          entry-offsets
-                          (array-length names))
-                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Err
-                              message)
-                            (ResultProducerBytes.Err message)]
-                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Ok
-                              bytes)
-                            (ResultProducerBytes.Ok bytes)])])))])])])))
+                  [imports
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-emit-imports
+                        (& layout)))]
+                  (ResultProducerBytes.Ok
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-package
+                        metadata-text
+                        build-hash
+                        (if windows-target
+                          tlci_core.tlci-host-platform-x86-64-windows
+                          tlci_core.tlci-host-platform-x86-64-linux)
+                        rodata
+                        layout.bytes
+                        imports
+                        layout.fixup-offsets
+                        layout.fixup-count
+                        (owned_view.compiler-owned-shared-view names)
+                        entry-offsets
+                        (array-length names)))))))])])))

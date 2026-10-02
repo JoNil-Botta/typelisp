@@ -304,23 +304,19 @@
         (git-delta-budget-charge-work! budget limits delta-length)
         (return
           (ResultGitDeltaBytes.Err "git delta: total work limit exceeded")))
-      (match (git-delta-read-size-varint delta index)
-        [(ResultGitDeltaVarint.Err message)
-          (return (ResultGitDeltaBytes.Err message))]
-        [(ResultGitDeltaVarint.Ok decoded)
-          (begin
-            (set! declared-base decoded.value)
-            (set! index decoded.next))])
+      (let
+        [decoded (try (git-delta-read-size-varint delta index))]
+        (begin
+          (set! declared-base decoded.value)
+          (set! index decoded.next)))
       (when
         (!= declared-base base-length)
         (return (ResultGitDeltaBytes.Err "git delta: base length mismatch")))
-      (match (git-delta-read-size-varint delta index)
-        [(ResultGitDeltaVarint.Err message)
-          (return (ResultGitDeltaBytes.Err message))]
-        [(ResultGitDeltaVarint.Ok decoded)
-          (begin
-            (set! result-length decoded.value)
-            (set! index decoded.next))])
+      (let
+        [decoded (try (git-delta-read-size-varint delta index))]
+        (begin
+          (set! result-length decoded.value)
+          (set! index decoded.next)))
       (when
         (> result-length limits.max-object-bytes)
         (return
@@ -843,21 +839,59 @@
                                   (return
                                     (ResultGitDeltaResolvedSet.Err
                                       "git delta: chain depth limit exceeded")))
-                                (match (git-delta-resolve-offset-lookup!
-                                  entries
-                                  tables.offsets
-                                  entry.offset
-                                  (deref base-offset)
-                                  limits
-                                  (&mut budget))
-                                  [(ResultGitDeltaDependency.Err message)
-                                    (return
-                                      (ResultGitDeltaResolvedSet.Err message))]
-                                  [(ResultGitDeltaDependency.Ok dependency)
-                                    (begin
-                                      (set!
-                                        (array-ref dependencies slot)
-                                        dependency)
+                                (let
+                                  [dependency
+                                    (try
+                                      (git-delta-resolve-offset-lookup!
+                                        entries
+                                        tables.offsets
+                                        entry.offset
+                                        (deref base-offset)
+                                        limits
+                                        (&mut budget)))]
+                                  (begin
+                                    (set!
+                                      (array-ref dependencies slot)
+                                      dependency)
+                                    (cond
+                                      [(= (array-ref states dependency) 1)
+                                        (return
+                                          (ResultGitDeltaResolvedSet.Err
+                                            "git delta: dependency cycle"))]
+                                      [(= (array-ref states dependency) 0)
+                                        (begin
+                                          (when
+                                            (>= stack-count count)
+                                            (return
+                                              (ResultGitDeltaResolvedSet.Err
+                                                "git delta: dependency stack overflow")))
+                                          (set!
+                                            (array-ref stack stack-count)
+                                            dependency)
+                                          (set! stack-count (+ stack-count 1)))]
+                                      [else unit]))))]
+                            [(GitDeltaEntryBody.Ref object-id _ _)
+                              (begin
+                                (when
+                                  (> stack-count limits.max-depth)
+                                  (return
+                                    (ResultGitDeltaResolvedSet.Err
+                                      "git delta: chain depth limit exceeded")))
+                                (let
+                                  [dependency
+                                    (try
+                                      (git-delta-resolve-id-lookup!
+                                        entries
+                                        tables.ids
+                                        tables.thin-bases
+                                        object-id
+                                        limits
+                                        (&mut budget)))]
+                                  (begin
+                                    (set!
+                                      (array-ref dependencies slot)
+                                      dependency)
+                                    (if (>= dependency 0)
                                       (cond
                                         [(= (array-ref states dependency) 1)
                                           (return
@@ -874,50 +908,8 @@
                                               (array-ref stack stack-count)
                                               dependency)
                                             (set! stack-count (+ stack-count 1)))]
-                                        [else unit]))]))]
-                            [(GitDeltaEntryBody.Ref object-id _ _)
-                              (begin
-                                (when
-                                  (> stack-count limits.max-depth)
-                                  (return
-                                    (ResultGitDeltaResolvedSet.Err
-                                      "git delta: chain depth limit exceeded")))
-                                (match (git-delta-resolve-id-lookup!
-                                  entries
-                                  tables.ids
-                                  tables.thin-bases
-                                  object-id
-                                  limits
-                                  (&mut budget))
-                                  [(ResultGitDeltaDependency.Err message)
-                                    (return
-                                      (ResultGitDeltaResolvedSet.Err message))]
-                                  [(ResultGitDeltaDependency.Ok dependency)
-                                    (begin
-                                      (set!
-                                        (array-ref dependencies slot)
-                                        dependency)
-                                      (if (>= dependency 0)
-                                        (cond
-                                          [(= (array-ref states dependency) 1)
-                                            (return
-                                              (ResultGitDeltaResolvedSet.Err
-                                                "git delta: dependency cycle"))]
-                                          [(= (array-ref states dependency) 0)
-                                            (begin
-                                              (when
-                                                (>= stack-count count)
-                                                (return
-                                                  (ResultGitDeltaResolvedSet.Err
-                                                    "git delta: dependency stack overflow")))
-                                              (set!
-                                                (array-ref stack stack-count)
-                                                dependency)
-                                              (set!
-                                                stack-count
-                                                (+ stack-count 1)))]
-                                          [else unit])
-                                        unit))]))]))]
+                                        [else unit])
+                                      unit))))]))]
                       [(= state 1)
                         (let
                           [dependency : i64 (array-ref dependencies slot)]
@@ -1006,16 +998,15 @@
                                     (return
                                       (ResultGitDeltaResolvedSet.Err
                                         "git delta: object type mismatch")))
-                                  (match (git-delta-apply-with-budget
-                                    (& base-bytes)
-                                    delta
-                                    limits
-                                    (&mut budget))
-                                    [(ResultGitDeltaBytes.Err message)
-                                      (return
-                                        (ResultGitDeltaResolvedSet.Err message))]
-                                    [(ResultGitDeltaBytes.Ok object)
-                                      (set! (array-ref objects slot) object)]))]
+                                  (let
+                                    [object
+                                      (try
+                                        (git-delta-apply-with-budget
+                                          (& base-bytes)
+                                          delta
+                                          limits
+                                          (&mut budget)))]
+                                    (set! (array-ref objects slot) object)))]
                               [(GitDeltaEntryBody.Ref _ expected delta)
                                 (begin
                                   (unless
@@ -1025,16 +1016,15 @@
                                     (return
                                       (ResultGitDeltaResolvedSet.Err
                                         "git delta: object type mismatch")))
-                                  (match (git-delta-apply-with-budget
-                                    (& base-bytes)
-                                    delta
-                                    limits
-                                    (&mut budget))
-                                    [(ResultGitDeltaBytes.Err message)
-                                      (return
-                                        (ResultGitDeltaResolvedSet.Err message))]
-                                    [(ResultGitDeltaBytes.Ok object)
-                                      (set! (array-ref objects slot) object)]))])
+                                  (let
+                                    [object
+                                      (try
+                                        (git-delta-apply-with-budget
+                                          (& base-bytes)
+                                          delta
+                                          limits
+                                          (&mut budget)))]
+                                    (set! (array-ref objects slot) object)))])
                             (set! (array-ref kinds slot) base-kind)
                             (set! (array-ref depths slot) (+ base-depth 1))
                             (set! (array-ref states slot) 2)

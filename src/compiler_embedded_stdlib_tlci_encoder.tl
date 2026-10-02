@@ -634,38 +634,26 @@
 (define (compiler-embedded-stdlib-tlci-encoder-encode [source : String]) : ResultCompilerEmbeddedStdlibTlciEncoderBytes
   (let
     [lzss : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes source)]
-    (match (compiler-embedded-stdlib-tlci-encoder-count (& lzss))
-      [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err message)
-        (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-      [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Ok frequencies)
-        (match (compiler-embedded-stdlib-tlci-encoder-build-codes
-          frequencies.main)
-          [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-            (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-          [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok main-codes)
-            (match (compiler-embedded-stdlib-tlci-encoder-build-codes
-              frequencies.distance)
-              [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-                (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-              [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok distance-codes)
-                (match (compiler-embedded-stdlib-tlci-encoder-build-codes
-                  frequencies.length)
-                  [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-                    (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-                  [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok
-                      length-codes)
-                    (let
-                      [writer : CompilerEmbeddedStdlibTlciEncoderBitWriter
-                        (compiler-embedded-stdlib-tlci-encoder-encode-tokens
-                          (& lzss)
-                          (& frequencies)
-                          (& main-codes)
-                          (& distance-codes)
-                          (& length-codes))]
-                      (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok
-                        (compiler-embedded-stdlib-tlci-encoder-finish
-                          (& frequencies)
-                          (& main-codes)
-                          (& distance-codes)
-                          (& length-codes)
-                          (& writer))))])])])])))
+    [frequencies (try (compiler-embedded-stdlib-tlci-encoder-count (& lzss)))]
+    [main-codes
+      (try (compiler-embedded-stdlib-tlci-encoder-build-codes frequencies.main))]
+    [distance-codes
+      (try
+        (compiler-embedded-stdlib-tlci-encoder-build-codes frequencies.distance))]
+    [length-codes
+      (try
+        (compiler-embedded-stdlib-tlci-encoder-build-codes frequencies.length))]
+    [writer : CompilerEmbeddedStdlibTlciEncoderBitWriter
+      (compiler-embedded-stdlib-tlci-encoder-encode-tokens
+        (& lzss)
+        (& frequencies)
+        (& main-codes)
+        (& distance-codes)
+        (& length-codes))]
+    (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok
+      (compiler-embedded-stdlib-tlci-encoder-finish
+        (& frequencies)
+        (& main-codes)
+        (& distance-codes)
+        (& length-codes)
+        (& writer)))))

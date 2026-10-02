@@ -457,17 +457,15 @@
   (match base
     [(CompilerSourceOverlayBase.Any) (CompilerSourceOverlayStatus.Ok)]
     [(CompilerSourceOverlayBase.Expect expected)
-      (match (compiler-source-content-identity path disk-text)
-        [(ResultCompilerSourceContent.Err failure)
-          (CompilerSourceOverlayStatus.Err failure)]
-        [(ResultCompilerSourceContent.Ok current)
-          (if (compiler-source-content-eq? (& current) expected)
-            (CompilerSourceOverlayStatus.Ok)
-            (CompilerSourceOverlayStatus.Err
-              (compiler-source-overlay-error
-                compiler-source-overlay-error-stale-base
-                path
-                "overlay source changed on disk since its candidate was planned")))])]))
+      (let
+        [current (try (compiler-source-content-identity path disk-text))]
+        (if (compiler-source-content-eq? (& current) expected)
+          (CompilerSourceOverlayStatus.Ok)
+          (CompilerSourceOverlayStatus.Err
+            (compiler-source-overlay-error
+              compiler-source-overlay-error-stale-base
+              path
+              "overlay source changed on disk since its candidate was planned"))))]))
 
 ;; Reject an overlay that replaces a source below `root` (canonicalized against
 ;; the overlay's working directory): stdlib and other shared roots are not

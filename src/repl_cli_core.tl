@@ -514,18 +514,19 @@
   [session-source : String]
   [expr-source : String]
   [ty : ast.AstType]) : ResultReplString
-  (match (repl-display-body
-    (owned_view.compiler-owned-shared-view ty)
-    expr-source)
-    [(ResultReplString.Ok body)
-      (ResultReplString.Ok
-        (str_cat.str-cat
-          "(import stdlib.io)\n(import stdlib.string)\n"
-          session-source
-          "\n"
-          (repl-display-helpers-source ty)
-          (repl-scratch-main-source body)))]
-    [(ResultReplString.Err message) (ResultReplString.Err message)]))
+  (let
+    [body
+      (try
+        (repl-display-body
+          (owned_view.compiler-owned-shared-view ty)
+          expr-source))]
+    (ResultReplString.Ok
+      (str_cat.str-cat
+        "(import stdlib.io)\n(import stdlib.string)\n"
+        session-source
+        "\n"
+        (repl-display-helpers-source ty)
+        (repl-scratch-main-source body)))))
 
 (define (repl-scratch-cleanup-error-class [error : io.IoError]) : String
   (match error

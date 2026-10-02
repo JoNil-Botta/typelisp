@@ -48,7 +48,8 @@
   (ModulePath)
   (ImportAlias)
   (ValueQualifier)
-  (ValueName))
+  (ValueName)
+  (BindingDefinition))
 
 (defstruct CompilerParseSemanticOrigin
   (kind CompilerParseSemanticOriginKind)
@@ -156,11 +157,14 @@
 
 (defstruct CompilerParseSemanticOriginCaptureState
   (active bool)
+  (binding-origins bool)
   (vec-addr i64)
   (decl-slot i64)
   (name-view ci.InternSemanticNameView))
 
 (define compiler-parse-semantic-origin-capture-active : bool
+  false)
+(define compiler-parse-semantic-binding-origin-capture-active : bool
   false)
 (define compiler-parse-semantic-origin-capture-vec-addr : i64
   0)
@@ -192,6 +196,7 @@
 (define (compiler-parse-decl-origin-cache-reset!) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active false)
+    (set! compiler-parse-semantic-binding-origin-capture-active false)
     (set! compiler-parse-semantic-origin-capture-vec-addr 0)
     (set! compiler-parse-semantic-origin-capture-decl-slot 0)
     (set!
@@ -232,7 +237,9 @@
     [(CompilerParseSemanticOriginKind.ValueQualifier)
       "__tl_semantic_origin_value_qualifier"]
     [(CompilerParseSemanticOriginKind.ValueName)
-      "__tl_semantic_origin_value_name"]))
+      "__tl_semantic_origin_value_name"]
+    [(CompilerParseSemanticOriginKind.BindingDefinition)
+      "__tl_semantic_origin_binding_definition"]))
 
 (define (compiler-parse-semantic-origin-kind-tag
   [kind : CompilerParseSemanticOriginKind]) : i64
@@ -248,7 +255,8 @@
     [(CompilerParseSemanticOriginKind.ModulePath) 8]
     [(CompilerParseSemanticOriginKind.ImportAlias) 9]
     [(CompilerParseSemanticOriginKind.ValueQualifier) 10]
-    [(CompilerParseSemanticOriginKind.ValueName) 11]))
+    [(CompilerParseSemanticOriginKind.ValueName) 11]
+    [(CompilerParseSemanticOriginKind.BindingDefinition) 12]))
 
 (define (compiler-parse-semantic-origin-kind-tag-from-marker [marker : String]) : i64
   (cond
@@ -264,6 +272,7 @@
     [(string.eq marker "__tl_semantic_origin_import_alias") 9]
     [(string.eq marker "__tl_semantic_origin_value_qualifier") 10]
     [(string.eq marker "__tl_semantic_origin_value_name") 11]
+    [(string.eq marker "__tl_semantic_origin_binding_definition") 12]
     [else -1]))
 
 (define (compiler-parse-semantic-origin-kind-from-tag [tag : i64]) : CompilerParseSemanticOriginKind
@@ -279,11 +288,13 @@
     [(= tag 8) (CompilerParseSemanticOriginKind.ModulePath)]
     [(= tag 9) (CompilerParseSemanticOriginKind.ImportAlias)]
     [(= tag 10) (CompilerParseSemanticOriginKind.ValueQualifier)]
+    [(= tag 12) (CompilerParseSemanticOriginKind.BindingDefinition)]
     [else (CompilerParseSemanticOriginKind.ValueName)]))
 
 (define (compiler-parse-semantic-origin-capture-current) : CompilerParseSemanticOriginCaptureState
   (CompilerParseSemanticOriginCaptureState
     compiler-parse-semantic-origin-capture-active
+    compiler-parse-semantic-binding-origin-capture-active
     compiler-parse-semantic-origin-capture-vec-addr
     compiler-parse-semantic-origin-capture-decl-slot
     (compiler-parse-semantic-origin-capture-name-view-shared)))
@@ -301,9 +312,11 @@
 (define (compiler-parse-semantic-origin-capture-begin!
   [name-view : ci.InternSemanticNameView]
   [items : (MutPtr ParseSemanticOriginVec)]
-  [decl-slot : i64]) : unit
+  [decl-slot : i64]
+  [binding-origins : bool]) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active true)
+    (set! compiler-parse-semantic-binding-origin-capture-active binding-origins)
     (set!
       (array-ref compiler-parse-semantic-origin-capture-name-view 0)
       name-view)
@@ -313,6 +326,9 @@
   [state : CompilerParseSemanticOriginCaptureState]) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active state.active)
+    (set!
+      compiler-parse-semantic-binding-origin-capture-active
+      state.binding-origins)
     (set! compiler-parse-semantic-origin-capture-vec-addr state.vec-addr)
     (set! compiler-parse-semantic-origin-capture-decl-slot state.decl-slot)
     (set!
@@ -322,6 +338,7 @@
 (define (compiler-parse-semantic-origin-capture-end!) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active false)
+    (set! compiler-parse-semantic-binding-origin-capture-active false)
     (set! compiler-parse-semantic-origin-capture-vec-addr 0)
     (set! compiler-parse-semantic-origin-capture-decl-slot 0)
     (set!
@@ -1719,7 +1736,7 @@
   6)
 (define compiler-parse-state-control-ready : i64
   7)
-(define compiler-parse-state-control-reserved : i64
+(define compiler-parse-state-control-binding-origins : i64
   9)
 (define compiler-parse-state-marker-id : i64
   -2)
@@ -1766,11 +1783,60 @@
       (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
       (set! (array-ref control compiler-parse-state-control-marker-id) -1)
       (set! (array-ref control compiler-parse-state-control-ready) 0)
-      (set! (array-ref control compiler-parse-state-control-reserved) 0)
+      (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
       (CompilerParseState control keys tags cache owner))))
 
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
+
+;; Binding tokens are requested by the checked semantic-facts consumer. The
+;; ordinary parser stores no extra token occurrences for this option.
+(define (compiler-parse-state-set-binding-origins!
+  [state : (& state CompilerParseState)]
+  [enabled : bool]) : unit
+  (set!
+    (array-ref state.control compiler-parse-state-control-binding-origins)
+    (if enabled
+      1
+      0)))
+
+(define (compiler-parse-binding-origins-enabled
+  [dispatch : sym_i64_env.SymI64Env]) : bool
+  (let
+    [invocation : i64 (compiler-parse-dispatch-invocation-control dispatch)]
+    [control : i64
+      (if (!= invocation 0)
+        invocation
+        (compiler-parse-dispatch-indexed-control dispatch))]
+    (and
+      (!= control 0)
+      (!=
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-binding-origins)
+        0))))
+
+;; The parse control option is sampled when a capture scope begins and is
+;; saved/restored with that scope. Disabled binding hooks never inspect tokens
+;; or construct dispatch views.
+(defmacro (compiler-parse-semantic-token-origin!
+  [_dispatch : Expr]
+  [node : Expr]
+  [kind : Expr]) : Expr
+  `(when
+    compiler-parse-semantic-binding-origin-capture-active
+    (compiler-parse-semantic-token-origin-active! ,node ,kind)))
+
+(define (compiler-parse-semantic-token-origin-active!
+  [node : reader.SpannedSexpr]
+  [kind : CompilerParseSemanticOriginKind]) : unit
+  (match (reader.spanned-sexpr-view node)
+    [(reader.SpannedSexprView.Sym name span)
+      (compiler-parse-semantic-origin-push!
+        kind
+        (ci.intern-syntax-id-value name)
+        span)]
+    [_ unit]))
 
 (define (compiler-parse-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerParseState
@@ -5235,7 +5301,32 @@
   [item : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view item)
     [(reader.SpannedSexprView.BracketList items _)
-      (compiler-parse-semantic-param-items-origin! dispatch items)]
+      (begin
+        (when
+          compiler-parse-semantic-binding-origin-capture-active
+          (match (reader.spanned-sexpr-view
+            (compiler-parse-place-shared-view items))
+            [(reader.SpannedSexprView.Cons name rest _)
+              (if (match (reader.sexpr-view
+                (compiler-parse-place-shared-view name))
+                [(reader.SexprView.Sym id)
+                  (=
+                    (ci.intern-syntax-id-value id)
+                    cbi.compiler-builtin-id-fix-comptime)]
+                [_ false])
+                (match (reader.spanned-sexpr-view rest)
+                  [(reader.SpannedSexprView.Cons binding _ _)
+                    (compiler-parse-semantic-token-origin!
+                      dispatch
+                      (compiler-parse-place-shared-view binding)
+                      CompilerParseSemanticOriginKind.BindingDefinition)]
+                  [_ unit])
+                (compiler-parse-semantic-token-origin!
+                  dispatch
+                  (compiler-parse-place-shared-view name)
+                  CompilerParseSemanticOriginKind.BindingDefinition))]
+            [_ unit]))
+        (compiler-parse-semantic-param-items-origin! dispatch items))]
     [_ unit]))
 
 (define (compiler-parse-semantic-param-list-origins!
@@ -6491,7 +6582,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstPattern
-  (match (reader.sexpr-view s)
+  (match (reader.sexpr-view (compiler-parse-place-shared-view s))
     [(reader.SexprView.Int n text)
       (ResultAstPattern.Ok (ast.AstPattern.Literal (ast.AstLiteral.Int n text)))]
     [(reader.SexprView.Float text)
@@ -6515,7 +6606,13 @@
           [(= tag (compiler-parse-tag-lit-false))
             (ResultAstPattern.Ok
               (ast.AstPattern.Literal (ast.AstLiteral.Bool false)))]
-          [else (ResultAstPattern.Ok (ast.ast-pat-binding-id name-id))]))]
+          [else
+            (begin
+              (compiler-parse-semantic-token-origin!
+                dispatch
+                (compiler-parse-place-shared-view s)
+                CompilerParseSemanticOriginKind.BindingDefinition)
+              (ResultAstPattern.Ok (ast.ast-pat-binding-id name-id)))]))]
     [(reader.SexprView.Cons name-node args)
       (match (reader.sexpr-view name-node)
         [(reader.SexprView.Sym name)
@@ -7188,6 +7285,14 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstLetBinding
   (let
+    [_binding-origin : unit
+      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view s))
+        [(reader.SpannedSexprView.Cons name _ _)
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view name)
+            CompilerParseSemanticOriginKind.BindingDefinition)]
+        [_ unit])]
     [result : ResultAstLetBinding
       (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view s))
         [(reader.SpannedSexprView.BracketList items _)
@@ -7828,47 +7933,54 @@
         expected-colon-message
         malformed-message)]
     [(reader.SpannedSexprView.Cons name-node colon-tail _)
-      (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon ty-tail _)
-              (match (reader.spanned-sexpr-view ty-tail)
-                [(reader.SpannedSexprView.Cons ty start-tail _)
-                  (match (reader.spanned-sexpr-view start-tail)
-                    [(reader.SpannedSexprView.Cons start end-tail _)
-                      (match (reader.spanned-sexpr-view end-tail)
-                        [(reader.SpannedSexprView.Cons end finish _)
-                          (match (reader.spanned-sexpr-view finish)
-                            [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon? colon)
-                                (match (parse-ast-type-spanned
-                                  dispatch
-                                  pools
-                                  ty)
-                                  [(ResultAstType.Ok parsed-ty)
-                                    (ResultParseAstSpmdTypedRangeBinding.Ok
-                                      (ParseAstSpmdTypedRangeBinding
-                                        (ci.intern-syntax-id-value name)
-                                        parsed-ty
-                                        start
-                                        end))]
-                                  [(ResultAstType.Err message)
-                                    (ResultParseAstSpmdTypedRangeBinding.Err
-                                      message)])
+      (let
+        [_origin : unit
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view name-node)
+            CompilerParseSemanticOriginKind.BindingDefinition)]
+        (match (reader.spanned-sexpr-view name-node)
+          [(reader.SpannedSexprView.Sym name _)
+            (match (reader.spanned-sexpr-view colon-tail)
+              [(reader.SpannedSexprView.Cons colon ty-tail _)
+                (match (reader.spanned-sexpr-view ty-tail)
+                  [(reader.SpannedSexprView.Cons ty start-tail _)
+                    (match (reader.spanned-sexpr-view start-tail)
+                      [(reader.SpannedSexprView.Cons start end-tail _)
+                        (match (reader.spanned-sexpr-view end-tail)
+                          [(reader.SpannedSexprView.Cons end finish _)
+                            (match (reader.spanned-sexpr-view finish)
+                              [(reader.SpannedSexprView.Nil _)
+                                (if (sexpr-colon? colon)
+                                  (match (parse-ast-type-spanned
+                                    dispatch
+                                    pools
+                                    ty)
+                                    [(ResultAstType.Ok parsed-ty)
+                                      (ResultParseAstSpmdTypedRangeBinding.Ok
+                                        (ParseAstSpmdTypedRangeBinding
+                                          (ci.intern-syntax-id-value name)
+                                          parsed-ty
+                                          start
+                                          end))]
+                                    [(ResultAstType.Err message)
+                                      (ResultParseAstSpmdTypedRangeBinding.Err
+                                        message)])
+                                  (ResultParseAstSpmdTypedRangeBinding.Err
+                                    expected-colon-message))]
+                              [_
                                 (ResultParseAstSpmdTypedRangeBinding.Err
-                                  expected-colon-message))]
-                            [_
-                              (ResultParseAstSpmdTypedRangeBinding.Err
-                                malformed-message)])]
-                        [_
-                          (ResultParseAstSpmdTypedRangeBinding.Err
-                            malformed-message)])]
-                    [_
-                      (ResultParseAstSpmdTypedRangeBinding.Err
-                        malformed-message)])]
-                [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
-            [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
-        [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+                                  malformed-message)])]
+                          [_
+                            (ResultParseAstSpmdTypedRangeBinding.Err
+                              malformed-message)])]
+                      [_
+                        (ResultParseAstSpmdTypedRangeBinding.Err
+                          malformed-message)])]
+                  [_
+                    (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+              [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+          [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)]))]
     [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)]))
 
 (define (parse-ast-spmd-state-binding
@@ -7886,34 +7998,41 @@
         expected-colon-message
         malformed-message)]
     [(reader.SpannedSexprView.Cons name-node colon-tail _)
-      (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon ty-tail _)
-              (match (reader.spanned-sexpr-view ty-tail)
-                [(reader.SpannedSexprView.Cons ty init-tail _)
-                  (match (reader.spanned-sexpr-view init-tail)
-                    [(reader.SpannedSexprView.Cons init finish _)
-                      (match (reader.spanned-sexpr-view finish)
-                        [(reader.SpannedSexprView.Nil _)
-                          (if (sexpr-colon? colon)
-                            (match (parse-ast-type-spanned dispatch pools ty)
-                              [(ResultAstType.Ok parsed-ty)
-                                (ResultParseAstSpmdStateBinding.Ok
-                                  (ParseAstSpmdStateBinding
-                                    (ci.intern-syntax-id-value name)
-                                    parsed-ty
-                                    init))]
-                              [(ResultAstType.Err message)
-                                (ResultParseAstSpmdStateBinding.Err message)])
+      (let
+        [_origin : unit
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view name-node)
+            CompilerParseSemanticOriginKind.BindingDefinition)]
+        (match (reader.spanned-sexpr-view name-node)
+          [(reader.SpannedSexprView.Sym name _)
+            (match (reader.spanned-sexpr-view colon-tail)
+              [(reader.SpannedSexprView.Cons colon ty-tail _)
+                (match (reader.spanned-sexpr-view ty-tail)
+                  [(reader.SpannedSexprView.Cons ty init-tail _)
+                    (match (reader.spanned-sexpr-view init-tail)
+                      [(reader.SpannedSexprView.Cons init finish _)
+                        (match (reader.spanned-sexpr-view finish)
+                          [(reader.SpannedSexprView.Nil _)
+                            (if (sexpr-colon? colon)
+                              (match (parse-ast-type-spanned dispatch pools ty)
+                                [(ResultAstType.Ok parsed-ty)
+                                  (ResultParseAstSpmdStateBinding.Ok
+                                    (ParseAstSpmdStateBinding
+                                      (ci.intern-syntax-id-value name)
+                                      parsed-ty
+                                      init))]
+                                [(ResultAstType.Err message)
+                                  (ResultParseAstSpmdStateBinding.Err message)])
+                              (ResultParseAstSpmdStateBinding.Err
+                                expected-colon-message))]
+                          [_
                             (ResultParseAstSpmdStateBinding.Err
-                              expected-colon-message))]
-                        [_
-                          (ResultParseAstSpmdStateBinding.Err malformed-message)])]
-                    [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
-                [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
-            [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
-        [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+                              malformed-message)])]
+                      [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+                  [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+              [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+          [_ (ResultParseAstSpmdStateBinding.Err malformed-message)]))]
     [_ (ResultParseAstSpmdStateBinding.Err malformed-message)]))
 
 ;; `[name : T]`, the binding shape with no range or initializer.
@@ -7932,29 +8051,35 @@
         expected-colon-message
         malformed-message)]
     [(reader.SpannedSexprView.Cons name-node colon-tail _)
-      (match (reader.spanned-sexpr-view name-node)
-        [(reader.SpannedSexprView.Sym name _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon ty-tail _)
-              (match (reader.spanned-sexpr-view ty-tail)
-                [(reader.SpannedSexprView.Cons ty finish _)
-                  (match (reader.spanned-sexpr-view finish)
-                    [(reader.SpannedSexprView.Nil _)
-                      (if (sexpr-colon? colon)
-                        (match (parse-ast-type-spanned dispatch pools ty)
-                          [(ResultAstType.Ok parsed-ty)
-                            (ResultParseAstSpmdTypedBinding.Ok
-                              (ParseAstSpmdTypedBinding
-                                (ci.intern-syntax-id-value name)
-                                parsed-ty))]
-                          [(ResultAstType.Err message)
-                            (ResultParseAstSpmdTypedBinding.Err message)])
-                        (ResultParseAstSpmdTypedBinding.Err
-                          expected-colon-message))]
-                    [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
-                [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
-            [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
-        [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+      (let
+        [_origin : unit
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view name-node)
+            CompilerParseSemanticOriginKind.BindingDefinition)]
+        (match (reader.spanned-sexpr-view name-node)
+          [(reader.SpannedSexprView.Sym name _)
+            (match (reader.spanned-sexpr-view colon-tail)
+              [(reader.SpannedSexprView.Cons colon ty-tail _)
+                (match (reader.spanned-sexpr-view ty-tail)
+                  [(reader.SpannedSexprView.Cons ty finish _)
+                    (match (reader.spanned-sexpr-view finish)
+                      [(reader.SpannedSexprView.Nil _)
+                        (if (sexpr-colon? colon)
+                          (match (parse-ast-type-spanned dispatch pools ty)
+                            [(ResultAstType.Ok parsed-ty)
+                              (ResultParseAstSpmdTypedBinding.Ok
+                                (ParseAstSpmdTypedBinding
+                                  (ci.intern-syntax-id-value name)
+                                  parsed-ty))]
+                            [(ResultAstType.Err message)
+                              (ResultParseAstSpmdTypedBinding.Err message)])
+                          (ResultParseAstSpmdTypedBinding.Err
+                            expected-colon-message))]
+                      [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+                  [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+              [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+          [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)]))]
     [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)]))
 
 (define (parse-ast-spmd-reduce-binding
@@ -8816,30 +8941,36 @@
     [(reader.SpannedSexprView.Cons _ _ _)
       (match (reader.spanned-sexpr-view rest)
         [(reader.SpannedSexprView.Cons region-node body _)
-          (match (reader.spanned-sexpr-view region-node)
-            [(reader.SpannedSexprView.Sym region _)
-              (match (reader.spanned-sexpr-view
-                (compiler-parse-place-shared-view body))
-                [(reader.SpannedSexprView.Nil _)
-                  (ResultAstExpr.Err
-                    (str_cat.str-cat
-                      "parse: with-arena '"
-                      (compiler-parse-dispatch-syntax-id-text dispatch region)
-                      "' requires a non-empty body"))]
-                [_
-                  (match (parse-ast-expr-list dispatch pools body)
-                    [(ResultAstExprList.Ok exprs)
-                      (ResultAstExpr.Ok
-                        (ast.ast-node-pool-context-expr-push
-                          pools
-                          (ast.AstExpr.WithRegion
-                            (ci.intern-syntax-id-value region)
-                            exprs)))]
-                    [(ResultAstExprList.Err message)
-                      (ResultAstExpr.Err message)])])]
-            [_
-              (ResultAstExpr.Err
-                "parse: with-arena region name must be an identifier")])]
+          (let
+            [_origin : unit
+              (compiler-parse-semantic-token-origin!
+                dispatch
+                (compiler-parse-place-shared-view region-node)
+                CompilerParseSemanticOriginKind.BindingDefinition)]
+            (match (reader.spanned-sexpr-view region-node)
+              [(reader.SpannedSexprView.Sym region _)
+                (match (reader.spanned-sexpr-view
+                  (compiler-parse-place-shared-view body))
+                  [(reader.SpannedSexprView.Nil _)
+                    (ResultAstExpr.Err
+                      (str_cat.str-cat
+                        "parse: with-arena '"
+                        (compiler-parse-dispatch-syntax-id-text dispatch region)
+                        "' requires a non-empty body"))]
+                  [_
+                    (match (parse-ast-expr-list dispatch pools body)
+                      [(ResultAstExprList.Ok exprs)
+                        (ResultAstExpr.Ok
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (ast.AstExpr.WithRegion
+                              (ci.intern-syntax-id-value region)
+                              exprs)))]
+                      [(ResultAstExprList.Err message)
+                        (ResultAstExpr.Err message)])])]
+              [_
+                (ResultAstExpr.Err
+                  "parse: with-arena region name must be an identifier")]))]
         [_ (ResultAstExpr.Err "parse: malformed with-arena")])]
     [_ (ResultAstExpr.Err "parse: malformed with-arena")]))
 
@@ -8913,47 +9044,57 @@
     [(reader.SpannedSexprView.Cons _ _ _)
       (match (reader.spanned-sexpr-view items)
         [(reader.SpannedSexprView.Cons name-node rest _)
-          (match (reader.spanned-sexpr-view name-node)
-            [(reader.SpannedSexprView.Sym name _)
-              (match (reader.spanned-sexpr-view rest)
-                [(reader.SpannedSexprView.Nil _)
-                  (ResultAstResourceBinding.Err
-                    "parse: with binding is missing initializer")]
-                [(reader.SpannedSexprView.Cons init tail _)
-                  (match (reader.spanned-sexpr-view tail)
-                    [(reader.SpannedSexprView.Nil _)
-                      (ResultAstResourceBinding.Err
-                        "parse: with binding is missing cleanup function")]
-                    [(reader.SpannedSexprView.Cons cleanup extra _)
-                      (match (reader.spanned-sexpr-view extra)
-                        [(reader.SpannedSexprView.Nil _)
-                          (match (parse-ast-expr-with-pools dispatch pools init)
-                            [(ResultAstExpr.Ok parsed-init)
-                              (match (parse-ast-expr-with-pools
-                                dispatch
-                                pools
-                                cleanup)
-                                [(ResultAstExpr.Ok parsed-cleanup)
-                                  (ResultAstResourceBinding.Ok
-                                    (ast.ast-resource-binding-id
-                                      (ci.intern-syntax-id-value name)
-                                      parsed-init
-                                      parsed-cleanup))]
-                                [(ResultAstExpr.Err message)
-                                  (ResultAstResourceBinding.Err message)])]
-                            [(ResultAstExpr.Err message)
-                              (ResultAstResourceBinding.Err message)])]
-                        [_
-                          (ResultAstResourceBinding.Err
-                            "parse: with binding has too many fields")])]
-                    [_
-                      (ResultAstResourceBinding.Err
-                        "parse: malformed with binding")])]
-                [_
-                  (ResultAstResourceBinding.Err "parse: malformed with binding")])]
-            [_
-              (ResultAstResourceBinding.Err
-                "parse: with binding name must be an identifier")])]
+          (let
+            [_origin : unit
+              (compiler-parse-semantic-token-origin!
+                dispatch
+                (compiler-parse-place-shared-view name-node)
+                CompilerParseSemanticOriginKind.BindingDefinition)]
+            (match (reader.spanned-sexpr-view name-node)
+              [(reader.SpannedSexprView.Sym name _)
+                (match (reader.spanned-sexpr-view rest)
+                  [(reader.SpannedSexprView.Nil _)
+                    (ResultAstResourceBinding.Err
+                      "parse: with binding is missing initializer")]
+                  [(reader.SpannedSexprView.Cons init tail _)
+                    (match (reader.spanned-sexpr-view tail)
+                      [(reader.SpannedSexprView.Nil _)
+                        (ResultAstResourceBinding.Err
+                          "parse: with binding is missing cleanup function")]
+                      [(reader.SpannedSexprView.Cons cleanup extra _)
+                        (match (reader.spanned-sexpr-view extra)
+                          [(reader.SpannedSexprView.Nil _)
+                            (match (parse-ast-expr-with-pools
+                              dispatch
+                              pools
+                              init)
+                              [(ResultAstExpr.Ok parsed-init)
+                                (match (parse-ast-expr-with-pools
+                                  dispatch
+                                  pools
+                                  cleanup)
+                                  [(ResultAstExpr.Ok parsed-cleanup)
+                                    (ResultAstResourceBinding.Ok
+                                      (ast.ast-resource-binding-id
+                                        (ci.intern-syntax-id-value name)
+                                        parsed-init
+                                        parsed-cleanup))]
+                                  [(ResultAstExpr.Err message)
+                                    (ResultAstResourceBinding.Err message)])]
+                              [(ResultAstExpr.Err message)
+                                (ResultAstResourceBinding.Err message)])]
+                          [_
+                            (ResultAstResourceBinding.Err
+                              "parse: with binding has too many fields")])]
+                      [_
+                        (ResultAstResourceBinding.Err
+                          "parse: malformed with binding")])]
+                  [_
+                    (ResultAstResourceBinding.Err
+                      "parse: malformed with binding")])]
+              [_
+                (ResultAstResourceBinding.Err
+                  "parse: with binding name must be an identifier")]))]
         [_ (ResultAstResourceBinding.Err "parse: malformed with binding")])]
     [_ (ResultAstResourceBinding.Err "parse: malformed with binding")]))
 
@@ -9134,67 +9275,74 @@
     [(reader.SpannedSexprView.BracketList items _)
       (parse-ast-foreach-binding dispatch pools items body)]
     [(reader.SpannedSexprView.Cons index-node colon-tail _)
-      (match (reader.spanned-sexpr-view index-node)
-        [(reader.SpannedSexprView.Sym index _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon index-ty-tail _)
-              (match (reader.spanned-sexpr-view index-ty-tail)
-                [(reader.SpannedSexprView.Cons index-ty start-tail _)
-                  (match (reader.spanned-sexpr-view start-tail)
-                    [(reader.SpannedSexprView.Cons start end-tail _)
-                      (match (reader.spanned-sexpr-view end-tail)
-                        [(reader.SpannedSexprView.Cons end finish _)
-                          (match (reader.spanned-sexpr-view finish)
-                            [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon? colon)
-                                (match (parse-ast-type-spanned
-                                  dispatch
-                                  pools
-                                  index-ty)
-                                  [(ResultAstType.Ok parsed-index-ty)
-                                    (match (parse-ast-expr-with-pools
-                                      dispatch
-                                      pools
-                                      start)
-                                      [(ResultAstExpr.Ok parsed-start)
-                                        (match (parse-ast-expr-with-pools
-                                          dispatch
-                                          pools
-                                          end)
-                                          [(ResultAstExpr.Ok parsed-end)
-                                            (match (parse-ast-expr-with-pools
-                                              dispatch
-                                              pools
-                                              body)
-                                              [(ResultAstExpr.Ok parsed-body)
-                                                (ResultAstExpr.Ok
-                                                  (ast.ast-expr-foreach-id-with-pools
-                                                    pools
-                                                    (ci.intern-syntax-id-value
-                                                      index)
-                                                    parsed-index-ty
-                                                    parsed-start
-                                                    parsed-end
-                                                    parsed-body))]
-                                              [(ResultAstExpr.Err message)
-                                                (ResultAstExpr.Err message)])]
-                                          [(ResultAstExpr.Err message)
-                                            (ResultAstExpr.Err message)])]
-                                      [(ResultAstExpr.Err message)
-                                        (ResultAstExpr.Err message)])]
-                                  [(ResultAstType.Err message)
-                                    (ResultAstExpr.Err message)])
+      (let
+        [_origin : unit
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view index-node)
+            CompilerParseSemanticOriginKind.BindingDefinition)]
+        (match (reader.spanned-sexpr-view index-node)
+          [(reader.SpannedSexprView.Sym index _)
+            (match (reader.spanned-sexpr-view colon-tail)
+              [(reader.SpannedSexprView.Cons colon index-ty-tail _)
+                (match (reader.spanned-sexpr-view index-ty-tail)
+                  [(reader.SpannedSexprView.Cons index-ty start-tail _)
+                    (match (reader.spanned-sexpr-view start-tail)
+                      [(reader.SpannedSexprView.Cons start end-tail _)
+                        (match (reader.spanned-sexpr-view end-tail)
+                          [(reader.SpannedSexprView.Cons end finish _)
+                            (match (reader.spanned-sexpr-view finish)
+                              [(reader.SpannedSexprView.Nil _)
+                                (if (sexpr-colon? colon)
+                                  (match (parse-ast-type-spanned
+                                    dispatch
+                                    pools
+                                    index-ty)
+                                    [(ResultAstType.Ok parsed-index-ty)
+                                      (match (parse-ast-expr-with-pools
+                                        dispatch
+                                        pools
+                                        start)
+                                        [(ResultAstExpr.Ok parsed-start)
+                                          (match (parse-ast-expr-with-pools
+                                            dispatch
+                                            pools
+                                            end)
+                                            [(ResultAstExpr.Ok parsed-end)
+                                              (match (parse-ast-expr-with-pools
+                                                dispatch
+                                                pools
+                                                body)
+                                                [(ResultAstExpr.Ok parsed-body)
+                                                  (ResultAstExpr.Ok
+                                                    (ast.ast-expr-foreach-id-with-pools
+                                                      pools
+                                                      (ci.intern-syntax-id-value
+                                                        index)
+                                                      parsed-index-ty
+                                                      parsed-start
+                                                      parsed-end
+                                                      parsed-body))]
+                                                [(ResultAstExpr.Err message)
+                                                  (ResultAstExpr.Err message)])]
+                                            [(ResultAstExpr.Err message)
+                                              (ResultAstExpr.Err message)])]
+                                        [(ResultAstExpr.Err message)
+                                          (ResultAstExpr.Err message)])]
+                                    [(ResultAstType.Err message)
+                                      (ResultAstExpr.Err message)])
+                                  (ResultAstExpr.Err
+                                    "parse: expected ':' in foreach"))]
+                              [_
                                 (ResultAstExpr.Err
-                                  "parse: expected ':' in foreach"))]
-                            [_
-                              (ResultAstExpr.Err
-                                "parse: malformed foreach binding")])]
-                        [_
-                          (ResultAstExpr.Err "parse: malformed foreach binding")])]
-                    [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
-                [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
-            [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
-        [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+                                  "parse: malformed foreach binding")])]
+                          [_
+                            (ResultAstExpr.Err
+                              "parse: malformed foreach binding")])]
+                      [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+                  [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+              [_ (ResultAstExpr.Err "parse: malformed foreach binding")])]
+          [_ (ResultAstExpr.Err "parse: malformed foreach binding")]))]
     [_ (ResultAstExpr.Err "parse: malformed foreach binding")]))
 
 (define (parse-ast-foreach
@@ -10375,22 +10523,33 @@
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(reader.SpannedSexprView.Cons head after-name _)
-      (match (reader.spanned-sexpr-view head)
+      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
         [(reader.SpannedSexprView.Sym name _)
-          (parse-ast-define-value
-            dispatch
-            pools
-            (ci.intern-syntax-id-value name)
-            after-name)]
+          (begin
+            (compiler-parse-semantic-token-origin!
+              dispatch
+              (compiler-parse-place-shared-view head)
+              CompilerParseSemanticOriginKind.ValueName)
+            (parse-ast-define-value
+              dispatch
+              pools
+              (ci.intern-syntax-id-value name)
+              after-name))]
         [(reader.SpannedSexprView.Cons name-node params _)
-          (match (reader.spanned-sexpr-view name-node)
+          (match (reader.spanned-sexpr-view
+            (compiler-parse-place-shared-view name-node))
             [(reader.SpannedSexprView.Sym name _)
-              (parse-ast-define-fn
-                dispatch
-                pools
-                (ci.intern-syntax-id-value name)
-                params
-                after-name)]
+              (begin
+                (compiler-parse-semantic-token-origin!
+                  dispatch
+                  (compiler-parse-place-shared-view name-node)
+                  CompilerParseSemanticOriginKind.ValueName)
+                (parse-ast-define-fn
+                  dispatch
+                  pools
+                  (ci.intern-syntax-id-value name)
+                  params
+                  after-name))]
             [_ (ResultAstDecl.Err "parse: malformed define")])]
         [_ (ResultAstDecl.Err "parse: malformed define")])]
     [_ (ResultAstDecl.Err "parse: malformed define")]))
@@ -12727,7 +12886,8 @@
                 (ci.intern-compat-state-semantic-name-view
                   (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
-                out.len)
+                out.len
+                (compiler-parse-binding-origins-enabled dispatch))
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools
@@ -13085,7 +13245,8 @@
                 (ci.intern-compat-state-semantic-name-view
                   (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
-                out.len)
+                out.len
+                (compiler-parse-binding-origins-enabled dispatch))
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools
@@ -13304,7 +13465,8 @@
                 (ci.intern-compat-state-semantic-name-view
                   (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
-                out.len)
+                out.len
+                (compiler-parse-binding-origins-enabled dispatch))
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools

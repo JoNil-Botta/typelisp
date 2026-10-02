@@ -359,7 +359,8 @@
     [(parse_core.CompilerParseSemanticOriginKind.ModulePath) 8]
     [(parse_core.CompilerParseSemanticOriginKind.ImportAlias) 9]
     [(parse_core.CompilerParseSemanticOriginKind.ValueQualifier) 10]
-    [(parse_core.CompilerParseSemanticOriginKind.ValueName) 11]))
+    [(parse_core.CompilerParseSemanticOriginKind.ValueName) 11]
+    [(parse_core.CompilerParseSemanticOriginKind.BindingDefinition) 12]))
 
 (define (compiler-semantic-origin-cursors-reset!
   [state : (& state CompilerSemanticWalkState)]) : unit
@@ -6757,7 +6758,7 @@
               (box 0)
               (box false)
               parse_core.CompilerParseMaybeSemanticOriginRun.None
-              (__tl_make-array i64 12))]
+              (__tl_make-array i64 13))]
           [index : i64 0]
           [cached-path : String ""]
           [cached-source : String ""]

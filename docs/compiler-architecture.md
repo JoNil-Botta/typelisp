@@ -223,6 +223,59 @@ by a store handle or node address cannot match a later fork reallocated at the
 same address, and clears the unbound-name suggestion snapshot that names the
 fork.
 
+Checked semantic consumers use `compiler_semantic_lint_facts.CompilerSemanticCheckRequest`
+for a source, file, or package entry. The request carries the existing job,
+cfgs and roots, a caller-owned facts arena, and a borrowed consumer callback.
+`checked-generated-source` is the caller's assertion that the physical input is
+a checked-in generated file; generated declarations and expression expansions
+remain synthetic. The collector supplies `compiler_check_core.CompilerObservedCheckRequest`, which
+runs the canonical checked-program pipeline once and invokes publication before
+checker pools retire. The ordinary CLI does not import the collector module.
+The observer belongs to the shared context, separately from the hot body-analysis
+descriptor. Context rebuilds carry it explicitly, including a suppressed probe.
+It is installed only in the final checked context, and is removed before checker
+state or facts storage can be retired. Macro probes and discarded
+speculative checks cannot publish observations. A disabled observer allocates no
+snapshot, walks no additional AST, and does not extend body-fact lifetimes.
+A balanced count of observed jobs lets disabled hooks skip observer state reads.
+Nested jobs preserve that count; their own context still selects the observer. Binding
+token capture samples its parse-control option at the existing capture boundary
+and saves/restores it with that scope, so disabled token hooks inspect no dispatch
+views or source tokens.
+
+`compiler_semantic_lint_facts.CompilerSemanticFacts` is a read-only capability.
+Count and lookup operations return owned records in the consumer's active arena;
+the capability itself is valid only until its request's facts arena is destroyed.
+Consumers finish the callback, destroy that arena before the next entry, and use
+the host driver's normal file-job cleanup for checker, pool and interner owners.
+The owned driver scope is exercised by the batch lifetime test. The check result
+contains diagnostics and advisories, never a facts or checker capability.
+
+Expression IDs, function indexes, declaration ordinals and lexical scope IDs are
+local to one snapshot. Persistent consumers derive anchors from owned module,
+name, path and declaring-token spans rather than retaining those ordinals or a
+`TcTypeEnv`. Shared resolver hooks publish the selected lookup key or member
+handle, including definition-site macro hygiene. Scoped bindings retain their
+per-job stack epoch, slot and generation together, so temporary SPMD imports cannot overwrite
+an active slot version and recycled slots cannot identify an older local. Declaring
+spans come from opt-in parser tokens and the checked initializer's source span;
+checker markers and imported captured bindings do not create declarations.
+Let scopes use their body IDs, which survive by-value SPMD rechecks. Rechecking a
+source body for SPMD reuses its source-function identity. `try` compatibility
+uses `tc-try-query`; foreach and SPMD bodies forbid early exit, while a nested
+lambda establishes a new return owner. Observed SPMD classification calls keep
+that policy scope around by-value operand rechecks, including let initializers;
+the scope is tied to its function owner and closes on both success and error.
+
+Source and exact macro-argument provenance can authorize edits only when the
+expression also has a reliable result and a complete source span. Unknown,
+synthetic, unresolved, poisoned and dependent facts fail closed. A failed check
+after observing poison is dependent rather than a new unresolved primary error. An imported
+generated nominal may have an owned declaration identity without an editable
+defining-token span. The snapshot retains no pooled types, intern spellings,
+parser sidecars or mutable checker environments. Lint policy and command/LSP
+adoption are separate consumers of this interface.
+
 File, package, check, test and semantic-index entry points pass their actual cfg
 environment through the lowerer/typecheck interfaces; a cache-scope String is
 only an identity key and cannot replace those semantic inputs.

@@ -10,6 +10,7 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
+(import compiler_typecheck_core as tc)
 (import compiler_driver_core)
 (import doc_test)
 (import compiler_load)
@@ -271,7 +272,8 @@
           emit-entry
           (target_cfg.compiler-target-cfgs-with-names
             target
-            (owned_view.compiler-owned-shared-view cfg-names)))
+            (owned_view.compiler-owned-shared-view cfg-names))
+          (tc.tc-serial-job-state))
           [(compiler_check_core.ResultCompilerCheckWithPaths.Ok
               _
               paths

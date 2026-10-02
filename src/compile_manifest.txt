@@ -112,6 +112,9 @@ end
 case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_semantic_lint_facts|src/compiler_semantic_lint_facts.tl|assembly|none|direct
+end
+
 case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|none|direct
 end
 
@@ -217,4 +220,3 @@ end
 case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct
 contains|main:
 end
-

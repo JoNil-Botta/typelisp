@@ -2994,7 +2994,8 @@
               cfgs
               "typecheck-generated-import-state-threading"
               pools
-              (ci.intern-compat-state-capture-active)))]
+              (ci.intern-compat-state-capture-active)
+              (tc_core.TcSemanticObserver 0)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3018,7 +3019,8 @@
               cfgs
               "typecheck-controlled-failure-state-threading"
               pools
-              (ci.intern-compat-state-capture-active)))]
+              (ci.intern-compat-state-capture-active)
+              (tc_core.TcSemanticObserver 0)))]
         [(parser.ResultAstProgramDiagnostic.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3187,7 +3189,8 @@
               cfgs
               "typecheck-macro-transitive-dependency-state"
               pools
-              (ci.intern-compat-state-capture-active)))]
+              (ci.intern-compat-state-capture-active)
+              (tc_core.TcSemanticObserver 0)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -5122,7 +5125,8 @@
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-capture-active)
         (tc_core.tc-macro-state-source-names macro-a)
-        body-a)]
+        body-a
+        (tc_core.TcSemanticObserver 0))]
     [hygiene-a : tc_core.MacroHygieneEnv
       (tc_core.macro-hygiene-env-empty macro-a (tc_core.tc-context-pools ctx-a))]
     [macro-a-handle : ci.InternSourceNameSessionHandle

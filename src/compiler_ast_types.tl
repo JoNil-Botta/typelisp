@@ -4578,6 +4578,33 @@
     [bound-2 (ast-expr-pool-cell-read pools.expr-pool)]
     (ast-expr-node-pool-state-view-span bound-2 id)))
 
+;; Recover the parser view that owns an expression's recorded source span.
+;; Exceptional ReSpan views keep their own identity; missing or stale sidecar
+;; entries cannot authorize a source identity.
+(define (ast-node-pool-context-expr-source-owner
+  [pools : (& pools AstNodePoolContext)]
+  [id : i64]) : i64
+  (let
+    [pool : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
+    [slot : i64
+      (if (and (>= id 0) (< id pool.count))
+        (ast-expr-span-slot-get-from-bases pool.span-slot-segment-bases id)
+        0)]
+    [owner : i64
+      (cond
+        [(and (> slot 0) (<= slot pool.canonical-span-count))
+          (cast
+            (array-ref pool.canonical-span-records (- slot 1)).owner-node
+            : i64)]
+        [(and (< slot 0) (<= (- 0 slot) pool.respan-count))
+          (cast
+            (array-ref pool.respan-records (- (- 0 slot) 1)).view-node
+            : i64)]
+        [else -1])]
+    (if (and (>= owner 0) (< owner pool.count))
+      owner
+      -1)))
+
 (define (ast-node-pool-context-expr-canonical-span-count
   [pools : (& pools AstNodePoolContext)]) : i64
   (ast-expr-node-pool-state-canonical-span-count

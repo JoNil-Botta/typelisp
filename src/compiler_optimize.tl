@@ -12673,22 +12673,22 @@
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (array-length values))
     (ResultCompilerOptimizeVerify.Ok)
-    (match (opt-verify-value-use
-      defs
-      doms
-      (compiler-opt-global-array-element-shared-view values index)
-      use-block
-      use-pos)
-      [(ResultCompilerOptimizeVerify.Ok)
-        (opt-verify-call-args-array-uses
-          defs
-          doms
-          values
-          use-block
-          use-pos
-          (+ index 1))]
-      [(ResultCompilerOptimizeVerify.Err message)
-        (ResultCompilerOptimizeVerify.Err message)])))
+    (let
+      [_
+        (try
+          (opt-verify-value-use
+            defs
+            doms
+            (compiler-opt-global-array-element-shared-view values index)
+            use-block
+            use-pos))]
+      (opt-verify-call-args-array-uses
+        defs
+        doms
+        values
+        use-block
+        use-pos
+        (+ index 1)))))
 
 (define (opt-verify-call-args-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12766,20 +12766,17 @@
             (- phi-inputs-at-12652-3.len 1))]
         (match value
           [(ir.CompilerIrValue.Var var)
-            (match (opt-verify-var-use-on-edge defs doms var pred-label)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-phi-input-uses defs doms rest)]
-              [(ResultCompilerOptimizeVerify.Err message)
-                (ResultCompilerOptimizeVerify.Err message)])]
+            (let
+              [_ (try (opt-verify-var-use-on-edge defs doms var pred-label))]
+              (opt-verify-phi-input-uses defs doms rest))]
           [_ (opt-verify-phi-input-uses defs doms rest)])))))
 
 (define (opt-verify-two
   [a : ResultCompilerOptimizeVerify]
   [b : ResultCompilerOptimizeVerify]) : ResultCompilerOptimizeVerify
-  (match a
-    [(ResultCompilerOptimizeVerify.Ok) b]
-    [(ResultCompilerOptimizeVerify.Err message)
-      (ResultCompilerOptimizeVerify.Err message)]))
+  (let
+    [_ (try a)]
+    b))
 
 (define (opt-verify-use
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12908,15 +12905,16 @@
     (begin
       (while (< i count)
         (begin
-          (match (opt-verify-instr-uses
-            defs
-            doms
-            block-id
-            p
-            (ir.compiler-ir-instr-seq-ref instrs i))
-            [(ResultCompilerOptimizeVerify.Ok) unit]
-            [(ResultCompilerOptimizeVerify.Err message)
-              (return (ResultCompilerOptimizeVerify.Err message))])
+          (let
+            [_
+              (try
+                (opt-verify-instr-uses
+                  defs
+                  doms
+                  block-id
+                  p
+                  (ir.compiler-ir-instr-seq-ref instrs i)))]
+            unit)
           (set! i (+ i 1))
           (set! p (+ p 1))))
       (ResultCompilerOptimizeVerify.Ok))))
@@ -13114,15 +13112,15 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
-          (match (opt-verify-phi-predecessors-instr-seq-from
-            pred-map
-            label
-            instrs
-            0)
-            [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-phi-predecessors-by-label pred-map (deref rest))]
-            [(ResultCompilerOptimizeVerify.Err message)
-              (ResultCompilerOptimizeVerify.Err message)])])]
+          (let
+            [_
+              (try
+                (opt-verify-phi-predecessors-instr-seq-from
+                  pred-map
+                  label
+                  instrs
+                  0))]
+            (opt-verify-phi-predecessors-by-label pred-map (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [remaining (ir.compiler-ir-block-seq-to-list seq)]
@@ -13138,11 +13136,11 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1)
-            [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-block-uses defs doms (deref rest) (+ block-id 1))]
-            [(ResultCompilerOptimizeVerify.Err message)
-              (ResultCompilerOptimizeVerify.Err message)])])]
+          (let
+            [_
+              (try
+                (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1))]
+            (opt-verify-block-uses defs doms (deref rest) (+ block-id 1)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-verify-block-uses
         defs
@@ -13194,21 +13192,21 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (match (opt-verify-instr-seq-uses-contextual
-            defs
-            doms
-            block-id
-            instrs
-            0
-            1)
-            [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-block-uses-contextual
-                defs
-                doms
-                (deref rest)
-                (+ block-id 1))]
-            [(ResultCompilerOptimizeVerify.Err message)
-              (ResultCompilerOptimizeVerify.Err message)])])]
+          (let
+            [_
+              (try
+                (opt-verify-instr-seq-uses-contextual
+                  defs
+                  doms
+                  block-id
+                  instrs
+                  0
+                  1))]
+            (opt-verify-block-uses-contextual
+              defs
+              doms
+              (deref rest)
+              (+ block-id 1)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [blocks (ir.compiler-ir-block-seq-to-list seq)]
@@ -13227,11 +13225,8 @@
           (let
             [doms (& context.doms)]
             [pred-map (& context.pred-map)]
-            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses defs doms blocks 0)]
-              [(ResultCompilerOptimizeVerify.Err message)
-                (ResultCompilerOptimizeVerify.Err message)]))])]))
+            [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+            (opt-verify-block-uses defs doms blocks 0))])]))
 
 ;; The caller derived the index (and with it the single-definition proof) for
 ;; exactly this function; final IR that fails that proof is not checked here at
@@ -13245,11 +13240,8 @@
       (let
         [doms : OptDomInfo context.doms]
         [pred-map : OptPredMap context.pred-map]
-        (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-          [(ResultCompilerOptimizeVerify.Ok)
-            (opt-verify-block-uses-contextual defs doms blocks 0)]
-          [(ResultCompilerOptimizeVerify.Err message)
-            (ResultCompilerOptimizeVerify.Err message)]))]))
+        [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+        (opt-verify-block-uses-contextual defs doms blocks 0))]))
 
 ;; The structural CFG contract, read off the context's index rather than
 ;; recomputed. `context` must be valid for the function's blocks, which is the
@@ -13272,11 +13264,8 @@
   (let
     [func : ir.CompilerIrFunction
       (owned_view.compiler-owned-reference-shared-view func)]
-    (match (opt-verify-structure context)
-      [(ResultCompilerOptimizeVerify.Ok)
-        (opt-verify-function-body-with-context func context)]
-      [(ResultCompilerOptimizeVerify.Err message)
-        (ResultCompilerOptimizeVerify.Err message)])))
+    [_ (try (opt-verify-structure context))]
+    (opt-verify-function-body-with-context func context)))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -13307,18 +13296,15 @@
       (let
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-        (match (opt-verify-structure context)
-          [(ResultCompilerOptimizeVerify.Ok)
-            ;; Final backend IR is not required to be SSA. Apply dominance/use
-            ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-            ;; are the valid final-IR contract. The SSA-shape decision and the
-            ;; index the dominance checks read are one derivation.
-            (match (opt-var-defs-index-checked params vars blocks)
-              [(OptVarDefsIndex.Index defs)
-                (opt-verify-final-function-body-with-defs defs func context)]
-              [(OptVarDefsIndex.Duplicate) (ResultCompilerOptimizeVerify.Ok)])]
-          [(ResultCompilerOptimizeVerify.Err message)
-            (ResultCompilerOptimizeVerify.Err message)]))]))
+        [_ (try (opt-verify-structure context))]
+        ;; Final backend IR is not required to be SSA. Apply dominance/use
+        ;; checks when it is SSA-shaped; otherwise the structural CFG checks
+        ;; are the valid final-IR contract. The SSA-shape decision and the
+        ;; index the dominance checks read are one derivation.
+        (match (opt-var-defs-index-checked params vars blocks)
+          [(OptVarDefsIndex.Index defs)
+            (opt-verify-final-function-body-with-defs defs func context)]
+          [(OptVarDefsIndex.Duplicate) (ResultCompilerOptimizeVerify.Ok)]))]))
 
 (define (opt-verify-function-seq-from
   [functions : ir.CompilerIrFunctionSeq]

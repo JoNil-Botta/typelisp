@@ -847,67 +847,58 @@
                                                           data-offset
                                                           word-width)
                                                         word-width)]
-                                                    (match (compiler-sframe-v3-decode-flex-rule
-                                                      cfa-control
-                                                      cfa-data
-                                                      data-offset)
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
+                                                    [rule
+                                                      (try
+                                                        (compiler-sframe-v3-decode-flex-rule
+                                                          cfa-control
+                                                          cfa-data
+                                                          data-offset))]
+                                                    (match rule
+                                                      [(CompilerSframeV3Rule.Register
+                                                          register
+                                                          deref?
+                                                          offset)
+                                                        (begin
+                                                          (set!
+                                                            cfa-register
+                                                            register)
+                                                          (set!
+                                                            cfa-deref?
+                                                            deref?)
+                                                          (set!
+                                                            cfa-offset
+                                                            offset))]
+                                                      [_
                                                         (return
                                                           (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
-                                                        (match rule
-                                                          [(CompilerSframeV3Rule.Register
-                                                              register
-                                                              deref?
-                                                              offset)
-                                                            (begin
-                                                              (set!
-                                                                cfa-register
-                                                                register)
-                                                              (set!
-                                                                cfa-deref?
-                                                                deref?)
-                                                              (set!
-                                                                cfa-offset
-                                                                offset))]
-                                                          [_
-                                                            (return
-                                                              (ResultCompilerSframeV3Image.Err
-                                                                (compiler-sframe-v3-error
-                                                                  compiler-sframe-v3-error-row
-                                                                  data-offset
-                                                                  "sframe v3: flexible CFA rule must name a register")))])]))
+                                                            (compiler-sframe-v3-error
+                                                              compiler-sframe-v3-error-row
+                                                              data-offset
+                                                              "sframe v3: flexible CFA rule must name a register")))]))
                                                   (when
                                                     (or
                                                       (= word-count 4)
                                                       (= word-count 6))
-                                                    (match (compiler-sframe-v3-decode-flex-rule
-                                                      (compiler-sframe-v3-read-unsigned-word
-                                                        bytes
-                                                        (+
-                                                          data-offset
-                                                          (* 2 word-width))
-                                                        word-width)
-                                                      (compiler-sframe-v3-read-signed-word
-                                                        bytes
-                                                        (+
-                                                          data-offset
-                                                          (* 3 word-width))
-                                                        word-width)
-                                                      (+
-                                                        data-offset
-                                                        (* 2 word-width)))
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
-                                                        (return
-                                                          (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
-                                                        (set! ra-rule rule)]))
+                                                    (let
+                                                      [rule
+                                                        (try
+                                                          (compiler-sframe-v3-decode-flex-rule
+                                                            (compiler-sframe-v3-read-unsigned-word
+                                                              bytes
+                                                              (+
+                                                                data-offset
+                                                                (* 2 word-width))
+                                                              word-width)
+                                                            (compiler-sframe-v3-read-signed-word
+                                                              bytes
+                                                              (+
+                                                                data-offset
+                                                                (* 3 word-width))
+                                                              word-width)
+                                                            (+
+                                                              data-offset
+                                                              (* 2 word-width))))]
+                                                      (set! ra-rule rule)))
                                                   (when
                                                     (= word-count 5)
                                                     (begin
@@ -928,56 +919,52 @@
                                                                 data-offset
                                                                 (* 2 word-width))
                                                               "sframe v3: nonzero flexible RA padding"))))
-                                                      (match (compiler-sframe-v3-decode-flex-rule
-                                                        (compiler-sframe-v3-read-unsigned-word
-                                                          bytes
-                                                          (+
-                                                            data-offset
-                                                            (* 3 word-width))
-                                                          word-width)
-                                                        (compiler-sframe-v3-read-signed-word
-                                                          bytes
-                                                          (+
-                                                            data-offset
-                                                            (* 4 word-width))
-                                                          word-width)
-                                                        (+
-                                                          data-offset
-                                                          (* 3 word-width)))
-                                                        [(ResultCompilerSframeV3Rule.Err
-                                                            error)
-                                                          (return
-                                                            (ResultCompilerSframeV3Image.Err
-                                                              error))]
-                                                        [(ResultCompilerSframeV3Rule.Ok
-                                                            rule)
-                                                          (set! fp-rule rule)])))
+                                                      (let
+                                                        [rule
+                                                          (try
+                                                            (compiler-sframe-v3-decode-flex-rule
+                                                              (compiler-sframe-v3-read-unsigned-word
+                                                                bytes
+                                                                (+
+                                                                  data-offset
+                                                                  (*
+                                                                    3
+                                                                    word-width))
+                                                                word-width)
+                                                              (compiler-sframe-v3-read-signed-word
+                                                                bytes
+                                                                (+
+                                                                  data-offset
+                                                                  (*
+                                                                    4
+                                                                    word-width))
+                                                                word-width)
+                                                              (+
+                                                                data-offset
+                                                                (* 3 word-width))))]
+                                                        (set! fp-rule rule))))
                                                   (when
                                                     (= word-count 6)
-                                                    (match (compiler-sframe-v3-decode-flex-rule
-                                                      (compiler-sframe-v3-read-unsigned-word
-                                                        bytes
-                                                        (+
-                                                          data-offset
-                                                          (* 4 word-width))
-                                                        word-width)
-                                                      (compiler-sframe-v3-read-signed-word
-                                                        bytes
-                                                        (+
-                                                          data-offset
-                                                          (* 5 word-width))
-                                                        word-width)
-                                                      (+
-                                                        data-offset
-                                                        (* 4 word-width)))
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
-                                                        (return
-                                                          (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
-                                                        (set! fp-rule rule)])))
+                                                    (let
+                                                      [rule
+                                                        (try
+                                                          (compiler-sframe-v3-decode-flex-rule
+                                                            (compiler-sframe-v3-read-unsigned-word
+                                                              bytes
+                                                              (+
+                                                                data-offset
+                                                                (* 4 word-width))
+                                                              word-width)
+                                                            (compiler-sframe-v3-read-signed-word
+                                                              bytes
+                                                              (+
+                                                                data-offset
+                                                                (* 5 word-width))
+                                                              word-width)
+                                                            (+
+                                                              data-offset
+                                                              (* 4 word-width))))]
+                                                      (set! fp-rule rule))))
                                                 (if (= word-count 0)
                                                   (begin
                                                     (when
@@ -1482,16 +1469,16 @@
                             compiler-sframe-v3-error-row
                             -1
                             "sframe v3: row start is outside its lookup interval"))))
-                    (match (compiler-sframe-v3-row-plan
-                      row
-                      function.flex?
-                      image.fixed-fp-offset
-                      image.fixed-ra-offset
-                      start-width)
-                      [(ResultCompilerSframeV3RowPlan.Err error)
-                        (return (ResultCompilerSframeV3Plan.Err error))]
-                      [(ResultCompilerSframeV3RowPlan.Ok row-plan)
-                        (set! fre-bytes (+ fre-bytes row-plan.encoded-size))])
+                    (let
+                      [row-plan
+                        (try
+                          (compiler-sframe-v3-row-plan
+                            row
+                            function.flex?
+                            image.fixed-fp-offset
+                            image.fixed-ra-offset
+                            start-width))]
+                      (set! fre-bytes (+ fre-bytes row-plan.encoded-size)))
                     (set! previous-row-start row.start-offset)
                     (set! row-index (+ row-index 1)))))
               (set! row-count (+ row-count function-row-count))
@@ -1552,258 +1539,240 @@
   [fixed-fp : i64]
   [fixed-ra : i64]
   [start-width : i64]) : ResultCompilerSframeV3RowPlan
-  (match (compiler-sframe-v3-row-plan row flex? fixed-fp fixed-ra start-width)
-    [(ResultCompilerSframeV3RowPlan.Err error)
-      (ResultCompilerSframeV3RowPlan.Err error)]
-    [(ResultCompilerSframeV3RowPlan.Ok plan)
-      (let
-        [base : i64
-          (if (and
-            (not flex?)
-            (not row.outermost?)
-            (= row.cfa-register compiler-sframe-v3-dwarf-rsp))
-            1
-            0)]
-        [word-type : i64 (compiler-sframe-v3-type-for-width plan.word-width)]
-        [info : i64 (+ (shl word-type 5) (+ (shl plan.word-count 1) base))]
-        [ra-data? : bool
-          (compiler-sframe-v3-rule-has-row-data? (& row.ra-rule))]
-        [fp-data? : bool
-          (compiler-sframe-v3-rule-has-row-data? (& row.fp-rule))]
-        (begin
-          (compiler-sframe-v3-push-word! out row.start-offset start-width)
-          (compiler-sframe-v3-push-u8! out info)
-          (when
-            (> plan.word-count 0)
-            (if flex?
+  (let
+    [plan
+      (try
+        (compiler-sframe-v3-row-plan row flex? fixed-fp fixed-ra start-width))]
+    [base : i64
+      (if (and
+        (not flex?)
+        (not row.outermost?)
+        (= row.cfa-register compiler-sframe-v3-dwarf-rsp))
+        1
+        0)]
+    [word-type : i64 (compiler-sframe-v3-type-for-width plan.word-width)]
+    [info : i64 (+ (shl word-type 5) (+ (shl plan.word-count 1) base))]
+    [ra-data? : bool (compiler-sframe-v3-rule-has-row-data? (& row.ra-rule))]
+    [fp-data? : bool (compiler-sframe-v3-rule-has-row-data? (& row.fp-rule))]
+    (begin
+      (compiler-sframe-v3-push-word! out row.start-offset start-width)
+      (compiler-sframe-v3-push-u8! out info)
+      (when
+        (> plan.word-count 0)
+        (if flex?
+          (begin
+            (compiler-sframe-v3-push-word!
+              out
+              (+
+                (shl row.cfa-register 3)
+                (+
+                  (if row.cfa-deref?
+                    2
+                    0)
+                  1))
+              plan.word-width)
+            (compiler-sframe-v3-push-word! out row.cfa-offset plan.word-width)
+            (if ra-data?
               (begin
                 (compiler-sframe-v3-push-word!
                   out
-                  (+
-                    (shl row.cfa-register 3)
-                    (+
-                      (if row.cfa-deref?
-                        2
-                        0)
-                      1))
+                  (compiler-sframe-v3-rule-control (& row.ra-rule))
                   plan.word-width)
                 (compiler-sframe-v3-push-word!
                   out
-                  row.cfa-offset
-                  plan.word-width)
-                (if ra-data?
-                  (begin
-                    (compiler-sframe-v3-push-word!
-                      out
-                      (compiler-sframe-v3-rule-control (& row.ra-rule))
-                      plan.word-width)
-                    (compiler-sframe-v3-push-word!
-                      out
-                      (compiler-sframe-v3-rule-offset (& row.ra-rule))
-                      plan.word-width))
-                  (when
-                    fp-data?
-                    (compiler-sframe-v3-push-word! out 0 plan.word-width)))
-                (when
-                  fp-data?
-                  (begin
-                    (compiler-sframe-v3-push-word!
-                      out
-                      (compiler-sframe-v3-rule-control (& row.fp-rule))
-                      plan.word-width)
-                    (compiler-sframe-v3-push-word!
-                      out
-                      (compiler-sframe-v3-rule-offset (& row.fp-rule))
-                      plan.word-width))))
+                  (compiler-sframe-v3-rule-offset (& row.ra-rule))
+                  plan.word-width))
+              (when
+                fp-data?
+                (compiler-sframe-v3-push-word! out 0 plan.word-width)))
+            (when
+              fp-data?
               (begin
                 (compiler-sframe-v3-push-word!
                   out
-                  row.cfa-offset
+                  (compiler-sframe-v3-rule-control (& row.fp-rule))
                   plan.word-width)
-                (when
-                  fp-data?
-                  (compiler-sframe-v3-push-word!
-                    out
-                    (compiler-sframe-v3-rule-offset (& row.fp-rule))
-                    plan.word-width)))))
-          (ResultCompilerSframeV3RowPlan.Ok plan)))]))
+                (compiler-sframe-v3-push-word!
+                  out
+                  (compiler-sframe-v3-rule-offset (& row.fp-rule))
+                  plan.word-width))))
+          (begin
+            (compiler-sframe-v3-push-word! out row.cfa-offset plan.word-width)
+            (when
+              fp-data?
+              (compiler-sframe-v3-push-word!
+                out
+                (compiler-sframe-v3-rule-offset (& row.fp-rule))
+                plan.word-width)))))
+      (ResultCompilerSframeV3RowPlan.Ok plan))))
 
 ;: Canonically encode final records using field-PC-relative function starts.
 (define (compiler-sframe-v3-encode
   [image : (& image CompilerSframeV3Image)]
   [section-address : i64]
   [limits : (& limits CompilerSframeV3Limits)]) : ResultCompilerSframeV3Bytes
-  (match (compiler-sframe-v3-plan image limits)
-    [(ResultCompilerSframeV3Plan.Err error)
-      (ResultCompilerSframeV3Bytes.Err error)]
-    [(ResultCompilerSframeV3Plan.Ok plan)
-      (begin
-        (when
-          (or
-            (< section-address 0)
-            (not (compiler-sframe-v3-safe-address? section-address)))
-          (return
-            (ResultCompilerSframeV3Bytes.Err
-              (compiler-sframe-v3-error
-                compiler-sframe-v3-error-address
-                -1
-                "sframe v3: section address is outside the supported range"))))
-        (let
-          [out : byte_buf_core.ByteBufBuilder
-            (byte_buf_core.byte-buf-builder-with-capacity plan.total-bytes)]
-          [function-index : i64 0]
-          [fre-cursor : i64 0]
-          (begin
-            (compiler-sframe-v3-push-u16! (&mut out) compiler-sframe-v3-magic)
-            (compiler-sframe-v3-push-u8! (&mut out) compiler-sframe-v3-version)
-            (compiler-sframe-v3-push-u8!
-              (&mut out)
-              (+
-                compiler-sframe-v3-flag-field-pcrel
-                (if image.sorted?
-                  compiler-sframe-v3-flag-sorted
-                  0)))
-            (compiler-sframe-v3-push-u8!
-              (&mut out)
-              compiler-sframe-v3-abi-amd64-le)
-            (compiler-sframe-v3-push-u8! (&mut out) image.fixed-fp-offset)
-            (compiler-sframe-v3-push-u8! (&mut out) image.fixed-ra-offset)
-            (compiler-sframe-v3-push-u8! (&mut out) 0)
-            (compiler-sframe-v3-push-u32! (&mut out) plan.function-count)
-            (compiler-sframe-v3-push-u32! (&mut out) plan.row-count)
-            (compiler-sframe-v3-push-u32! (&mut out) plan.fre-bytes)
-            (compiler-sframe-v3-push-u32! (&mut out) 0)
-            (compiler-sframe-v3-push-u32!
-              (&mut out)
-              (* plan.function-count compiler-sframe-v3-index-size))
-            ;; Index entries.  Planning each row again is bounded by max-work
-            ;; and avoids mutable layout metadata in the caller's records.
-            (while (< function-index plan.function-count)
-              (let
-                [function : (& image CompilerSframeV3Function)
-                  (& (array-ref image.functions function-index))]
-                [index-offset : i64
-                  (+
-                    compiler-sframe-v3-header-size
-                    (* function-index compiler-sframe-v3-index-size))]
-                (begin
-                  (when
-                    (not
-                      (compiler-sframe-v3-safe-add?
-                        section-address
-                        index-offset))
-                    (return
-                      (ResultCompilerSframeV3Bytes.Err
-                        (compiler-sframe-v3-error
-                          compiler-sframe-v3-error-address
-                          index-offset
-                          "sframe v3: encoded index address overflows"))))
-                  (let
-                    [field-address : i64 (+ section-address index-offset)]
-                    [raw-start : i64 (- function.start-address field-address)]
-                    (begin
-                      (when
-                        (not (compiler-sframe-v3-safe-address? raw-start))
-                        (return
-                          (ResultCompilerSframeV3Bytes.Err
-                            (compiler-sframe-v3-error
-                              compiler-sframe-v3-error-address
-                              index-offset
-                              "sframe v3: field-PC-relative start does not fit i64"))))
-                      (compiler-sframe-v3-push-i64! (&mut out) raw-start)))
-                  (compiler-sframe-v3-push-u32! (&mut out) function.size)
-                  (compiler-sframe-v3-push-u32! (&mut out) fre-cursor)
-                  (let
-                    [row-index : i64 0]
-                    [start-width : i64
-                      (compiler-sframe-v3-row-start-width function.size)]
-                    (begin
-                      (set!
-                        fre-cursor
-                        (+ fre-cursor compiler-sframe-v3-attribute-size))
-                      (while (< row-index function.row-count)
+  (let
+    [plan (try (compiler-sframe-v3-plan image limits))]
+    (begin
+      (when
+        (or
+          (< section-address 0)
+          (not (compiler-sframe-v3-safe-address? section-address)))
+        (return
+          (ResultCompilerSframeV3Bytes.Err
+            (compiler-sframe-v3-error
+              compiler-sframe-v3-error-address
+              -1
+              "sframe v3: section address is outside the supported range"))))
+      (let
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-with-capacity plan.total-bytes)]
+        [function-index : i64 0]
+        [fre-cursor : i64 0]
+        (begin
+          (compiler-sframe-v3-push-u16! (&mut out) compiler-sframe-v3-magic)
+          (compiler-sframe-v3-push-u8! (&mut out) compiler-sframe-v3-version)
+          (compiler-sframe-v3-push-u8!
+            (&mut out)
+            (+
+              compiler-sframe-v3-flag-field-pcrel
+              (if image.sorted?
+                compiler-sframe-v3-flag-sorted
+                0)))
+          (compiler-sframe-v3-push-u8!
+            (&mut out)
+            compiler-sframe-v3-abi-amd64-le)
+          (compiler-sframe-v3-push-u8! (&mut out) image.fixed-fp-offset)
+          (compiler-sframe-v3-push-u8! (&mut out) image.fixed-ra-offset)
+          (compiler-sframe-v3-push-u8! (&mut out) 0)
+          (compiler-sframe-v3-push-u32! (&mut out) plan.function-count)
+          (compiler-sframe-v3-push-u32! (&mut out) plan.row-count)
+          (compiler-sframe-v3-push-u32! (&mut out) plan.fre-bytes)
+          (compiler-sframe-v3-push-u32! (&mut out) 0)
+          (compiler-sframe-v3-push-u32!
+            (&mut out)
+            (* plan.function-count compiler-sframe-v3-index-size))
+          ;; Index entries.  Planning each row again is bounded by max-work
+          ;; and avoids mutable layout metadata in the caller's records.
+          (while (< function-index plan.function-count)
+            (let
+              [function : (& image CompilerSframeV3Function)
+                (& (array-ref image.functions function-index))]
+              [index-offset : i64
+                (+
+                  compiler-sframe-v3-header-size
+                  (* function-index compiler-sframe-v3-index-size))]
+              (begin
+                (when
+                  (not
+                    (compiler-sframe-v3-safe-add? section-address index-offset))
+                  (return
+                    (ResultCompilerSframeV3Bytes.Err
+                      (compiler-sframe-v3-error
+                        compiler-sframe-v3-error-address
+                        index-offset
+                        "sframe v3: encoded index address overflows"))))
+                (let
+                  [field-address : i64 (+ section-address index-offset)]
+                  [raw-start : i64 (- function.start-address field-address)]
+                  (begin
+                    (when
+                      (not (compiler-sframe-v3-safe-address? raw-start))
+                      (return
+                        (ResultCompilerSframeV3Bytes.Err
+                          (compiler-sframe-v3-error
+                            compiler-sframe-v3-error-address
+                            index-offset
+                            "sframe v3: field-PC-relative start does not fit i64"))))
+                    (compiler-sframe-v3-push-i64! (&mut out) raw-start)))
+                (compiler-sframe-v3-push-u32! (&mut out) function.size)
+                (compiler-sframe-v3-push-u32! (&mut out) fre-cursor)
+                (let
+                  [row-index : i64 0]
+                  [start-width : i64
+                    (compiler-sframe-v3-row-start-width function.size)]
+                  (begin
+                    (set!
+                      fre-cursor
+                      (+ fre-cursor compiler-sframe-v3-attribute-size))
+                    (while (< row-index function.row-count)
+                      (let
+                        [row : (& image CompilerSframeV3Row)
+                          (&
+                            (array-ref
+                              image.rows
+                              (+ function.row-start row-index)))]
                         (let
-                          [row : (& image CompilerSframeV3Row)
-                            (&
-                              (array-ref
-                                image.rows
-                                (+ function.row-start row-index)))]
-                          (match (compiler-sframe-v3-row-plan
+                          [row-plan
+                            (try
+                              (compiler-sframe-v3-row-plan
+                                row
+                                function.flex?
+                                image.fixed-fp-offset
+                                image.fixed-ra-offset
+                                start-width))]
+                          (set! fre-cursor (+ fre-cursor row-plan.encoded-size)))
+                        (set! row-index (+ row-index 1)))))
+                  (set! function-index (+ function-index 1))))))
+          ;; Function attributes and rows.
+          (set! function-index 0)
+          (while (< function-index plan.function-count)
+            (let
+              [function : (& image CompilerSframeV3Function)
+                (& (array-ref image.functions function-index))]
+              [start-width : i64
+                (compiler-sframe-v3-row-start-width function.size)]
+              [fre-type : i64
+                (compiler-sframe-v3-type-for-width
+                  (compiler-sframe-v3-row-start-width function.size))]
+              [row-index : i64 0]
+              (begin
+                (compiler-sframe-v3-push-u16! (&mut out) function.row-count)
+                (compiler-sframe-v3-push-u8!
+                  (&mut out)
+                  (+
+                    fre-type
+                    (+
+                      (if function.mask-pc?
+                        16
+                        0)
+                      (if function.signal-frame?
+                        128
+                        0))))
+                (compiler-sframe-v3-push-u8!
+                  (&mut out)
+                  (if function.flex?
+                    1
+                    0))
+                (compiler-sframe-v3-push-u8!
+                  (&mut out)
+                  function.repetition-size)
+                (while (< row-index function.row-count)
+                  (let
+                    [row : (& image CompilerSframeV3Row)
+                      (&
+                        (array-ref image.rows (+ function.row-start row-index)))]
+                    (let
+                      [_
+                        (try
+                          (compiler-sframe-v3-write-row!
+                            (&mut out)
                             row
                             function.flex?
                             image.fixed-fp-offset
                             image.fixed-ra-offset
-                            start-width)
-                            [(ResultCompilerSframeV3RowPlan.Err error)
-                              (return (ResultCompilerSframeV3Bytes.Err error))]
-                            [(ResultCompilerSframeV3RowPlan.Ok row-plan)
-                              (set!
-                                fre-cursor
-                                (+ fre-cursor row-plan.encoded-size))])
-                          (set! row-index (+ row-index 1)))))
-                    (set! function-index (+ function-index 1))))))
-            ;; Function attributes and rows.
-            (set! function-index 0)
-            (while (< function-index plan.function-count)
-              (let
-                [function : (& image CompilerSframeV3Function)
-                  (& (array-ref image.functions function-index))]
-                [start-width : i64
-                  (compiler-sframe-v3-row-start-width function.size)]
-                [fre-type : i64
-                  (compiler-sframe-v3-type-for-width
-                    (compiler-sframe-v3-row-start-width function.size))]
-                [row-index : i64 0]
-                (begin
-                  (compiler-sframe-v3-push-u16! (&mut out) function.row-count)
-                  (compiler-sframe-v3-push-u8!
-                    (&mut out)
-                    (+
-                      fre-type
-                      (+
-                        (if function.mask-pc?
-                          16
-                          0)
-                        (if function.signal-frame?
-                          128
-                          0))))
-                  (compiler-sframe-v3-push-u8!
-                    (&mut out)
-                    (if function.flex?
-                      1
-                      0))
-                  (compiler-sframe-v3-push-u8!
-                    (&mut out)
-                    function.repetition-size)
-                  (while (< row-index function.row-count)
-                    (let
-                      [row : (& image CompilerSframeV3Row)
-                        (&
-                          (array-ref
-                            image.rows
-                            (+ function.row-start row-index)))]
-                      (match (compiler-sframe-v3-write-row!
-                        (&mut out)
-                        row
-                        function.flex?
-                        image.fixed-fp-offset
-                        image.fixed-ra-offset
-                        start-width)
-                        [(ResultCompilerSframeV3RowPlan.Err error)
-                          (return (ResultCompilerSframeV3Bytes.Err error))]
-                        [(ResultCompilerSframeV3RowPlan.Ok _) unit])
-                      (set! row-index (+ row-index 1))))
-                  (set! function-index (+ function-index 1)))))
-            (if (!=
-              (byte_buf_core.byte-buf-builder-len (& out))
-              plan.total-bytes)
-              (ResultCompilerSframeV3Bytes.Err
-                (compiler-sframe-v3-error
-                  compiler-sframe-v3-error-layout
-                  -1
-                  "sframe v3: internal encoder size-plan mismatch"))
-              (ResultCompilerSframeV3Bytes.Ok
-                (byte_buf_core.byte-buf-builder-finish-array (& out)))))))]))
+                            start-width))]
+                      unit)
+                    (set! row-index (+ row-index 1))))
+                (set! function-index (+ function-index 1)))))
+          (if (!= (byte_buf_core.byte-buf-builder-len (& out)) plan.total-bytes)
+            (ResultCompilerSframeV3Bytes.Err
+              (compiler-sframe-v3-error
+                compiler-sframe-v3-error-layout
+                -1
+                "sframe v3: internal encoder size-plan mismatch"))
+            (ResultCompilerSframeV3Bytes.Ok
+              (byte_buf_core.byte-buf-builder-finish-array (& out)))))))))
 
 ;: Find the semantic row for an absolute PC.  MASK lookup first subtracts the
 ;; relocated function start and then applies general modulo, including for

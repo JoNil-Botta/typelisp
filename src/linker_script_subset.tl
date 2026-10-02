@@ -962,12 +962,11 @@
   [source : (& s str)]
   [parser : (&mut p Parser)]
   [keyword : (& k Token)]) : ResultCommand
-  (match (parse-name source parser keyword)
-    [(ResultName.Err error) (ResultCommand.Err error)]
-    [(ResultName.Ok name)
-      (if (accept? parser false)
-        (ResultCommand.Ok (LinkerScriptCommand.SearchDir name))
-        (ResultCommand.Err (close-error source parser keyword)))]))
+  (let
+    [name (try (parse-name source parser keyword))]
+    (if (accept? parser false)
+      (ResultCommand.Ok (LinkerScriptCommand.SearchDir name))
+      (ResultCommand.Err (close-error source parser keyword)))))
 
 ;; The diagnostic for a top-level word that is not one of the subset's commands.
 (define (refused-word-error
@@ -1157,6 +1156,6 @@
             " bytes exceeds "
             (string.int->string limits.max-bytes))))]
     [else
-      (match (tokenize source data limits)
-        [(ResultTokens.Err error) (ResultLinkerScript.Err error)]
-        [(ResultTokens.Ok tokens) (parse-tokens source tokens limits)])]))
+      (let
+        [tokens (try (tokenize source data limits))]
+        (parse-tokens source tokens limits))]))

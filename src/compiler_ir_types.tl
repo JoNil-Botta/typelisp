@@ -4871,24 +4871,6 @@
   [caller : i64]
   [blocks : CompilerIrBlockList]) : String
   (match blocks
-    [(CompilerIrBlockList.Nil) ""]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (let
-            [problem : String
-              (compiler-ir-spmd-private-instr-seq-error
-                functions
-                private-index
-                caller
-                instrs)]
-            (if (> (string.string-length problem) 0)
-              problem
-              (compiler-ir-spmd-private-block-list-error
-                functions
-                private-index
-                caller
-                (deref rest))))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [problem : String ""]
@@ -5587,11 +5569,8 @@
   [rest : CompilerIrBlockList]) : CompilerIrBlockList
   (CompilerIrBlockList.Cons block (box rest)))
 
-(define (compiler-ir-block-list-count-cons [blocks : CompilerIrBlockList]) : i64
+(define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count-cons (deref rest)))]
     [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-fill-array
@@ -5599,11 +5578,6 @@
   [slots : (&mut slots (__tl_dyn-array CompilerIrBlock))]
   [index : i64]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (begin
-        (set! (array-ref slots index) block)
-        (compiler-ir-block-list-fill-array (deref rest) slots (+ index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -5620,14 +5594,6 @@
   [slots : (&mut slots (__tl_dyn-array CompilerIrBlock))]
   [index : i64]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (begin
-        (set! (array-ref slots index) block)
-        (compiler-ir-block-list-fill-array-reversed
-          (deref rest)
-          slots
-          (- index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -5640,11 +5606,10 @@
             (set! write (- write 1))
             (set! i (+ i 1)))))]))
 
-(define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
+(define (compiler-ir-block-list-seq [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64
-      (compiler-ir-block-list-count-cons
-        (compiler-ir-global-shared-view blocks))]
+      (compiler-ir-block-list-count (compiler-ir-global-shared-view blocks))]
     [slots : (__tl_dyn-array CompilerIrBlock)
       (__tl_make-array CompilerIrBlock count)]
     (begin
@@ -5655,8 +5620,7 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64
-      (compiler-ir-block-list-count-cons
-        (compiler-ir-global-shared-view blocks))]
+      (compiler-ir-block-list-count (compiler-ir-global-shared-view blocks))]
     [slots : (__tl_dyn-array CompilerIrBlock)
       (__tl_make-array CompilerIrBlock count)]
     (begin
@@ -5688,7 +5652,7 @@
   (compiler-ir-block-seq-to-list-rev
     blocks.slots
     (- blocks.len 1)
-    CompilerIrBlockList.Nil))
+    (compiler-ir-block-list-empty)))
 
 (defmacro (compiler-ir-block-seq-count [blocks : Expr]) : Expr
   `(__tl-project-field-name ,blocks "len"))
@@ -5699,26 +5663,17 @@
     (__tl-project-field-name ,blocks "slots")
     ,index))
 
-(define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define [blocks : CompilerIrBlockList] : CompilerIrBlockList
   (match (compiler-ir-global-shared-view blocks)
     [(CompilerIrBlockList.Array seq) (compiler-ir-block-seq-to-list seq)]
     [_ blocks]))
-
-(define (compiler-ir-block-list-compact [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define [blocks : CompilerIrBlockList] : CompilerIrBlockList
   (match (compiler-ir-global-shared-view blocks)
-    [(CompilerIrBlockList.Array _) blocks]
-    [_ (CompilerIrBlockList.Array (compiler-ir-block-seq-from-list blocks))]))
-
-(define (compiler-ir-function-compact-blocks [func : CompilerIrFunction]) : CompilerIrFunction
+    [(CompilerIrBlockList.Array _) blocks]))
+(define [func : CompilerIrFunction] : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret vars blocks function-abi)
-      (CompilerIrFunction.Function
-        name
-        params
-        ret
-        vars
-        (compiler-ir-block-list-compact blocks)
-        function-abi)]))
+      (CompilerIrFunction.Function name params ret vars blocks function-abi)]))
 
 (define (compiler-ir-param-seq-empty) : CompilerIrParamSeq
   (CompilerIrParamSeq (__tl_make-array CompilerIrParam 0) 0))
@@ -5936,11 +5891,6 @@
   [builder : (&mut builder CompilerIrBlockBuilder)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (begin
-        (compiler-ir-block-builder-push! builder block)
-        (compiler-ir-block-builder-append-list! builder (deref rest)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -6444,12 +6394,6 @@
   [blocks : CompilerIrBlockList]
   [acc : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
-    [(CompilerIrBlockList.Nil) acc]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-clone-block-list-acc
-        pools
-        (deref rest)
-        (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
     ;; Same forward order the cons walk used, so the accumulated (reversed)
     ;; result is unchanged (refs #5729).
     [(CompilerIrBlockList.Array seq)
@@ -6470,26 +6414,29 @@
               (set! index (+ index 1))))
           out))]))
 
-(define (compiler-ir-block-list-reverse-onto
-  [blocks : CompilerIrBlockList]
-  [acc : CompilerIrBlockList]) : CompilerIrBlockList
+(define (compiler-ir-block-list-reverse-onto!
+  [out : (&mut out CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice CompilerIrBlock))]
+  [acc : CompilerIrBlockList]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) acc]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-block-list-reverse-onto
-        (deref rest)
-        (compiler-ir-block-cons block acc))]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-reverse-onto
-        (compiler-ir-block-seq-to-list seq)
-        acc)]))
+    [(slice) (compiler-ir-block-builder-append-list! out acc)]
+    [(slice block & rest)
+      (compiler-ir-block-list-reverse-onto!
+        out
+        rest
+        (compiler-ir-block-cons
+          (owned_view.compiler-owned-reference-shared-view block)
+          acc))]))
 
 (define (compiler-ir-clone-block-list
   [pools : ast.AstNodePoolContext]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (compiler-ir-block-list-reverse-onto
-    (compiler-ir-clone-block-list-acc pools blocks CompilerIrBlockList.Nil)
-    CompilerIrBlockList.Nil))
+    (compiler-ir-clone-block-list-acc
+      pools
+      blocks
+      (compiler-ir-block-list-empty))
+    (compiler-ir-block-list-empty)))
 
 (define (compiler-ir-clone-param
   [pools : ast.AstNodePoolContext]
@@ -6529,8 +6476,7 @@
         (compiler-ir-clone-param-seq pools params)
         (compiler-ir-clone-type pools ret)
         vars
-        (compiler-ir-block-list-compact
-          (compiler-ir-clone-block-list pools blocks))
+        (compiler-ir-clone-block-list pools blocks)
         (compiler-ir-clone-function-abi pools function-abi))]))
 
 (define (compiler-ir-clone-function-seq
@@ -7958,7 +7904,7 @@
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
   [blocks : CompilerIrBlockList]) : text_buf.TextBuf
-  (match (compiler-ir-block-list-force-cons blocks)
+  (match blocks
     [(CompilerIrBlockList.Nil) buf]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-render-into
@@ -7970,8 +7916,7 @@
       (compiler-ir-block-list-render-into
         structural-session
         type-segment-bases
-        (match (compiler-ir-block-list-force-cons
-          (compiler-ir-box-shared-view rest))
+        (match (compiler-ir-box-shared-view rest)
           [(CompilerIrBlockList.Nil)
             (text_buf.append
               buf
@@ -9419,75 +9364,57 @@
 
 (define (compiler-ir-block-list-count [blocks : (& blocks CompilerIrBlockList)]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count (deref (deref rest))))]
     [(CompilerIrBlockList.Array seq) seq.len]))
 
-(define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
+(define (compiler-ir-block-list-empty-count
+  [blocks : (& blocks (Slice CompilerIrBlock))]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(CompilerIrBlock.Block _ instrs)
           (+
             (if (= (compiler-ir-instr-seq-count instrs) 0)
               1
               0)
-            (compiler-ir-block-list-empty-count (deref rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-empty-count (compiler-ir-block-seq-to-list seq))]))
+            (compiler-ir-block-list-empty-count rest))])]))
 
 (define (compiler-ir-block-list-max-instruction-count
-  [blocks : CompilerIrBlockList]) : i64
+  [blocks : (& blocks (Slice CompilerIrBlock))]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(CompilerIrBlock.Block _ instrs)
           (compiler-ir-max-i64
             (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-max-instruction-count (deref rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-max-instruction-count
-        (compiler-ir-block-seq-to-list seq))]))
+            (compiler-ir-block-list-max-instruction-count rest))])]))
 
-(define (compiler-ir-block-list-call-arg-count [blocks : CompilerIrBlockList]) : i64
+(define (compiler-ir-block-list-call-arg-count
+  [blocks : (& blocks (Slice CompilerIrBlock))]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-ir-instr-seq-call-arg-count instrs)
-            (compiler-ir-block-list-call-arg-count (deref rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-call-arg-count
-        (compiler-ir-block-seq-to-list seq))]))
+            (compiler-ir-block-list-call-arg-count rest))])]))
 
-(define (compiler-ir-block-list-phi-input-count [blocks : CompilerIrBlockList]) : i64
+(define (compiler-ir-block-list-phi-input-count
+  [blocks : (& blocks (Slice CompilerIrBlock))]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-ir-instr-seq-phi-input-count instrs)
-            (compiler-ir-block-list-phi-input-count (deref rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-phi-input-count
-        (compiler-ir-block-seq-to-list seq))]))
+            (compiler-ir-block-list-phi-input-count rest))])]))
 
 (define (compiler-ir-block-list-instruction-count
   [blocks : CompilerIrBlockList]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (+
-            (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-instruction-count (deref rest)))])]
     ;; Read-only: scan the sequence instead of materialising a block cons
     ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
@@ -9517,7 +9444,7 @@
 (define (compiler-ir-function-empty-block-count [func : CompilerIrFunction]) : i64
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks _)
-      (compiler-ir-block-list-empty-count blocks)]))
+      (compiler-ir-block-list-empty-count (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-max-instruction-count [func : CompilerIrFunction]) : i64
   (match func
@@ -9528,17 +9455,20 @@
   [func : CompilerIrFunction]) : i64
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks _)
-      (compiler-ir-block-list-max-instruction-count blocks)]))
+      (compiler-ir-block-list-max-instruction-count
+        (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-call-arg-count [func : CompilerIrFunction]) : i64
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks _)
-      (compiler-ir-block-list-call-arg-count blocks)]))
+      (compiler-ir-block-list-call-arg-count
+        (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-phi-input-count [func : CompilerIrFunction]) : i64
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks _)
-      (compiler-ir-block-list-phi-input-count blocks)]))
+      (compiler-ir-block-list-phi-input-count
+        (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-var-count [func : CompilerIrFunction]) : i64
   (match func
@@ -10095,13 +10025,6 @@
   [blocks : CompilerIrBlockList]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-ir-representation-instr-types! instrs types)
-            (compiler-ir-representation-block-types! (deref rest) types))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10300,19 +10223,6 @@
   [types : CompilerIrRepresentationVarTypes]
   [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
   (match blocks
-    [(CompilerIrBlockList.Nil) index]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (compiler-ir-representation-collect-group-blocks
-            type-segment-bases
-            (compiler-ir-representation-collect-group-instrs
-              type-segment-bases
-              index
-              (compiler-ir-global-shared-view types)
-              instrs)
-            types
-            (deref rest))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-representation-collect-group-block-seq-from
         type-segment-bases
@@ -10615,17 +10525,6 @@
   [index : CompilerIrRepresentationIndex]
   [blocks : CompilerIrBlockList]) : CompilerIrRepresentationIndex
   (match blocks
-    [(CompilerIrBlockList.Nil) index]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (compiler-ir-representation-collect-one-blocks
-            type-segment-bases
-            (compiler-ir-representation-collect-one-instrs
-              type-segment-bases
-              index
-              instrs)
-            (deref rest))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-representation-collect-one-block-seq-from
         type-segment-bases

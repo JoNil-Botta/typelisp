@@ -51,7 +51,7 @@
       (if (= storage 0)
         (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots n))
         (let
-          [tail : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
+          [tail : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
           [k : i64 n]
           (begin
             (when
@@ -119,7 +119,7 @@
       (let
         [old
           (opt.opt-bce-mb-wire-vars-blocks
-            (opt.compiler-opt-global-shared-view bs)
+            (ir.compiler-ir-block-list-view bs)
             uses
             (seed))]
         [new (opt.opt-bce-mb-body-defs-used defs bs uses (seed))]

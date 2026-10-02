@@ -1150,7 +1150,7 @@
     (let
       [first : ir.CompilerIrBlock (ir-text-block! doc)]
       (ir.compiler-ir-block-cons first (ir-text-blocks! doc)))
-    (ir.CompilerIrBlockList.Nil)))
+    (ir.compiler-ir-block-list-empty)))
 
 ;; `name=%var:type`, comma separated, up to the closing `close`.
 (define (ir-text-count-from

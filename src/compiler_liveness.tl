@@ -2498,8 +2498,7 @@
 ;; Avoids linked-list allocation overhead in the hot self-compile path.
 (define (compiler-live-ir-block-list-to-seq [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockSeq
   (match (compiler-live-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array seq) seq]
-    [_ (ir.compiler-ir-block-seq-from-list blocks)]))
+    [(ir.CompilerIrBlockList.Array seq) seq]))
 
 (define (compiler-live-build-block-array-with
   [blocks : (& blocks ir.CompilerIrBlockSeq)]

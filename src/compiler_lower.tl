@@ -24707,83 +24707,128 @@
             variant-id))
         fallback))))
 
+;; Run the active exits, then return the already-built result value.
+(define (lower-return-after-exits
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]) : ResultLowerState
+  (let
+    [exit-state : LowerState
+      (try (lower-emit-active-exits ctx state env type-env))]
+    (ResultLowerState.Ok
+      (lower-state-emit
+        exit-state
+        (ir.CompilerIrInstr.Return (lower-return-maybe value ret-ty))))))
+
+;; The error exit of `try` returns the enclosing function's Err variant the way
+;; a returned constructor does: written straight into the hidden sret slot when
+;; the enum is returned in memory, otherwise built as the value the return ABI
+;; carries (the register group of a 16-byte enum). As with `return`, the value
+;; is complete before the active exits run, so no scope reset can clobber the
+;; payload it is copied from.
 (define (lower-return-result-err
   [ctx : tc_core.TcContext]
   [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [return-info : tc_core.TcResultInfo]
   [payload : ir.CompilerIrValue]) : ResultLowerState
   (let
-    [enum-name-id : i64
+    [enum-id : i64
       (tc_core.tc-result-info-enum-id (lower-global-shared-view return-info))]
-    [enum-name : String (tc_core.tc-nominal-name-id-display enum-name-id)]
+    [enum-name : String (tc_core.tc-nominal-name-id-display enum-id)]
     [err-id : i64
       (tc_core.tc-result-info-err-id (lower-global-shared-view return-info))]
     [err-name : String
       (tc_core.tc-qualified-variant-name
         (lower-global-shared-view enum-name)
         (tc_core.tc-env-key-name-text err-id))]
-    [err-ty : ast.AstType
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-result-info-err-type (lower-global-shared-view return-info)))]
     [handle : i64
       (lower-result-info-variant-handle-or
         ctx
         return-info
         err-id
         (csym.compiler-symbols-missing-handle))]
+    [ret-ty : ast.AstType (ast.AstType.Enum enum-id)]
+    [sret-var : i64 (lower-current-sret-var state env)]
     (if (csym.compiler-symbols-handle-found? handle)
-      (match (let
-        [size (lower-enum-storage-size ctx enum-name-id enum-name)]
-        [ty (ast.AstType.Enum enum-name-id)]
-        (lower-reserve-heap-storage state size ty))
-        [(LowerExpr.Expr base-state base _)
+      (match (csym.compiler-registries-variant-fields-indexed
+        (tc_core.tc-context-symbols ctx)
+        handle)
+        [(parser.ResultAstTypeList.Ok fields)
           (let
-            [tag-state : LowerState
-              (lower-store-at-offset
-                base-state
-                base
-                0
-                (ir.CompilerIrValue.I64
-                  (csym.compiler-registry-handle-child-index handle))
-                (ast.AstType.I64))]
-            [payload-state : LowerState
-              (match (lower-global-shared-view err-ty)
-                [(ast.AstType.Unit) tag-state]
-                ;; An inline struct/enum err payload must be
-                ;; byte-copied into the err slot, not scalar-stored.
-                [_
-                  (lower-store-inline-value-at-offset
-                    ctx
-                    tag-state
-                    base
-                    8
-                    payload
-                    (lower-global-shared-view err-ty)
-                    (lower-type-size ctx err-ty))])]
-            [ret-ty : ast.AstType (ast.AstType.Enum enum-name-id)]
-            ;; When the function's result enum is register-resident
-            ;; the caller reads the return value from registers, so load
-            ;; the constructed enum back out of the buffer (word or
-            ;; 2-word group) instead of returning the buffer pointer.
-            (if (lower-type-register-resident?
-              ctx
-              (lower-global-shared-view ret-ty))
-              (match (lower-load-inline-value-at-offset
+            [field-types : ast.AstTypeList
+              (lower-variant-payload-fields-for-handle
                 ctx
-                payload-state
-                base
-                0
+                handle
+                (lower-global-shared-view ret-ty)
+                fields)]
+            ;; An option family's absence variant carries no payload.
+            [values : ir.CompilerIrValueSeq
+              (if (ast.ast-type-list-empty? (& field-types))
+                (ir.compiler-ir-value-seq-empty)
+                (ir.compiler-ir-value-seq1 payload))]
+            (if (and
+              (>= sret-var 0)
+              (lower-inline-aggregate-abi-copy-needed?
+                ctx
+                (lower-global-shared-view ret-ty)))
+              (let
+                [built : LowerState
+                  (try
+                    (lower-construct-enum-inline-into-from-values
+                      ctx
+                      state
+                      (ir.CompilerIrValue.Var sret-var)
+                      err-name
+                      handle
+                      values
+                      field-types
+                      enum-id
+                      enum-name))]
+                (lower-return-after-exits
+                  ctx
+                  built
+                  env
+                  type-env
+                  (ir.CompilerIrValue.Var sret-var)
+                  ret-ty))
+              (match (lower-construct-enum-inline-from-values
+                ctx
+                state
+                err-name
+                handle
+                values
+                field-types
+                enum-name
                 (lower-global-shared-view ret-ty))
-                [(LowerExpr.Expr loaded-state loaded _)
-                  (ResultLowerState.Ok
-                    (lower-state-emit
-                      loaded-state
-                      (ir.CompilerIrInstr.Return
-                        (lower-return-maybe loaded ret-ty))))])
-              (ResultLowerState.Ok
-                (lower-state-emit
-                  payload-state
-                  (ir.CompilerIrInstr.Return (lower-return-maybe base ret-ty))))))])
+                [(ResultLowerExpr.Ok built)
+                  (match built
+                    [(LowerExpr.Expr built-state value _)
+                      (match (lower-prepare-internal-return-value
+                        ctx
+                        built-state
+                        env
+                        value
+                        (lower-global-shared-view ret-ty))
+                        [(ResultLowerExpr.Ok prepared)
+                          (match prepared
+                            [(LowerExpr.Expr ret-state ret-value _)
+                              (lower-return-after-exits
+                                ctx
+                                ret-state
+                                env
+                                type-env
+                                ret-value
+                                ret-ty)])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerState.Err message)])])]
+                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))]
+        [(parser.ResultAstTypeList.Err message)
+          (ResultLowerState.Err (box (lower-diagnostic message)))])
       (ResultLowerState.Err
         (box
           (lower-diagnostic
@@ -24832,13 +24877,13 @@
       (tc_core.tc-result-info-err-type (lower-global-shared-view operand-info)))
       [(LowerExpr.Expr err-payload-state err-payload _)
         (let
-          [cleanup-state : LowerState
-            (try (lower-emit-active-exits ctx err-payload-state env type-env))]
           [returned-state : LowerState
             (try
               (lower-return-result-err
                 ctx
-                cleanup-state
+                err-payload-state
+                env
+                type-env
                 return-info
                 err-payload))]
           [ok-start : LowerState

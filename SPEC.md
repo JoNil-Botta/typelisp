@@ -8913,20 +8913,29 @@ checker.
 Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
 `?` or Zig `try`, but it operates on concrete option/result families rather
 than generic traits or implicit conversions. A convention-compatible concrete
-family is a concrete enum with exactly one `Ok*` payload variant and one
-`Err*` payload variant (result-like), or exactly one `Some*` payload variant
-and one `None*` absence variant (option-like).
+family is a concrete enum with exactly two variants: an `Ok*` variant and an
+`Err*` variant with exactly one payload (result-like), or a `Some*` variant
+with one payload and a `None*` variant with none (option-like). The `Ok*`
+variant of a `try` operand has at most one payload, since that payload is the
+value `try` yields.
 
 - For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
-  success variant it unwraps and yields the success payload. On the error
-  variant it returns from the enclosing function with the compatible error
-  variant carrying the same error payload.
+  success variant it unwraps and yields the success payload, or `unit` when
+  the `Ok*` variant has no payload. On the error variant it returns from the
+  enclosing function with that function's `Err*` variant carrying the same
+  error payload. Like `return`, the early exit runs the active `with`
+  cleanups and `with-arena` resets first.
 - For an absence-only option, `(try expr)` unwraps `Some`/`Some*` and returns
   the enclosing compatible `None`/`None*` on absence.
-- Compatibility is exact-family compatibility. There is no trait-like `From`
-  conversion, no cross-family conversion, and no implicit option-to-result
-  conversion; conversions between families are written as explicit helper
-  functions.
+- Two result-like families are compatible when their `Err*` payload types are
+  equal; the families themselves may differ. A function returning a
+  `ResultBool` with an `ErrBool String` variant can `(try ...)` a
+  `ResultI64` with an `ErrI64 String` variant. The enclosing family is only
+  built through its `Err*` variant, so its `Ok*` variant may carry any
+  payloads or none. Any two option-like families are compatible. The error
+  payload is passed on unchanged: there is no trait-like `From` conversion of
+  the payload and no implicit option-to-result conversion; those are written
+  as explicit helper functions or matches.
 - `(try expr)` is valid only inside an enclosing function whose return type
   is a compatible generated family or convention-compatible concrete family.
 - `(try expr)` is rejected inside `foreach`/SPMD bodies because its
@@ -8951,6 +8960,51 @@ and one `None*` absence variant (option-like).
 (define (read-plus-one [text : String]) : ResultI64
   (let [value : i64 (try (read-small text))]
     (OkI64 (+ value 1))))
+```
+
+The three families below share the `String` error payload, so each `try`
+propagates into `RangeResult`. `CheckResult` has a payload-free `Ok*`
+variant, so its `try` yields `unit`.
+
+```lisp test=compile name=result-try-cross-family
+(import stdlib.string)
+
+(defenum ParseResult
+  (OkParse i64)
+  (ErrParse String))
+
+(defenum CheckResult
+  (OkCheck)
+  (ErrCheck String))
+
+(defenum RangeResult
+  (OkRange bool)
+  (ErrRange String))
+
+(define (parse [text : String]) : ParseResult
+  (if (string.eq text "7")
+    (OkParse 7)
+    (ErrParse "not a number")))
+
+(define (check-small [n : i64]) : CheckResult
+  (if (< n 10)
+    OkCheck
+    (ErrCheck "too large")))
+
+(define (positive-small [text : String]) : RangeResult
+  (let
+    [n : i64 (try (parse text))]
+    (begin
+      (try (check-small n))
+      (OkRange (> n 0)))))
+
+(define (main) : i64
+  (match (positive-small "7")
+    [(OkRange positive)
+      (if positive
+        1
+        0)]
+    [(ErrRange message) (string.string-length message)]))
 ```
 
 Propagation into an incompatible family is rejected: a function returning a

@@ -1034,7 +1034,8 @@
   (BracketClause AstExprList)
   ;; Narrow Result-like propagation form `(try expr)`. The
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
-  ;; variant, each carrying exactly one payload.
+  ;; variant; the `Err*` variant carries exactly one payload and an operand's
+  ;; `Ok*` variant at most one.
   (Try i64)
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.

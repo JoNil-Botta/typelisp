@@ -159,7 +159,8 @@ pure safe TypeLisp — no `unsafe`, `extern`, or host I/O — bounded by
 deterministic fuel. Write hand-authored monomorphic declarations (such as a
 domain-specific `Result*` enum) when a generated family has not been
 requested; `(try expr)` is the propagation form over compatible concrete
-Result-like enums.
+Result-like enums, which may be different families as long as their `Err*`
+payload types are equal (SPEC.md section 9).
 
 ### Top-level forms
 

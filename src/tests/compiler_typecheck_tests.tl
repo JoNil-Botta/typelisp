@@ -3680,6 +3680,24 @@
 (define (main) : i64
   (try (read)))"
       "typecheck: try operand must be Result-like enum")
+    ;; A payload-free Ok yields unit, and the enclosing family's Ok may carry
+    ;; no payload or several; an operand's Ok still carries at most one.
+    (compiler-typecheck-ok?
+      "(defenum TryCheck (OkCheck) (ErrCheck i64))
+(defenum TryPair (OkPair i64 bool) (ErrPair i64))
+(define (check [flag : bool]) : TryCheck
+  (if flag OkCheck (ErrCheck 7)))
+(define (validate [flag : bool]) : TryCheck
+  (let [u : unit (try (check flag))] OkCheck))
+(define (main [flag : bool]) : TryPair
+  (begin (try (validate flag)) (OkPair 1 flag)))")
+    (compiler-typecheck-error-ok?
+      "(defenum TryPair (OkPair i64 bool) (ErrPair i64))
+(defenum TrySingle (OkSingle i64) (ErrSingle i64))
+(define (pair) : TryPair (OkPair 1 true))
+(define (main) : TrySingle
+  (OkSingle (try (pair))))"
+      "typecheck: try operand must be Result-like enum")
     (compiler-typecheck-ok?
       (compiler-typecheck-with-io-source
         "(import stdlib.result)

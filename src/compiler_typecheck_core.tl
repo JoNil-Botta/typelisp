@@ -51442,8 +51442,14 @@
         "typecheck: try requires Result-like variant with one payload "
         (ci.intern-str variant-name)))))
 
+;; `ok-value?` holds for a `try` operand, whose `Ok*` payload is the value the
+;; `try` yields: a payload-free `Ok*` yields `unit`, and more than one payload
+;; is rejected. The enclosing function's family is only ever built through its
+;; `Err*` variant, so its `Ok*` variant may carry any number of payloads; the
+;; recorded Ok type is then `unit`.
 (define (tc-result-info-build
   [ctx : TcContext]
+  [ok-value? : bool]
   [try-kind : TcTryKind]
   [enum-name : i64]
   [ok-name : i64]
@@ -51451,8 +51457,11 @@
   [err-name : i64]
   [err-fields : ast.AstTypeList]) : ResultTcResultInfo
   (let
+    [ok-count : i64 (ast.ast-type-list-len (& ok-fields))]
     [ok-ty : ast.AstType
-      (try (tc-result-variant-payload-type ctx ok-name ok-fields))]
+      (if (or (= ok-count 0) (and (> ok-count 1) (not ok-value?)))
+        (ast.AstType.Unit)
+        (try (tc-result-variant-payload-type ctx ok-name ok-fields)))]
     [err-ty : ast.AstType
       (try (tc-result-variant-payload-type ctx err-name err-fields))]
     (ResultTcResultInfo.Ok
@@ -51492,6 +51501,7 @@
 
 (define (tc-result-info-two-variants
   [ctx : TcContext]
+  [ok-value? : bool]
   [enum-name : i64]
   [first-name : i64]
   [first-fields : ast.AstTypeList]
@@ -51501,6 +51511,7 @@
     [(and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
       (tc-result-info-build
         ctx
+        ok-value?
         TcTryResult
         enum-name
         first-name
@@ -51510,6 +51521,7 @@
     [(and (tc-err-variant-name? first-name) (tc-ok-variant-name? second-name))
       (tc-result-info-build
         ctx
+        ok-value?
         TcTryResult
         enum-name
         second-name
@@ -51542,6 +51554,7 @@
 
 (define (tc-result-info-from-variants
   [ctx : TcContext]
+  [ok-value? : bool]
   [enum-name : i64]
   [variants : ast.AstVariantDefList]) : ResultTcResultInfo
   (if (= variants.len 2)
@@ -51562,6 +51575,7 @@
             [(ast.AstVariantDef.Def second-name second-fields _)
               (tc-result-info-two-variants
                 ctx
+                ok-value?
                 enum-name
                 first-name
                 first-fields
@@ -51570,7 +51584,7 @@
     (ResultTcResultInfo.Err
       "typecheck: try requires Result-like enum with exactly two variants")))
 
-(define (tc-result-info [ctx : TcContext] [ty : ast.AstType]) : ResultTcResultInfo
+(define (tc-result-info [ctx : TcContext] [ok-value? : bool] [ty : ast.AstType]) : ResultTcResultInfo
   (match (tc-type-strip-region ty)
     [(ast.AstType.Enum enum-name)
       (let
@@ -51579,7 +51593,7 @@
           (tc-context-with-nominal-owner-module-id ctx enum-name)]
         [variants : ast.AstVariantDefList
           (try (tc-context-enum-variants-id ctx enum-name enum-name-str))]
-        (tc-result-info-from-variants enum-ctx enum-name variants))]
+        (tc-result-info-from-variants enum-ctx ok-value? enum-name variants))]
     [(ast.AstType.EnumArgs enum-name _)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
@@ -51587,11 +51601,14 @@
           (tc-context-with-nominal-owner-module-id ctx enum-name)]
         [variants : ast.AstVariantDefList
           (try (tc-context-enum-variants-id ctx enum-name enum-name-str))]
-        (tc-result-info-from-variants enum-ctx enum-name variants))]
+        (tc-result-info-from-variants enum-ctx ok-value? enum-name variants))]
     [_ (ResultTcResultInfo.Err "typecheck: try requires Result-like enum")]))
 
-(define (tc-try-classify-carrier [ctx : TcContext] [ty : ast.AstType]) : TcTryCarrierClassification
-  (match (tc-result-info ctx ty)
+(define (tc-try-classify-carrier
+  [ctx : TcContext]
+  [ok-value? : bool]
+  [ty : ast.AstType]) : TcTryCarrierClassification
+  (match (tc-result-info ctx ok-value? ty)
     [(ResultTcResultInfo.Ok info) (TcTryCarrier info)]
     [(ResultTcResultInfo.Err message) (TcTryNotCarrier message)]))
 
@@ -51657,9 +51674,9 @@
   [early-exit : TcTryEarlyExitContext]) : TcTryQueryResult
   (let
     [operand : TcTryCarrierClassification
-      (tc-try-classify-carrier ctx operand-ty)]
+      (tc-try-classify-carrier ctx true operand-ty)]
     [enclosing-return : TcTryCarrierClassification
-      (tc-try-classify-carrier ctx return-ty)]
+      (tc-try-classify-carrier ctx false return-ty)]
     (match (tc-try-compatibility-for-classifications
       (tc-global-shared-view operand)
       (tc-global-shared-view enclosing-return)
@@ -58090,6 +58107,10 @@
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Return inner-box)
+      (let
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(ast.AstExpr.Try inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
@@ -71623,6 +71644,37 @@
                     moveds-box
                     scrut-breaks?
                     scrut-break-box))]))])]
+    ;; `try` either continues with its operand's value or leaves the function,
+    ;; so its operand keeps its own break, continue and return edges; the
+    ;; error exit checks the obligations of the operand's fallthrough state.
+    [(ast.AstExpr.Try inner-box)
+      (begin
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
+        (match (tc-move-check-loop-expr
+          ctx
+          expr-bases
+          env
+          (tc-global-shared-view locals)
+          loop-carried
+          outer-loop-carried
+          moved
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)
+          continuation-repeats
+          continuation-breaks)
+          [(TcMoveLoopResult.Ok normal? normal-box breaks? break-box)
+            (if normal?
+              (match (tc-move-check-obligations-exit
+                expr-bases
+                locals
+                -1
+                (tc-moved-set-box-shared-view normal-box)
+                (tc-global-shared-view expr)
+                "before this try can propagate an error")
+                [(TcMoveResult.Ok moved1)
+                  (TcMoveLoopResult.Ok true (box moved1) breaks? break-box)]
+                [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)])
+              (TcMoveLoopResult.Ok false normal-box breaks? break-box))]
+          [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)]))]
     [(ast.AstExpr.Return _)
       (match (tc-move-check-expr
         ctx
@@ -81338,6 +81390,18 @@
                         loop-env
                         borrowed
                         (tc-moved-set-box-shared-view break-box))))])])])]
+    ;; `try` continues with its operand's value or leaves the function, so the
+    ;; operand's own edges are the try's edges.
+    [(ast.AstExpr.Try inner-box)
+      (tc-borrow-check-loop-path-expr
+        ctx
+        expr-bases
+        env
+        loop-env
+        locals
+        borrowed
+        protected
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Return _)
       (match (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)
         [(TcBorrowCheckResult.Ok borrowed1)
@@ -106263,6 +106327,11 @@
       (match (macro-expand-node ctx env decls depth inner-box)
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok (ast.ast-expr-return ninner))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.Try inner-box)
+      (match (macro-expand-node ctx env decls depth inner-box)
+        [(ResultMacroExpr.Ok ninner)
+          (ResultMacroExpr.Ok (ast.ast-node-push (ast.AstExpr.Try ninner)))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.Set name rhs-box)
       (match (macro-expand-node ctx env decls depth rhs-box)

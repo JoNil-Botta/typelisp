@@ -121,6 +121,39 @@ file docs_bad.tl
 ;# (define (bad) : i64 true)
 ;# ```
 end-file
+file docs_generated_first.tl
+;# Instantiating a generated module in one example must not break the next
+;# example's use of it (#8580).
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64 0)
+;# ```
+;#
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ints)
+;# (define (main) : i64
+;#   (let
+;#     [xs : ints.Vec (ints.with-capacity 1)]
+;#     (begin
+;#       (ints.push! xs 42)
+;#       (ints.get (& xs) 0 0))))
+;# ```
+end-file
+file docs_generated_second.tl
+;# The same instance in a later file of the same run.
+;# ```typelisp
+;# (import stdlib.vector)
+;# (import (vector.vector i64) as ivec)
+;# (define (main) : i64
+;#   (let
+;#     [xs : ivec.Vec (ivec.with-capacity 1)]
+;#     (begin
+;#       (ivec.push! xs 7)
+;#       (ivec.get (& xs) 0 0))))
+;# ```
+end-file
 sh cp "{{work}}/docs.tl" "{{dir}}/docs.tl"
 step doc-test-pass
 run doc --test "{{dir}}/docs.tl"
@@ -148,6 +181,19 @@ run doc --test "{{dir}}/docs.tl" "{{dir}}/docs_second.tl"
 stderr empty
 stdout contains --- {{native-dir}}/docs.tl
 stdout contains --- {{native-dir}}/docs_second.tl
+stdout contains Doc tests passed: 2 example(s)
+stdout contains Doc tests passed: 1 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-generated-module-examples
+run doc --test "{{dir}}/docs_generated_first.tl"
+stderr empty
+stdout contains Doc tests passed: 2 example(s)
+test ! -d "{{dir}}/.typelisp-doctest"
+step doc-test-generated-module-files
+run doc --test "{{dir}}/docs_generated_first.tl" "{{dir}}/docs_generated_second.tl"
+stderr empty
+stdout contains --- {{native-dir}}/docs_generated_first.tl
+stdout contains --- {{native-dir}}/docs_generated_second.tl
 stdout contains Doc tests passed: 2 example(s)
 stdout contains Doc tests passed: 1 example(s)
 test ! -d "{{dir}}/.typelisp-doctest"

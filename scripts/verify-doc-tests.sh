@@ -131,6 +131,16 @@ if "$COMPILER" doc --test --batch "$DISCOVERED" --stdlib-root "$ROOT/stdlib" \
 else
     echo "[doc-tests] batched run failed; probing files one by one" >&2
     run_doc_tests_per_file
+    # The probe exits on the first file that fails alone. Reaching here means
+    # every file passes alone, so the failure is batch-only, such as state one
+    # file's examples leave behind for the next (#8580). The probe only locates
+    # failures; it must not turn a batch failure into a pass.
+    echo "doc test verification failed: the batched run failed, but every file passes on its own (a batch-only failure)" >&2
+    echo "batched stdout:" >&2
+    sed 's/^/  /' "$BATCH_STDOUT" >&2 || true
+    echo "batched stderr:" >&2
+    sed 's/^/  /' "$BATCH_STDERR" >&2 || true
+    exit 1
 fi
 
 echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"

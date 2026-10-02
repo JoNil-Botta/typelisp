@@ -10613,7 +10613,38 @@
       "typecheck: if branches must match")
       unit
       (io.panic "typecheck: branch mismatch diagnostic test failed"))
+    (if (compiler-typecheck-if-literal-branch-tests-ok?)
+      unit
+      (io.panic "typecheck: if literal branch context test failed"))
     unit))
+
+;; Without an expected type, an integer literal branch adopts the other
+;; branch's type; values of different types still do not merge.
+(define (compiler-typecheck-if-literal-branch-source [body : String]) : String
+  (str_cat.str-cat
+    "(define (wide) : i64 2)
+(define (narrow) : i32 2)
+(define (main) : i64
+"
+    body
+    ")"))
+
+(define (compiler-typecheck-if-literal-branch-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-if-literal-branch-source
+        "(if (< (if false 0 (wide)) 3) 7 9)"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-if-literal-branch-source
+        "(let [x (if true (wide) -1)] x)"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-if-literal-branch-source
+        "(let [x (if false (narrow) (wide))] x)")
+      "typecheck: if branches must match")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-if-literal-branch-source
+        "(if (< (if false true 1) 2) 7 9)")
+      "typecheck: if branches must match")))
 
 (define (compiler-typecheck-self-test-models) : unit
   (begin

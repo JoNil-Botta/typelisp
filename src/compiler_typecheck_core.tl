@@ -27041,6 +27041,45 @@
           (cdiag.CompilerTypecheckKind.TypeMismatch)
           "typecheck: if branches must match"))]))
 
+;; Without an expected type, a branch that types only by context, such as an
+;; integer literal defaulting to i32, adopts the other branch's type, as match
+;; arms do (`tc-check-match-arm-types-from-first-at`).
+(define (tc-merge-if-branch-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [then-box : i64]
+  [else-box : i64]
+  [then-ty : ast.AstType]
+  [else-ty : ast.AstType]) : ResultTcType
+  (match (tc-merge-branch-type
+    ctx
+    env
+    (tc-global-shared-view then-ty)
+    (tc-global-shared-view else-ty))
+    [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+    [(ResultTcType.Err message)
+      (match (tc-if-branch-adopts-type ctx env then-box else-ty)
+        [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+        [(ResultTcType.Err _)
+          (match (tc-if-branch-adopts-type ctx env else-box then-ty)
+            [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+            [(ResultTcType.Err _) (ResultTcType.Err message)])])]))
+
+;; `branch` retyped with the other branch's type as its expected type.
+(define (tc-if-branch-adopts-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [branch-box : i64]
+  [other-ty : ast.AstType]) : ResultTcType
+  (match (tc-expr-with-expected-or-actual-id
+    ctx
+    env
+    branch-box
+    (tc-global-shared-view other-ty))
+    [(ResultTcType.Ok branch-ty)
+      (tc-merge-branch-type ctx env branch-ty other-ty)]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
 (define (tc-merge-branch-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -59350,7 +59389,13 @@
                 [(ResultTcType.Ok then-ty)
                   (match (tc-expr-id ctx env else-branch-box)
                     [(ResultTcType.Ok else-ty)
-                      (tc-merge-branch-type ctx env then-ty else-ty)]
+                      (tc-merge-if-branch-types
+                        ctx
+                        env
+                        then-branch-box
+                        else-branch-box
+                        then-ty
+                        else-ty)]
                     [(ResultTcType.Err message) (ResultTcType.Err message)])]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]

@@ -271,7 +271,9 @@ contextual literals are compile-time errors; explicit
 truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
-default. Floating-point literals are always `f64` unless a contextual `f32`
+default. In the same way, with no expected type an `if` branch or `match` arm
+that is an integer literal adopts another branch's integer type, so
+`(if c 0 (f))` with `f : i64` is `i64`. Floating-point literals are always `f64` unless a contextual `f32`
 expected type is present. Exponent-only forms such as `1e10` are `Float`
 tokens, and exponent/fraction spellings retain their source bytes through
 formatting. An exponent marker must have an optional sign and at least one
@@ -4690,7 +4692,8 @@ All operators are prefix functions (or special forms):
 ### 5.6 `(if cond then else)` — conditional
 
 - `cond` must be `bool`.
-- Both branches must have the same type.
+- Both branches must have the same type. Without an expected type, a literal
+  branch adopts the other branch's type (section 2.4).
 - Returns the value of the taken branch.
 
 `(cond [test expr] ... [else fallback])` is the conditional macro surface

@@ -277,7 +277,7 @@ use the end-state forms:
   `(cond [test expr] ... [else fallback])`.
 - Count with `(for [i (iterator.range start end)] ...)` and walk a
   collection with `(for [item (& items)] ...)` rather than a hand-written index
-  `while`; a direct `range` call and a borrowed array, Slice,
+  `while`; a range and a borrowed array, Slice,
   `__tl_dyn-array` or slots/len struct expand to a plain counting loop.
 - Build strings with `str-cat` or `text_buf`; do not add
   `string-append`/`string-concat` chains.

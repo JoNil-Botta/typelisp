@@ -759,11 +759,6 @@
     compiler-comptime-host-callback-local-expr-var-name
     compiler-comptime-host-callback-local-expr-begin?
     compiler-comptime-host-callback-local-expr-begin-items
-    ;; The same staged-local destructuring for Expr.Call: a probe, then the
-    ;; callee Expr and the argument ExprList.
-    compiler-comptime-host-callback-local-expr-call?
-    compiler-comptime-host-callback-local-expr-call-callee
-    compiler-comptime-host-callback-local-expr-call-args
     compiler-comptime-host-callback-local-bool-value
     compiler-comptime-host-callback-value-bool
     ;; Remaining binder-free template node kinds (refs #5605, #6240):

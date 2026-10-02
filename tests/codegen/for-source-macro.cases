@@ -1,6 +1,6 @@
 # Scalar `for` is an ordinary source transformer (run by scripts/verify-stdlib.sh):
 # no native identity hooks remain, an exact copy of its body still works
-# after changing only its name, and a direct `range` call counts in place.
+# after changing only its name, and an owned range counts in place.
 
 file copied-for.tl
 (import stdlib.iterator)
@@ -78,7 +78,7 @@ exit 42
 in file {{work}}/stdlib-root/for_copy_macros.tl
 match \(defmacro \(for-copy[ ]
 
-# A direct `range` call and a borrowed slots/len struct expand to one counting
+# A `range` call and a borrowed slots/len struct expand to one counting
 # `while`: at -O2 nothing references the range iterator protocol. The
 # annotated clause of the control still steps `into-next`, which stays out of
 # line (#8555).

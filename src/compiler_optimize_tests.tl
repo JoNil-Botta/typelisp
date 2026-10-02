@@ -627,6 +627,7 @@
     [load-kinds (opt.opt-load-kinds-empty)]
     [entry-label (ir.compiler-ir-label "entry")]
     [seed-facts (opt.opt-alias-empty)]
+    [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     (opt.optimize-block-hs-with-kinds
       profile-state
       pools
@@ -637,6 +638,7 @@
       entry-label
       seed-facts
       (__tl_make-array i64 0)
+      (&mut tables)
       block)))
 
 (define (opt-test-optimize-block-list
@@ -5407,12 +5409,12 @@
     [vector-cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-vector-cse-instrs))]
     [vector-reduce-cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-vector-reduce-cse-instrs))]
     [vector-stale : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
@@ -7427,7 +7429,7 @@
     [rewritten : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt.compiler-opt-global-shared-view input))]
     [copied : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs
@@ -7948,37 +7950,37 @@
     [cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-self-test-instrs))]
     [sqrt : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-sqrt-instrs))]
     [store : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-store-clears-instrs))]
     [redef : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-operand-redef-instrs))]
     [probe : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-probe-instrs))]
     [probe-different : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-probe-different-instrs))]
     [shift-count-types : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-shift-count-type-instrs))]
     (begin
       (unless (= (opt-count-arith-instr-seq cse) 1) (return 1))
@@ -10343,7 +10345,7 @@
         (opt.OptCopyEnv.Nil)
         (opt-test-cse-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
-          (opt.OptExprTable.Nil)
+          (opt.opt-expr-table-new)
           (opt-copy-cse-instrs)))]
     [cse-dce : ir.CompilerIrInstrSeq
       (let
@@ -52735,6 +52737,7 @@
         (opt.compiler-opt-global-shared-view params)
         blocks)]
     [seq : ir.CompilerIrInstrSeq instrs]
+    [words : opt.OptExprTable (opt.opt-expr-table-new)]
     (begin
       (opt.opt-load-copy-instr-seq-rewrite!
         type-segment-bases
@@ -52747,6 +52750,7 @@
           (opt.opt-load-cse-kinds-cap-for-size
             (ir.compiler-ir-instr-seq-count seq))
           (opt.opt-alias-seed-params type-segment-bases params))
+        (&mut words)
         (opt.compiler-opt-global-shared-view seq))
       seq)))
 
@@ -64589,6 +64593,440 @@
     (compiler-optimize-simd-local-cse-self-test)
     42
     "local CSE and its fast scan recognize exact Splat/VectorBinOp/VectorCompare duplicates while keeping distinct op, lane and element-type keys"))
+
+;; The block pass shares one CSE table pair across a function's blocks, and each
+;; block walk clears its table first (#5731). A fallthrough block ends without
+;; the terminator that would otherwise clear the table, so this is the case where
+;; a leak would show: `b1` must keep its own first `add` and fold only its
+;; duplicate, never reuse `entry`'s `%1`.
+(define (opt-cse-block-arith-count
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : String]) : i64
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+    [(opt.OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-count-arith-instr-seq (& instrs))])]
+    [(opt.OptMaybeBlock.No) -1]))
+
+(test
+  cse-tables-do-not-cross-a-fallthrough-block
+  (match (opt.optimize-block-list-for-function-pass
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    (ast.ast-node-pool-reader-context-current)
+    (ast.ast-node-pool-reader-type-segment-bases)
+    8
+    (ir.compiler-ir-param-seq-empty)
+    (irt.blocks
+      "entry:
+         %1 = add %0, 1 : i64
+         %4 = add %0, 1 : i64
+       b1:
+         %2 = add %0, 1 : i64
+         %3 = add %0, 1 : i64
+         return %3"))
+    [(opt.OptBlockListPassResult.Result blocks _)
+      (begin
+        (test.assert-i64-eq
+          (opt-cse-block-arith-count (& blocks) "entry")
+          1
+          "entry folds its own duplicate")
+        (test.assert-i64-eq
+          (opt-cse-block-arith-count (& blocks) "b1")
+          1
+          "b1 keeps its first add: no entry reaches it from the fallthrough block"))]))
+
+;; The block-local CSE table compacts in place (#5731). Redefining `%0` drops
+;; exactly the entries that use it, and a survivor between them still matches.
+;; Redefining `%2` drops the entry whose result it was. A call clears the table,
+;; and the same table is filled and read again afterwards.
+(test
+  cse-table-compacts-invalidated-entries-and-reuses-after-clear
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrInstrSeq
+      (opt-test-cse-instrs
+        bases
+        (opt.opt-expr-table-new)
+        (opt-test-instrs
+          (irt.instr "%1 = add %0, 1 : i64")
+          (irt.instr "%2 = add %7, 1 : i64")
+          (irt.instr "%3 = mul %0, 2 : i64")
+          (irt.instr "%0 = mov 5 : i64")
+          (irt.instr "%4 = add %0, 1 : i64")
+          (irt.instr "%5 = add %7, 1 : i64")
+          (irt.instr "%2 = mov 9 : i64")
+          (irt.instr "%6 = add %7, 1 : i64")
+          (irt.instr "%8 = call f() : i64")
+          (irt.instr "%9 = add %7, 1 : i64")
+          (irt.instr "%10 = add %7, 1 : i64")))]
+    [expected : ir.CompilerIrInstrSeq
+      (opt-test-instrs
+        (irt.instr "%1 = add %0, 1 : i64")
+        (irt.instr "%2 = add %7, 1 : i64")
+        (irt.instr "%3 = mul %0, 2 : i64")
+        (irt.instr "%0 = mov 5 : i64")
+        (irt.instr "%4 = add %0, 1 : i64")
+        (irt.instr "%5 = mov %2 : i64")
+        (irt.instr "%2 = mov 9 : i64")
+        (irt.instr "%6 = add %7, 1 : i64")
+        (irt.instr "%8 = call f() : i64")
+        (irt.instr "%9 = add %7, 1 : i64")
+        (irt.instr "%10 = mov %9 : i64"))]
+    (test.assert-true
+      (opt.opt-instr-seq-eq bases out expected)
+      "stale operands and results are dropped, survivors still match, and the cleared table is reused")))
+
+(define (opt-cse-table-key [source : String]) : opt.OptExprKey
+  (match (opt.opt-expr-def (irt.instr source))
+    [(opt.OptMaybeExprDef.Some key _ _) key]
+    [(opt.OptMaybeExprDef.No)
+      (io.panic "CSE table fixture has no expression key")]))
+
+(define (opt-cse-table-result
+  [bases : i64]
+  [table : (& table opt.OptExprTable)]
+  [key : (& key opt.OptExprKey)]) : i64
+  (match (opt.opt-expr-lookup bases table key)
+    [(ir.CompilerIrMaybeValue.Some value)
+      (match value
+        [(ir.CompilerIrValue.Var id) id]
+        [_ -1])]
+    [(ir.CompilerIrMaybeValue.No) -1]))
+
+(define (opt-cse-table-index-capacity [table : (& table opt.OptExprTable)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(opt.OptExprTable.Empty) 0]
+    [(opt.OptExprTable.Dense state)
+      (let
+        [content : (& state opt.OptExprState) (& (deref state))]
+        (array-length content.heads))]))
+
+;; 0 for a table that has no state yet, else its clear generation: a fresh state
+;; starts at 1 and every clear of a non-empty state advances it.
+(define (opt-cse-table-generation [table : (& table opt.OptExprTable)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(opt.OptExprTable.Empty) 0]
+    [(opt.OptExprTable.Dense state)
+      (let
+        [content : (& state opt.OptExprState) (& (deref state))]
+        content.generation)]))
+
+;; A pass's block tables start empty, take the state of the first block walk that
+;; inserts, and lend it to every later walk: the second block clears the stored
+;; state (generation 2) rather than allocating its own, and the pass's slot still
+;; holds that one state afterwards. A walk that inserts nothing leaves an empty
+;; slot empty.
+(test
+  cse-block-tables-keep-the-first-walk-state
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
+    [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
+    [first : ir.CompilerIrInstrSeq
+      (irt.instrs "%2 = add %0, %1 : i64
+%3 = add %0, %1 : i64")]
+    [second : ir.CompilerIrInstrSeq
+      (irt.instrs "%4 = mul %0, %1 : i64
+%5 = mul %0, %1 : i64")]
+    (begin
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view no-exprs))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        0
+        "a walk that inserts nothing allocates no state")
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view first))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        1
+        "the first inserting walk stores its state in the pass's slot")
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view second))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        2
+        "the next block clears and reuses that state")
+      (test.assert-bool-eq
+        (match (ir.compiler-ir-instr-seq-ref second 1)
+          [(ir.CompilerIrInstr.Mov dst value _)
+            (and
+              (= dst 5)
+              (match value
+                [(ir.CompilerIrValue.Var source) (= source 4)]
+                [_ false]))]
+          [_ false])
+        true
+        "the reused state still eliminates the repeated expression")
+      (let
+        [walk : opt.OptExprTable (opt.opt-expr-table-with-capacity 1)]
+        (begin
+          (opt.opt-expr-table-keep!
+            (&mut tables.words)
+            (opt.compiler-opt-global-shared-view walk))
+          (test.assert-i64-eq
+            (opt-cse-table-generation (& tables.words))
+            1
+            "an empty slot keeps the walk's state")
+          (opt.opt-expr-table-keep! (&mut tables.exprs) walk)
+          (test.assert-i64-eq
+            (opt-cse-table-generation (& tables.exprs))
+            2
+            "a slot that has state keeps it"))))))
+
+(test
+  cse-table-hash-collisions-unlink-head-middle-and-tail
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [table : opt.OptExprTable (opt.opt-expr-table-with-capacity 1)]
+    [a : opt.OptExprKey (opt-cse-table-key "%11 = neg 1 : i64")]
+    [b : opt.OptExprKey (opt-cse-table-key "%22 = neg 2147483648 : i64")]
+    [c : opt.OptExprKey (opt-cse-table-key "%33 = neg 4294967295 : i64")]
+    (begin
+      (test.assert-i64-eq
+        (opt.opt-expr-key-hash bases (& a))
+        (opt.opt-expr-key-hash bases (& b))
+        "distinct integer keys collide")
+      (test.assert-i64-eq
+        (opt.opt-expr-key-hash bases (& b))
+        (opt.opt-expr-key-hash bases (& c))
+        "all three share one bucket")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone a) 11))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone c) 33))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        11
+        "collision lookup checks the tail key")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        22
+        "collision lookup checks the middle key")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        33
+        "collision lookup checks the head key")
+      (set! table (opt.opt-expr-invalidate-var (& table) 22))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        -1
+        "a dead middle entry is absent")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        11
+        "unlinking the middle preserves its successor")
+      (set! table (opt.opt-expr-invalidate-var (& table) 11))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "a successor can be removed before any insertion repairs its link")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        33
+        "removing that successor preserves the live head")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 44))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "a removed successor stays absent when a second live key restores indexed lookup")
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone a) 11))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone c) 33))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        -1
+        "a prior generation cannot leak a missing colliding key into the new index")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))
+      (set! table (opt.opt-expr-invalidate-var (& table) 22))
+      (set! table (opt.opt-expr-invalidate-var (& table) 33))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        -1
+        "the removed head is absent while its successor remains live")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        11
+        "unlinking the head advances the bucket")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 44))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        -1
+        "a removed head stays absent when indexed lookup resumes")
+      (set! table (opt.opt-expr-invalidate-var (& table) 11))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "the removed tail is absent while the reinserted key remains live")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        44
+        "unlinking the tail preserves a reinserted key")
+      (set! table (opt.opt-expr-invalidate-var (& table) 44))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        -1
+        "the last removal empties the bucket")
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone a) 0))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        0
+        "clear retires tombstones and result zero remains valid"))))
+
+(test
+  cse-table-index-grows-with-entries-and-reuses-capacity
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [table : opt.OptExprTable (opt.opt-expr-table-new)]
+    [index : i64 0]
+    [grown-capacity : i64 0]
+    [missing : opt.OptExprKey
+      (opt-cse-table-key "%0 = add %1000000000, 99 : i64")]
+    (begin
+      (test.assert-i64-eq
+        (opt-cse-table-index-capacity (& table))
+        0
+        "a never-used table reserves no bucket storage")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& missing))
+        -1
+        "empty lookup misses")
+      (set! table (opt.opt-expr-invalidate-var (& table) 7))
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (test.assert-i64-eq
+        (opt-cse-table-index-capacity (& table))
+        0
+        "invalidation and clear leave a never-used table unallocated")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone missing) 7))
+      (set! table (opt.opt-expr-invalidate-var (& table) 7))
+      (while (< index 65)
+        (let
+          [key : opt.OptExprKey
+            (opt-cse-table-key
+              (str_cat.str-cat
+                "%0 = add %1000000000, "
+                (string.int->string index)
+                " : i64"))]
+          (begin
+            (set! table (opt.opt-expr-table-add bases (& table) key index))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index 65)
+        (let
+          [key : opt.OptExprKey
+            (opt-cse-table-key
+              (str_cat.str-cat
+                "%0 = add %1000000000, "
+                (string.int->string index)
+                " : i64"))]
+          (begin
+            (test.assert-i64-eq
+              (opt-cse-table-result bases (& table) (& key))
+              index
+              "every key survives entry and index growth")
+            (set! index (+ index 1)))))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& missing))
+        -1
+        "a missing key remains absent after growth")
+      (set! grown-capacity (opt-cse-table-index-capacity (& table)))
+      (test.assert-true
+        (<= grown-capacity 512)
+        "index size follows entry count rather than the sparse operand ID")
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (test.assert-i64-eq
+        (opt-cse-table-index-capacity (& table))
+        grown-capacity
+        "clear retains the grown bucket storage")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& missing))
+        -1
+        "a cleared index contains no earlier key")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone missing) 7))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& missing))
+        7
+        "the grown storage can be reused"))))
+
+(test
+  cse-table-generation-rollover-does-not-revive-old-keys
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [table : opt.OptExprTable (opt.opt-expr-table-new)]
+    [retired : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 1 : i64")]
+    [retired-collision : opt.OptExprKey
+      (opt-cse-table-key "%0 = add %7, 2147483648 : i64")]
+    [key : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 2 : i64")]
+    [current-collision : opt.OptExprKey
+      (opt-cse-table-key "%0 = add %7, 2147483649 : i64")]
+    (begin
+      (set! table (opt.opt-expr-table-add bases (& table) (clone retired) 9))
+      (set! table (opt.opt-expr-table-add bases (& table) retired-collision 10))
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone key) 11))
+      (set! table (opt.opt-expr-table-add bases (& table) current-collision 12))
+      (match (owned_view.compiler-owned-reference-shared-view (& table))
+        [(opt.OptExprTable.Empty)
+          (test.assert-true false "the populated rollover fixture has storage")]
+        [(opt.OptExprTable.Dense state)
+          (let
+            [content : (&mut state opt.OptExprState)
+              (&mut (__tl-box-place state))]
+            [bucket : i64
+              (bit-and
+                (opt.opt-expr-key-hash bases (& key))
+                (- (array-length content.heads) 1))]
+            [retired-bucket : i64
+              (bit-and
+                (opt.opt-expr-key-hash bases (& retired))
+                (- (array-length content.heads) 1))]
+            (begin
+              (test.assert-true
+                (not (= bucket retired-bucket))
+                "the first-generation key retains a distinct stale bucket")
+              (set! content.generation 9223372036854775807)
+              (set! (array-ref content.stamps bucket) content.generation)))])
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& key))
+        11
+        "the last generation still owns its key")
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (match (owned_view.compiler-owned-reference-shared-view (& table))
+        [(opt.OptExprTable.Empty)
+          (test.assert-true false "clear retains the rollover fixture storage")]
+        [(opt.OptExprTable.Dense state)
+          (let
+            [content : (& state opt.OptExprState) (& (deref state))]
+            (begin
+              (test.assert-i64-eq
+                (opt.opt-expr-index-head
+                  content
+                  (opt.opt-expr-key-hash bases (& key)))
+                -1
+                "rollover invalidates the bucket independently of an empty lookup")
+              (test.assert-i64-eq
+                (opt.opt-expr-index-head
+                  content
+                  (opt.opt-expr-key-hash bases (& retired)))
+                -1
+                "rollover cannot revive a stale first-generation bucket")))])
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& key))
+        -1
+        "rollover retires every old bucket")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone key) 0))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& key))
+        0
+        "the first generation can be reused after rollover"))))
 
 (test
   simd-gvn-strict-dominators

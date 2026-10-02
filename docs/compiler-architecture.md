@@ -584,6 +584,25 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
+reuse one table pair per function pass (`OptExprTable`), clearing each table
+before its block walk. The block walkers borrow the pair mutably. An empty
+carrier allocates storage only on its first insertion, and that walk stores the
+state back into the pass's pair, so every later block clears and reuses it with
+its capacity. Keys keep stable positions;
+parallel integer storage records results, live entries and collision links.
+Power-of-two bucket heads index expression hashes, and lookup checks structural
+equality within the chain.
+The index grows at half occupancy by relinking live positions. Lookup treats
+zero or one live entry directly; hashing starts with the second
+live key, so this constant-size path never scans a growing table. Once started,
+the index remains active until clear. Invalidation unlinks indexed dead entries
+and compacts only live positions. Calls, stores, shuffles
+and control-flow boundaries clear lengths and advance the bucket generation,
+retaining capacity without scanning it; generation rollover resets all stamps.
+Entries are added only after a lookup miss, so live keys are unique. No caller
+retains an older table or a view across vector growth.
+
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit
 pools, and the span rows its rewrite added; the phase is rewound before the

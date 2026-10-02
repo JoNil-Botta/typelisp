@@ -6795,9 +6795,230 @@
     i64
     ast.AstType))
 
+;; The table is one mutable store per block walk (#5731). No older table is
+;; retained: every step hands back the handle it was given. Keys are stored once,
+;; in walk order, and never moved or rewritten, since copying a key deep-copies
+;; its values and types. `vars` holds each key's result var, and `live` lists the
+;; positions of the entries still valid, oldest first. Invalidating a var
+;; compacts `live` in place -- integers only -- instead of rebuilding the whole
+;; list, which made each definition cost an allocation per live entry. A boundary
+;; that clears the table resets the lengths and keeps their capacity, so the
+;; per-pass tables grow only past the largest block seen and a key is copied only
+;; by that growth. Never-used tables allocate their store on the first insertion.
+;; Live keys are unique -- an entry is added only after its lookup
+;; missed -- so entry order never decides a lookup.
+(import (vector.vector OptExprKey core) as opt_expr_key_vec)
+
+(defstruct OptExprLink
+  (hash i64)
+  (previous i64)
+  (next i64))
+
+(import (vector.vector OptExprLink core) as opt_expr_link_vec)
+
+(defstruct OptExprState
+  (keys opt_expr_key_vec.Vec)
+  (vars opt_dense_i64_vec.Vec)
+  (live opt_dense_i64_vec.Vec)
+  (links opt_expr_link_vec.Vec)
+  (heads (__tl_dyn-array i64))
+  (stamps (__tl_dyn-array i64))
+  (generation i64)
+  (indexed bool))
+
 (defenum OptExprTable
-  (Nil)
-  (Cons OptExprKey i64 (Box OptExprTable)))
+  (Empty)
+  (Dense (Box OptExprState)))
+
+(define (opt-expr-table-with-capacity [capacity : i64]) : OptExprTable
+  (let
+    [buckets : i64
+      (opt_i64_i64_map.round-capacity
+        (if (< capacity 4)
+          4
+          capacity))]
+    (OptExprTable.Dense
+      (box
+        (OptExprState
+          (opt_expr_key_vec.with-capacity capacity)
+          (opt_dense_i64_vec.with-capacity capacity)
+          (opt_dense_i64_vec.with-capacity capacity)
+          (opt_expr_link_vec.with-capacity capacity)
+          (__tl_make-array i64 buckets)
+          (__tl_make-array i64 buckets)
+          1
+          false)))))
+
+(define (opt-expr-table-new) : OptExprTable
+  (OptExprTable.Empty))
+
+(define (opt-expr-table-clear [table : (& table OptExprTable)]) : OptExprTable
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (OptExprTable.Empty)]
+    [(OptExprTable.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptExprState) (&mut (__tl-box-place state))]
+          (if (> (opt_expr_key_vec.len (& content.keys)) 0)
+            (begin
+              (set! content.keys.len 0)
+              (set! content.vars.len 0)
+              (set! content.live.len 0)
+              (set! content.links.len 0)
+              (set! content.indexed false)
+              (if (= content.generation 9223372036854775807)
+                (begin
+                  (set!
+                    content.stamps
+                    (__tl_make-array i64 (array-length content.heads)))
+                  (set! content.generation 1))
+                (set! content.generation (+ content.generation 1))))
+            unit))
+        (OptExprTable.Dense state))]))
+
+;; Keep a block walk's final table in `table`, the pass's slot it started from.
+;; A walk that starts from `Empty` allocates on its first insertion; storing that
+;; state back is what lets every later block of the pass clear and reuse it. A
+;; walk that started from `Dense` only ever holds views of the same state, so
+;; there is nothing to store.
+(define (opt-expr-table-keep!
+  [table : (&mut table OptExprTable)]
+  [walk : OptExprTable]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (set! (deref table) walk)]
+    [(OptExprTable.Dense _) unit]))
+
+;; The block pass's two CSE tables: `exprs` for `opt-cse-instr` and `words` for
+;; the Slice-word CSE of the load/copy walk. One pair serves a whole function
+;; pass, next to its other per-pass scratch: the walkers borrow it mutably, each
+;; block walk clears the table it uses before its first instruction, so no entry
+;; crosses a block, and the first walk that inserts stores its state back with
+;; `opt-expr-table-keep!`.
+(defstruct OptBlockExprTables
+  (exprs OptExprTable)
+  (words OptExprTable))
+
+(define (opt-block-expr-tables-new) : OptBlockExprTables
+  (OptBlockExprTables (opt-expr-table-new) (opt-expr-table-new)))
+
+;; A stamp makes ordinary clears independent of the largest earlier block.
+;; Bucket counts are powers of two; only entries from the current generation
+;; belong to a bucket. The explicit rollover reset cannot revive old heads.
+(define (opt-expr-index-head
+  [content : (& content OptExprState)]
+  [key-hash : i64]) : i64
+  (let
+    [bucket : i64 (bit-and key-hash (- (array-length content.heads) 1))]
+    (if (= (array-ref content.stamps bucket) content.generation)
+      (array-ref content.heads bucket)
+      -1)))
+
+(define (opt-expr-index-link!
+  [content : (&mut content OptExprState)]
+  [position : i64]
+  [key-hash : i64]) : unit
+  (let
+    [bucket : i64 (bit-and key-hash (- (array-length content.heads) 1))]
+    [head : i64 (opt-expr-index-head (& content) key-hash)]
+    (begin
+      (set! (array-ref content.links.slots position).previous -1)
+      (set! (array-ref content.links.slots position).next head)
+      (if (>= head 0)
+        (set! (array-ref content.links.slots head).previous position)
+        unit)
+      (set! (array-ref content.heads bucket) position)
+      (set! (array-ref content.stamps bucket) content.generation))))
+
+;; Grow at half occupancy and rebuild integer links from the live positions.
+;; Dead keys neither lengthen lookup chains nor participate in rehashing.
+(define (opt-expr-index-reserve! [content : (&mut content OptExprState)]) : unit
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& content.live))]
+    [capacity : i64 (array-length content.heads)]
+    (when
+      (> (+ count 1) (/ capacity 2))
+      (let
+        [fresh-capacity : i64 (* capacity 2)]
+        [index : i64 0]
+        (begin
+          (set! content.heads (__tl_make-array i64 fresh-capacity))
+          (set! content.stamps (__tl_make-array i64 fresh-capacity))
+          (set! content.generation 1)
+          (while (< index count)
+            (let
+              [position : i64 (array-ref content.live.slots index)]
+              [key-hash : i64 (array-ref content.links.slots position).hash]
+              (begin
+                (opt-expr-index-link! content position key-hash)
+                (set! index (+ index 1))))))))))
+
+;; An unindexed table has at most one live key. The second insertion indexes
+;; that key at its stable position; earlier invalidated keys stay unreachable.
+(define (opt-expr-index-start!
+  [type-segment-bases : i64]
+  [content : (&mut content OptExprState)]) : unit
+  (when
+    (and (not content.indexed) (> (opt_dense_i64_vec.len (& content.live)) 0))
+    (let
+      [position : i64 (array-ref content.live.slots 0)]
+      [key-hash : i64
+        (opt-expr-key-hash
+          type-segment-bases
+          (& (array-ref content.keys.slots position)))]
+      (begin
+        (set! (array-ref content.links.slots position).hash key-hash)
+        (opt-expr-index-link! content position key-hash)
+        (set! content.indexed true)))))
+
+(define (opt-expr-table-add
+  [type-segment-bases : i64]
+  [table : (& table OptExprTable)]
+  [key : OptExprKey]
+  [var : i64]) : OptExprTable
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty)
+      (let
+        [allocated : OptExprTable (opt-expr-table-with-capacity 1)]
+        (opt-expr-table-add type-segment-bases (& allocated) key var))]
+    [(OptExprTable.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptExprState) (&mut (__tl-box-place state))]
+          [position : i64 (opt_expr_key_vec.len (& content.keys))]
+          [key-hash : i64 0]
+          (begin
+            (opt-expr-index-start! type-segment-bases content)
+            (when
+              content.indexed
+              (begin
+                (set! key-hash (opt-expr-key-hash type-segment-bases (& key)))
+                (opt-expr-index-reserve! content)))
+            (opt_expr_key_vec.push-ref! (&mut content.keys) key)
+            (opt_dense_i64_vec.push-ref! (&mut content.vars) var)
+            (opt_dense_i64_vec.push-ref! (&mut content.live) position)
+            (opt_expr_link_vec.push-ref!
+              (&mut content.links)
+              (OptExprLink key-hash -1 -1))
+            (when
+              content.indexed
+              (opt-expr-index-link! content position key-hash))))
+        (OptExprTable.Dense state))]))
+
+;; Only live entries occur in a hash bucket. Unlinking changes integer links,
+;; never keys; even a colliding key remains reachable when its neighbor dies.
+(define (opt-expr-table-unlink!
+  [content : (&mut content OptExprState)]
+  [position : i64]) : unit
+  (let
+    [link : OptExprLink (array-ref content.links.slots position)]
+    [bucket : i64 (bit-and link.hash (- (array-length content.heads) 1))]
+    (begin
+      (if (>= link.previous 0)
+        (set! (array-ref content.links.slots link.previous).next link.next)
+        (set! (array-ref content.heads bucket) link.next))
+      (if (>= link.next 0)
+        (set! (array-ref content.links.slots link.next).previous link.previous)
+        unit))))
 
 (define (opt-binop-tag [op : (& op ir.CompilerIrBinOp)]) : i64
   (match op
@@ -8473,13 +8694,53 @@
   [table : (& table OptExprTable)]
   [key : (& key OptExprKey)]) : ir.CompilerIrMaybeValue
   (match (owned_view.compiler-owned-reference-shared-view table)
-    [(OptExprTable.Nil) (ir.CompilerIrMaybeValue.No)]
-    [(OptExprTable.Cons k var rest)
+    [(OptExprTable.Empty) (ir.CompilerIrMaybeValue.No)]
+    [(OptExprTable.Dense state)
       (let
-        [rest : OptExprTable (deref rest)]
-        (if (opt-expr-key-eq type-segment-bases k key)
-          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var var))
-          (opt-expr-lookup type-segment-bases rest key)))]))
+        [content : (& state OptExprState) (& (deref state))]
+        [count : i64 (opt_dense_i64_vec.len (& content.live))]
+        (if (= count 0)
+          (ir.CompilerIrMaybeValue.No)
+          (if (= count 1)
+            (let
+              [position : i64 (array-ref content.live.slots 0)]
+              (if (opt-expr-key-eq
+                type-segment-bases
+                (compiler-opt-global-array-element-shared-view
+                  content.keys.slots
+                  position)
+                key)
+                (ir.CompilerIrMaybeValue.Some
+                  (ir.CompilerIrValue.Var
+                    (array-ref content.vars.slots position)))
+                (ir.CompilerIrMaybeValue.No)))
+            (let
+              [key-hash : i64 (opt-expr-key-hash type-segment-bases key)]
+              [position : i64 (opt-expr-index-head content key-hash)]
+              [found : i64 (- 0 1)]
+              (begin
+                (while (and (>= position 0) (< found 0))
+                  (begin
+                    (if (and
+                      (= (array-ref content.links.slots position).hash key-hash)
+                      (opt-expr-key-eq
+                        type-segment-bases
+                        (compiler-opt-global-array-element-shared-view
+                          content.keys.slots
+                          position)
+                        key))
+                      (set!
+                        found
+                        (array-ref
+                          (opt_dense_i64_vec.slots (& content.vars))
+                          position))
+                      unit)
+                    (set!
+                      position
+                      (array-ref content.links.slots position).next)))
+                (if (< found 0)
+                  (ir.CompilerIrMaybeValue.No)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var found))))))))]))
 
 (define (opt-value-is-var? [value : (& value ir.CompilerIrValue)] [var : i64]) : bool
   (match value
@@ -8502,16 +8763,39 @@
       (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
-;; is `var` (a stale definition).
-(define (opt-expr-invalidate-var [table : OptExprTable] [var : i64]) : OptExprTable
-  (match table
-    [(OptExprTable.Nil) (OptExprTable.Nil)]
-    [(OptExprTable.Cons k v rest)
-      (let
-        [rest2 : OptExprTable (opt-expr-invalidate-var (deref rest) var)]
-        (if (or (opt-key-uses-var? k var) (= v var))
-          rest2
-          (OptExprTable.Cons k v (box rest2))))]))
+;; is `var` (a stale definition): `live` keeps the survivors' positions, in
+;; order, and the keys themselves stay where they are.
+(define (opt-expr-invalidate-var [table : (& table OptExprTable)] [var : i64]) : OptExprTable
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (OptExprTable.Empty)]
+    [(OptExprTable.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptExprState) (&mut (__tl-box-place state))]
+          [count : i64 (opt_dense_i64_vec.len (& content.live))]
+          [read : i64 0]
+          [write : i64 0]
+          (if (= count 0)
+            unit
+            (begin
+              (while (< read count)
+                (let
+                  [position : i64 (array-ref content.live.slots read)]
+                  (begin
+                    (if (or
+                      (= (array-ref content.vars.slots position) var)
+                      (opt-key-uses-var?
+                        (& (array-ref content.keys.slots position))
+                        var))
+                      (when
+                        content.indexed
+                        (opt-expr-table-unlink! content position))
+                      (begin
+                        (set! (array-ref content.live.slots write) position)
+                        (set! write (+ write 1))))
+                    (set! read (+ read 1)))))
+              (set! content.live.len write))))
+        (OptExprTable.Dense state))]))
 
 (defenum OptCseResult
   (Result OptExprTable ir.CompilerIrInstr))
@@ -8523,28 +8807,30 @@
   (match (opt-expr-def (compiler-opt-global-shared-view instr))
     [(OptMaybeExprDef.Some key dst ty)
       (let
-        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [t1 : OptExprTable (opt-expr-invalidate-var (& table) dst)]
         (match (opt-expr-lookup type-segment-bases t1 key)
           [(ir.CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
           [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (OptCseResult.Result
+              (opt-expr-table-add type-segment-bases (& t1) key dst)
+              instr)]))]
     [(OptMaybeExprDef.No)
       (match (compiler-opt-global-shared-view instr)
         ;; Calls and shuffles clear all available expressions, as do the stores
         ;; and control flow below.
         [(ir.CompilerIrInstr.Syscall _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.Call _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.SpmdCall payload-box)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.VectorShuffle _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)]
+          (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
         [(ir.CompilerIrInstr.BoundsCheck _ _ _)
           (OptCseResult.Result table instr)]
         ;; Other defining instructions (register-group ops included)
@@ -8553,8 +8839,11 @@
         [_
           (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
             [(option_i64.Some dst)
-              (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-            [(option_i64.None) (OptCseResult.Result (OptExprTable.Nil) instr)])])]))
+              (OptCseResult.Result
+                (opt-expr-invalidate-var (& table) dst)
+                instr)]
+            [(option_i64.None)
+              (OptCseResult.Result (opt-expr-table-clear (& table)) instr)])])]))
 
 ;; The pure expression `instr` computes, keyed as the block-local CSE and the
 ;; dominator GVN look it up: its key, its dst, and the type of the `Mov` that
@@ -61959,13 +62248,14 @@
 
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
+  [exprs : (&mut exprs OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
     [fold-state : OptConstEnv (OptConstEnv.Nil)]
     [strength-state : OptConstEnv (OptConstEnv.Nil)]
-    [cse-state : OptExprTable (OptExprTable.Nil)]
+    [cse-state : OptExprTable (opt-expr-table-clear exprs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (begin
       (while (< index count)
@@ -62011,6 +62301,7 @@
                         unit)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
+      (opt-expr-table-keep! exprs cse-state)
       store-count)))
 
 ;; Native Slice parameters are two-word register groups passed by value. Their
@@ -62027,7 +62318,7 @@
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Word dst source index ty)
       (let
-        [next : OptExprTable (opt-expr-invalidate-var table dst)]
+        [next : OptExprTable (opt-expr-invalidate-var (& table) dst)]
         (match (compiler-opt-global-shared-view source)
           [(ir.CompilerIrValue.Var source-var)
             (if (opt-load-slice-var? hs source-var)
@@ -62044,45 +62335,46 @@
                       (ir.CompilerIrInstr.Mov dst earlier ty))]
                   [(ir.CompilerIrMaybeValue.No)
                     (OptCseResult.Result
-                      (OptExprTable.Cons key dst (box next))
+                      (opt-expr-table-add type-segment-bases (& next) key dst)
                       instr)]))
               (OptCseResult.Result next instr))]
           [_ (OptCseResult.Result next instr)]))]
     [(ir.CompilerIrInstr.Syscall _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.Call _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.SpmdCall _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.VectorShuffle _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.TailCall _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(ir.CompilerIrInstr.Jump _) (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
+    [(ir.CompilerIrInstr.Jump _)
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.Branch _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.TotalEnumBranch _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.Return _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.Switch _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-clear (& table)) instr)]
     [_
       (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
-          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
+          (OptCseResult.Result (opt-expr-invalidate-var (& table) dst) instr)]
         [(option_i64.None) (OptCseResult.Result table instr)])]))
 
 (define (opt-slice-word-copy-value?
@@ -62117,6 +62409,7 @@
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
   [state : OptLoadCseState]
+  [words : (&mut words OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
     [index : i64 0]
@@ -62128,46 +62421,48 @@
     [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
-    [word-state : OptExprTable (OptExprTable.Nil)]
+    [word-state : OptExprTable (opt-expr-table-clear words)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-slice-word-cse-instr
-        type-segment-bases
-        hs
-        (compiler-opt-global-shared-view word-state)
-        (ir.compiler-ir-instr-seq-ref instrs index))
-        [(OptCseResult.Result next-word word-rewritten)
-          (let
-            [load-input : ir.CompilerIrInstr
-              (if (opt-slice-word-copy-use? hs word-rewritten)
-                (opt-copy-subst-instr
-                  (compiler-opt-global-shared-view copy-state)
-                  word-rewritten)
-                word-rewritten)]
-            (match (opt-load-cse-dispatch
-              type-segment-bases
-              (&mut no-canon)
-              hs
-              false
-              sources
-              call-memory
-              cells
-              (compiler-opt-global-shared-view load-state)
-              load-input)
-              [(OptLoadCseResult.Result next-load loaded)
-                (match (opt-copy-instr
-                  (compiler-opt-global-shared-view copy-state)
-                  loaded)
-                  [(OptCopyResult.Result next-copy rewritten)
-                    (begin
-                      (ir.compiler-ir-instr-seq-set!
-                        (&mut instrs)
-                        index
-                        rewritten)
-                      (set! load-state next-load)
-                      (set! copy-state next-copy)
-                      (set! word-state next-word)
-                      (set! index (+ index 1)))])]))]))))
+    (begin
+      (while (< index count)
+        (match (opt-slice-word-cse-instr
+          type-segment-bases
+          hs
+          (compiler-opt-global-shared-view word-state)
+          (ir.compiler-ir-instr-seq-ref instrs index))
+          [(OptCseResult.Result next-word word-rewritten)
+            (let
+              [load-input : ir.CompilerIrInstr
+                (if (opt-slice-word-copy-use? hs word-rewritten)
+                  (opt-copy-subst-instr
+                    (compiler-opt-global-shared-view copy-state)
+                    word-rewritten)
+                  word-rewritten)]
+              (match (opt-load-cse-dispatch
+                type-segment-bases
+                (&mut no-canon)
+                hs
+                false
+                sources
+                call-memory
+                cells
+                (compiler-opt-global-shared-view load-state)
+                load-input)
+                [(OptLoadCseResult.Result next-load loaded)
+                  (match (opt-copy-instr
+                    (compiler-opt-global-shared-view copy-state)
+                    loaded)
+                    [(OptCopyResult.Result next-copy rewritten)
+                      (begin
+                        (ir.compiler-ir-instr-seq-set!
+                          (&mut instrs)
+                          index
+                          rewritten)
+                        (set! load-state next-load)
+                        (set! copy-state next-copy)
+                        (set! word-state next-word)
+                        (set! index (+ index 1)))])]))]))
+      (opt-expr-table-keep! words word-state))))
 
 ;; --- fold pre-scan -------------------------------------------------------------
 ;;
@@ -62941,6 +63236,7 @@
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
   [load-facts : OptAliasFacts]
+  [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
@@ -62962,6 +63258,7 @@
             store-capacity
             (opt-fold-strength-cse-instr-seq-rewrite!
               type-segment-bases
+              (&mut tables.exprs)
               (compiler-opt-global-shared-view work)))
           (set!
             work
@@ -62980,6 +63277,7 @@
               (ir.compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
+            (&mut tables.words)
             (compiler-opt-global-shared-view work))
           (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
           (ir.CompilerIrBlock.Block label work)))]))
@@ -62994,6 +63292,7 @@
   [entry-label : i64]
   [seed-facts : (& seed-facts OptAliasFacts)]
   [scan-work : (__tl_dyn-array i64)]
+  [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (if (opt-block-scan-skippable?
     scan-work
@@ -63007,6 +63306,7 @@
       dead-kinds
       load-kinds
       (optimize-block-entry-facts block entry-label seed-facts)
+      tables
       block)))
 
 (define (optimize-block-entry-facts
@@ -63035,6 +63335,7 @@
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
+  [tables : (&mut tables OptBlockExprTables)]
   [work : OptLoadKindsDenseWork]
   [generation : i64]
   [blocks : ir.CompilerIrBlockSeq]) : ir.CompilerIrBlockList
@@ -63069,6 +63370,7 @@
                 entry-label
                 seed-facts
                 (compiler-opt-global-shared-view scan-work)
+                tables
                 block))
             (set! index (+ index 1)))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
@@ -63084,6 +63386,7 @@
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
+  [tables : (&mut tables OptBlockExprTables)]
   [work : OptLoadKindsDenseWork]
   [generation : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
@@ -63107,6 +63410,7 @@
           entry-label
           seed-facts
           (compiler-opt-global-shared-view scan-work)
+          tables
           block)
         (optimize-block-list-hs-dense
           profile-state
@@ -63116,6 +63420,7 @@
           entry-label
           seed-facts
           scan-work
+          tables
           work
           (+ generation 2)
           (deref rest)))]
@@ -63128,6 +63433,7 @@
         entry-label
         seed-facts
         scan-work
+        tables
         work
         generation
         seq)]))
@@ -63194,6 +63500,8 @@
         ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
+        ;; One pair of block CSE tables per pass, cleared by each block's walk.
+        [tables : OptBlockExprTables (opt-block-expr-tables-new)]
         [_addr-taken : unit
           (opt-function-addr-taken-install!
             frame
@@ -63209,6 +63517,7 @@
                 entry-label
                 seed-facts
                 scan-work
+                (&mut tables)
                 work
                 1
                 seq)]
@@ -63221,6 +63530,7 @@
                 entry-label
                 seed-facts
                 scan-work
+                (&mut tables)
                 work
                 1
                 blocks)])]

@@ -47,6 +47,20 @@
         n)]
     (+ v 1)))
 
+;; A negative literal and one past the `i32` range keep their exact values in
+;; the `i64` join.
+(define (literal-values [taken : bool] [n : i64]) : bool
+  (let
+    [negative
+      (if taken
+        -1
+        n)]
+    [big
+      (if taken
+        4000000000
+        n)]
+    (and (= negative -1) (= big 4000000000))))
+
 ;; A narrow integer branch: the literal adopts `u8`.
 (define (narrow [taken : bool] [b : u8]) : u8
   (let
@@ -73,6 +87,8 @@
         (cond-equals false false 2)
         (= (unannotated true (wide 6)) 4)
         (= (unannotated false (wide 6)) 6000000001)
+        (literal-values true (wide 9))
+        (not (literal-values false (wide 9)))
         (= (narrow true (cast 200 : u8)) (cast 9 : u8))
         (= (narrow false (cast 200 : u8)) (cast 200 : u8)))]
     (if ok

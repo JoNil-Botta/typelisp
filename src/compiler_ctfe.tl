@@ -10982,7 +10982,34 @@
     [(ast.AstPattern.Tuple _) (CtfePatternMatch.No)]
     [(ast.AstPattern.Array _) (CtfePatternMatch.No)]
     ;; Comptime values have no Slice representation.
-    [(ast.AstPattern.Slice _ _) (CtfePatternMatch.No)]))
+    [(ast.AstPattern.Slice _ _) (CtfePatternMatch.No)]
+    [(ast.AstPattern.Or alternatives-box)
+      (ctfe-match-or-pattern (deref alternatives-box) 0 value value-ty env)]
+    ;; Comptime values have no struct form, so struct patterns never match.
+    [(ast.AstPattern.Fields _) (CtfePatternMatch.No)]
+    [(ast.AstPattern.Field _ _) (CtfePatternMatch.No)]))
+
+;; An or-pattern matches with the first alternative that does.
+(define (ctfe-match-or-pattern
+  [alternatives : ast.AstPatternList]
+  [index : i64]
+  [value : CompilerCtfeValue]
+  [value-ty : ast.AstType]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (if (>= index alternatives.len)
+    (CtfePatternMatch.No)
+    (match (ctfe-match-pattern
+      (ast.ast-pattern-list-get
+        (& alternatives)
+        index
+        (ast.ast-pattern-fallback))
+      (ctfe-value-owned-copy (& value))
+      (clone value-ty)
+      env)
+      [(CtfePatternMatch.Matched matched-env)
+        (CtfePatternMatch.Matched matched-env)]
+      [(CtfePatternMatch.No)
+        (ctfe-match-or-pattern alternatives (+ index 1) value value-ty env)])))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -12222,7 +12249,21 @@
         (ast.ast-pat-variant-id
           (ctfe-quote-name-id env name)
           (ctfe-quote-pattern-list args env)))]
-    [(ast.AstPattern.Literal lit) (ast.AstPattern.Literal lit)]))
+    [(ast.AstPattern.Literal lit) (ast.AstPattern.Literal lit)]
+    [(ast.AstPattern.Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (ast.ast-pat-or (ctfe-quote-pattern-list patterns env)))]
+    [(ast.AstPattern.Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (ast.ast-pat-fields (ctfe-quote-pattern-list patterns env)))]
+    ;; The field name names a struct field, not a binder, so only the entry's
+    ;; pattern is quoted.
+    [(ast.AstPattern.Field name patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (ast.AstPattern.Field name (box (ctfe-quote-pattern-list patterns env))))]))
 
 (define (ctfe-quote-let-binding-list
   [bindings : ast.AstLetBindingList]
@@ -13760,7 +13801,30 @@
       (match b
         [(ast.AstPattern.Literal b-lit)
           (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
-        [_ false])]))
+        [_ false])]
+    [(ast.AstPattern.Or a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Or b-items-box)
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Fields a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Fields b-items-box)
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Field a-name a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Field b-name b-items-box)
+            (and
+              (= a-name b-name)
+              (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box)))]
+          [_ false]))]))
 
 (define (ctfe-pattern-list-eq-in-env
   [env : CtfeEnv]

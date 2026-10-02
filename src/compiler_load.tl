@@ -7452,6 +7452,27 @@
         alias
         summary
         locals)]
+    [(ast.AstPattern.Or patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
+    [(ast.AstPattern.Fields patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
+    [(ast.AstPattern.Field _ patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
     [(ast.AstPattern.Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
@@ -7540,6 +7561,21 @@
         (deref patterns)
         locals)]
     [(ast.AstPattern.Slice patterns _)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(ast.AstPattern.Or patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(ast.AstPattern.Fields patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(ast.AstPattern.Field _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)

@@ -16,6 +16,7 @@
 (cfg compiler-surface-selftest (import compiler_surface_ast as surface_ast))
 (cfg compiler-surface-selftest (import compiler_surface_ast_expr as expr_codec))
 (cfg compiler-surface-selftest (import compiler_surface_facts as surface_facts))
+(cfg compiler-surface-selftest (import stdlib.str_cat_runtime as str_cat))
 (cfg
   compiler-surface-selftest
   (import compiler_surface_hydrate as surface_hydrate))
@@ -631,6 +632,201 @@
             (surface_ast.surface-ast-read-extern-abi! (&mut reader))]
           (not (codec.surface-ast-reader-valid? (& reader))))))))
 
+;; Source-like spelling of a pattern, for comparing a decoded pattern.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-pattern-text [pattern : ast.AstPattern]) : String
+    (match pattern
+      [(ast.AstPattern.Wildcard) "_"]
+      [(ast.AstPattern.Binding name) (ci.intern-str name)]
+      [(ast.AstPattern.Variant name items)
+        (str_cat.str-cat
+          "("
+          (ci.intern-str name)
+          (surface-ast-pattern-list-text (deref items))
+          ")")]
+      [(ast.AstPattern.Or items)
+        (str_cat.str-cat
+          "(or"
+          (surface-ast-pattern-list-text (deref items))
+          ")")]
+      [(ast.AstPattern.Slice items has-rest)
+        (let
+          [list : ast.AstPatternList (deref items)]
+          (if has-rest
+            (str_cat.str-cat
+              "(slice"
+              (surface-ast-pattern-list-text-to list (- list.len 1))
+              " & "
+              (surface-ast-pattern-text
+                (ast.ast-pattern-list-get
+                  (& list)
+                  (- list.len 1)
+                  (ast.ast-pattern-fallback)))
+              ")")
+            (str_cat.str-cat
+              "(slice"
+              (surface-ast-pattern-list-text-to list list.len)
+              ")")))]
+      [(ast.AstPattern.Fields items)
+        (str_cat.str-cat
+          "(fields"
+          (surface-ast-pattern-list-text (deref items))
+          ")")]
+      [(ast.AstPattern.Field name items)
+        (let
+          [sub : ast.AstPatternList (deref items)]
+          (str_cat.str-cat
+            "["
+            (surface-ast-pattern-text (ast.ast-pattern-field-sub (& sub)))
+            " "
+            (ci.intern-str name)
+            "]"))]
+      [_ "?"])))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-pattern-list-text [patterns : ast.AstPatternList]) : String
+    (surface-ast-pattern-list-text-to patterns patterns.len)))
+
+;; The first `end` patterns of a list, each after a space.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-pattern-list-text-to
+    [patterns : ast.AstPatternList]
+    [end : i64]) : String
+    (let
+      [text : String ""]
+      [index : i64 0]
+      (begin
+        (while (< index end)
+          (begin
+            (set!
+              text
+              (str_cat.str-cat
+                text
+                " "
+                (surface-ast-pattern-text
+                  (ast.ast-pattern-list-get
+                    (& patterns)
+                    index
+                    (ast.ast-pattern-fallback)))))
+            (set! index (+ index 1))))
+        text))))
+
+;; Writes `pattern` and reads it back with an identity name remap over intern
+;; ids below `count`. The result is the decoded pattern's text, or "invalid"
+;; when either side fails or the reader does not consume exactly the bytes
+;; written.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-pattern-roundtrip-text
+    [pattern : ast.AstPattern]
+    [count : i64]) : String
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new structural-session count count)]
+      [remap : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [index : i64 0]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (while (< index count)
+          (begin
+            (set! (array-ref remap index) index)
+            (set! index (+ index 1))))
+        (expr_codec.surface-ast-write-pattern! (&mut out) (&mut context) pattern)
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (byte_buf_core.byte-buf-builder-finish-array (& out))]
+          [byte-count : i64 (array-length bytes)]
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new bytes structural-session remap)]
+          [decoded : ast.AstPattern
+            (expr_codec.surface-ast-read-pattern! (&mut reader))]
+          (if (and
+            (codec.surface-ast-write-valid? (& context))
+            (codec.surface-ast-reader-valid? (& reader))
+            (= (codec.surface-ast-reader-offset (& reader)) byte-count))
+            (surface-ast-pattern-text decoded)
+            "invalid"))))))
+
+;; One more than the largest of three intern ids: the remap size that covers
+;; them all.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-intern-id-bound [a : i64] [b : i64] [c : i64]) : i64
+    (+
+      1
+      (if (> a b)
+        (if (> a c)
+          a
+          c)
+        (if (> b c)
+          b
+          c)))))
+
+;; Or-patterns and `(fields ...)` entries (AstPattern tags 8, 9 and 10) read
+;; back as themselves and consume exactly their bytes.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-or-fields-pattern-roundtrip-ok?) : bool
+    (let
+      [dst-id : i64 (ci.intern "dst")]
+      [field-id : i64 (ci.intern "value")]
+      [variant-id : i64 (ci.intern "Load")]
+      [entries : ast.AstPatternList (ast.ast-pattern-list-new)]
+      [payload : ast.AstPatternList (ast.ast-pattern-list-new)]
+      [alternatives : ast.AstPatternList (ast.ast-pattern-list-new)]
+      (begin
+        (ast.ast-pattern-list-push
+          (&mut entries)
+          (ast.ast-pat-field field-id (ast.ast-pat-binding-id dst-id)))
+        (ast.ast-pattern-list-push
+          (&mut payload)
+          (ast.ast-pat-binding-id dst-id))
+        (ast.ast-pattern-list-push (&mut payload) ast.AstPattern.Wildcard)
+        (ast.ast-pattern-list-push
+          (&mut alternatives)
+          (ast.ast-pat-variant-id variant-id payload))
+        (ast.ast-pattern-list-push
+          (&mut alternatives)
+          (ast.ast-pat-fields entries))
+        (surface_identity.surface-identity-string-eq?
+          (surface-ast-pattern-roundtrip-text
+            (ast.ast-pat-or alternatives)
+            (surface-ast-intern-id-bound dst-id field-id variant-id))
+          "(or (Load dst _) (fields [dst value]))")))))
+
+;; An or-pattern over slice patterns, `(or (slice) (slice x & r))`, keeps each
+;; alternative's rest flag (tag 7 inside tag 8).
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-or-slice-pattern-roundtrip-ok?) : bool
+    (let
+      [x-id : i64 (ci.intern "x")]
+      [rest-id : i64 (ci.intern "r")]
+      [items : ast.AstPatternList (ast.ast-pattern-list-new)]
+      [alternatives : ast.AstPatternList (ast.ast-pattern-list-new)]
+      (begin
+        (ast.ast-pattern-list-push (&mut items) (ast.ast-pat-binding-id x-id))
+        (ast.ast-pattern-list-push (&mut items) (ast.ast-pat-binding-id rest-id))
+        (ast.ast-pattern-list-push
+          (&mut alternatives)
+          (ast.ast-pat-slice (ast.ast-pattern-list-new) false))
+        (ast.ast-pattern-list-push
+          (&mut alternatives)
+          (ast.ast-pat-slice items true))
+        (surface_identity.surface-identity-string-eq?
+          (surface-ast-pattern-roundtrip-text
+            (ast.ast-pat-or alternatives)
+            (surface-ast-intern-id-bound x-id rest-id 0))
+          "(or (slice) (slice x & r))")))))
+
 ;; A decoded declared alignment must be absent (0) or a power of two within
 ;; the parser's range, and a field list must end at a declared value; anything
 ;; else fails the reader instead of reaching layout.
@@ -720,6 +916,8 @@
       (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.TypeLisp)
       (surface-ast-extern-abi-unknown-tag-rejected?)
       (surface-ast-slice-pattern-roundtrip-ok?)
+      (surface-ast-or-fields-pattern-roundtrip-ok?)
+      (surface-ast-or-slice-pattern-roundtrip-ok?)
       (surface-ast-declared-align-tests-ok?)
       (surface-ast-old-schema-rejected?)
       (surface-ast-c-function-reference-decode-ok? 1)

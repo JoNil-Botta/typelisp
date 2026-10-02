@@ -1858,6 +1858,109 @@
             "callback"
             inner-callback.symbol))))))
 
+(define (compiler-semantic-record-spells?
+  [source : (& source str)]
+  [record : (& record sem.CompilerSemanticRecord)]
+  [text : String]) : bool
+  (and
+    (>= record.span.start-byte 0)
+    (string.eq
+      (string.substring
+        source
+        record.span.start-byte
+        (- record.span.end-byte record.span.start-byte))
+      text)))
+
+;; Each alternative of an or-pattern binds the same local: every binding site
+;; is a definition of one symbol, and the shared body's use resolves to it.
+(define (compiler-check-semantic-index-or-pattern-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_or_pattern.tl"]
+    [source : String
+      "(defstruct SemanticPayload (mask i64) (value i64))
+(defenum SemanticOp
+  (SemanticLoad i64)
+  (SemanticBoxed (Box SemanticPayload))
+  (SemanticHalt))
+(define (op-dst [op : SemanticOp]) : i64
+  (match op
+    [(or (SemanticLoad dst) (SemanticBoxed (box (fields [dst value])))) dst]
+    [SemanticHalt 0]))"]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
+      [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [first-definition : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "dst"
+              sem.CompilerSemanticRecordRole.Definition
+              0)]
+          [second-definition : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "dst"
+              sem.CompilerSemanticRecordRole.Definition
+              1)]
+          [extra-definition : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "dst"
+              sem.CompilerSemanticRecordRole.Definition
+              2)]
+          [use : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "dst"
+              sem.CompilerSemanticRecordRole.Use
+              0)]
+          [ok : bool
+            (if (or
+              (< first-definition 0)
+              (< second-definition 0)
+              (>= extra-definition 0)
+              (< use 0))
+              false
+              (let
+                [first : sem.CompilerSemanticRecord
+                  (sem.compiler-semantic-source-index-get
+                    (& index)
+                    first-definition)]
+                [second : sem.CompilerSemanticRecord
+                  (sem.compiler-semantic-source-index-get
+                    (& index)
+                    second-definition)]
+                [body-use : sem.CompilerSemanticRecord
+                  (sem.compiler-semantic-source-index-get (& index) use)]
+                (and
+                  (sem.compiler-semantic-symbol-id-eq?
+                    first.symbol
+                    second.symbol)
+                  (sem.compiler-semantic-symbol-id-eq?
+                    first.symbol
+                    body-use.symbol)
+                  (< first.span.start-byte second.span.start-byte)
+                  (< second.span.start-byte body-use.span.start-byte)
+                  (compiler-semantic-record-spells? source (& first) "dst")
+                  (compiler-semantic-record-spells? source (& second) "dst")
+                  (compiler-semantic-record-spells? source (& body-use) "dst")
+                  (string.eq first.resolved-type "i64")
+                  (string.eq second.resolved-type "i64"))))]
+          (begin
+            (sem.compiler-semantic-source-index-release! (&mut index))
+            ok))]
+      [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_inferred_locals.tl"]
@@ -4461,7 +4564,8 @@
     [locals-ok : bool
       (and
         (compiler-check-semantic-index-inferred-locals-ok?)
-        (compiler-check-semantic-index-slice-pattern-locals-ok?))]
+        (compiler-check-semantic-index-slice-pattern-locals-ok?)
+        (compiler-check-semantic-index-or-pattern-ok?))]
     [locals-timing-ok : bool
       (compiler-semantic-index-smoke-timing-record
         "semantic-inferred-locals"

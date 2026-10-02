@@ -4974,16 +4974,70 @@ explicit constructors.
   patterns are rejected with focused diagnostics. In enum contexts, `(box
   ...)` resolves as an enum variant pattern when the expected enum has such a
   variant.
+- `(fields f [p g] ...)` matches a struct by field name wherever a struct
+  pattern may appear: a struct scrutinee, a struct field, tuple slot, array
+  element, enum payload, or `(box ...)` payload. A bare `f` binds field `f` to
+  a local named `f`; `[p g]` matches field `g` against the pattern `p`, so
+  `[local g]` binds field `g` as `local`. `p` is any pattern a struct field
+  accepts: a binding, `_`, or a nested irrefutable tuple, array, struct, or
+  `(fields ...)` pattern. Fields the pattern does not name are ignored, so it
+  stands for the positional struct pattern with `_` in their places. It needs
+  at least one entry; naming a field the struct does not declare, or naming a
+  field twice, is rejected. Positional struct patterns are unchanged.
+- `(or p1 p2 ...)` matches when any of its two or more alternatives does,
+  trying them left to right. It may be an arm's whole pattern or an enum
+  payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`.
+  Struct field, `(fields ...)` entry, `(box ...)`, tuple slot, and array
+  element sub-patterns must stay irrefutable, so an or-pattern there is
+  rejected. Every alternative must bind exactly the same names, each at the
+  same type; the arm body sees the names bound by whichever alternative
+  matched. At the top of an enum arm each alternative is itself a top-level
+  pattern, so a bare identifier there names a nullary variant:
+  `[(or Red Green) ...]`. An alternative that follows one matching every value
+  is rejected as unreachable, as an arm after `_` is. Exhaustiveness treats an
+  or-pattern as the union of its alternatives: an arm covers a variant when one
+  alternative does, and a nested or-pattern is irrefutable when one
+  alternative is or when its alternatives cover the payload type the way a
+  match's arms would. All alternatives jump to one shared arm body; a nested
+  or-pattern is tested as the whole-arm alternatives it expands to, so
+  `(V (or a b) c)` tries `(V a c)` and then `(V b c)`. A varying `foreach`
+  match does not accept or-patterns.
+- `or` and `fields` are reserved pattern heads; in expressions `(or ...)`
+  remains the short-circuiting boolean macro.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
 - Bindings in aggregate patterns introduce variables for payloads, fields,
   slots, or elements.
-- A bare identifier at the top level of an enum `match` arm resolves as a
-  nullary variant name. It is not a fresh catch-all binding; use `_` for that.
+- A bare identifier at the top level of an enum `match` arm, or of one of its
+  or-pattern alternatives, resolves as a nullary variant name. It is not a
+  fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
+
+```lisp test=run name=or-pattern-shared-arm exit=42 stdout=""
+(defstruct SelectPayload
+  (mask i64)
+  (dst i64))
+
+(defenum Instr
+  (Load i64 i64)
+  (EntryArgc i64)
+  (Select (Box SelectPayload))
+  (Halt))
+
+(define (instr-dst [instr : Instr]) : i64
+  (match instr
+    [(or (Load dst _) (EntryArgc dst) (Select (box (fields dst)))) dst]
+    [Halt -1]))
+
+(define (main) : i64
+  (+ (instr-dst (Load 40 7)) (instr-dst (Select (box (SelectPayload 0 2))))))
+```
+
+Every alternative binds `dst`, from a positional payload or by name from the
+boxed payload struct, and all of them share the one arm body.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 

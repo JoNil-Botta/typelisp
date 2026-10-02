@@ -3027,7 +3027,31 @@
       "parse: malformed match arm")
     (compiler-parse-error-ok?
       "(define (main) : i64 (match 1 [() 0]))"
-      "parse: expected pattern")))
+      "parse: expected pattern")
+    (compiler-parse-ok?
+      "(defenum E (A i64) (B i64) (C))
+(define (main [e : E]) : i64 (match e [(or (A x) (B x)) x] [(or C (C)) 0]))")
+    (compiler-parse-ok?
+      "(defstruct P (x i64) (y i64))
+(define (main [p : P]) : i64 (match p [(fields x [other y]) (+ x other)]))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(or 1) 0] [_ 1]))"
+      "parse: or-pattern needs at least two alternatives")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(fields) 0]))"
+      "parse: (fields ...) pattern needs at least one field")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(fields [a]) 0]))"
+      "parse: (fields ...) entry [pattern field] takes exactly two items")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(fields [a 1]) 0]))"
+      "parse: (fields ...) entry [pattern field] must end with a field name")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(fields _) 0]))"
+      "parse: (fields ...) entry must name a field")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [(fields (a b)) 0]))"
+      "parse: (fields ...) entry must be a field name or [pattern field]")))
 
 ;; pattern literals: string literal arms, nested string payload,
 ;; char literals in pattern and value position.

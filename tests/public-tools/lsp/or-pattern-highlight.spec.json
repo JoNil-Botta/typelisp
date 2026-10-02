@@ -1,0 +1,10 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"documentHighlightProvider\":true"},
+    {"jsonpath_id": 2, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":3,\"character\":15},\"end\":{\"line\":3,\"character\":20}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":29},\"end\":{\"line\":3,\"character\":34}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":37},\"end\":{\"line\":3,\"character\":42}},\"kind\":2}]"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":[{\"range\":{\"start\":{\"line\":3,\"character\":15},\"end\":{\"line\":3,\"character\":20}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":29},\"end\":{\"line\":3,\"character\":34}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":37},\"end\":{\"line\":3,\"character\":42}},\"kind\":2}]"},
+    {"jsonpath_id": 4, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

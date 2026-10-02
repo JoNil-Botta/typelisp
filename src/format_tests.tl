@@ -56,6 +56,53 @@
     unit
     (io.panic "fmt number literal diagnostics changed")))
 
+(define (fmt-or-pattern-source) : String
+  "(define (classify [op : Op]) : i64 (match op [(or (Load dst) (Store dst)) dst] [(or (Alpha first-value) (Beta first-value)) (+ first-value (compute first-value))] [(or (Alpha-instruction dst _ _) (Beta-instruction dst _) (Gamma-instruction dst) (Delta-instruction dst _ _ _) (Epsilon-instruction dst)) dst] [(or (Alpha-instruction dst _ _)
+;; a comment between alternatives
+(Beta-instruction dst _) (Gamma-instruction dst)) dst] [_ (if (or (long-condition-name-one op) (long-condition-name-two op) (long-condition-name-three op)) 1 0)]))")
+
+;; An `(or ...)` match pattern that fits stays on its line; one that does not
+;; packs as many alternatives per line as fit, aligned under the first, and a
+;; comment keeps its own line. A boolean `(or ...)` expression is unchanged.
+(define (fmt-or-pattern-expected) : String
+  "(define (classify [op : Op]) : i64
+  (match op
+    [(or (Load dst) (Store dst)) dst]
+    [(or (Alpha first-value) (Beta first-value))
+      (+ first-value (compute first-value))]
+    [(or (Alpha-instruction dst _ _) (Beta-instruction dst _)
+         (Gamma-instruction dst) (Delta-instruction dst _ _ _)
+         (Epsilon-instruction dst))
+      dst]
+    [(or (Alpha-instruction dst _ _)
+         ;; a comment between alternatives
+         (Beta-instruction dst _) (Gamma-instruction dst))
+      dst]
+    [_
+      (if (or
+        (long-condition-name-one op)
+        (long-condition-name-two op)
+        (long-condition-name-three op))
+        1
+        0)]))")
+
+(test
+  fmt-or-pattern-fills-alternatives
+  (let
+    [formatted : String
+      (format-rules-render-source-width (fmt-or-pattern-source) 80)]
+    [fixpoint : String
+      (format-rules-render-source-width
+        (owned_view.compiler-owned-shared-view formatted)
+        80)]
+    (begin
+      (unless
+        (string.eq formatted (fmt-or-pattern-expected))
+        (io.panic formatted))
+      (unless
+        (string.eq fixpoint formatted)
+        (io.panic "fmt or-pattern fill is not a fixpoint")))))
+
 (define (fmt-list-count [items : cst.FormatCstList]) : i64
   items.len)
 

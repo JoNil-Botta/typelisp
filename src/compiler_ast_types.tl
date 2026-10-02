@@ -740,7 +740,14 @@
   ;; `(slice p1 ... pk)` or `(slice p1 ... pk & rest)` over a borrowed Slice.
   ;; With `true`, the last item is the rest pattern (a binding or `_`) and the
   ;; items before it are the k element patterns.
-  (Slice (Box AstPatternList) bool))
+  (Slice (Box AstPatternList) bool)
+  ;; `(or p1 ... pn)`: the alternatives, tried in order.
+  (Or (Box AstPatternList))
+  ;; `(fields ...)`: a by-name struct pattern whose entries are all `Field`.
+  (Fields (Box AstPatternList))
+  ;; One `(fields ...)` entry: the field name and a one-element list holding
+  ;; the pattern that field's value is matched against. Only `Fields` holds it.
+  (Field i64 (Box AstPatternList)))
 
 (defstruct AstPatternList
   (slots (__tl_dyn-array AstPattern))
@@ -6169,6 +6176,23 @@
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
 
+(define (ast-pat-or [alternatives : AstPatternList]) : AstPattern
+  (AstPattern.Or (box alternatives)))
+
+(define (ast-pat-fields [entries : AstPatternList]) : AstPattern
+  (AstPattern.Fields (box entries)))
+
+(define (ast-pat-field [name : i64] [pattern : AstPattern]) : AstPattern
+  (let
+    [items : AstPatternList (ast-pattern-list-with-capacity 1)]
+    (begin
+      (ast-pattern-list-push (&mut items) pattern)
+      (AstPattern.Field name (box items)))))
+
+;; The pattern a `(fields ...)` entry matches its field's value against.
+(define (ast-pattern-field-sub [items : (& items AstPatternList)]) : AstPattern
+  (ast-pattern-list-get items 0 (ast-pattern-fallback)))
+
 (define (ast-let-binding-id
   [name : i64]
   [maybe-ty : AstMaybeType]
@@ -10869,7 +10893,17 @@
         name
         (box (ast-compaction-remap-pattern-list remap (deref items))))]
     [(AstPattern.Literal lit)
-      (AstPattern.Literal (ast-compaction-remap-literal lit))]))
+      (AstPattern.Literal (ast-compaction-remap-literal lit))]
+    [(AstPattern.Or items)
+      (AstPattern.Or
+        (box (ast-compaction-remap-pattern-list remap (deref items))))]
+    [(AstPattern.Fields items)
+      (AstPattern.Fields
+        (box (ast-compaction-remap-pattern-list remap (deref items))))]
+    [(AstPattern.Field name items)
+      (AstPattern.Field
+        name
+        (box (ast-compaction-remap-pattern-list remap (deref items))))]))
 
 (define (ast-compaction-remap-pattern-list-into
   [remap : (& remap AstProgramCompactionRemap)]

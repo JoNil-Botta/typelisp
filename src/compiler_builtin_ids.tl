@@ -1715,7 +1715,8 @@
           (ctfe 301 "invalidate")
           (ctfe 302 ":align")
           (ctfe 303 "type-declared-align")
-          (ctfe 304 "struct-field-declared-align")))
+          (ctfe 304 "struct-field-declared-align")
+          (ctfe 305 "fields")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

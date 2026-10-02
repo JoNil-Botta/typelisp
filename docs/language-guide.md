@@ -241,7 +241,8 @@ the server host and accepts `target` plus a string-array `cfg` in
 `if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit
 `break`/`continue`),
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
-struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
+and by-name `(fields ...)` struct patterns, `(slice ...)` length patterns over
+borrowed Slices, `(or ...)` alternatives, `_`),
 `ann`, `cast`, `return`, `try`, `foreach`,
 `foreach-active`, `spmd-reduce`, `spmd-scan`, `spmd-compact`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`

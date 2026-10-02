@@ -29957,6 +29957,7 @@
         [name-text : String (tc_core.tc-env-key-name-text name)]
         (if (tc_core.tc-dotted-local-field-name-id? type-env name)
           (match (tc_core.tc-dotted-local-field-set-expr-id
+            (tc_core.tc-context-expr-bases ctx)
             type-env
             name
             value-box)

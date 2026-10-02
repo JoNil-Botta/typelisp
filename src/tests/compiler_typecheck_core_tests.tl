@@ -1228,6 +1228,83 @@
         unit
         (io.panic "typecheck: macro expression read pool isolation failed")))))
 
+;; --- #8200: typecheck and CTFE-predicate reads use the owning pool ----------
+;;
+;; Two fresh pools take the same push sequence, so each probed node has the same
+;; id in both. Pool B is installed as the ambient decoy while A's segment bases
+;; are passed explicitly; a read that fell back to the installed pool would see
+;; B's node and answer differently.
+;; Three filler nodes, then LAST; LAST's id. The same calls on two fresh pools
+;; return the same ids.
+(define (owned-read-pool-node
+  [pools : ast.AstNodePoolContext]
+  [last : ast.AstExpr]) : i64
+  (begin
+    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools last)))
+
+(test
+  typecheck-expression-reads-use-owning-pool
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [name-id : i64 (ci.intern "owned-read/value")]
+    [span : ast.AstSourceSpan (ast.ast-source-span 2 1 2 9)]
+    ;; call classification: a call in A, a literal at the same id in B
+    [call-a : i64
+      (owned-read-pool-node
+        pools-a
+        (ast.AstExpr.Call 0 (ast.ast-expr-list-new)))]
+    [call-b : i64
+      (owned-read-pool-node
+        pools-b
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
+    ;; borrow check: A's value names `name-id`, B's names another binding
+    [var-a : i64 (owned-read-pool-node pools-a (ast.AstExpr.Var name-id))]
+    [var-b : i64
+      (owned-read-pool-node
+        pools-b
+        (ast.AstExpr.Var (ci.intern "owned-read/decoy")))]
+    ;; CTFE predicate: a type literal in A, a plain literal in B
+    [type-a : i64 (owned-read-pool-node pools-a (ast.AstExpr.TypeLiteral 0))]
+    [type-b : i64
+      (owned-read-pool-node
+        pools-b
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 2 "2")))]
+    [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
+    [_decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [call? : bool
+      (tc_core.tc-call-expr? bases-a (ast.AstExpr.Spanned call-a span))]
+    [uses? : bool
+      (tc_core.tc-borrow-check-composite-value-uses-name?
+        bases-a
+        (ast.AstExpr.Spanned var-a span)
+        name-id)]
+    [typed? : bool
+      (tc_core.ctfe-node-has-type-literal? bases-a macro-state type-a)]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (test.assert-true
+        (and (= call-a call-b) (= var-a var-b) (= type-a type-b))
+        "the two pools give the probed nodes the same ids")
+      (test.assert-true
+        call?
+        "call classification (tc-call-expr?) reads the call from its owning pool, not the installed decoy")
+      (test.assert-true
+        uses?
+        "the composite-value borrow check reads the value from its owning pool, not the installed decoy")
+      (test.assert-true
+        typed?
+        "the CTFE type-literal predicate reads the node from its owning pool, not the installed decoy"))))
+
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
 ;; A Decls or Module macro's output reaches the declaration parser through

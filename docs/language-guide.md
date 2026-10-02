@@ -107,7 +107,11 @@ inputs; fields, globals, locals, and nominal lifetime arguments remain
 explicit. Borrow expressions stay `(& place)` and `(&mut place)`.
 At a typed call, an existing `&mut T` argument may be passed to an `&T`
 parameter as a tracked shared reborrow; the reverse conversion is never
-implicit.
+implicit. A call argument may also borrow a temporary, `(f (& (g x)))` or
+`(f (&mut (make-buf)))`: the value lives in hidden storage until the call
+returns (a cleanup-owning value is cleaned then), so a call whose result could
+keep that borrow is rejected. Matching through a shared reference binds `Copy`
+payloads by value and a `(Box T)` payload as `(& T)`.
 
 `Slice` is an unsized borrowed referent, so only `(& r (Slice t))` and
 `(&mut r (Slice t))` are runtime forms; a bare `(Slice t)` cannot be a value,

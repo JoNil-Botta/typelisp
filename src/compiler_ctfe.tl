@@ -966,7 +966,10 @@
 
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name) (= (deref name) (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name)
+      (=
+        (owned_view.compiler-owned-pattern-copy name)
+        (ctfe-untyped-expr-type-id))]
     [_ false]))
 
 (define (ctfe-captured-expr-type-id) : i64

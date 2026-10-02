@@ -498,11 +498,7 @@
         [_ false])]
     [(SccpValue.Const ak av aty)
       (match b
-        [(SccpValue.Const bk bv bty)
-          (and
-            (= (deref ak) (deref bk))
-            (= (deref av) (deref bv))
-            (= (deref aty) (deref bty)))]
+        [(SccpValue.Const bk bv bty) (and (= ak bk) (= av bv) (= aty bty))]
         [_ false])]))
 
 (define (sccp-join [old : (& o SccpValue)] [new : (& n SccpValue)]) : SccpValue
@@ -511,20 +507,15 @@
       (match new
         [(SccpValue.Unknown) (SccpValue.Unknown)]
         [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-        [(SccpValue.Const nk nv nty)
-          (SccpValue.Const (deref nk) (deref nv) (deref nty))])]
+        [(SccpValue.Const nk nv nty) (SccpValue.Const nk nv nty)])]
     [(SccpValue.Overdefined) (SccpValue.Overdefined)]
     [(SccpValue.Const ok ov oty)
       (match new
-        [(SccpValue.Unknown)
-          (SccpValue.Const (deref ok) (deref ov) (deref oty))]
+        [(SccpValue.Unknown) (SccpValue.Const ok ov oty)]
         [(SccpValue.Overdefined) (SccpValue.Overdefined)]
         [(SccpValue.Const nk nv nty)
-          (if (and
-            (= (deref ok) (deref nk))
-            (= (deref ov) (deref nv))
-            (= (deref oty) (deref nty)))
-            (SccpValue.Const (deref ok) (deref ov) (deref oty))
+          (if (and (= ok nk) (= ov nv) (= oty nty))
+            (SccpValue.Const ok ov oty)
             (SccpValue.Overdefined))])]))
 
 ;; opt-sccp-state-bind: join the incoming value onto the slot; when the join
@@ -961,16 +952,7 @@
     [(SccpValue.Const lk lv lty)
       (match rhs
         [(SccpValue.Const rk rv rty)
-          (sccp-fold-binop
-            op
-            (deref lk)
-            (deref lv)
-            (deref lty)
-            (deref rk)
-            (deref rv)
-            (deref rty)
-            ty
-            rhs-ty-field)]
+          (sccp-fold-binop op lk lv lty rk rv rty ty rhs-ty-field)]
         [(SccpValue.Unknown) (SccpValue.Unknown)]
         [(SccpValue.Overdefined) (SccpValue.Overdefined)])]
     [(SccpValue.Unknown) (SccpValue.Unknown)]
@@ -1011,8 +993,7 @@
 ;; opt-sccp-fold-unop-value.
 (define (sccp-fold-unop-value [op : i64] [src : (& s SccpValue)] [ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
-      (sccp-fold-unop op (deref kind) (deref value) ty)]
+    [(SccpValue.Const kind value _) (sccp-fold-unop op kind value ty)]
     [(SccpValue.Unknown) (SccpValue.Unknown)]
     [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
 
@@ -1039,8 +1020,7 @@
   [from-ty : i64]
   [to-ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
-      (sccp-fold-cast (deref kind) (deref value) from-ty to-ty)]
+    [(SccpValue.Const kind value _) (sccp-fold-cast kind value from-ty to-ty)]
     [(SccpValue.Unknown) (SccpValue.Unknown)]
     [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
 

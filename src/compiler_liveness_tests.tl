@@ -359,7 +359,7 @@
       (compiler-live-instr-ids-seq-match-set? (compiler-live-ids-sample-instrs)))))
 
 (define (compiler-live-i64-ty) : ast.AstType
-  (ast.AstType.I64))
+  (I64))
 
 (define (compiler-live-instr-seq7
   [first : ir.CompilerIrInstr]
@@ -491,28 +491,28 @@
     [use-def : live.CompilerLiveUseDef
       (compiler-live-block-use-def
         (compiler-live-instr-seq7
-          (ir.CompilerIrInstr.LaneId 0 4 (compiler-live-i64-ty))
+          (LaneId 0 4 (compiler-live-i64-ty))
           (irt.instr "%1 = splat %10 lanes 4 : i64")
           (ir.ir-instr-vector-bin-op
             2
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
+            (Add)
+            (Var 0)
+            (Var 1)
             4
             (compiler-live-i64-ty))
           (irt.instr "%3 = tail_mask %11, %12 lanes 4")
           (ir.ir-instr-predicated-load
             4
-            (ir.CompilerIrValue.Var 13)
-            (ir.CompilerIrValue.Var 11)
-            (ir.CompilerIrValue.Var 3)
+            (Var 13)
+            (Var 11)
+            (Var 3)
             4
             (compiler-live-i64-ty))
           (ir.ir-instr-predicated-store
-            (ir.CompilerIrValue.Var 14)
-            (ir.CompilerIrValue.Var 11)
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.Var 3)
+            (Var 14)
+            (Var 11)
+            (Var 2)
+            (Var 3)
             4
             (compiler-live-i64-ty))
           (irt.instr "%5 = mask_reduce_any %3 lanes 4")))]
@@ -529,7 +529,7 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view liveness)
       (ir.compiler-ir-label "entry"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (live.compiler-live-set-eq?
             (compiler-live-block-uses block)
@@ -560,7 +560,7 @@
           (live.compiler-live-set-eq?
             (live.compiler-live-after liveness (ir.compiler-ir-label "entry") 2)
             (live.compiler-live-set-empty)))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+      [(No) false])))
 
 (define (compiler-live-branch-ok?) : bool
   (let
@@ -569,7 +569,7 @@
     (match (live.compiler-live-function-find-block
       liveness
       (ir.compiler-ir-label "entry"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (=
             (live.compiler-live-label-set-count
@@ -584,7 +584,7 @@
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in block)
             (compiler-live-set3 0 1 2)))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+      [(No) false])))
 
 (define (compiler-live-phi-ok?) : bool
   (let
@@ -593,7 +593,7 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view liveness)
       (ir.compiler-ir-label "join"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (live.compiler-live-set-eq?
             (compiler-live-block-uses block)
@@ -614,12 +614,12 @@
           (match (live.compiler-live-function-find-block
             liveness
             (ir.compiler-ir-label "left"))
-            [(live.CompilerLiveMaybeBlock.Some left-block)
+            [(Some left-block)
               (live.compiler-live-label-set-contains?
                 (compiler-live-block-successor-labels left-block)
                 (ir.compiler-ir-label "join"))]
-            [(live.CompilerLiveMaybeBlock.No) false]))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+            [(No) false]))]
+      [(No) false])))
 
 (define (compiler-live-phi-edge-precise-ok?) : bool
   (let
@@ -631,23 +631,23 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view baseline)
       (ir.compiler-ir-label "join"))
-      [(live.CompilerLiveMaybeBlock.Some baseline-join)
+      [(Some baseline-join)
         (match (live.compiler-live-function-find-block
           (live.compiler-live-shared-view edge-precise)
           (ir.compiler-ir-label "join"))
-          [(live.CompilerLiveMaybeBlock.Some edge-precise-join)
+          [(Some edge-precise-join)
             (match (live.compiler-live-function-find-block
               baseline
               (ir.compiler-ir-label "left"))
-              [(live.CompilerLiveMaybeBlock.Some baseline-left)
+              [(Some baseline-left)
                 (match (live.compiler-live-function-find-block
                   (live.compiler-live-shared-view edge-precise)
                   (ir.compiler-ir-label "left"))
-                  [(live.CompilerLiveMaybeBlock.Some edge-precise-left)
+                  [(Some edge-precise-left)
                     (match (live.compiler-live-function-find-block
                       edge-precise
                       (ir.compiler-ir-label "right"))
-                      [(live.CompilerLiveMaybeBlock.Some edge-precise-right)
+                      [(Some edge-precise-right)
                         (and
                           (live.compiler-live-set-eq?
                             (compiler-live-block-uses baseline-join)
@@ -669,11 +669,11 @@
                             (live.compiler-live-block-live-out
                               edge-precise-right)
                             (live.compiler-live-set1 2)))]
-                      [(live.CompilerLiveMaybeBlock.No) false])]
-                  [(live.CompilerLiveMaybeBlock.No) false])]
-              [(live.CompilerLiveMaybeBlock.No) false])]
-          [(live.CompilerLiveMaybeBlock.No) false])]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+                      [(No) false])]
+                  [(No) false])]
+              [(No) false])]
+          [(No) false])]
+      [(No) false])))
 
 (define (compiler-live-switch-ok?) : bool
   (let
@@ -681,7 +681,7 @@
       (irt.instr "switch %9 base 4 [4:four, 5:five] default other")]
     [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq1 instr)]
     [block : ir.CompilerIrBlock
-      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") (clone instrs))]
+      (Block (ir.compiler-ir-label "entry") (clone instrs))]
     [successors : live.CompilerLiveLabelSet
       (live.compiler-live-block-successors block)]
     [use-def : live.CompilerLiveUseDef (compiler-live-block-use-def instrs)]

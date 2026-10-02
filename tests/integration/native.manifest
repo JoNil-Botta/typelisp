@@ -346,6 +346,7 @@ comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl
 clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
 comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
 comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
+comptime_type_macro_operand|all|-,0,2|tests/integration/comptime_type_macro_operand.tl|42|-|-|-|-
 generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-
 generated_string_vector_private_intrinsics|all|-|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
 cond|all|-|tests/integration/cond.tl|42|-|-|-|-

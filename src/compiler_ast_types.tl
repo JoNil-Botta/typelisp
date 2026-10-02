@@ -5426,8 +5426,19 @@
       (ast-lifetime-list-append-from (&mut out) (& rest) 0)
       out)))
 
+;; How many comptime parameters this process has built (#8578). Every one
+;; starts at `ast-comptime-param-id`; the rest are copies. While it is zero no
+;; call can pass a comptime argument, so the checker skips that work.
+(define ast-comptime-param-count : i64
+  0)
+
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param name ty is-comptime))
+
+(define (ast-comptime-param-id [name : i64] [ty : AstType]) : AstParam
+  (begin
+    (set! ast-comptime-param-count (+ ast-comptime-param-count 1))
+    (AstParam.Param name ty true)))
 
 (define (ast-param-fallback) : AstParam
   (AstParam.Param 0 (AstType.Unit) false))

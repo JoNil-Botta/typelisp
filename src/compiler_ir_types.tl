@@ -24,11 +24,16 @@
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
+;; A value that is not a Box is already the boxed value: a `(Box T)` payload
+;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-ir-box-shared-view [value : Expr]) : Expr
   (let
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(compiler-ir-typed-box-shared-view ,value ,inner-ty)))
+    [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (string-eq (type-kind value-ty) "box")
+      `(compiler-ir-typed-box-shared-view
+        ,value
+        ,(comptime.box-element-type value-ty))
+      value)))
 
 (defmacro (compiler-ir-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let
@@ -1574,94 +1579,120 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(Mov dst _ _) (deref dst)]
-    [(Alloc dst _) (deref dst)]
-    [(AddrOf dst _) (deref dst)]
-    [(Gep dst _ _ _) (deref dst)]
-    [(Load dst _ _) (deref dst)]
-    [(StoreOwned _ _ _) -1]
-    [(StorePtr _ _ _) -1]
-    [(CopyBytes _ _ _) -1]
-    [(BoundsCheck _ _ _) -1]
-    [(Cast dst _ _ _) (deref dst)]
-    [(Bitcast dst _ _ _) (deref dst)]
-    [(BinOp dst _ _ _ _) (deref dst)]
-    [(UnOp dst _ _ _) (deref dst)]
-    [(LaneId dst _ _) (deref dst)]
-    [(Splat dst _ _ _) (deref dst)]
-    [(VectorBinOp payload-box)
+    [(CompilerIrInstr.Mov dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Alloc dst _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.AddrOf dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Gep dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Load dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.StoreOwned _ _ _) -1]
+    [(CompilerIrInstr.StorePtr _ _ _) -1]
+    [(CompilerIrInstr.CopyBytes _ _ _) -1]
+    [(CompilerIrInstr.BoundsCheck _ _ _) -1]
+    [(CompilerIrInstr.Cast dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Bitcast dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.BinOp dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.UnOp dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.LaneId dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Splat dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(VectorPrefix payload-box)
+    [(CompilerIrInstr.VectorPrefix payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(VectorReduce dst _ _ _ _) (deref dst)]
-    [(VectorCompare payload-box)
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(MaskBinOp dst _ _ _ _) (deref dst)]
-    [(MaskNot dst _ _) (deref dst)]
-    [(MaskReduce dst _ _ _) (deref dst)]
-    [(Select payload-box)
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.MaskNot dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.MaskReduce dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(VectorLoad dst _ _ _ _) (deref dst)]
-    [(VectorStore _) -1]
-    [(PredicatedStore _) -1]
-    [(PredicatedLoad payload-box)
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.VectorStore _) -1]
+    [(CompilerIrInstr.PredicatedStore _) -1]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(GatherLoad payload-box)
+    [(CompilerIrInstr.GatherLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(VectorShuffle payload-box)
+    [(CompilerIrInstr.VectorShuffle payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box dst))]
-    [(TailMask dst _ _ _) (deref dst)]
-    [(EntryArgc dst) (deref dst)]
-    [(EntryArgv dst) (deref dst)]
-    [(EntryEnvp dst) (deref dst)]
-    [(CpuId dst _ _ _) (deref dst)]
-    [(Xgetbv dst _) (deref dst)]
-    [(Syscall dst _) (deref dst)]
-    [(Call dst _ _ _) (deref dst)]
-    [(CallIndirect dst _ _ _) (deref dst)]
-    [(CallIndirectC dst _ _ _) (deref dst)]
-    [(CallCAbiStoreResult _) -1]
-    [(CallIndirectCAbiStoreResult _) -1]
-    [(SpmdCall payload-box)
+    [(CompilerIrInstr.TailMask dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryArgc dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryArgv dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.EntryEnvp dst)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CpuId dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Xgetbv dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Syscall dst _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Call dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CallIndirect dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.CallCAbiStoreResult _) -1]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         (compiler-ir-box-field-shared-view payload-box result))
-        [(Unit) -1]
-        [(Value dst _ _) dst])]
-    [(TailCall _ _ _) -1]
-    [(Store _ _ _) -1]
-    [(Jump _) -1]
-    [(Branch _ _ _) -1]
-    [(TotalEnumBranch _ _ _) -1]
-    [(Return _) -1]
-    [(Phi dst _ _) (deref dst)]
-    [(Pack dst _ _) (deref dst)]
-    [(Word dst _ _ _) (deref dst)]
-    [(TailCallIndirect _ _ _) -1]
-    [(Switch _ _ _ _) -1]
-    [(TotalEnumSwitch _ _ _ _ _) -1]))
+        [(CompilerIrSpmdCallResult.Unit) -1]
+        [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
+    [(CompilerIrInstr.TailCall _ _ _) -1]
+    [(CompilerIrInstr.Store _ _ _) -1]
+    [(CompilerIrInstr.Jump _) -1]
+    [(CompilerIrInstr.Branch _ _ _) -1]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
+    [(CompilerIrInstr.Return _) -1]
+    [(CompilerIrInstr.Phi dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Pack dst _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Word dst _ _ _)
+      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
+    [(CompilerIrInstr.Switch _ _ _ _) -1]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
 
 ;: The value type the instruction states for its destination: the type field
 ;: of a scalar result (a Cast's target, a comparison's `bool`, an SPMD call's

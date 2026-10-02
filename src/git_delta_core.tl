@@ -6,6 +6,7 @@
 ;; Hashing, zlib, files, processes, and network I/O are outside this boundary.
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (defstruct GitDeltaLimits
   (max-object-bytes i64)
@@ -628,10 +629,14 @@
           (match (& candidate.target)
             [(Entry entry-index)
               (set! target-kind 0)
-              (set! target-index (deref entry-index))]
+              (set!
+                target-index
+                (owned_view.compiler-owned-pattern-copy entry-index))]
             [(Thin thin-index)
               (set! target-kind 1)
-              (set! target-index (deref thin-index))]))
+              (set!
+                target-index
+                (owned_view.compiler-owned-pattern-copy thin-index))]))
         (set! index (+ index 1))))
     (cond
       [(= matches 0) (Err "git delta: missing REF base")]
@@ -640,7 +645,9 @@
         (if (or (< target-index 0) (>= target-index (array-length entries)))
           (Err "git delta: invalid REF entry target")
           (if (string.eq
-            (git-delta-entry-at entries target-index).object-id
+            (git-delta-entry-at entries target-index)
+            .
+            object-id
             object-id)
             (Ok target-index)
             (Err "git delta: inconsistent REF entry lookup")))]
@@ -648,7 +655,9 @@
         (if (or (< target-index 0) (>= target-index (array-length thin-bases)))
           (Err "git delta: invalid thin base target")
           (if (string.eq
-            (git-delta-thin-at thin-bases target-index).object-id
+            (git-delta-thin-at thin-bases target-index)
+            .
+            object-id
             object-id)
             (Ok (- 0 (+ target-index 1)))
             (Err "git delta: inconsistent thin base lookup")))]
@@ -725,7 +734,7 @@
                         entries
                         tables.offsets
                         entry.offset
-                        (deref base-offset)
+                        (owned_view.compiler-owned-pattern-copy base-offset)
                         limits
                         (&mut budget))
                         [(Err message) (return (Err message))]

@@ -34,6 +34,7 @@
 ;; for every importer.
 (import compiler_intern as ci)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (defenum Token
   (LParen)
@@ -125,7 +126,7 @@
 ;; value back out of the enum, the way a parser reads a numeric literal.
 (define (int [t : (& t Token)]) : i64
   (match t
-    [(Int value _) (deref value)]
+    [(Token.Int value _) (owned_view.compiler-owned-pattern-copy value)]
     [_ 0]))
 
 ;; Original source spelling of `Token.Int` (empty string for any other kind).
@@ -141,7 +142,7 @@
 ;; a non-symbol is not represented by a raw negative name sentinel.
 (define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Sym id) (deref id)]
+    [(Token.Sym id) (owned_view.compiler-owned-pattern-copy id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
@@ -188,7 +189,7 @@
 ;; tag before projecting, so missing remains outside the name-id type.
 (define (str-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Str id) (deref id)]
+    [(Token.Str id) (owned_view.compiler-owned-pattern-copy id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
@@ -204,7 +205,7 @@
 ;; symbols, ints, and strings.
 (define (char [t : (& t Token)]) : char
   (match t
-    [(Char value) (deref value)]
+    [(Token.Char value) (owned_view.compiler-owned-pattern-copy value)]
     [_ '\0']))
 
 ;; A token paired with the 1-based source line and column where its lexeme

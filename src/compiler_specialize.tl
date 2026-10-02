@@ -735,11 +735,9 @@
   (match param
     [(Param name _ _) name]))
 
-(define (spec-state-ctfe-env [state : (& state SpecState)]) : (&
-    state
-    ctfe.CtfeEnv)
+(define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(State _ _ env _) env]))
+    [(SpecState.State _ _ env _) (owned_view.compiler-owned-pattern-copy env)]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state
@@ -761,8 +759,7 @@
   [expr : ast.AstExpr]
   [fuel : i64]) : ctfe.ResultCtfe
   (let
-    [ctfe-env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-shared-view (spec-state-ctfe-env state))]
+    [ctfe-env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
     (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
@@ -3846,96 +3843,93 @@
   [state : SpecState]
   [value : ctfe.CompilerCtfeValue]
   [ty : ast.AstType]) : bool
-  (cbi.compiler-builtin-refresh!)
-  (match value
-    [(I64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (I64))]
-    [(F64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F64))]
-    [(F32 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F32))]
-    [(Bool _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Bool))]
-    [(Char _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Char))]
-    [(String _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-    [(Name _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-    [(Unit) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Unit))]
-    [(Type _) false]
-    [(Expr _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-    [(CapturedExpr _ _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-    [(ExprList _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-    [(CapturedExprList _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-    [(ExprClause _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClause))]
-    [(CapturedExprClause _ _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClause))]
-    [(ExprClauseList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-    [(CapturedExprClauseList _ _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-    [(ExprBindingClause _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
-    [(ExprBindingClauseList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
-    [(Pattern _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-Pattern))]
-    [(PatternList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-PatternList))]
-    [(MatchArm _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-MatchArm))]
-    [(MatchArmList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-MatchArmList))]
-    [(LetBinding _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-LetBinding))]
-    [(LetBindingList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-LetBindingList))]
-    [(TypeInfo _) false]
-    [(TypeInfoBox _) false]
-    [(TypeInfoList _) false]
-    [(TypeField _ _) false]
-    [(TypeFieldList _) false]
-    [(TypeVariantPayload _) false]
-    [(TypeVariantPayloadList _) false]
-    [(TypeVariant _ _) false]
-    [(TypeVariantList _) false]))
+  (let
+    [env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
+    (begin
+      (cbi.compiler-builtin-refresh!)
+      (match value
+        [(I64 _) (ctfe.ctfe-type-eq-in-env env ty (I64))]
+        [(F64 _) (ctfe.ctfe-type-eq-in-env env ty (F64))]
+        [(F32 _) (ctfe.ctfe-type-eq-in-env env ty (F32))]
+        [(Bool _) (ctfe.ctfe-type-eq-in-env env ty (Bool))]
+        [(Char _) (ctfe.ctfe-type-eq-in-env env ty (Char))]
+        [(String _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+        [(Name _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+        [(Unit) (ctfe.ctfe-type-eq-in-env env ty (Unit))]
+        [(Type _) false]
+        [(Expr _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+        [(CapturedExpr _ _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+        [(ExprList _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+        [(CapturedExprList _ _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+        [(ExprClause _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprClause))]
+        [(CapturedExprClause _ _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprClause))]
+        [(ExprClauseList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+        [(CapturedExprClauseList _ _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+        [(ExprBindingClause _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
+        [(ExprBindingClauseList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
+        [(Pattern _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-Pattern))]
+        [(PatternList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-PatternList))]
+        [(MatchArm _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-MatchArm))]
+        [(MatchArmList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-MatchArmList))]
+        [(LetBinding _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-LetBinding))]
+        [(LetBindingList _)
+          (ctfe.ctfe-type-eq-in-env
+            env
+            ty
+            (Var cbi.compiler-builtin-id-fix-LetBindingList))]
+        [(TypeInfo _) false]
+        [(TypeInfoBox _) false]
+        [(TypeInfoList _) false]
+        [(TypeField _ _) false]
+        [(TypeFieldList _) false]
+        [(TypeVariantPayload _) false]
+        [(TypeVariantPayloadList _) false]
+        [(TypeVariant _ _) false]
+        [(TypeVariantList _) false]))))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value

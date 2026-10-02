@@ -328,8 +328,43 @@
                                   owner-display
                                   "; invoke gen-clone in its owner module first")))))))))))))))))
 
-;: Emit an ordinary deep copy for one shared-reference source expression.
+;: Emit an ordinary deep copy for one source expression.
+;:
+;: The source is a shared reference to a `T`, or a payload bound by a pattern
+;: matched through a shared reference: a Copy `T` bound by value, or the boxed
+;: value of a `(Box U)` bound as `(& U)`.
 (defmacro (clone-value
+  [T : type]
+  [source : comptime.Expr]
+  [root-key-expr : comptime.Expr]
+  [path-expr : comptime.Expr]) : comptime.Expr
+  (let
+    [kind : String (type-kind T)]
+    [source-type : comptime.Expr (comptime.expr-type source)]
+    (if (string-eq (type-kind source-type) "ref")
+      (if (if (string-eq kind "box")
+        (if (string-eq
+          (type-kind (comptime.reference-element-type source-type))
+          "box")
+          false
+          true)
+        false)
+        `(box
+          (stdlib.clone.clone-value
+            ,(comptime.box-element-type T)
+            ,source
+            ,root-key-expr
+            ,path-expr))
+        `(stdlib.clone.clone-borrowed-value
+          ,T
+          ,source
+          ,root-key-expr
+          ,path-expr))
+      ;; Only a Copy payload binds by value; its copy is the clone.
+      source)))
+
+;: Emit an ordinary deep copy for one shared-reference source expression.
+(defmacro (clone-borrowed-value
   [T : type]
   [source : comptime.Expr]
   [root-key-expr : comptime.Expr]

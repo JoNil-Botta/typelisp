@@ -965,8 +965,9 @@ generic macro sequence operations, not macro-name hooks; user-defined macros
 may use them to construct iterative syntax without recursively emitting macro
 calls. Each consumed input charges the shared deterministic CTFE fuel budget.
 The generated program typechecks the resulting borrow and call normally, so a
-mutable-borrow receiver must still be a caller place and every supplied
-argument is evaluated once in source order.
+mutable-borrow receiver is a caller place, or a temporary that the call
+borrows under the call-argument temporary rule of section 3.10, and every
+supplied argument is evaluated once in source order.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
 `pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
@@ -1873,8 +1874,54 @@ owner/provenance is statically known:
   the default program-lifetime arena infer the reserved lifetime name
   `program`.
 
-The checker rejects borrows of arbitrary rvalues and temporaries whose owner
-cannot be named. Bind the value first if it should have a lexical owner.
+Any other operand is a temporary, not a place. A borrow of a temporary is
+accepted only as a direct call argument, described next; everywhere else bind
+the value first if it should have a lexical owner.
+
+**Borrowed call-argument temporaries.** A borrow expression whose operand is a
+call, constructor, literal, or other value expression may be passed directly as
+an argument of a typed function, function-value, or lambda call:
+
+```lisp test=run name=borrow-call-argument-temporaries exit=12 stdout=""
+(defstruct Point (x i64) (y i64))
+
+(define (sum [p : (& Point)]) : i64
+  (+ p.x p.y))
+
+(define (bump! [p : (&mut Point)]) : i64
+  (begin
+    (set! p.x (+ p.x 1))
+    (sum p)))
+
+(define (origin) : Point
+  (Point 0 0))
+
+(define (main) : i64
+  (+ (sum (& (Point 3 4))) (bump! (&mut (origin))) (sum (& (Point 2 2)))))
+```
+
+The operand is evaluated by value at its argument position, left to right with
+the other arguments, into hidden storage that lives until the call returns, and
+the argument is a reference to that storage. The operand is a by-value position
+(section 4.7.2): a non-`Copy` place named at its tail moves into the storage.
+After the call returns, a cleanup-owning struct or enum is passed to its
+declared cleanup function (section 4.7.1); any other value is dropped with the
+storage. A temporary whose type holds a cleanup-owning value without itself
+declaring a cleanup function is rejected.
+
+The borrow's lifetime ends with the call; every other lifetime outlives it and
+no source spelling can name it, so `(& lifetime operand)` is rejected for a
+temporary. A call is rejected with `typecheck: temporary dropped while still
+borrowed` when the lifetime of the reference parameter that receives a
+temporary, elided or explicit, appears in the call's result type or in the
+referent of another `&mut` parameter, since the callee could then keep the
+borrow after the temporary is dropped. Bind the value to a local before the
+call in that case. A borrow of a temporary anywhere else, such as a `let`
+initializer, a `match` scrutinee, or the operand of another expression, is
+rejected with `typecheck: a borrowed temporary must be a direct function-call
+argument`. A projection such as `(& (make).field)` is not a temporary operand;
+it remains a borrow of a non-place. Call-site auto-borrowing never applies to a
+temporary: the borrow is always written.
 
 **Returned stored-reference reborrows.** A field or tuple element that stores a
 reference can be reborrowed through iterator-like state. If that reborrow is
@@ -2018,8 +2065,8 @@ reference, and a returned or stored shared result keeps the reborrow live until
 its last use. There is no inverse `&T` to `&mut T` strengthening. Macros are
 checked after expansion. Extern C ABI calls do
 not participate because safe reference types are not legal C ABI parameter
-values. Arbitrary rvalues and temporaries are rejected because they have no
-stable lexical owner:
+values. Arbitrary rvalues and temporaries are not auto-borrowed; borrow one
+explicitly as a call argument, `(takes-ref (& (+ n 1)))`, as described above:
 
 **Two-phase mutable call borrows.** For a typed TypeLisp call argument, an
 explicit top-level `(&mut place)` passed to a mutable-reference formal reserves
@@ -4091,6 +4138,10 @@ different live owners does not prove that both were discharged.
     1))
 ```
 
+A cleanup-owning struct or enum borrowed as a call-argument temporary (section
+3.10) is owned by that call's hidden storage, which passes it to the declared
+cleanup function right after the call returns.
+
 Cleanup runs when the owner scope exits normally and before recoverable
 `(try ...)` propagation leaves the scope. If initialization of a later `with`
 binding propagates recoverably, already-initialized earlier cleanup-owning
@@ -4201,7 +4252,9 @@ move-only values and as copies for copyable values:
   creates no moved state. Arguments are evaluated left-to-right, so earlier
   moves are visible while checking later arguments and the remaining
   expression. The rule depends only on the resolved parameter type, never on
-  the callee's name, module, qualification, or generated identity.
+  the callee's name, module, qualification, or generated identity. The operand
+  of a borrowed call-argument temporary `(& operand)` (section 3.10) is a
+  by-value position of the operand's own type at its argument position.
 - Function returns. Returning a move-only local or parameter moves it to the
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
@@ -4238,14 +4291,15 @@ move-only values and as copies for copyable values:
 - Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` consumes a
   move-only tuple and transfers its slots to bindings from left to right. A
   copyable tuple is copied at the by-value match boundary. Matching
-  `(& place)` binds shared references to the selected tuple slots instead and
-  leaves the owner initialized subject to the live borrow.
+  `(& place)` binds the selected tuple slots by the borrowed-pattern binding
+  rule of section 5.13 instead and leaves the owner initialized subject to the
+  live borrow.
 - Fixed-array patterns. Matching an owned fixed array with
   `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
   A move-only array is consumed and transfers its elements to bindings from
-  left to right; a copyable array is copied. Matching `(& place)` binds shared
-  references to the selected elements and leaves the owner initialized subject
-  to the live borrow.
+  left to right; a copyable array is copied. Matching `(& place)` binds the
+  selected elements by the borrowed-pattern binding rule of section 5.13 and
+  leaves the owner initialized subject to the live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -4365,7 +4419,9 @@ moving it. These are limited to:
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
 - Borrowed tuple matches over `(& place)` / `(& lifetime place)`. Tuple
-  subpattern bindings are shared references carrying the scrutinee lifetime.
+  subpattern bindings follow the borrowed-pattern binding rule of section
+  5.13: a `Copy` slot is copied, and any other slot binds a shared reference
+  carrying the scrutinee lifetime.
 - Calls and typed operations whose parameter or receiver is `(& lifetime T)`
   or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
   immutable auto-borrow or reborrow when the formal parameter is an immutable
@@ -4414,6 +4470,10 @@ Tuple-element assignment likewise reinitializes the selected literal-index
 path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
+Projecting a field or tuple element through `(deref box)`, as in
+`(deref b).count`, reads the boxed storage in place: a `Copy` projection is
+copied without moving the box, so `b` stays usable, while moving a non-Copy
+projection out of the box is rejected.
 Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
@@ -4572,8 +4632,8 @@ use-after-move.
     [NoName 0]))
 ```
 
-The borrowed `match` inspects `m` without moving it. Payload bindings are
-references tied to the borrowed scrutinee lifetime; the `String` payload above
+The borrowed `match` inspects `m` without moving it. Payload bindings follow
+the borrowed-pattern binding rule of section 5.13; the `String` payload above
 binds `s` as `(& m str)`.
 
 #### 4.7.3 Recursive aggregate layout and boxed recursion
@@ -4976,8 +5036,8 @@ explicit constructors.
   compose in the same recursive positions inside enum payload, struct field,
   and box patterns. Owned move-only tuples are consumed and their bound slots
   transfer left to right; copyable tuples are copied. Matching a shared
-  borrowed tuple binds slot references carrying the scrutinee lifetime and
-  does not move the owner. Tuple access outside a pattern remains
+  borrowed tuple binds its slots by the borrowed-pattern binding rule below
+  and does not move the owner. Tuple access outside a pattern remains
   `(tuple-ref place literal-index)`; numeric dotted syntax is not supported.
 - Fixed-array scrutinees support the constructor-shaped `(array p1 ... pn)`
   pattern. Its arity must exactly match `(Array T N)`. Element subpatterns are
@@ -4985,7 +5045,7 @@ explicit constructors.
   and compose recursively inside array, enum payload, struct field, tuple, and
   box patterns. Owned move-only arrays are consumed and their elements transfer
   from left to right; copyable arrays are copied. Matching a shared borrowed
-  array binds element references carrying the scrutinee lifetime without
+  array binds its elements by the borrowed-pattern binding rule below without
   moving the owner. The pattern introduces no run-time branch or allocation.
 - Borrowed views `(& (Slice T))` and `(&mut (Slice T))`, and borrowed fixed
   arrays `(& (Array T N))` and `(&mut (Array T N))`, support the variable-length
@@ -5031,11 +5091,22 @@ explicit constructors.
       [(slice x & rest) (+ x (sum rest))]))
   ```
 
-- Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
-  the same variant, wildcard, literal payload, and nested variant pattern
-  forms, but inspect the enum without moving the owner. Payload bindings are
-  immutable references tied to the borrowed scrutinee lifetime; `String`
-  payloads bind as borrowed `str` references.
+- Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)`, or
+  any scrutinee of shared reference type, use the same variant, wildcard,
+  literal payload, and nested variant pattern forms, but inspect the enum
+  without moving the owner.
+- Borrowed-pattern binding rule. A name bound by a pattern matched through a
+  shared reference, at any nesting depth of enum payloads, struct fields,
+  tuple slots, and array elements, binds:
+  - a `Copy` part (section 4.7.2) by value, a copy of the part;
+  - a `(Box T)` part as `(& lifetime T)`, a shared reference to the boxed
+    value with the scrutinee lifetime;
+  - any other part as `(& lifetime T)`, a shared reference to the part with the
+    scrutinee lifetime, where a `String` part binds as `(& lifetime str)`.
+
+  A by-value binding holds no borrow of the scrutinee. There is no reference
+  binding mode for a `Copy` part; borrow the whole scrutinee to keep a
+  reference. The example after this list shows the rule.
 - Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
   the explicit `(box inner-pattern)` pattern. The form takes exactly one inner
   pattern, reads the boxed `T`, and checks/binds the inner pattern against
@@ -5056,6 +5127,23 @@ explicit constructors.
   with their type as its expected type, as `if` branches are (§5.6).
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
+
+In the borrowed match below, `value` binds as `i64`, and `left` and `right`
+as `(& tree Tree)`:
+
+```lisp test=run name=borrowed-pattern-binding-rule exit=10 stdout=""
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+
+(define (sum [tree : (& Tree)]) : i64
+  (match tree
+    [(Tree.Leaf value) value]
+    [(Tree.Node left right) (+ (sum left) (sum right))]))
+
+(define (main) : i64
+  (sum (& (Tree.Node (box (Tree.Leaf 3)) (box (Tree.Leaf 7))))))
+```
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 

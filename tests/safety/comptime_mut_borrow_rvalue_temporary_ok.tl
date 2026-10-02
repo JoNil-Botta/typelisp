@@ -1,5 +1,6 @@
-;; comptime_mut_borrow_rvalue_reject.tl - a generated explicit mutable borrow
-;; keeps the normal place-only diagnostic for a temporary receiver.
+;; comptime_mut_borrow_rvalue_temporary_ok.tl - a generated explicit mutable
+;; borrow of a temporary receiver follows the ordinary rule: as a direct call
+;; argument it borrows a call-scoped temporary (SPEC section 3.10).
 (import stdlib.comptime)
 
 (defstruct Counter

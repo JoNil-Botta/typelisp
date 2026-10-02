@@ -1,4 +1,5 @@
-;: Fixed-arity mutable call builders retain the ordinary place-only diagnostic.
+;: Fixed-arity mutable call builders follow the ordinary rule: a temporary
+;: receiver is a borrowed call-argument temporary (SPEC section 3.10).
 (import stdlib.comptime)
 
 (defstruct Counter

@@ -215,12 +215,27 @@ global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borro
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
-comptime_mut_borrow_rvalue_reject|check-fail|tests/safety/comptime_mut_borrow_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+# Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
+# call argument borrows hidden storage that lives until the call returns and is
+# cleaned after it; no borrow of it may outlive the call.
+borrow_temporary_call_arg_ok|run-exit|tests/safety/borrow_temporary_call_arg_ok.tl|42|-
+borrow_temporary_cleanup_ok|run-exit|tests/safety/borrow_temporary_cleanup_ok.tl|42|-
+borrow_temporary_result_escape_reject|check-fail|tests/safety/borrow_temporary_result_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_nested_escape_reject|check-fail|tests/safety/borrow_temporary_nested_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_constructor_escape_reject|check-fail|tests/safety/borrow_temporary_constructor_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_mut_param_escape_reject|check-fail|tests/safety/borrow_temporary_mut_param_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_let_reject|check-fail|tests/safety/borrow_temporary_let_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_match_scrutinee_reject|check-fail|tests/safety/borrow_temporary_match_scrutinee_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_named_lifetime_reject|check-fail|tests/safety/borrow_temporary_named_lifetime_reject.tl|-|typecheck: a borrowed temporary has no lifetime to name
+borrow_temporary_moved_operand_reject|check-fail|tests/safety/borrow_temporary_moved_operand_reject.tl|-|use of moved value `name`
+borrow_temporary_cleanup_early_exit_reject|check-fail|tests/safety/borrow_temporary_cleanup_early_exit_reject.tl|-|skip the cleanup of this borrowed cleanup-owning temporary
+borrow_temporary_cleanup_aggregate_reject|check-fail|tests/safety/borrow_temporary_cleanup_aggregate_reject.tl|-|a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function
+comptime_mut_borrow_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_borrow_rvalue_temporary_ok.tl|-|-
+comptime_mut_call_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_call_rvalue_temporary_ok.tl|-|-
+queue_bang_rvalue_temporary_ok|check-ok|tests/safety/queue_bang_rvalue_temporary_ok.tl|-|-
+set_bang_rvalue_temporary_ok|check-ok|tests/safety/set_bang_rvalue_temporary_ok.tl|-|-
+hashmap_bang_rvalue_temporary_ok|check-ok|tests/safety/hashmap_bang_rvalue_temporary_ok.tl|-|-
+vector_bang_rvalue_temporary_ok|check-ok|tests/safety/vector_bang_rvalue_temporary_ok.tl|-|-
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
 nested_call_loan_enum_reject|check-fail|tests/safety/nested_call_loan_enum_reject.tl|-|cannot mutably borrow borrowed place `wire`
@@ -605,6 +620,13 @@ tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_af
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+# A pattern matched through a shared reference binds Copy parts by value and a
+# `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
+# leaves the box usable.
+borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
+borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
+box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
+box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path
 # Value forms (#8268): a consumer moves the places at the value tails of the
 # `if`, `match`, `begin`, `let` or `with` it consumes when the value carries a
 # cleanup obligation. Each reject fails on main by acceptance.

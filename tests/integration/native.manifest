@@ -344,6 +344,7 @@ generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
 clone_imported_nominal_direct|all|-|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
 comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl|-
 clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+entry_names_like_imported_variants|all|-|tests/integration/entry_names_like_imported_variants.tl|42|-|-|entry_names_like_imported_variants_dep.tl stdlib/iterator.tl|-
 comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
 comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
 generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-

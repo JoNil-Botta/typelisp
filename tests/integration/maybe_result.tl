@@ -7,8 +7,8 @@
 
 (define (find-answer [name : String]) : option_i64.Option
   (if (string.eq name "answer")
-    (option_i64.Some 42)
-    option_i64.None))
+    (Some 42)
+    None))
 
 (define (read-small [text : String]) : result_i64_string.Result
   (if (string.eq text "7")
@@ -17,13 +17,13 @@
 
 (define (maybe-score [m : option_i64.Option] [fallback : i64]) : i64
   (match m
-    [(option_i64.Some value) value]
-    [(option_i64.None) fallback]))
+    [(Some value) value]
+    [(None) fallback]))
 
 (define (result-score [r : result_i64_string.Result]) : i64
   (match r
-    [(result_i64_string.Ok value) value]
-    [(result_i64_string.Err message) (string-length message)]))
+    [(Ok value) value]
+    [(Err message) (string-length message)]))
 
 (define (main) : i64
   (let

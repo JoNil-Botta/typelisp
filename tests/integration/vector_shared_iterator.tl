@@ -21,13 +21,13 @@
 
 (define (i64-step-score [result : (i64vec.IterNext source)]) : i64
   (match result
-    [(i64vec.IterNext.Done) 0]
-    [(i64vec.IterNext.Item value) (observe-i64 value)]))
+    [(Done) 0]
+    [(Item value) (observe-i64 value)]))
 
 (define (ball-step-score [result : (ballvec.IterNext source)]) : i64
   (match result
-    [(ballvec.IterNext.Done) 0]
-    [(ballvec.IterNext.Item ball) (ball-score ball)]))
+    [(Done) 0]
+    [(Item ball) (ball-score ball)]))
 
 (define (main) : i64
   (let
@@ -72,8 +72,8 @@
           ;; Stopping after the first item is a valid early loop exit.
           (while true
             (match (i64vec.next (&mut early-iter))
-              [(i64vec.IterNext.Done) (break)]
-              [(i64vec.IterNext.Item value)
+              [(Done) (break)]
+              [(Item value)
                 (begin
                   (set! early-exit-score (observe-i64 value))
                   (break))]))

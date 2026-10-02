@@ -206,22 +206,22 @@
   (let
     [key : String field]
     (match (json.object-get item (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonNumber text) (string.>int text)]
+          [(JsonNumber text) (string.>int text)]
           [_ 0])]
-      [(json.JsonMissing) 0])))
+      [(JsonMissing) 0])))
 
 ;: Extract a String from a JSON string field, defaulting to "" when absent.
 (define (json-field-string [item : json.Json] [field : String]) : String
   (let
     [key : String field]
     (match (json.object-get item (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonString text) text]
+          [(JsonString text) text]
           [_ ""])]
-      [(json.JsonMissing) ""])))
+      [(JsonMissing) ""])))
 
 ;: Extract a bool from a JSON boolean field, defaulting to false when absent so
 ;: a PR with no `isDraft` key is treated as a non-draft (open) PR.
@@ -229,11 +229,11 @@
   (let
     [key : String field]
     (match (json.object-get item (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonBool value) value]
+          [(JsonBool value) value]
           [_ false])]
-      [(json.JsonMissing) false])))
+      [(JsonMissing) false])))
 
 ;: True when any object in `labels` has a `name` equal to `needle`.
 (define (label-list-has? [labels : json.JsonSeq] [needle : String]) : bool
@@ -245,11 +245,11 @@
       (while (and (not found) (< i n))
         (begin
           (match (json.list-get-index (chooser-shared-view labels) i)
-            [(json.JsonFound head)
+            [(JsonFound head)
               (if (string.eq (json-field-string head "name") needle)
                 (set! found true)
                 unit)]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! i (+ i 1))))
       found)))
 
@@ -267,14 +267,14 @@
           (set!
             valid
             (match (json.list-get-index (chooser-shared-view labels) index)
-              [(json.JsonFound entry)
+              [(JsonFound entry)
                 (match (json.object-get entry (& name-key))
-                  [(json.JsonFound name)
+                  [(JsonFound name)
                     (match name
-                      [(json.JsonString _) true]
+                      [(JsonString _) true]
                       [_ false])]
-                  [(json.JsonMissing) false])]
-              [(json.JsonMissing) false]))
+                  [(JsonMissing) false])]
+              [(JsonMissing) false]))
           (set! index (+ index 1))))
       valid)))
 
@@ -284,10 +284,10 @@
   (let
     [key : String "labels"]
     (match (json.object-get item (& key))
-      [(json.JsonMissing) true]
-      [(json.JsonFound value)
+      [(JsonMissing) true]
+      [(JsonFound value)
         (match value
-          [(json.JsonArray labels)
+          [(JsonArray labels)
             (pr-label-list-valid?
               (unsafe
                 (json.json-box-shared-view labels)))]
@@ -302,9 +302,9 @@
       (while (and (< invalid-index 0) (< index count))
         (begin
           (match (json.list-get-index (chooser-shared-view prs) index)
-            [(json.JsonFound item)
+            [(JsonFound item)
               (unless (pr-labels-valid? item) (set! invalid-index index))]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! index (+ index 1))))
       (if (< invalid-index 0)
         ""
@@ -385,11 +385,11 @@
       (while (and ok (< i n))
         (begin
           (match (json.list-get-index (chooser-shared-view checks) i)
-            [(json.JsonFound head)
+            [(JsonFound head)
               (if (pr-check-entry-complete? head)
                 unit
                 (set! ok false))]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! i (+ i 1))))
       ok)))
 
@@ -399,14 +399,14 @@
   (let
     [key : String "statusCheckRollup"]
     (match (json.object-get item (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonArray entries)
+          [(JsonArray entries)
             (pr-check-list-complete?
               (unsafe
                 (json.json-box-shared-view entries)))]
           [_ true])]
-      [(json.JsonMissing) true])))
+      [(JsonMissing) true])))
 
 ;: Build an issue candidate, classifying ready-for-implementation vs triage and
 ;: adding the priority bonus.
@@ -446,7 +446,7 @@
     (while (< i n)
       (begin
         (match (json.list-get-index (chooser-shared-view items) i)
-          [(json.JsonFound head)
+          [(JsonFound head)
             (if (and
               (not (pr-review-claimed? (chooser-shared-view head)))
               (not (pr-draft? (chooser-shared-view head)))
@@ -454,7 +454,7 @@
               (pr-checks-complete? (chooser-shared-view head)))
               (cand-builder-push! out (pr-candidate head))
               unit)]
-          [(json.JsonMissing) unit])
+          [(JsonMissing) unit])
         (set! i (+ i 1))))))
 
 ;: Shortest digit run treated as an issue reference inside a branch name or PR
@@ -547,7 +547,7 @@
       (while (and (not found) (< i n))
         (begin
           (match (json.list-get-index (chooser-shared-view prs) i)
-            [(json.JsonFound head)
+            [(JsonFound head)
               (if (or
                 (text-claims-number?
                   (json-field-string (chooser-shared-view head) "headRefName")
@@ -555,7 +555,7 @@
                 (text-claims-number? (json-field-string head "title") number))
                 (set! found true)
                 unit)]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! i (+ i 1))))
       found)))
 
@@ -575,7 +575,7 @@
     (while (< i n)
       (begin
         (match (json.list-get-index (chooser-shared-view items) i)
-          [(json.JsonFound head)
+          [(JsonFound head)
             (if (or
               (issue-claimed-by-pr?
                 (chooser-shared-view prs)
@@ -585,7 +585,7 @@
                 (issue-ready? (chooser-shared-view head))))
               unit
               (cand-builder-push! out (issue-candidate head)))]
-          [(json.JsonMissing) unit])
+          [(JsonMissing) unit])
         (set! i (+ i 1))))))
 
 ;: Look up the JSON array stored at `field`, or an empty sequence when absent.
@@ -593,11 +593,11 @@
   (let
     [key : String field]
     (match (json.object-get value (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonArray entries) (__tl-box-place entries)]
+          [(JsonArray entries) (__tl-box-place entries)]
           [_ (json.list-empty)])]
-      [(json.JsonMissing) (json.list-empty)])))
+      [(JsonMissing) (json.list-empty)])))
 
 ;: True when `field` exists and is an array. Unlike `json-field-array`, this is
 ;: used at the input boundary so absent or wrongly typed queue lanes are errors
@@ -606,11 +606,11 @@
   (let
     [key : String field]
     (match (json.object-get value (& key))
-      [(json.JsonFound found)
+      [(JsonFound found)
         (match found
-          [(json.JsonArray _) true]
+          [(JsonArray _) true]
           [_ false])]
-      [(json.JsonMissing) false])))
+      [(JsonMissing) false])))
 
 (define (queue-shape-valid? [root : json.Json]) : bool
   (and
@@ -628,11 +628,11 @@
       (while (< i n)
         (begin
           (match (json.list-get-index (chooser-shared-view items) i)
-            [(json.JsonFound head)
+            [(JsonFound head)
               (if (json-field-bool head "isDraft")
                 unit
                 (set! open (+ open 1)))]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! i (+ i 1))))
       open)))
 
@@ -647,9 +647,9 @@
       (while (< index count)
         (begin
           (match (json.list-get-index (chooser-shared-view items) index)
-            [(json.JsonFound item)
+            [(JsonFound item)
               (when (pr-review-claimed? item) (set! claimed (+ claimed 1)))]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! index (+ index 1))))
       claimed)))
 
@@ -666,7 +666,7 @@
       (while (< i n)
         (begin
           (match (json.list-get-index (chooser-shared-view items) i)
-            [(json.JsonFound head)
+            [(JsonFound head)
               (let
                 [claimed : bool
                   (issue-claimed-by-pr?
@@ -679,7 +679,7 @@
                   [(and (not ready) claimed)
                     (set! research-claimed (+ research-claimed 1))]
                   [else unit]))]
-            [(json.JsonMissing) unit])
+            [(JsonMissing) unit])
           (set! i (+ i 1))))
       (SaturationCounts ready-held-back research-claimed))))
 
@@ -788,7 +788,7 @@
     [kind : i64]
     [number : i64]) : unit
     (match (choose-candidate text)
-      [(ChooserResult.Ok cand)
+      [(Ok cand)
         (begin
           (test.assert-i64-eq cand.kind kind "selected lane")
           (test.assert-i64-eq cand.number number "selected item"))]
@@ -798,7 +798,7 @@
   test
   (define (chooser-test-expect-wait [text : String] [expected : String]) : unit
     (match (choose-candidate text)
-      [(ChooserResult.Wait message)
+      [(Wait message)
         (test.assert-true
           (string.eq message expected)
           "stable claim wait and recheck trigger")]
@@ -808,7 +808,7 @@
   test
   (define (chooser-test-expect-label-error [text : String] [expected : String]) : unit
     (match (choose-candidate text)
-      [(ChooserResult.Err message)
+      [(Err message)
         (test.assert-true
           (string.eq message expected)
           "actionable malformed PR label diagnostic")]
@@ -952,7 +952,7 @@
     [text : String
       "{\"prs\":[{\"number\":1,\"title\":\"No checks\",\"isDraft\":false},{\"number\":2,\"title\":\"Empty checks\",\"statusCheckRollup\":[]},{\"number\":3,\"title\":\"Completed checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]},{\"number\":4,\"title\":\"Running checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":5,\"title\":\"Pending status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"PENDING\"}]},{\"number\":6,\"title\":\"Failed status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}]}],\"issues\":[{\"number\":7,\"title\":\"Fallback issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -974,7 +974,7 @@
             (if (= (__tl-project-field (cand-nth cands 4) number) 7)
               unit
               (io.panic "issue should remain after skipped PRs"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-never-chooses-non-main-base-prs
@@ -982,7 +982,7 @@
     [text : String
       "{\"prs\":[{\"number\":8,\"title\":\"Stacked passing\",\"baseRefName\":\"feature-base\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]},{\"number\":9,\"title\":\"Main passing\",\"baseRefName\":\"main\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}],\"issues\":[]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -992,7 +992,7 @@
             (if (= (__tl-project-field (cand-nth cands 0) number) 9)
               unit
               (io.panic "the stacked PR must not become a review candidate"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-priority-order-is-lane-aware
@@ -1000,7 +1000,7 @@
     [text : String
       "{\"prs\":[{\"number\":20,\"title\":\"Review\",\"statusCheckRollup\":[]}],\"issues\":[{\"number\":10,\"title\":\"Ready both\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"Ready p0\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":12,\"title\":\"Ready p1\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]},{\"number\":13,\"title\":\"Ready plain\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":14,\"title\":\"Triage both\",\"labels\":[{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":15,\"title\":\"Triage p0\",\"labels\":[{\"name\":\"p0\"}]},{\"number\":16,\"title\":\"Triage p1\",\"labels\":[{\"name\":\"p1\"}]},{\"number\":17,\"title\":\"Triage plain\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           [review : i64 (__tl-project-field (cand-nth cands 0) weight)]
@@ -1041,7 +1041,7 @@
             (if (> ready-p0 review)
               unit
               (io.panic "ready p0 must retain its override above PR review"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-keeps-blocked-issues-eligible
@@ -1049,7 +1049,7 @@
     [text : String
       "{\"prs\":[],\"issues\":[{\"number\":30,\"title\":\"Blocked triage\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":31,\"title\":\"Blocked ready\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"ready-for-implementation\"}]},{\"number\":32,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":33,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1072,7 +1072,7 @@
               (= (__tl-project-field (cand-nth cands 3) number) 33))
               unit
               (io.panic "existing issue eligibility should remain unchanged"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-pr-review-weight-is-raised
@@ -1080,7 +1080,7 @@
     [text : String
       "{\"prs\":[{\"number\":20,\"title\":\"Review me\",\"statusCheckRollup\":[]}],\"issues\":[]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1090,7 +1090,7 @@
             (if (= (__tl-project-field (cand-nth cands 0) weight) 45)
               unit
               (io.panic "PR review weight should be 45"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-never-chooses-draft-prs
@@ -1098,7 +1098,7 @@
     [text : String
       "{\"prs\":[{\"number\":60,\"title\":\"Draft passing\",\"isDraft\":true,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]},{\"number\":61,\"title\":\"Draft no checks\",\"isDraft\":true},{\"number\":62,\"title\":\"Open passing\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\"}]}],\"issues\":[{\"number\":70,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1113,7 +1113,7 @@
             (if (= (__tl-project-field (cand-nth cands 1) number) 70)
               unit
               (io.panic "triage issue should follow once draft PRs are dropped"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-caps-implement-when-many-open-prs
@@ -1121,7 +1121,7 @@
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1144,7 +1144,7 @@
             (if (= (__tl-project-field (cand-nth cands 9) number) 51)
               unit
               (io.panic "triage issue should remain after the nine review PRs"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-allows-implement-at-pr-cap-boundary
@@ -1152,7 +1152,7 @@
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1165,7 +1165,7 @@
             (if (= (__tl-project-field (cand-nth cands 8) number) 50)
               unit
               (io.panic "ready issue should remain right at the PR cap"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-draft-prs-do-not-count-toward-pr-cap
@@ -1173,7 +1173,7 @@
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":49,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1188,7 +1188,7 @@
             (if (= (__tl-project-field (cand-nth cands 8) number) 50)
               unit
               (io.panic "ready issue should sit right after the non-draft PRs"))))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-implement-cap-can-empty-queue-when-only-ready-issues
@@ -1196,7 +1196,7 @@
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Another ready\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
     (match (json.parse (& text))
-      [(json.OkJson root)
+      [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
@@ -1205,14 +1205,14 @@
               (io.panic
                 "saturated PRs with only ready issues should leave no work"))
             (match (choose-candidate text)
-              [(ChooserResult.Wait message)
+              [(Wait message)
                 (test.assert-true
                   (string.eq
                     message
                     "wait: queue saturated; review: 9 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
                   "ready-only saturation should report its empty lanes")]
               [_ (io.panic "saturated queue should return the wait signal")])))]
-      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+      [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-saturated-signal-counts-claimed-research
@@ -1220,7 +1220,7 @@
     [text : String
       "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
     (match (choose-candidate text)
-      [(ChooserResult.Wait message)
+      [(Wait message)
         (test.assert-true
           (string.eq
             message
@@ -1246,7 +1246,7 @@
   (let
     [text : String "{\"prs\":[],\"issues\":[]}"]
     (match (choose-candidate text)
-      [(ChooserResult.Err message)
+      [(Err message)
         (test.assert-true
           (string.eq message "Error: no eligible candidates were provided")
           "empty valid queue should keep its error")]
@@ -1257,7 +1257,7 @@
   (let
     [text : String "{\"prs\":[]}"]
     (match (choose-candidate text)
-      [(ChooserResult.Err message)
+      [(Err message)
         (test.assert-true
           (string.eq
             message
@@ -1297,9 +1297,8 @@
     [normalized : String (chooser-normalize-json-input text)]
     [text : String normalized]
     (match (json.parse (& text))
-      [(json.ErrJson message)
-        (ChooserResult.Err (string.append "Error: invalid JSON: " message))]
-      [(json.OkJson root)
+      [(ErrJson message) (Err (string.append "Error: invalid JSON: " message))]
+      [(OkJson root)
         (if (queue-shape-valid? (chooser-shared-view root))
           (let
             [prs : json.JsonSeq
@@ -1309,7 +1308,7 @@
             [open-prs : i64 (count-open-nondraft-prs (chooser-shared-view prs))]
             [label-error : String (pr-labels-error (chooser-shared-view prs))]
             (if (> (string.string-length label-error) 0)
-              (ChooserResult.Err label-error)
+              (Err label-error)
               (let
                 [cands : CandSeq (build-candidates root)]
                 (if (= (cand-count cands) 0)
@@ -1318,48 +1317,45 @@
                       (count-review-claimed-prs (chooser-shared-view prs))]
                     (cond
                       [(> claimed-prs 0)
-                        (ChooserResult.Wait
+                        (Wait
                           (review-claim-wait-line
                             open-prs
                             claimed-prs
                             (saturation-counts issues prs)))]
                       [(> open-prs implement-pr-cap)
-                        (ChooserResult.Wait
+                        (Wait
                           (saturation-line
                             open-prs
                             (saturation-counts issues prs)))]
-                      [else
-                        (ChooserResult.Err
-                          "Error: no eligible candidates were provided")]))
+                      [else (Err "Error: no eligible candidates were provided")]))
                   (match (random.system-seed)
-                    [(random.ErrSystemSeed err)
-                      (ChooserResult.Err
+                    [(ErrSystemSeed err)
+                      (Err
                         (match err
-                          [(random.RandomSystemSeedUnavailable message)
+                          [(RandomSystemSeedUnavailable message)
                             (string.append "Error: " message)]))]
-                    [(random.OkSystemSeed seed)
+                    [(OkSystemSeed seed)
                       (match (random.weighted-index
                         (random.seed seed)
                         (cand-weights cands))
-                        [(random.ErrRandomWeightedIndex message)
-                          (ChooserResult.Err (string.append "Error: " message))]
-                        [(random.OkRandomWeightedIndex _ index)
-                          (ChooserResult.Ok (cand-nth cands index))])])))))
-          (ChooserResult.Err
-            "Error: invalid input: expected top-level prs and issues arrays"))])))
+                        [(ErrRandomWeightedIndex message)
+                          (Err (string.append "Error: " message))]
+                        [(OkRandomWeightedIndex _ index)
+                          (Ok (cand-nth cands index))])])))))
+          (Err "Error: invalid input: expected top-level prs and issues arrays"))])))
 
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))
-    [(ChooserResult.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]
-    [(ChooserResult.Wait message)
+    [(Wait message)
       (begin
         (io.print-format "{}" message)
         (io.println "")
         0)]
-    [(ChooserResult.Ok cand)
+    [(Ok cand)
       (begin
         (io.print-format "{}" (candidate-line cand))
         (io.println "")

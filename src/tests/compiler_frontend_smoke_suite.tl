@@ -25,17 +25,17 @@
   [b : compiler_ctfe.CompilerCtfeValue]
   [env : (& env compiler_ctfe.CtfeEnv)]) : bool
   (match (compiler_ctfe.ctfe-apply-binop
-    (ast.AstBinOp.Eq)
+    (Eq)
     a
     b
-    (ast.AstExpr.Literal (ast.AstLiteral.Unit))
+    (Literal (Unit))
     (compiler_ctfe.ctfe-env-shared-view env)
     (compiler_ctfe.ctfe-fuel-limit))
-    [(compiler_ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(compiler_ctfe.CompilerCtfeValue.Bool same?) same?]
+        [(Bool same?) same?]
         [_ false])]
-    [(compiler_ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-source-parity-arg
   [index : i64]
@@ -55,7 +55,7 @@
   (if (>= index arity)
     env
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _)
+      [(Param name _ _)
         (compiler-ctfe-source-parity-bind-params
           (compiler_ctfe.ctfe-env-extend-id
             env
@@ -75,8 +75,7 @@
   [params : (& params ast.AstParamList)]
   [index : i64]) : i64
   (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-    [(ast.AstParam.Param name _ _)
-      (compiler_ctfe.ctfe-ast-push env (ast.AstExpr.Var name))]))
+    [(Param name _ _) (compiler_ctfe.ctfe-ast-push env (Var name))]))
 
 (define (compiler-ctfe-source-parity-direct-call
   [env : (& env compiler_ctfe.CtfeEnv)]
@@ -120,27 +119,27 @@
       (compiler_ctfe.ctfe-ast-get (& env) body)
       (& env)
       (compiler_ctfe.ctfe-fuel-limit))
-      [(compiler_ctfe.ResultCtfe.Ok source-value _)
+      [(Ok source-value _)
         (match (compiler_ctfe.compiler-ctfe-eval
           (compiler_ctfe.ctfe-ast-get (& env) direct-call)
           (& env)
           (compiler_ctfe.ctfe-fuel-limit))
-          [(compiler_ctfe.ResultCtfe.Ok direct-value _)
+          [(Ok direct-value _)
             (compiler-ctfe-source-parity-value-eq?
               source-value
               direct-value
               (& env))]
-          [(compiler_ctfe.ResultCtfe.Err _) false])]
-      [(compiler_ctfe.ResultCtfe.Err source-diag)
+          [(Err _) false])]
+      [(Err source-diag)
         (match (compiler_ctfe.compiler-ctfe-eval
           (compiler_ctfe.ctfe-ast-get (& env) direct-call)
           (& env)
           (compiler_ctfe.ctfe-fuel-limit))
-          [(compiler_ctfe.ResultCtfe.Err direct-diag)
+          [(Err direct-diag)
             (string.eq
               (cdiag.compiler-diagnostic-message (__tl-box-place source-diag))
               (cdiag.compiler-diagnostic-message (__tl-box-place direct-diag)))]
-          [(compiler_ctfe.ResultCtfe.Ok _ _) false])])))
+          [(Ok _ _) false])])))
 
 (define (compiler-ctfe-source-parity-find
   [decls : ast.AstDeclList]
@@ -153,7 +152,7 @@
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
     (match (ast.ast-decl-list-ref decls index)
-      [(ast.AstDecl.DefFn _ found-name params _ body _)
+      [(DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-parity-eval-decl
             params
@@ -218,12 +217,9 @@
   (if (>= index (ast.ast-param-list-len params))
     env
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _)
+      [(Param name _ _)
         (compiler-ctfe-source-placeholder-bind-params
-          (compiler_ctfe.ctfe-env-extend-id
-            env
-            name
-            (compiler_ctfe.CompilerCtfeValue.Unit))
+          (compiler_ctfe.ctfe-env-extend-id env name (Unit))
           params
           (+ index 1))])))
 
@@ -241,11 +237,11 @@
       (compiler_ctfe.ctfe-ast-get env body)
       env
       (compiler_ctfe.ctfe-fuel-limit))
-      [(compiler_ctfe.ResultCtfe.Err diag)
+      [(Err diag)
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
           message)]
-      [(compiler_ctfe.ResultCtfe.Ok _ _) false])))
+      [(Ok _ _) false])))
 
 (define (compiler-ctfe-source-placeholder-find?
   [decls : ast.AstDeclList]
@@ -255,7 +251,7 @@
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
     (match (ast.ast-decl-list-ref decls index)
-      [(ast.AstDecl.DefFn _ found-name params _ body _)
+      [(DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-placeholder-eval? params body message)
           (compiler-ctfe-source-placeholder-find?
@@ -290,36 +286,22 @@
   [decls : ast.AstDeclList]) : bool
   (let
     [env : compiler_ctfe.CtfeEnv (compiler_ctfe.ctfe-env-empty)]
-    [true-node : i64
-      (compiler_ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-node : i64
-      (compiler_ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-node : i64 (compiler_ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [false-node : i64 (compiler_ctfe.ctfe-ast-push env (Literal (Bool false)))]
     [first-int-node : i64
-      (compiler_ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+      (compiler_ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 1)))]
     [second-int-node : i64
-      (compiler_ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+      (compiler_ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 2)))]
     [if-node : i64
       (compiler_ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.If true-node first-int-node second-int-node))]
-    [true-expr : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.Expr true-node (ast.AstType.Bool))]
-    [false-expr : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.Expr false-node (ast.AstType.Bool))]
-    [if-expr : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.Expr if-node (ast.AstType.I64))]
+        (If true-node first-int-node second-int-node))]
+    [true-expr : compiler_ctfe.CompilerCtfeValue (Expr true-node (Bool))]
+    [false-expr : compiler_ctfe.CompilerCtfeValue (Expr false-node (Bool))]
+    [if-expr : compiler_ctfe.CompilerCtfeValue (Expr if-node (I64))]
     [exprs : ast.AstExprList (ast.ast-expr-list-new)]
     [clause : ast.AstExprClause (ast.ast-expr-clause true-node false-node)]
-    [clause-value : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.ExprClause clause)]
+    [clause-value : compiler_ctfe.CompilerCtfeValue (ExprClause clause)]
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [binding : ast.AstExprBindingClause
       (ast.ast-expr-binding-clause-id
@@ -327,31 +309,26 @@
         true
         true-node
         false-node
-        (ast.AstType.Bool)
+        (Bool)
         (ast.ast-source-span 0 0 0 0))]
     [bindings : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-new)]
     [binding-value : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.ExprBindingClause
-        (owned_view.compiler-owned-shared-view binding))]
-    [unused : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.Unit)]
-    [zero : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.I64 0)]
-    [out-of-range : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.I64 99)]
+      (ExprBindingClause (owned_view.compiler-owned-shared-view binding))]
+    [unused : compiler_ctfe.CompilerCtfeValue (Unit)]
+    [zero : compiler_ctfe.CompilerCtfeValue (I64 0)]
+    [out-of-range : compiler_ctfe.CompilerCtfeValue (I64 99)]
     (begin
       (ast.ast-expr-list-push (&mut exprs) true-node)
       (ast.ast-expr-list-push (&mut exprs) false-node)
       (ast.ast-expr-clause-list-push (&mut clauses) clause)
       (ast.ast-expr-binding-clause-list-push (&mut bindings) binding)
       (let
-        [expr-list-value : compiler_ctfe.CompilerCtfeValue
-          (compiler_ctfe.CompilerCtfeValue.ExprList exprs)]
+        [expr-list-value : compiler_ctfe.CompilerCtfeValue (ExprList exprs)]
         [clause-list-value : compiler_ctfe.CompilerCtfeValue
-          (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses)]
+          (ExprClauseList clauses)]
         [binding-list-value : compiler_ctfe.CompilerCtfeValue
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList bindings)]
+          (ExprBindingClauseList bindings)]
         (and
           (compiler-ctfe-source-parity-check
             decls
@@ -556,17 +533,15 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (match (embedded_stdlib.compiler-embedded-stdlib-lookup "comptime.tl")
-      [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
+      [(CompilerEmbeddedStdlibSomeSource source)
         (match (parser.parse-ast-source source)
-          [(parser.ResultAstProgram.Ok program)
+          [(Ok program)
             (match program
-              [(ast.AstProgram.Program decls-box)
+              [(Program decls-box)
                 (compiler-ctfe-stdlib-source-parity-for-decls?
                   (deref decls-box))])]
-          [(parser.ResultAstProgram.Err _) false])]
-      [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        false])))
+          [(Err _) false])]
+      [(CompilerEmbeddedStdlibNoSource) false])))
 
 (define (compiler-smoke-suite-require-child [name : String] [message : String]) : unit
   (let

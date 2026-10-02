@@ -7,4 +7,4 @@
   (+
     (lib.make a 2)
     (- (lib.eval (lib.settle (arena.current) a)) 7)
-    (lib.mode-score lib.Mode.Plain)))
+    (lib.mode-score Plain)))

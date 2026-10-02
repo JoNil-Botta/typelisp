@@ -387,24 +387,22 @@
           (sexpr-node-push (sexpr-builder-get (+ builder-start i)))
           (set! i (+ i 1))))
       (set! sexpr-builder-count builder-start)
-      (Sexpr.List start len))))
+      (List start len))))
 
 (define (sexpr-builder-discard! [builder : SexprBuilder]) : unit
   (set! sexpr-builder-count builder.start))
 
 (define (sexpr-view [s : Sexpr]) : SexprView
   (match s
-    [(Sexpr.Int n) (SexprView.Int n)]
-    [(Sexpr.Sym name) (SexprView.Sym name)]
-    [(Sexpr.List start length)
+    [(Int n) (Int n)]
+    [(Sym name) (Sym name)]
+    [(List start length)
       (if (<= length 0)
-        SexprView.Nil
-        (SexprView.Cons
-          (sexpr-node-get start)
-          (Sexpr.List (+ start 1) (- length 1))))]
-    [(Sexpr.Str text) (SexprView.Str text)]
-    [(Sexpr.Char c) (SexprView.Char c)]
-    [(Sexpr.Float text) (SexprView.Float text)]))
+        Nil
+        (Cons (sexpr-node-get start) (List (+ start 1) (- length 1))))]
+    [(Str text) (Str text)]
+    [(Char c) (Char c)]
+    [(Float text) (Float text)]))
 
 ;; --------------------------------------------------------------------------
 ;; Cursor helpers (src/read.tl).
@@ -439,7 +437,7 @@
 (define (prefix-form [name : i64] [form : Sexpr]) : Sexpr
   (sexpr-list-from-builder
     (sexpr-builder-push
-      (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym name))
+      (sexpr-builder-push (sexpr-builder-new) (Sym name))
       form)))
 
 ;; ci.intern-syntax-id-from-renderable: `InternId` stores a `u32` and
@@ -461,24 +459,23 @@
       [(= t (tag-int))
         (begin
           (advance cur)
-          (ResultSexpr.Ok (Sexpr.Int tok.payload)))]
+          (Ok (Int tok.payload)))]
       [(= t (tag-float))
         (begin
           (advance cur)
-          (ResultSexpr.Ok (Sexpr.Float tok.payload)))]
+          (Ok (Float tok.payload)))]
       [(= t (tag-sym))
         (begin
           (advance cur)
-          (ResultSexpr.Ok
-            (Sexpr.Sym (intern-syntax-id-from-renderable tok.payload))))]
+          (Ok (Sym (intern-syntax-id-from-renderable tok.payload))))]
       [(= t (tag-str))
         (begin
           (advance cur)
-          (ResultSexpr.Ok (Sexpr.Str tok.payload)))]
+          (Ok (Str tok.payload)))]
       [(= t (tag-char))
         (begin
           (advance cur)
-          (ResultSexpr.Ok (Sexpr.Char tok.payload)))]
+          (Ok (Char tok.payload)))]
       [(= t (tag-lparen))
         (begin
           (advance cur)
@@ -493,11 +490,11 @@
           (begin
             (advance cur)
             (match (form-result toks cur)
-              [(ResultSexpr.Ok form) (ResultSexpr.Ok (prefix-form name form))]
-              [(ResultSexpr.Err message) (ResultSexpr.Err message)])))]
-      [(= t (tag-rparen)) (ResultSexpr.Err rs-err-unexpected-rparen)]
-      [(= t (tag-rbracket)) (ResultSexpr.Err rs-err-unexpected-rbracket)]
-      [else (ResultSexpr.Err rs-err-unexpected-end)])))
+              [(Ok form) (Ok (prefix-form name form))]
+              [(Err message) (Err message)])))]
+      [(= t (tag-rparen)) (Err rs-err-unexpected-rparen)]
+      [(= t (tag-rbracket)) (Err rs-err-unexpected-rbracket)]
+      [else (Err rs-err-unexpected-end)])))
 
 ;; list-result-with-close: the cursor is positioned just AFTER an opening '('.
 ;; Read forms until the matching ')' into a growable temporary builder;
@@ -517,20 +514,20 @@
       ;; End of this list: consume the ')' and seal the dense child range.
       (begin
         (advance cur)
-        (ResultSexpr.Ok (sexpr-list-from-builder builder)))
+        (Ok (sexpr-list-from-builder builder)))
       (if (= t (tag-end))
-        (ResultSexpr.Err unterminated-message)
+        (Err unterminated-message)
         ;; A list element: read the next form (which advances the cursor past
         ;; it, however deeply nested), append it, and continue.
         (match (form-result toks cur)
-          [(ResultSexpr.Ok head)
+          [(Ok head)
             (list-result-with-close
               toks
               cur
               close-tag
               unterminated-message
               (sexpr-builder-push builder head))]
-          [(ResultSexpr.Err message) (ResultSexpr.Err message)])))))
+          [(Err message) (Err message)])))))
 
 (define (list-result
   [toks : (& toks (__tl_dyn-array Token))]
@@ -546,12 +543,12 @@
         rs-err-unterminated-paren
         builder)]
     (match result
-      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
-      [(ResultSexpr.Err message)
+      [(Ok form) (Ok form)]
+      [(Err message)
         (begin
           (sexpr-builder-discard! builder)
           (sexpr-node-pool-truncate! pool-mark)
-          (ResultSexpr.Err message))])))
+          (Err message))])))
 
 (define (bracket-list-result
   [toks : (& toks (__tl_dyn-array Token))]
@@ -567,12 +564,12 @@
         rs-err-unterminated-bracket
         builder)]
     (match result
-      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
-      [(ResultSexpr.Err message)
+      [(Ok form) (Ok form)]
+      [(Err message)
         (begin
           (sexpr-builder-discard! builder)
           (sexpr-node-pool-truncate! pool-mark)
-          (ResultSexpr.Err message))])))
+          (Err message))])))
 
 ;; `read.result`: reset the pool, then read one top-level form. The compiler's
 ;; `result` also rewinds the cursor to zero because it reads a single datum; the
@@ -587,8 +584,8 @@
 ;; `read`: the panicking wrapper the loader's non-diagnostic path uses.
 (define (rs-read) : Sexpr
   (match (rs-result)
-    [(ResultSexpr.Ok form) form]
-    [(ResultSexpr.Err _) (io.panic "reader: malformed corpus")]))
+    [(Ok form) form]
+    [(Err _) (io.panic "reader: malformed corpus")]))
 
 ;; --------------------------------------------------------------------------
 ;; The consumer: the recursive `sexpr-view` walk a parser performs.
@@ -598,14 +595,14 @@
     (set! rs-walk-nodes (+ rs-walk-nodes 1))
     (when (> depth rs-walk-depth) (set! rs-walk-depth depth))
     (match (sexpr-view s)
-      [(SexprView.Int value) (rs-mix hash value)]
-      [(SexprView.Sym name) (rs-mix hash name)]
-      [(SexprView.Nil) (rs-mix hash depth)]
-      [(SexprView.Cons head tail)
+      [(Int value) (rs-mix hash value)]
+      [(Sym name) (rs-mix hash name)]
+      [(Nil) (rs-mix hash depth)]
+      [(Cons head tail)
         (sexpr-walk tail depth (sexpr-walk head (+ depth 1) hash))]
-      [(SexprView.Str text) (rs-mix hash text)]
-      [(SexprView.Char c) (rs-mix hash c)]
-      [(SexprView.Float text) (rs-mix hash text)])))
+      [(Str text) (rs-mix hash text)]
+      [(Char c) (rs-mix hash c)]
+      [(Float text) (rs-mix hash text)])))
 
 ;; --------------------------------------------------------------------------
 ;; Driver.

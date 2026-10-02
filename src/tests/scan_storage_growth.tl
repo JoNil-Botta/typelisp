@@ -13,7 +13,7 @@
 
 (define (retained-reader-row? [index : i64]) : bool
   (match (reader.sp-node-get index)
-    [(reader.SpannedSexpr.Int value text span)
+    [(Int value text span)
       (and
         (= value index)
         (string.eq text "retained")
@@ -31,10 +31,7 @@
         (while (< index 32768)
           (begin
             (reader.sp-node-push
-              (reader.SpannedSexpr.Int
-                index
-                "retained"
-                (token.SourceSpan (+ index 1) 2 3 4)))
+              (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
             (set! index (+ index 1))))
         (reader.sp-node-pool-compact-retained!)
         (let
@@ -48,22 +45,15 @@
           [_before : i64 (cfg compile-profile (profile.alloc-live) 0)]
           [valid : bool true]
           (begin
-            (reader.spanned-sexpr-builder-push
-              builder
-              (reader.SpannedSexpr.Float "1.5" span))
-            (reader.spanned-sexpr-builder-push
-              builder
-              (reader.SpannedSexpr.List 4 2 span))
+            (reader.spanned-sexpr-builder-push builder (Float "1.5" span))
+            (reader.spanned-sexpr-builder-push builder (List 4 2 span))
             (if pool-current?
               (unsafe
                 ;; lint-allow: raw-arena-op
                 (arena.tl_arena_set old-owner))
               unit)
             (reader.sp-node-push
-              (reader.SpannedSexpr.Int
-                32768
-                "retained"
-                (token.SourceSpan 32769 2 3 4)))
+              (Int 32768 "retained" (token.SourceSpan 32769 2 3 4)))
             (let
               [new-owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
               [new-bytes : i64
@@ -94,7 +84,7 @@
                 (set! valid (and valid (retained-reader-row? index)))
                 (set! index (+ index 1))))
             (match (reader.spanned-sexpr-list-from-builder builder span)
-              [(reader.SpannedSexpr.List start length _)
+              [(List start length _)
                 (set!
                   valid
                   (and
@@ -102,11 +92,11 @@
                     (= start 32769)
                     (= length 2)
                     (match (reader.sp-node-get start)
-                      [(reader.SpannedSexpr.Float text saved)
+                      [(Float text saved)
                         (and (string.eq text "1.5") (= saved.start-line 9))]
                       [_ false])
                     (match (reader.sp-node-get (+ start 1))
-                      [(reader.SpannedSexpr.List child count _)
+                      [(List child count _)
                         (and
                           (= child 4)
                           (= count 2)
@@ -129,8 +119,7 @@
   (begin
     (reader.sp-node-pool-reset!)
     (reader.sp-node-pool-compact-retained!)
-    (reader.sp-node-push
-      (reader.SpannedSexpr.Int 0 "" (token.SourceSpan 1 1 1 1)))
+    (reader.sp-node-push (Int 0 "" (token.SourceSpan 1 1 1 1)))
     (reader.sp-node-pool-compact-retained!)
     (reader.sp-node-pool-reset!)
     (let
@@ -141,8 +130,7 @@
       (begin
         (while (< index 2049)
           (begin
-            (reader.sp-node-push
-              (reader.SpannedSexpr.Int index "" (token.SourceSpan 1 1 1 1)))
+            (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
             (set! index (+ index 1))))
         (unless
           (and
@@ -158,13 +146,12 @@
   (begin
     (reader.sp-node-pool-reset!)
     (reader.sp-node-pool-compact-retained!)
-    (reader.sp-node-push
-      (reader.SpannedSexpr.Int 0 "retained" (token.SourceSpan 1 1 1 1)))
+    (reader.sp-node-push (Int 0 "retained" (token.SourceSpan 1 1 1 1)))
     (reader.sp-node-pool-compact-retained!)
     (match (lex.spanned-result "(7 (8) \"text\"")
-      [(lex.ResultSpannedTokens.Ok tokens)
+      [(Ok tokens)
         (match (reader.spanned-result tokens)
-          [(reader.ResultSpannedSexpr.Err _)
+          [(Err _)
             (unless
               (and (= (reader.sp-node-pool-len) 1) (retained-reader-row? 0))
               (io.panic "retained reader: failed read lost the retained prefix"))]
@@ -172,11 +159,11 @@
       [_
         (io.panic "retained reader: lexer rejected the malformed reader input")])
     (match (lex.spanned-result "(9 10)")
-      [(lex.ResultSpannedTokens.Ok tokens)
+      [(Ok tokens)
         (match (reader.spanned-result tokens)
-          [(reader.ResultSpannedSexpr.Ok form)
+          [(Ok form)
             (match form
-              [(reader.SpannedSexpr.List start length _)
+              [(List start length _)
                 (unless
                   (and (= start 1) (= length 2))
                   (io.panic "retained reader: failed read left a live builder"))]
@@ -231,20 +218,20 @@
       (= (token.spanned-token-line record) (+ (/ index 7) 1))
       (= (token.spanned-token-col record) column)
       (match (token.spanned-token-token-ref record)
-        [(token.Token.LParen) (= position 0)]
-        [(token.Token.Sym name)
+        [(LParen) (= position 0)]
+        [(Sym name)
           (and
             (= position 1)
             (string.eq (ci.intern-str (ci.intern-id-value name)) "atom"))]
-        [(token.Token.Int value text)
+        [(Int value text)
           (and (= position 2) (= (deref value) 123) (string.eq text "0x7b"))]
-        [(token.Token.Char value) (and (= position 3) (= (deref value) 'q'))]
-        [(token.Token.Str text)
+        [(Char value) (and (= position 3) (= (deref value) 'q'))]
+        [(Str text)
           (and
             (= position 4)
             (string.eq (ci.intern-str (ci.intern-id-value text)) "bytes"))]
-        [(token.Token.Float text) (and (= position 5) (string.eq text "1.5"))]
-        [(token.Token.RParen) (= position 6)]
+        [(Float text) (and (= position 5) (string.eq text "1.5"))]
+        [(RParen) (= position 6)]
         [_ false]))))
 
 (cfg
@@ -258,8 +245,8 @@
         [caller : i64 (arena.tl_arena_current)]
         [valid : bool
           (match (lex.spanned-result source)
-            [(lex.ResultSpannedTokens.Err _) false]
-            [(lex.ResultSpannedTokens.Ok tokens)
+            [(Err _) false]
+            [(Ok tokens)
               (let
                 [index : i64 0]
                 [ok : bool true]
@@ -302,19 +289,19 @@
 
 (define (scan-reader-int? [node : reader.SpannedSexpr] [expected : i64]) : bool
   (match node
-    [(reader.SpannedSexpr.Int value _ _) (= value expected)]
+    [(Int value _ _) (= value expected)]
     [_ false]))
 
 (define (scan-reader-group? [node : reader.SpannedSexpr] [position : i64]) : bool
   (match node
-    [(reader.SpannedSexpr.Int value _ _) (and (= position 0) (= value 1))]
-    [(reader.SpannedSexpr.List start length _)
+    [(Int value _ _) (and (= position 0) (= value 1))]
+    [(List start length _)
       (and
         (= position 1)
         (= length 2)
         (scan-reader-int? (reader.sp-node-get start) 2)
         (scan-reader-int? (reader.sp-node-get (+ start 1)) 3))]
-    [(reader.SpannedSexpr.Str text _)
+    [(Str text _)
       (and
         (= position 2)
         (string.eq (ci.intern-str (ci.intern-id-value text)) "bytes"))]
@@ -322,10 +309,10 @@
 
 (define (scan-reader-wide-ok? [source : String]) : bool
   (match (reader.data-result source)
-    [(reader.ResultSexpr.Err _) false]
-    [(reader.ResultSexpr.Ok form)
+    [(Err _) false]
+    [(Ok form)
       (match form
-        [(reader.SpannedSexpr.List start length _)
+        [(List start length _)
           (let
             [index : i64 1]
             [ok : bool true]
@@ -358,17 +345,17 @@
         [_reset-wide : unit (reader.sp-node-pool-reset!)]
         [error-ok : bool
           (match (reader.data-result (str_cat.str-cat "(" source))
-            [(reader.ResultSexpr.Ok _) false]
-            [(reader.ResultSexpr.Err message)
+            [(Ok _) false]
+            [(Err message)
               (and
                 (string.eq message "reader: unterminated list (missing ')')")
                 (= (reader.sp-node-pool-len) 0))])]
         [reuse-ok : bool
           (match (reader.data-result "(8)")
-            [(reader.ResultSexpr.Err _) false]
-            [(reader.ResultSexpr.Ok form)
+            [(Err _) false]
+            [(Ok form)
               (match form
-                [(reader.SpannedSexpr.List start length _)
+                [(List start length _)
                   (and
                     (= length 1)
                     (scan-reader-int? (reader.sp-node-get start) 8))]
@@ -414,16 +401,16 @@
       [caller : i64 (arena.tl_arena_current)]
       [error-ok : bool
         (match (lex.spanned-result source)
-          [(lex.ResultSpannedTokens.Ok _) false]
-          [(lex.ResultSpannedTokens.Err err)
+          [(Ok _) false]
+          [(Err err)
             (and
               (string.eq err.message "lexer: unterminated string literal")
               (= err.span.start-line 513)
               (= err.span.start-col 1))])]
       [empty-ok : bool
         (match (lex.spanned-result "")
-          [(lex.ResultSpannedTokens.Err _) false]
-          [(lex.ResultSpannedTokens.Ok tokens)
+          [(Err _) false]
+          [(Ok tokens)
             (and
               (=
                 (token.tag-ref

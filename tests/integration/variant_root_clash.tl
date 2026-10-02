@@ -14,4 +14,4 @@
     [Other 2]))
 
 (define (main) : i64
-  (+ (mid.via 40) (local-value Local.Cast)))
+  (+ (mid.via 40) (local-value Cast)))

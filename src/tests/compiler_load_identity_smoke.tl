@@ -14,7 +14,7 @@
   [slot : i64]
   [count : i64]) : unit
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program box))
+    [(Ok (Program box))
       (let
         [input : ast.AstDeclList (deref box)]
         [decls : ast.AstDeclList
@@ -28,7 +28,7 @@
             count
             "only a missing module gets a prefix")
           (match (parser.compiler-parse-semantic-origin-run (& decls) slot)
-            [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+            [(Some run)
               (let
                 [origin : parser.CompilerParseSemanticOrigin
                   (parser.compiler-parse-semantic-origin-run-get
@@ -53,7 +53,7 @@
                 false
                 "the shifted declaration retains its semantic origin")])
           (match (parser.compiler-parse-decl-origin-span (& decls) slot)
-            [(parser.CompilerParseMaybeDeclSpan.Some span)
+            [(Some span)
               (test.assert-i64-eq
                 (ast.ast-source-span-start-line span)
                 2
@@ -88,15 +88,15 @@
       (ci.intern-generated-name
         (owned_view.compiler-owned-shared-view module-name))]
     [decls : ast.AstDeclList
-      (ast.ast-decl-cons (ast.AstDecl.Module source-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (Module source-id) (ast.ast-decl-list-new))]
     [fallback-from-source : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
         (owned_view.compiler-owned-shared-view module-name)
-        (ast.AstMaybeModuleName.Some source-id))]
+        (Some source-id))]
     [fallback-from-generated : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
         (owned_view.compiler-owned-shared-view module-name)
-        (ast.AstMaybeModuleName.Some generated-id))]
+        (Some generated-id))]
     (and
       (not (= source-id generated-id))
       (= fallback-from-source source-id)
@@ -110,19 +110,18 @@
           generated-id))
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
-        (ast.AstMaybeModuleName.Some source-id)
+        (Some source-id)
         (owned_view.compiler-owned-shared-view module-name)
         -1)
-        [(compiler_load.ResultCompilerLoadModuleId.Ok _ checked-id)
-          (= checked-id source-id)]
-        [(compiler_load.ResultCompilerLoadModuleId.Err _) false])
+        [(Ok _ checked-id) (= checked-id source-id)]
+        [(Err _) false])
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"
-        (ast.AstMaybeModuleName.Some generated-id)
+        (Some generated-id)
         module-name
         source-id)
-        [(compiler_load.ResultCompilerLoadModuleId.Ok _ _) false]
-        [(compiler_load.ResultCompilerLoadModuleId.Err _) true]))))
+        [(Ok _ _) false]
+        [(Err _) true]))))
 
 (test
   compiler-load-module-identity-ids

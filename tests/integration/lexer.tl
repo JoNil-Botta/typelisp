@@ -47,15 +47,15 @@
 ;; Token enum, including the String-payload `Token.Ident` variant.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(Token.Ident _) 0]
-    [(Token.Int _) 1]
-    [(Token.Plus) 2]
-    [(Token.Minus) 3]
-    [(Token.Star) 4]
-    [(Token.Slash) 5]
-    [(Token.LParen) 6]
-    [(Token.RParen) 7]
-    [(Token.End) 8]))
+    [(Ident _) 0]
+    [(Int _) 1]
+    [(Plus) 2]
+    [(Minus) 3]
+    [(Star) 4]
+    [(Slash) 5]
+    [(LParen) 6]
+    [(RParen) 7]
+    [(End) 8]))
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
 (define (code [c : char]) : i64
@@ -90,12 +90,12 @@
 ;; `panic` yields unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
-    [(= c '+') Token.Plus]
-    [(= c '-') Token.Minus]
-    [(= c '*') Token.Star]
-    [(= c '/') Token.Slash]
-    [(= c '(') Token.LParen]
-    [(= c ')') Token.RParen]
+    [(= c '+') Plus]
+    [(= c '-') Minus]
+    [(= c '*') Star]
+    [(= c '/') Slash]
+    [(= c '(') LParen]
+    [(= c ')') RParen]
     [else (io.panic "lexer: unexpected character")]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
@@ -111,22 +111,22 @@
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(Token.Ident text)` token.
 (define (ident-token [src : (& src str)] [start : i64] [end : i64]) : Token
-  (Token.Ident (string.substring src start (- end start))))
+  (Ident (string.substring src start (- end start))))
 
 ;; Length of the String payload of a `Token.Ident` token (0 for any other token):
 ;; projects the payload back out of the enum in a `match` arm, the way a parser
 ;; consuming the token stream would.
 (define (ident-text-length [t : Token]) : i64
   (match t
-    [(Token.Ident s) (string-length s)]
-    [(Token.Int _) 0]
-    [(Token.Plus) 0]
-    [(Token.Minus) 0]
-    [(Token.Star) 0]
-    [(Token.Slash) 0]
-    [(Token.LParen) 0]
-    [(Token.RParen) 0]
-    [(Token.End) 0]))
+    [(Ident s) (string-length s)]
+    [(Int _) 0]
+    [(Plus) 0]
+    [(Minus) 0]
+    [(Star) 0]
+    [(Slash) 0]
+    [(LParen) 0]
+    [(RParen) 0]
+    [(End) 0]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is exactly the shape of a real lexer: a cursor over the
@@ -161,7 +161,7 @@
                     (begin
                       (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                       (set! i (+ i 1))))
-                  (token_vec.push-ref! toks (Token.Int acc))
+                  (token_vec.push-ref! toks (Int acc))
                   (set! count (+ count 1))))]
             [else
               (begin
@@ -169,7 +169,7 @@
                 (set! count (+ count 1))
                 (set! i (+ i 1)))])))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (token_vec.push-ref! toks Token.End)
+      (token_vec.push-ref! toks End)
       count)))
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
@@ -186,4 +186,4 @@
   (let
     [toks : token_vec.Vec (token_vec.with-capacity 16)]
     [count : i64 (lex "foo - 3 * (12 / 4)" (&mut toks))]
-    (+ count (ident-text-length (token_vec.get (& toks) 0 Token.End)))))
+    (+ count (ident-text-length (token_vec.get (& toks) 0 End)))))

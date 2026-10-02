@@ -16,19 +16,19 @@
   (Detailed StatusPayload))
 
 (define (idle) : Status
-  (Status.Idle))
+  (Idle))
 
 (define (scored [value : i64]) : Status
-  (Status.Scored value))
+  (Scored value))
 
 (define (moved) : Status
-  (Status.Moved 123 (array 9 10)))
+  (Moved 123 (array 9 10)))
 
 (define (wide) : Status
-  (Status.Wide 1 2 3 4 5 6 7 8 9))
+  (Wide 1 2 3 4 5 6 7 8 9))
 
 (define (detailed) : Status
-  (Status.Detailed (StatusPayload 77 (StatusPlace 90210 "Malmo"))))
+  (Detailed (StatusPayload 77 (StatusPlace 90210 "Malmo"))))
 
 (define (idle? [status : Status]) : bool
   (match status
@@ -78,7 +78,7 @@
   (At u64))
 
 (define (stamp-max) : Stamp
-  (Stamp.At (cast -1 : u64)))
+  (At (cast -1 : u64)))
 
 (define (stamp-max? [stamp : Stamp]) : bool
   (match stamp

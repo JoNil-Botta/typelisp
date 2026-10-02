@@ -503,37 +503,37 @@
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
   (match value
-    [(Expr.Bool _) true]
+    [(Bool _) true]
     [_ false]))
 
 ;: Extract the bool literal payload from an expression.
 (define (expr-bool-value [value : Expr]) : bool
   (match value
-    [(Expr.Bool found) found]
+    [(Bool found) found]
     [_ false]))
 
 ;: Return true when an expression is an if expression.
 (define (expr-if? [value : Expr]) : bool
   (match value
-    [(Expr.If _ _ _) true]
+    [(If _ _ _) true]
     [_ false]))
 
 ;: Extract an if expression's condition.
 (define (expr-if-cond [value : Expr]) : Expr
   (match value
-    [(Expr.If cond _ _) cond]
+    [(If cond _ _) cond]
     [_ value]))
 
 ;: Extract an if expression's then branch.
 (define (expr-if-then [value : Expr]) : Expr
   (match value
-    [(Expr.If _ then-expr _) then-expr]
+    [(If _ then-expr _) then-expr]
     [_ value]))
 
 ;: Extract an if expression's else branch.
 (define (expr-if-else [value : Expr]) : Expr
   (match value
-    [(Expr.If _ _ else-expr) else-expr]
+    [(If _ _ else-expr) else-expr]
     [_ value]))
 
 ;; This module defines the AST constructors used by the implicit dotted-place

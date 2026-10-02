@@ -29,7 +29,7 @@
           (= (env.sym-i64-lookup-id-or (& copied) 12 -1) -1))
         (io.panic "copied symbol environment lost snapshot or shadowing"))
       (match (env.sym-i64-view copied)
-        [(env.SymI64ViewBind key value rest)
+        [(SymI64ViewBind key value rest)
           (unless
             (and
               (= key 7)

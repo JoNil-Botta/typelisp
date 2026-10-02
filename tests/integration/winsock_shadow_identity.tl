@@ -39,20 +39,20 @@
           (winsock.winsock-check-module-identity preloaded)]
         [result : i64
           (match (winsock.winsock-acquire)
-            [(winsock.WinsockAcquireErr (winsock.WinsockIdentityMismatch))
+            [(WinsockAcquireErr (WinsockIdentityMismatch))
               (match preloaded-identity
-                [(winsock.WinsockIdentityWrongModule) 42]
+                [(WinsockIdentityWrongModule) 42]
                 [_ 2])]
-            [(winsock.WinsockAcquireErr _) 3]
-            [(winsock.WinsockAcquired lease)
+            [(WinsockAcquireErr _) 3]
+            [(WinsockAcquired lease)
               (with
                 ([owned lease winsock.cleanup-winsock-lease])
                 (match (unsafe
                   (winsock.winsock-table-for-lease (& owned)))
-                  [(winsock.WinsockTableErr _) 4]
-                  [(winsock.WinsockTableOk table)
+                  [(WinsockTableErr _) 4]
+                  [(WinsockTableOk table)
                     (match (winsock.winsock-check-module-identity table.module)
-                      [(winsock.WinsockIdentityOk) 43]
+                      [(WinsockIdentityOk) 43]
                       [_ 5])]))])]
         (winsock.winsock-free-library preloaded)
         result))))

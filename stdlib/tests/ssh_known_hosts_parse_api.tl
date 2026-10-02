@@ -8,39 +8,39 @@
 
 (define (error-code [kind : known_hosts.KnownHostsErrorKind]) : i64
   (match kind
-    [(known_hosts.KnownHostsInvalidLimits) 0]
-    [(known_hosts.KnownHostsInvalidIdentity) 1]
-    [(known_hosts.KnownHostsInvalidSourceId) 2]
-    [(known_hosts.KnownHostsPolicyTooLarge) 3]
-    [(known_hosts.KnownHostsLineTooLong) 4]
-    [(known_hosts.KnownHostsTooManyLines) 5]
-    [(known_hosts.KnownHostsTooManyRecords) 6]
-    [(known_hosts.KnownHostsBareCarriageReturn) 7]
-    [(known_hosts.KnownHostsMalformedMarker) 8]
-    [(known_hosts.KnownHostsUnsupportedMarker) 9]
-    [(known_hosts.KnownHostsMarkerTooLong) 10]
-    [(known_hosts.KnownHostsRepeatedMarker) 11]
-    [(known_hosts.KnownHostsMissingSelector) 12]
-    [(known_hosts.KnownHostsSelectorTooLong) 13]
-    [(known_hosts.KnownHostsMalformedPlainSelector) 14]
-    [(known_hosts.KnownHostsTooManyPatterns) 15]
-    [(known_hosts.KnownHostsPatternTooLong) 16]
-    [(known_hosts.KnownHostsPatternWorkExceeded) 17]
-    [(known_hosts.KnownHostsMalformedHashedSelector) 18]
-    [(known_hosts.KnownHostsHashFieldTooLong) 19]
-    [(known_hosts.KnownHostsMissingKeyFormat) 20]
-    [(known_hosts.KnownHostsKeyFormatTooLong) 21]
-    [(known_hosts.KnownHostsInvalidKeyFormat) 22]
-    [(known_hosts.KnownHostsMissingKeyBase64) 23]
-    [(known_hosts.KnownHostsKeyBase64TooLong) 24]
-    [(known_hosts.KnownHostsInvalidKeyBase64) 25]
-    [(known_hosts.KnownHostsInternalMismatch) 26]))
+    [(KnownHostsInvalidLimits) 0]
+    [(KnownHostsInvalidIdentity) 1]
+    [(KnownHostsInvalidSourceId) 2]
+    [(KnownHostsPolicyTooLarge) 3]
+    [(KnownHostsLineTooLong) 4]
+    [(KnownHostsTooManyLines) 5]
+    [(KnownHostsTooManyRecords) 6]
+    [(KnownHostsBareCarriageReturn) 7]
+    [(KnownHostsMalformedMarker) 8]
+    [(KnownHostsUnsupportedMarker) 9]
+    [(KnownHostsMarkerTooLong) 10]
+    [(KnownHostsRepeatedMarker) 11]
+    [(KnownHostsMissingSelector) 12]
+    [(KnownHostsSelectorTooLong) 13]
+    [(KnownHostsMalformedPlainSelector) 14]
+    [(KnownHostsTooManyPatterns) 15]
+    [(KnownHostsPatternTooLong) 16]
+    [(KnownHostsPatternWorkExceeded) 17]
+    [(KnownHostsMalformedHashedSelector) 18]
+    [(KnownHostsHashFieldTooLong) 19]
+    [(KnownHostsMissingKeyFormat) 20]
+    [(KnownHostsKeyFormatTooLong) 21]
+    [(KnownHostsInvalidKeyFormat) 22]
+    [(KnownHostsMissingKeyBase64) 23]
+    [(KnownHostsKeyBase64TooLong) 24]
+    [(KnownHostsInvalidKeyBase64) 25]
+    [(KnownHostsInternalMismatch) 26]))
 
 (define (name-identity [host : String] [port : i64]) : known_hosts.KnownHostsIdentity
-  (known_hosts.KnownHostsIdentity host (known_hosts.KnownHostsHostName) port))
+  (known_hosts.KnownHostsIdentity host (KnownHostsHostName) port))
 
 (define (ipv6-identity [host : String] [port : i64]) : known_hosts.KnownHostsIdentity
-  (known_hosts.KnownHostsIdentity host (known_hosts.KnownHostsHostIpv6) port))
+  (known_hosts.KnownHostsIdentity host (KnownHostsHostIpv6) port))
 
 (define (scan-text
   [policy : String]
@@ -58,8 +58,8 @@
     [policy : String
       (str_cat.str-cat selector " ssh-ed25519 " "QUJD trailing bytes")]
     (match (scan-text policy identity limits)
-      [(known_hosts.KnownHostsScanErr _) false]
-      [(known_hosts.KnownHostsScanOk records)
+      [(KnownHostsScanErr _) false]
+      [(KnownHostsScanOk records)
         (and
           (= (known_hosts.records-len (& records)) 1)
           (known_hosts.record-selector-matching?
@@ -71,8 +71,8 @@
   (let
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
     (match (known_hosts.lookup-token (& identity) (& limits))
-      [(known_hosts.KnownHostsLookupErr _) (fail "lookup identity rejected")]
-      [(known_hosts.KnownHostsLookupOk actual)
+      [(KnownHostsLookupErr _) (fail "lookup identity rejected")]
+      [(KnownHostsLookupOk actual)
         (test.assert-string-eq (& actual) (& expected) "lookup token")])))
 
 (define (assert-identity-and-lookup) : unit
@@ -85,38 +85,36 @@
       (assert-lookup (ipv6-identity "2001:db8::1" 2200) "[2001:db8::1]:2200")
       (match (known_hosts.identity-new
         "example.test"
-        (known_hosts.KnownHostsHostName)
+        (KnownHostsHostName)
         22
         limits)
-        [(known_hosts.KnownHostsIdentityErr _) (fail "valid identity rejected")]
-        [(known_hosts.KnownHostsIdentityOk _) unit])
+        [(KnownHostsIdentityErr _) (fail "valid identity rejected")]
+        [(KnownHostsIdentityOk _) unit])
       (match (known_hosts.identity-new
         "Example.test"
-        (known_hosts.KnownHostsHostName)
+        (KnownHostsHostName)
         22
         limits)
-        [(known_hosts.KnownHostsIdentityOk _)
-          (fail "uppercase identity accepted")]
-        [(known_hosts.KnownHostsIdentityErr error)
+        [(KnownHostsIdentityOk _) (fail "uppercase identity accepted")]
+        [(KnownHostsIdentityErr error)
           (test.assert-i64-eq
             (error-code error.kind)
             1
             "uppercase identity error")])
       (match (known_hosts.identity-new
         "2001:db8::1"
-        (known_hosts.KnownHostsHostName)
+        (KnownHostsHostName)
         22
         limits)
-        [(known_hosts.KnownHostsIdentityOk _)
-          (fail "inconsistent host kind accepted")]
-        [(known_hosts.KnownHostsIdentityErr _) unit])
+        [(KnownHostsIdentityOk _) (fail "inconsistent host kind accepted")]
+        [(KnownHostsIdentityErr _) unit])
       (match (known_hosts.identity-new
         "example.test"
-        (known_hosts.KnownHostsHostName)
+        (KnownHostsHostName)
         0
         limits)
-        [(known_hosts.KnownHostsIdentityOk _) (fail "zero port accepted")]
-        [(known_hosts.KnownHostsIdentityErr _) unit]))))
+        [(KnownHostsIdentityOk _) (fail "zero port accepted")]
+        [(KnownHostsIdentityErr _) unit]))))
 
 (define (assert-plain-patterns) : unit
   (let
@@ -198,8 +196,8 @@
       "\n  # ignored comment\r\nEXAMPLE.TEST ssh-ed25519 QUJD first\r\n@revoked *.test ssh-rsa REVG\n@cert-authority other.test ssh-ed25519 R0hJ\n|1|c2FsdA==|ZGlnZXN0 ssh-ed25519 S0VZ\n|2|opaque|digest ssh-ed25519 S0VZ trailing\nnomatch ssh-ed25519 %%% malformed but unrelated\n"]
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
     (match (scan-text policy (name-identity "example.test" 22) limits)
-      [(known_hosts.KnownHostsScanErr _) (fail "record corpus rejected")]
-      [(known_hosts.KnownHostsScanOk records)
+      [(KnownHostsScanErr _) (fail "record corpus rejected")]
+      [(KnownHostsScanOk records)
         (begin
           (test.assert-i64-eq
             (known_hosts.records-len (& records))
@@ -222,7 +220,7 @@
                 (known_hosts.record-key-valid? ordinary)
                 "ordinary key fields")
               (match ordinary.key
-                [(known_hosts.KnownHostsKeyFields format base64)
+                [(KnownHostsKeyFields format base64)
                   (begin
                     (test.assert-string-eq
                       (& format)
@@ -234,14 +232,14 @@
             [revoked : (& records known_hosts.KnownHostsRecord)
               (known_hosts.records-ref (& records) 1)]
             (match revoked.marker
-              [(known_hosts.KnownHostsRevokedMarker) unit]
+              [(KnownHostsRevokedMarker) unit]
               [_ (fail "revoked marker")]))
           (let
             [authority : (& records known_hosts.KnownHostsRecord)
               (known_hosts.records-ref (& records) 2)]
             (begin
               (match authority.marker
-                [(known_hosts.KnownHostsCertAuthorityMarker) unit]
+                [(KnownHostsCertAuthorityMarker) unit]
                 [_ (fail "cert-authority marker")])
               (test.assert-true
                 (known_hosts.record-selector-nonmatching? authority)
@@ -250,7 +248,7 @@
             [hashed : (& records known_hosts.KnownHostsRecord)
               (known_hosts.records-ref (& records) 3)]
             (match hashed.selector
-              [(known_hosts.KnownHostsHashedPending value)
+              [(KnownHostsHashedPending value)
                 (begin
                   (test.assert-string-eq (& value.version) "1" "hash version")
                   (test.assert-string-eq
@@ -266,7 +264,7 @@
             [unknown-hash : (& records known_hosts.KnownHostsRecord)
               (known_hosts.records-ref (& records) 4)]
             (match unknown-hash.selector
-              [(known_hosts.KnownHostsHashedPending value)
+              [(KnownHostsHashedPending value)
                 (test.assert-string-eq
                   (& value.version)
                   "2"
@@ -288,10 +286,10 @@
     [policy : String (str_cat.str-cat selector " ssh-ed25519 " "QUJD")]
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
     (match (scan-text policy (name-identity "example.test" 22) limits)
-      [(known_hosts.KnownHostsScanErr _) (fail "selector error escaped record")]
-      [(known_hosts.KnownHostsScanOk records)
+      [(KnownHostsScanErr _) (fail "selector error escaped record")]
+      [(KnownHostsScanOk records)
         (match (known_hosts.records-ref (& records) 0).selector
-          [(known_hosts.KnownHostsSelectorIndeterminate kind)
+          [(KnownHostsSelectorIndeterminate kind)
             (test.assert-i64-eq
               (error-code (clone kind))
               expected
@@ -313,9 +311,8 @@
       [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
       [policy : String "@REVOKED example.test ssh-ed25519 QUJD"]
       (match (scan-text policy (name-identity "example.test" 22) limits)
-        [(known_hosts.KnownHostsScanErr _)
-          (fail "unknown marker escaped record")]
-        [(known_hosts.KnownHostsScanOk records)
+        [(KnownHostsScanErr _) (fail "unknown marker escaped record")]
+        [(KnownHostsScanOk records)
           (let
             [record : (& records known_hosts.KnownHostsRecord)
               (known_hosts.records-ref (& records) 0)]
@@ -324,7 +321,7 @@
                 (known_hosts.record-indeterminate? record)
                 "unknown marker is indeterminate")
               (match record.marker
-                [(known_hosts.KnownHostsMarkerIndeterminate kind)
+                [(KnownHostsMarkerIndeterminate kind)
                   (test.assert-i64-eq
                     (error-code (clone kind))
                     9
@@ -334,11 +331,10 @@
       [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
       [policy : String "@revoked @cert-authority example.test ssh-ed25519 QUJD"]
       (match (scan-text policy (name-identity "example.test" 22) limits)
-        [(known_hosts.KnownHostsScanErr _)
-          (fail "repeated marker escaped record")]
-        [(known_hosts.KnownHostsScanOk records)
+        [(KnownHostsScanErr _) (fail "repeated marker escaped record")]
+        [(KnownHostsScanOk records)
           (match (known_hosts.records-ref (& records) 0).selector
-            [(known_hosts.KnownHostsSelectorIndeterminate kind)
+            [(KnownHostsSelectorIndeterminate kind)
               (test.assert-i64-eq
                 (error-code (clone kind))
                 11
@@ -350,8 +346,8 @@
   [limits : known_hosts.KnownHostsLimits]
   [expected : i64]) : unit
   (match (scan-text policy (name-identity "example.test" 22) limits)
-    [(known_hosts.KnownHostsScanOk _) (fail "policy-wide error accepted")]
-    [(known_hosts.KnownHostsScanErr error)
+    [(KnownHostsScanOk _) (fail "policy-wide error accepted")]
+    [(KnownHostsScanErr error)
       (test.assert-i64-eq (error-code error.kind) expected "scan error")]))
 
 (define (set-small-line-limits!
@@ -402,8 +398,8 @@
       [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
       [policy : String "example.test ssh-ed25519 QUJD\r\n"]
       (match (scan-text policy (name-identity "example.test" 22) limits)
-        [(known_hosts.KnownHostsScanErr _) (fail "CRLF rejected")]
-        [(known_hosts.KnownHostsScanOk records)
+        [(KnownHostsScanErr _) (fail "CRLF rejected")]
+        [(KnownHostsScanOk records)
           (test.assert-i64-eq
             (known_hosts.records-len (& records))
             1
@@ -414,10 +410,10 @@
       (begin
         (set! limits.max-pattern-work 5)
         (match (scan-text policy (name-identity "example.test" 22) limits)
-          [(known_hosts.KnownHostsScanErr _) (fail "DP work escaped record")]
-          [(known_hosts.KnownHostsScanOk records)
+          [(KnownHostsScanErr _) (fail "DP work escaped record")]
+          [(KnownHostsScanOk records)
             (match (known_hosts.records-ref (& records) 0).selector
-              [(known_hosts.KnownHostsSelectorIndeterminate kind)
+              [(KnownHostsSelectorIndeterminate kind)
                 (test.assert-i64-eq
                   (error-code (clone kind))
                   17
@@ -429,11 +425,10 @@
         (begin
           (set! limits.max-pattern-components 2)
           (match (scan-text policy (name-identity "example.test" 22) limits)
-            [(known_hosts.KnownHostsScanErr _)
-              (fail "component limit escaped record")]
-            [(known_hosts.KnownHostsScanOk records)
+            [(KnownHostsScanErr _) (fail "component limit escaped record")]
+            [(KnownHostsScanOk records)
               (match (known_hosts.records-ref (& records) 0).selector
-                [(known_hosts.KnownHostsSelectorIndeterminate kind)
+                [(KnownHostsSelectorIndeterminate kind)
                   (test.assert-i64-eq
                     (error-code (clone kind))
                     15
@@ -462,8 +457,8 @@
   (let
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
     (match (scan-text policy (name-identity "example.test" 22) limits)
-      [(known_hosts.KnownHostsScanErr error) (- -100 (error-code error.kind))]
-      [(known_hosts.KnownHostsScanOk records)
+      [(KnownHostsScanErr error) (- -100 (error-code error.kind))]
+      [(KnownHostsScanOk records)
         (let
           [count : i64 (known_hosts.records-len (& records))]
           (if (= count 0)

@@ -10,8 +10,7 @@
 
 (define (summary-snapshot [result : tc.ResultCompilerTypecheck]) : String
   (match result
-    [(tc.ResultCompilerTypecheck.Ok
-        (tc.CompilerTypecheckSummary values functions externs))
+    [(Ok (CompilerTypecheckSummary values functions externs))
       (cat.str-cat
         "ok:"
         (string.int->string values)
@@ -19,7 +18,7 @@
         (string.int->string functions)
         ":"
         (string.int->string externs))]
-    [(tc.ResultCompilerTypecheck.Err boxed)
+    [(Err boxed)
       (let
         [diagnostics : diag.CompilerDiagnosticList
           (diag.compiler-diagnostic-list-box-shared-view boxed)]
@@ -45,7 +44,7 @@
     (tc.compiler-typecheck-reset-file-state!)
     (tc.tc-prefix-snapshot-cache-clear!)
     (match (parser.parse-ast-source (string.copy source))
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (let
           [before : i64 api.compiler-typecheck-pipeline-runs]
           [checked : tc.ResultCompilerTypecheckChecked
@@ -54,8 +53,8 @@
               (ast.ast-decl-path-list-new))]
           [kind : i64
             (match (view.compiler-owned-shared-view checked)
-              [(tc.ResultCompilerTypecheckChecked.Ok _ _ _ _) 0]
-              [(tc.ResultCompilerTypecheckChecked.Partial _ _ _ _) 1]
+              [(Ok _ _ _ _) 0]
+              [(Partial _ _ _ _) 1]
               [_ 2])]
           [projected : tc.ResultCompilerTypecheck
             (tc.tc-typecheck-checked-result-summary checked)]
@@ -72,7 +71,7 @@
             (tc.compiler-typecheck-reset-file-state!)
             (tc.tc-prefix-snapshot-cache-clear!)
             (match (parser.parse-ast-source source)
-              [(parser.ResultAstProgram.Ok reparsed)
+              [(Ok reparsed)
                 (let
                   [before : i64 api.compiler-typecheck-pipeline-runs]
                   [actual : String
@@ -115,7 +114,7 @@
     (begin
       (test.assert-true
         (match result
-          [(tc.ResultCompilerTypecheck.Err _) true]
+          [(Err _) true]
           [_ false])
         "parse error remains an error")
       (test.assert-i64-eq

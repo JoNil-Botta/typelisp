@@ -24,33 +24,33 @@
     [done : bool false]
     (while (not done)
       (match (countervec.next-mut (&mut iter))
-        [(countervec.IterMutNext.Done) (set! done true)]
-        [(countervec.IterMutNext.Item item) (set! item.value (+ item.value 6))]))))
+        [(Done) (set! done true)]
+        [(Item item) (set! item.value (+ item.value 6))]))))
 
 (define (iter-mut-done? [result : (countervec.IterMutNext source)]) : bool
   (match result
-    [(countervec.IterMutNext.Done) true]
-    [(countervec.IterMutNext.Item _) false]))
+    [(Done) true]
+    [(Item _) false]))
 
 (define (iter-mut-string-is-alpha? [result : (strvec.IterMutNext source)]) : bool
   (match result
-    [(strvec.IterMutNext.Done) false]
-    [(strvec.IterMutNext.Item item) (string.eq item "alpha")]))
+    [(Done) false]
+    [(Item item) (string.eq item "alpha")]))
 
 (define (iter-shared-done? [result : (countervec.IterNext source)]) : bool
   (match result
-    [(countervec.IterNext.Done) true]
-    [(countervec.IterNext.Item _) false]))
+    [(Done) true]
+    [(Item _) false]))
 
 (define (iter-shared-string-is-alpha? [result : (strvec.IterNext source)]) : bool
   (match result
-    [(strvec.IterNext.Done) false]
-    [(strvec.IterNext.Item item) (string.eq item "alpha")]))
+    [(Done) false]
+    [(Item item) (string.eq item "alpha")]))
 
 (define (iter-shared-i64-count [result : (i64vec.IterNext source)]) : i64
   (match result
-    [(i64vec.IterNext.Done) 0]
-    [(i64vec.IterNext.Item _) 1]))
+    [(Done) 0]
+    [(Item _) 1]))
 
 (define (shared-counter-value [counter : (& source VectorApiCounter)]) : i64
   counter.value)
@@ -113,8 +113,8 @@
             (begin
               (while (not done)
                 (match (countervec.next (&mut iter))
-                  [(countervec.IterNext.Done) (set! done true)]
-                  [(countervec.IterNext.Item counter)
+                  [(Done) (set! done true)]
+                  [(Item counter)
                     (set! total (+ total (shared-counter-value counter)))]))
               total))]
         [shared-single-counter-total : i64
@@ -122,9 +122,8 @@
             [iter : (countervec.Iter single-counter)
               (countervec.iterator (& single-counter))]
             (match (countervec.next (&mut iter))
-              [(countervec.IterNext.Done) 0]
-              [(countervec.IterNext.Item counter)
-                (shared-counter-value counter)]))]
+              [(Done) 0]
+              [(Item counter) (shared-counter-value counter)]))]
         [shared-balls-total : i64
           (let
             [iter : (ballvec.Iter balls) (ballvec.iterator (& balls))]
@@ -133,12 +132,11 @@
             (begin
               (while (not done)
                 (match (ballvec.next (&mut iter))
-                  [(ballvec.IterNext.Done) (set! done true)]
-                  [(ballvec.IterNext.Item ball)
-                    (set! total (+ total (shared-ball-score ball)))]))
+                  [(Done) (set! done true)]
+                  [(Item ball) (set! total (+ total (shared-ball-score ball)))]))
               total))]
         (match (strvec.pop! words)
-          [(strvec.Pop.Ok word)
+          [(Ok word)
             (if (and
               (= (i64vec.len (& numbers)) 2)
               (= (i64vec.get (& numbers) 0 0) 32)
@@ -167,4 +165,4 @@
               (iter-shared-done? (countervec.next (&mut empty-shared-iter))))
               42
               1)]
-          [(strvec.Pop.Empty) 1])))))
+          [(Empty) 1])))))

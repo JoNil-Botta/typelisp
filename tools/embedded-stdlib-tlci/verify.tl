@@ -64,8 +64,7 @@
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
     (match (clone expr)
-      [(compiler_ast_types.AstExpr.Spanned inner _)
-        (embedded-verify-expr-get pools inner)]
+      [(Spanned inner _) (embedded-verify-expr-get pools inner)]
       [_ expr])))
 
 ;; The operand is the node a parsed call site would hand over, so it carries
@@ -77,18 +76,18 @@
     pools
     (compiler_ast_types.ast-node-pool-context-expr-push
       (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-      (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
+      (Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
 (define (embedded-verify-result-shape-ok?
   [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
-    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (embedded-verify-expr-get
         (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
         node)
-        [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
+        [(BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
 
@@ -97,8 +96,8 @@
     (arena.tl_arena_current)
     (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
     (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
-    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
-    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+    [(Err _) false]
+    [(Ok loaded)
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
@@ -110,9 +109,7 @@
         (begin
           (set!
             (array-ref operands 0)
-            (compiler_ctfe.CompilerCtfeValue.Expr
-              operand-node
-              (compiler_ast_types.AstType.Expr)))
+            (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
             operands
@@ -128,8 +125,8 @@
                 embedded-verify-cookie
                 (__tl_make-array i64 0)
                 0)
-                [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
-                [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+                [(Err _) false]
+                [(Ok dispatch)
                   (and
                     (= dispatch.status 0)
                     (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
@@ -137,8 +134,8 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (match (tlci_loader.tlci-loader-release loaded)
-                [(tlci_loader.ResultTlciLoaderUnit.Ok) ok]
-                [(tlci_loader.ResultTlciLoaderUnit.Err _) false])))))]))
+                [(Ok) ok]
+                [(Err _) false])))))]))
 
 (define (embedded-verify-native-array-length-error-ok?
   [fuel : i64]
@@ -148,8 +145,8 @@
     (arena.tl_arena_current)
     (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
     (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
-    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
-    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+    [(Err _) false]
+    [(Ok loaded)
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
@@ -161,9 +158,7 @@
         (begin
           (set!
             (array-ref operands 0)
-            (compiler_ctfe.CompilerCtfeValue.Expr
-              operand-node
-              (compiler_ast_types.AstType.Expr)))
+            (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
             operands
@@ -179,8 +174,8 @@
                 embedded-verify-cookie
                 (__tl_make-array i64 0)
                 0)
-                [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
-                [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+                [(Err _) false]
+                [(Ok dispatch)
                   (and
                     (= dispatch.status expected-status)
                     (not
@@ -188,19 +183,17 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (match (tlci_loader.tlci-loader-release loaded)
-                [(tlci_loader.ResultTlciLoaderUnit.Ok) ok]
-                [(tlci_loader.ResultTlciLoaderUnit.Err _) false])))))]))
+                [(Ok) ok]
+                [(Err _) false])))))]))
 
 (define (main) : i64
   (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
-    [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Err
-        message)
+    [(Err message)
       (begin
         (io.print-error
           (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
         1)]
-    [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
-        count)
+    [(Ok count)
       (if (= count 159)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)

@@ -39,27 +39,27 @@
 ;; imported `defenum`'s `match` works across the import boundary.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(Token.Int _) 1]
-    [(Token.Plus) 2]
-    [(Token.Minus) 3]
-    [(Token.Star) 4]
-    [(Token.Slash) 5]
-    [(Token.LParen) 6]
-    [(Token.RParen) 7]
-    [(Token.End) 8]))
+    [(Int _) 1]
+    [(Plus) 2]
+    [(Minus) 3]
+    [(Star) 4]
+    [(Slash) 5]
+    [(LParen) 6]
+    [(RParen) 7]
+    [(End) 8]))
 
 ;; Integer payload of `Token.Int` (0 for any other kind): projects the operand
 ;; back out of the enum, the way the parser reads a literal.
 (define (token-int [t : Token]) : i64
   (match t
-    [(Token.Int v) v]
-    [(Token.Plus) 0]
-    [(Token.Minus) 0]
-    [(Token.Star) 0]
-    [(Token.Slash) 0]
-    [(Token.LParen) 0]
-    [(Token.RParen) 0]
-    [(Token.End) 0]))
+    [(Int v) v]
+    [(Plus) 0]
+    [(Minus) 0]
+    [(Star) 0]
+    [(Slash) 0]
+    [(LParen) 0]
+    [(RParen) 0]
+    [(End) 0]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; The parser compares a token's tag against these to drive its descent.

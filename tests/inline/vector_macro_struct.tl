@@ -73,7 +73,7 @@
             32
             "struct vector map returns aggregate")
           (match (pvec.pop! v)
-            [(pvec.Pop.Ok value)
+            [(Ok value)
               (begin
                 (test.assert-i64-eq
                   (pair-score value)
@@ -83,7 +83,7 @@
                   (pvec.len (& v))
                   2
                   "struct vector pop shrinks"))]
-            [pvec.Pop.Empty
+            [Empty
               (test.assert-true false "struct vector pop should return a value")]))))))
 
 (test

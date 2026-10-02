@@ -65,39 +65,28 @@
     (owned_view.compiler-owned-shared-view roots)
     (cfg_env.sym-i64-shared-view (& cfgs))
     pools)
-    [(load.ResultCompilerLoadWithPaths.Ok
-        runtime-decls
-        runtime-paths
-        runtime-modules
-        runtime-seen)
+    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
       (match (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
         (load.compiler-load-session-state-shared-view (& load-state))
         runtime-seen
         (owned_view.compiler-owned-shared-view roots)
         (cfg_env.sym-i64-shared-view (& cfgs))
         pools)
-        [(load.ResultCompilerLoadWithPaths.Ok
-            macro-decls
-            macro-paths
-            macro-modules
-            macro-seen)
-          (load.ResultCompilerLoadWithPaths.Ok
+        [(Ok macro-decls macro-paths macro-modules macro-seen)
+          (Ok
             (load.compiler-load-decl-list-append runtime-decls macro-decls)
             (load.compiler-load-decl-path-list-append runtime-paths macro-paths)
             (load.compiler-load-decl-module-list-append
               runtime-modules
               macro-modules)
             macro-seen)]
-        [(load.ResultCompilerLoadWithPaths.Err diag)
-          (load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(load.ResultCompilerLoadWithPaths.Err diag)
-      (load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (prelude-surface-facts-error
   [prefix : String]
   [diag : (Box cdiag.CompilerDiagnostic)]) : ResultPreludeSurfaceFacts
-  (ResultPreludeSurfaceFacts.Err
-    (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (deref diag)))))
+  (Err (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (deref diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
   [load-state : load.CompilerLoadSessionState]
@@ -114,7 +103,7 @@
   (let
     [decl-count : i64
       (match (ast.ast-place-shared-view program)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -139,27 +128,27 @@
         source-names
         (ci.intern-compat-state-capture-active))]
     (match checked
-      [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
+      [(Partial diag _ _ _)
         (begin
           (tc.tc-clone-root-collection-abort! job-state)
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
             (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
-      [(tc.ResultCompilerTypecheckChecked.Err diag)
+      [(Err diag)
         (begin
           (tc.tc-clone-root-collection-abort! job-state)
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
             (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
-      [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
+      [(Ok summary ctx _ _)
         (let
           [_finish-clone-roots : clone.CloneRootEntries
             (tc.tc-clone-root-collection-finish! ctx)]
           (match summary
-            [(tc.CompilerTypecheckSummary values functions externs)
-              (ResultPreludeSurfaceFacts.Ok
+            [(CompilerTypecheckSummary values functions externs)
+              (Ok
                 (surface_facts.surface-typecheck-facts-recording-finish
                   macro-decl-count
                   decl-count
@@ -182,7 +171,7 @@
   (let
     [macro-decl-count : i64
       (match (ast.ast-place-shared-view expanded)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -195,11 +184,11 @@
         (ast.ast-place-shared-view expanded-paths)
         ""
         pools)
-        [(spec.ResultSpecProgramWithPaths.Err diag)
+        [(Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
             diag)]
-        [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
+        [(Ok specialized specialized-paths)
           (prelude-surface-typecheck-facts-specialized
             load-state
             prefix-cache
@@ -251,11 +240,11 @@
     ;; Publish the owner's interner before the legacy expansion phase reads it.
     [_publish : unit (ci.intern-compat-state-install! intern-state)]
     (match generated-result
-      [(spec.ResultGenProgramWithPaths.Err diag)
+      [(Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
           diag)]
-      [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+      [(Ok generated generated-paths)
         (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
           (load.compiler-load-session-state-shared-view (& load-state))
           generated
@@ -265,11 +254,11 @@
           job-state
           (owned_view.compiler-owned-shared-view roots)
           (cfg_env.sym-i64-shared-view (& cfgs)))
-          [(tc.ResultMacroExpand.Err diag)
+          [(Err diag)
             (prelude-surface-facts-error
               "prelude surface expansion failed: "
               diag)]
-          [(tc.ResultMacroExpand.Ok expanded expanded-paths)
+          [(Ok expanded expanded-paths)
             (prelude-surface-typecheck-facts-expanded
               load-state
               prefix-cache
@@ -312,9 +301,8 @@
           surface_facts.surface-typecheck-facts-schema-version
           fact-bytes))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err message)
-          (ResultPreludeSurface.Err message)]
-        [(tlci.ResultTlciAuxBytes.Ok rodata) (ResultPreludeSurface.Ok rodata)]))))
+        [(Err message) (Err message)]
+        [(Ok rodata) (Ok rodata)]))))
 
 (define (prelude-surface-encode-payloads
   [structural-session : cis.InternStructuralSessionHandle]
@@ -328,9 +316,8 @@
   [source-count : i64]
   [identity-count : i64]) : ResultPreludeSurface
   (match (surface_identity.surface-identity-encode identity-payload)
-    [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-      (ResultPreludeSurface.Err message)]
-    [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+    [(Err message) (Err message)]
+    [(Ok identity-bytes)
       (match (surface_ast.surface-ast-encode
         structural-session
         decls
@@ -340,17 +327,15 @@
         pools
         source-count
         identity-count)
-        [(surface_ast.ResultSurfaceAstBytes.Err message)
-          (ResultPreludeSurface.Err message)]
-        [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
+        [(Err message) (Err message)]
+        [(Ok ast-bytes)
           (match (surface_facts.surface-typecheck-facts-encode
             facts
             structural-session
             source-count
             identity-count)
-            [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-              (ResultPreludeSurface.Err message)]
-            [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok fact-bytes)
+            [(Err message) (Err message)]
+            [(Ok fact-bytes)
               (prelude-surface-pack identity-bytes ast-bytes fact-bytes)])])]))
 
 (define (prelude-surface-build
@@ -363,7 +348,7 @@
       (when
         (load.compiler-load-active-session-live?)
         (return
-          (ResultPreludeSurface.Err
+          (Err
             "prelude-surface-build: standalone resetting compiler entry cannot run inside an active compiler load session")))]
     [previous-arena : i64 (arena.tl_arena_current)]
     [surface-arena : i64 (arena.tl_arena_make)]
@@ -387,15 +372,15 @@
         (owned_view.compiler-owned-shared-view roots)
         (prelude-surface-target-cfgs windows-target)
         pools)
-        [(load.ResultCompilerLoadWithPaths.Err diag)
+        [(Err diag)
           (begin
             (unsafe
               (arena.tl_arena_set previous-arena))
-            (ResultPreludeSurface.Err
+            (Err
               (str_cat.str-cat
                 "prelude surface load failed: "
                 (cdiag.compiler-diagnostic-render (deref diag)))))]
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+        [(Ok decls paths modules seen)
           (match (prelude-surface-typecheck-facts
             load-state
             decls
@@ -403,22 +388,18 @@
             roots
             (prelude-surface-target-cfgs windows-target)
             pools)
-            [(ResultPreludeSurfaceFacts.Err message)
+            [(Err message)
               (begin
                 (unsafe
                   (arena.tl_arena_set previous-arena))
-                (ResultPreludeSurface.Err message))]
-            [(ResultPreludeSurfaceFacts.Ok
-                facts
-                surface-program
-                surface-paths
-                source-names)
+                (Err message))]
+            [(Ok facts surface-program surface-paths source-names)
               (let
                 [module-set : (__tl_dyn-array String)
                   (prelude_shared.prelude-surface-module-set paths)]
                 [surface-decls : ast.AstDeclList
                   (match surface-program
-                    [(ast.AstProgram.Program decls-box)
+                    [(Program decls-box)
                       (ast.ast-decl-list-box-shared-view decls-box)])]
                 [key : surface_identity.SurfaceIdentityKey
                   (surface_identity.SurfaceIdentityKey

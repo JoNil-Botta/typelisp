@@ -15,23 +15,23 @@
   (Wrapper
     (dep.Item (string.copy (& tag)))
     (dep.Nested (dep.Item (string.append (string.copy (& tag)) ":nested")))
-    (dep.ImportedBranch
+    (ImportedBranch
       (box (dep.ImportedLeaf (string.append (string.copy (& tag)) ":left")))
       (box (dep.ImportedLeaf (string.append tag ":right"))))))
 
 (define (tree-ok? [tree : dep.Tree] [tag : String]) : bool
   (match tree
-    [(dep.ImportedLeaf _) false]
-    [(dep.ImportedBranch left right)
+    [(ImportedLeaf _) false]
+    [(ImportedBranch left right)
       (match (__tl-box-place left)
-        [(dep.ImportedLeaf left-text)
+        [(ImportedLeaf left-text)
           (match (__tl-box-place right)
-            [(dep.ImportedLeaf right-text)
+            [(ImportedLeaf right-text)
               (and
                 (string.eq left-text (string.append tag ":left"))
                 (string.eq right-text (string.append tag ":right")))]
-            [(dep.ImportedBranch _ _) false])]
-        [(dep.ImportedBranch _ _) false])]))
+            [(ImportedBranch _ _) false])]
+        [(ImportedBranch _ _) false])]))
 
 (define (wrapper-ok? [value : Wrapper] [tag : String]) : bool
   (and

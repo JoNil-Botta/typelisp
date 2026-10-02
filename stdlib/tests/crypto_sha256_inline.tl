@@ -15,8 +15,8 @@
   test
   (define (test-require-update [result : sha.Sha256UpdateResult]) : unit
     (match result
-      [(sha.Sha256UpdateOk) unit]
-      [(sha.Sha256UpdateErr _)
+      [(Sha256UpdateOk) unit]
+      [(Sha256UpdateErr _)
         (test.assert-true false "SHA-256 update should succeed")])))
 
 ;: Require one successful public finalization.
@@ -24,8 +24,8 @@
   test
   (define (test-require-finalize [result : sha.Sha256FinalizeResult]) : sha.Sha256Digest
     (match result
-      [(sha.Sha256FinalizeOk value) value]
-      [(sha.Sha256FinalizeErr _)
+      [(Sha256FinalizeOk value) value]
+      [(Sha256FinalizeErr _)
         (test-zero-digest "SHA-256 finalization should succeed")])))
 
 ;: Hash one exact borrowed input.
@@ -139,7 +139,7 @@
   test
   (define (test-assert-finalized-update [result : sha.Sha256UpdateResult]) : unit
     (match result
-      [(sha.Sha256UpdateErr (sha.Sha256Finalized)) unit]
+      [(Sha256UpdateErr (Sha256Finalized)) unit]
       [_ (test.assert-true false "expected finalized SHA-256 update error")])))
 
 ;: Require one lifecycle error from repeated finalization.
@@ -147,7 +147,7 @@
   test
   (define (test-assert-finalized-finalize [result : sha.Sha256FinalizeResult]) : unit
     (match result
-      [(sha.Sha256FinalizeErr (sha.Sha256Finalized)) unit]
+      [(Sha256FinalizeErr (Sha256Finalized)) unit]
       [_
         (test.assert-true false "expected finalized SHA-256 finalization error")])))
 
@@ -156,7 +156,7 @@
   test
   (define (test-assert-length-error [result : sha.Sha256LengthResult]) : unit
     (match result
-      [(sha.Sha256LengthErr (sha.Sha256MessageTooLong _ _)) unit]
+      [(Sha256LengthErr (Sha256MessageTooLong _ _)) unit]
       [_ (test.assert-true false "expected SHA-256 length error")])))
 
 ;: Require a raw-source validation failure.
@@ -164,8 +164,8 @@
   test
   (define (test-assert-source-error [result : sha.Sha256UpdateResult]) : unit
     (match result
-      [(sha.Sha256UpdateErr (sha.Sha256InvalidSource)) unit]
-      [(sha.Sha256UpdateErr (sha.Sha256InvalidSourceLength _)) unit]
+      [(Sha256UpdateErr (Sha256InvalidSource)) unit]
+      [(Sha256UpdateErr (Sha256InvalidSourceLength _)) unit]
       [_ (test.assert-true false "expected SHA-256 source error")])))
 
 ;: Require an invalid public state error.
@@ -173,7 +173,7 @@
   test
   (define (test-assert-state-error [result : sha.Sha256UpdateResult]) : unit
     (match result
-      [(sha.Sha256UpdateErr (sha.Sha256InvalidState)) unit]
+      [(Sha256UpdateErr (Sha256InvalidState)) unit]
       [_ (test.assert-true false "expected SHA-256 state error")])))
 
 ;: Require an exact-output validation failure.
@@ -181,8 +181,8 @@
   test
   (define (test-assert-output-error [result : sha.Sha256FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha256FinalizeIntoErr (sha.Sha256InvalidOutput)) unit]
-      [(sha.Sha256FinalizeIntoErr (sha.Sha256InvalidOutputLength _)) unit]
+      [(Sha256FinalizeIntoErr (Sha256InvalidOutput)) unit]
+      [(Sha256FinalizeIntoErr (Sha256InvalidOutputLength _)) unit]
       [_ (test.assert-true false "expected SHA-256 output error")])))
 
 ;: Require a duplicate consumed-state finalization error.
@@ -191,7 +191,7 @@
   (define (test-assert-finalize-into-closed
     [result : sha.Sha256FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha256FinalizeIntoErr (sha.Sha256Finalized)) unit]
+      [(Sha256FinalizeIntoErr (Sha256Finalized)) unit]
       [_ (test.assert-true false "expected closed SHA-256 sink error")])))
 
 ;: Require successful finalization through the exact raw sink.
@@ -199,8 +199,8 @@
   test
   (define (test-require-finalize-into [result : sha.Sha256FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha256FinalizeIntoOk) unit]
-      [(sha.Sha256FinalizeIntoErr _)
+      [(Sha256FinalizeIntoOk) unit]
+      [(Sha256FinalizeIntoErr _)
         (test.assert-true false "SHA-256 sink finalization should succeed")])))
 
 (cfg
@@ -291,11 +291,11 @@
       (match (sha.length-add
         (- (sha.max-byte-length) (cast 1 : u64))
         (cast 1 : u64))
-        [(sha.Sha256LengthOk length)
+        [(Sha256LengthOk length)
           (test.assert-true
             (= length (sha.max-byte-length))
             "SHA-256 maximum byte length should be admitted")]
-        [(sha.Sha256LengthErr _)
+        [(Sha256LengthErr _)
           (test.assert-true false "SHA-256 maximum should be admitted")])
       (test-assert-length-error
         (sha.length-add (sha.max-byte-length) (cast 1 : u64)))
@@ -310,7 +310,7 @@
           (set! state.byte-length (sha.max-byte-length))
           (set! state.block-length 63)
           (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
-            [(sha.Sha256UpdateErr (sha.Sha256MessageTooLong _ _)) unit]
+            [(Sha256UpdateErr (Sha256MessageTooLong _ _)) unit]
             [_
               (test.assert-true
                 false

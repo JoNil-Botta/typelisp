@@ -7,21 +7,21 @@
 
 (define (error-kind-code [kind : rsa.RsaCoreErrorKind]) : i64
   (match kind
-    [(rsa.RsaNegativeModulus) 0]
-    [(rsa.RsaNegativeExponent) 1]
-    [(rsa.RsaInvalidModulusLength) 2]
-    [(rsa.RsaNonCanonicalModulus) 3]
-    [(rsa.RsaModulusTooSmall) 4]
-    [(rsa.RsaModulusTooLarge) 5]
-    [(rsa.RsaEvenModulus) 6]
-    [(rsa.RsaInvalidExponentLength) 7]
-    [(rsa.RsaNonCanonicalExponent) 8]
-    [(rsa.RsaExponentTooSmall) 9]
-    [(rsa.RsaExponentTooLarge) 10]
-    [(rsa.RsaEvenExponent) 11]
-    [(rsa.RsaInvalidRepresentativeLength) 12]
-    [(rsa.RsaRepresentativeOutOfRange) 13]
-    [(rsa.RsaArithmeticInvariant) 14]))
+    [(RsaNegativeModulus) 0]
+    [(RsaNegativeExponent) 1]
+    [(RsaInvalidModulusLength) 2]
+    [(RsaNonCanonicalModulus) 3]
+    [(RsaModulusTooSmall) 4]
+    [(RsaModulusTooLarge) 5]
+    [(RsaEvenModulus) 6]
+    [(RsaInvalidExponentLength) 7]
+    [(RsaNonCanonicalExponent) 8]
+    [(RsaExponentTooSmall) 9]
+    [(RsaExponentTooLarge) 10]
+    [(RsaEvenExponent) 11]
+    [(RsaInvalidRepresentativeLength) 12]
+    [(RsaRepresentativeOutOfRange) 13]
+    [(RsaArithmeticInvariant) 14]))
 
 (define (hex-nibble [byte : char]) : i64
   (cond
@@ -149,12 +149,12 @@
     (match (rsa.parse-public-key
       (byte_buf.as-bytes (& modulus))
       (byte_buf.as-bytes (& exponent)))
-      [(rsa.ErrRsaPublicKey error)
+      [(ErrRsaPublicKey error)
         (test.assert-i64-eq
           (error-kind-code error.kind)
           -1
           "RSA fixture key rejected")]
-      [(rsa.OkRsaPublicKey key)
+      [(OkRsaPublicKey key)
         (begin
           (test.assert-i64-eq
             (rsa.modulus-class-bits (& key))
@@ -175,9 +175,8 @@
           (match (rsa.public-exponentiate
             (& key)
             (byte_buf.as-bytes (& representative)))
-            [(rsa.ErrRsaPublicBytes _)
-              (fail "RSA fixture exponentiation failed")]
-            [(rsa.OkRsaPublicBytes actual)
+            [(ErrRsaPublicBytes _) (fail "RSA fixture exponentiation failed")]
+            [(OkRsaPublicBytes actual)
               (test.assert-true
                 (bytes-equal?
                   (byte_buf.as-bytes (& actual))
@@ -196,8 +195,8 @@
     modulus-negative
     exponent
     exponent-negative)
-    [(rsa.OkRsaPublicKey _) (fail message)]
-    [(rsa.ErrRsaPublicKey error)
+    [(OkRsaPublicKey _) (fail message)]
+    [(ErrRsaPublicKey error)
       (test.assert-i64-eq (error-kind-code error.kind) expected-kind message)]))
 
 (define (assert-public-result
@@ -206,8 +205,8 @@
   [expected : (& expected bytes)]
   [message : String]) : unit
   (match (rsa.public-exponentiate key input)
-    [(rsa.ErrRsaPublicBytes _) (fail message)]
-    [(rsa.OkRsaPublicBytes actual)
+    [(ErrRsaPublicBytes _) (fail message)]
+    [(OkRsaPublicBytes actual)
       (test.assert-true
         (bytes-equal? (byte_buf.as-bytes (& actual)) expected)
         message)]))
@@ -218,8 +217,8 @@
   [expected-kind : i64]
   [message : String]) : unit
   (match (rsa.public-exponentiate key input)
-    [(rsa.OkRsaPublicBytes _) (fail message)]
-    [(rsa.ErrRsaPublicBytes error)
+    [(OkRsaPublicBytes _) (fail message)]
+    [(ErrRsaPublicBytes error)
       (test.assert-i64-eq (error-kind-code error.kind) expected-kind message)]))
 
 (define (assert-key-validation) : unit
@@ -333,8 +332,8 @@
     (match (rsa.parse-public-key
       (byte_buf.as-bytes (& modulus))
       (byte_buf.as-bytes (& exponent)))
-      [(rsa.ErrRsaPublicKey _) (fail "RSA 2049-bit modulus rejected")]
-      [(rsa.OkRsaPublicKey key)
+      [(ErrRsaPublicKey _) (fail "RSA 2049-bit modulus rejected")]
+      [(OkRsaPublicKey key)
         (begin
           (test.assert-i64-eq
             (rsa.modulus-bit-length (& key))
@@ -363,8 +362,8 @@
       (match (rsa.parse-public-key
         (byte_buf.as-bytes (& modulus))
         (byte_buf.as-bytes (& exponent)))
-        [(rsa.ErrRsaPublicKey _) (fail "RSA maximal-limb modulus rejected")]
-        [(rsa.OkRsaPublicKey key)
+        [(ErrRsaPublicKey _) (fail "RSA maximal-limb modulus rejected")]
+        [(OkRsaPublicKey key)
           (begin
             (test.assert-i64-eq
               (rsa.public-exponentiation-multiplication-count (& key))

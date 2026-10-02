@@ -41,8 +41,8 @@
       (cis.intern-structural-session-macro-global-identity
         session
         (if legacy
-          cis.InternMacroGlobalRole.Legacy
-          cis.InternMacroGlobalRole.Context)
+          Legacy
+          Context)
         module-id
         source-name-id))))
 
@@ -220,8 +220,8 @@
         false
         (match (surface_identity.surface-identity-encode
           (surface-tests-shared-view payload))
-          [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
-          [(surface_identity.ResultSurfaceIdentityBytes.Ok bytes)
+          [(Err _) false]
+          [(Ok bytes)
             (let
               [copy : (__tl_dyn-array u8)
                 (surface-identity-test-copy-bytes
@@ -231,13 +231,9 @@
                 (let
                   [unrelated : i64 (ci.intern "unrelated")]
                   (match (surface_identity.surface-identity-hydrate bytes key)
-                    [(surface_identity.ResultSurfaceIdentityHydration.Err _)
-                      false]
-                    [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
-                        _)
-                      false]
-                    [(surface_identity.ResultSurfaceIdentityHydration.Ok
-                        hydration)
+                    [(Err _) false]
+                    [(KeyMismatch _) false]
+                    [(Ok hydration)
                       (let
                         [remap : (__tl_dyn-array i64)
                           (surface-tests-shared-view hydration.remap)]
@@ -325,11 +321,8 @@
                               1536
                               mapped-alpha))
                           (match (surface_identity.surface-identity-decode copy)
-                            [(surface_identity.ResultSurfaceIdentityPayload.Err
-                                _)
-                              false]
-                            [(surface_identity.ResultSurfaceIdentityPayload.Ok
-                                decoded)
+                            [(Err _) false]
+                            [(Ok decoded)
                               (surface_identity.surface-identity-key-eq?
                                 decoded.key
                                 key)])))]))))])))))
@@ -379,9 +372,9 @@
             (= (codec.surface-ast-reader-offset (& reader)) byte-count)
             (or comptime? (!= expected-markers 0) (arena.mark-eq? before after))
             (match (__tl-box-place decoded.value)
-              [(ast.AstDeclMetaValue.Runtime markers)
+              [(Runtime markers)
                 (and (= markers expected-markers) (not comptime?))]
-              [(ast.AstDeclMetaValue.Comptime _ markers)
+              [(Comptime _ markers)
                 (and (= markers expected-markers) comptime?)])))))))
 
 ;; `(slice 3 _ & _)` keeps its rest flag and its items through tag 7.
@@ -399,12 +392,10 @@
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       [items : ast.AstPatternList
         (ast.ast-pattern-cons
-          (ast.AstPattern.Literal (ast.AstLiteral.Int 3 "3"))
+          (Literal (Int 3 "3"))
           (ast.ast-pattern-cons
-            ast.AstPattern.Wildcard
-            (ast.ast-pattern-cons
-              ast.AstPattern.Wildcard
-              (ast.ast-pattern-list-new))))]
+            Wildcard
+            (ast.ast-pattern-cons Wildcard (ast.ast-pattern-list-new))))]
       (begin
         (expr_codec.surface-ast-write-pattern!
           (&mut out)
@@ -425,7 +416,7 @@
             (codec.surface-ast-reader-valid? (& reader))
             (= (codec.surface-ast-reader-offset (& reader)) byte-count)
             (match decoded
-              [(ast.AstPattern.Slice decoded-items has-rest)
+              [(Slice decoded-items has-rest)
                 (let
                   [list : ast.AstPatternList (deref decoded-items)]
                   (and
@@ -435,7 +426,7 @@
                       (& list)
                       0
                       (ast.ast-pattern-fallback))
-                      [(ast.AstPattern.Literal (ast.AstLiteral.Int 3 _)) true]
+                      [(Literal (Int 3 _)) true]
                       [_ false])))]
               [_ false])))))))
 
@@ -482,18 +473,15 @@
         (codec.surface-ast-write-i64! (&mut out) 0)
         (codec.surface-ast-write-i64! (&mut out) 3)
         (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-type! (&mut out) (&mut context) I64)
         (codec.surface-ast-write-type!
           (&mut out)
           (&mut context)
-          ast.AstType.I64)
+          (Func (box (ast.ast-type-list-new)) 0))
         (codec.surface-ast-write-type!
           (&mut out)
           (&mut context)
-          (ast.AstType.Func (box (ast.ast-type-list-new)) 0))
-        (codec.surface-ast-write-type!
-          (&mut out)
-          (&mut context)
-          (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull))
+          (CFunc signature NonNull))
         ;; Empty declaration, path, module, and seen lists.
         (codec.surface-ast-write-i64! (&mut out) 0)
         (codec.surface-ast-write-i64! (&mut out) 0)
@@ -504,8 +492,8 @@
           session
           (__tl_make-array i64 0)
           (ast.ast-node-pool-context-new-with-capacities 4 1))
-          [(surface_ast.ResultSurfaceAstHydration.Ok _) (= signature 1)]
-          [(surface_ast.ResultSurfaceAstHydration.Err message)
+          [(Ok _) (= signature 1)]
+          [(Err message)
             (and
               (not (= signature 1))
               (surface_identity.surface-identity-string-eq?
@@ -533,8 +521,8 @@
           structural-session
           (__tl_make-array i64 0)
           (ast.ast-node-pool-context-new-with-capacities 1 1))
-          [(surface_ast.ResultSurfaceAstHydration.Err _) true]
-          [(surface_ast.ResultSurfaceAstHydration.Ok _) false])))))
+          [(Err _) true]
+          [(Ok _) false])))))
 
 (cfg
   compiler-surface-selftest
@@ -676,15 +664,13 @@
   compiler-surface-selftest
   (define (surface-ast-declared-align-tests-ok?) : bool
     (and
-      (surface-ast-struct-repr-roundtrip-ok? ast.AstStructRepr.Default)
+      (surface-ast-struct-repr-roundtrip-ok? Default)
       (surface-ast-struct-repr-roundtrip-ok? (ast.ast-struct-repr-c))
-      (surface-ast-struct-repr-roundtrip-ok?
-        (ast.AstStructRepr.C 1 (ast.ast-no-field-aligns)))
-      (surface-ast-struct-repr-roundtrip-ok?
-        (ast.AstStructRepr.C 4096 (ast.ast-no-field-aligns)))
+      (surface-ast-struct-repr-roundtrip-ok? (C 1 (ast.ast-no-field-aligns)))
+      (surface-ast-struct-repr-roundtrip-ok? (C 4096 (ast.ast-no-field-aligns)))
       (surface-ast-struct-repr-roundtrip-ok?
         (ast.ast-struct-repr-with-field-align
-          (ast.AstStructRepr.C 32 (ast.ast-no-field-aligns))
+          (C 32 (ast.ast-no-field-aligns))
           2
           16))
       (surface-ast-declared-align-rejected? 1 24 0 0)
@@ -710,14 +696,13 @@
         false
         1)
       (surface-ast-decl-meta-roundtrip-ok?
-        (ast.AstDeclMeta
-          (box (ast.AstDeclMetaValue.Comptime ast.AstGeneratedDeclMeta.No 1)))
+        (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime No 1)))
         true
         1)
       (surface-ast-decl-meta-invalid-flags-ok?)
-      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.C)
-      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.CVarargsOpen)
-      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.TypeLisp)
+      (surface-ast-extern-abi-roundtrip-ok? C)
+      (surface-ast-extern-abi-roundtrip-ok? CVarargsOpen)
+      (surface-ast-extern-abi-roundtrip-ok? TypeLisp)
       (surface-ast-extern-abi-unknown-tag-rejected?)
       (surface-ast-slice-pattern-roundtrip-ok?)
       (surface-ast-declared-align-tests-ok?)
@@ -765,9 +750,8 @@
       source-pools
       source-count
       identity-count)
-      [(surface_ast.ResultSurfaceAstBytes.Err message)
-        (surface_ast.ResultSurfaceAstBytes.Err message)]
-      [(surface_ast.ResultSurfaceAstBytes.Ok first)
+      [(Err message) (Err message)]
+      [(Ok first)
         (match (surface_ast.surface-ast-encode
           structural-session
           decls
@@ -777,15 +761,13 @@
           source-pools
           source-count
           identity-count)
-          [(surface_ast.ResultSurfaceAstBytes.Err message)
-            (surface_ast.ResultSurfaceAstBytes.Err message)]
-          [(surface_ast.ResultSurfaceAstBytes.Ok second)
+          [(Err message) (Err message)]
+          [(Ok second)
             (if (surface-ast-byte-array-eq?
               (owned_view.compiler-owned-shared-view first)
               second)
-              (surface_ast.ResultSurfaceAstBytes.Ok first)
-              (surface_ast.ResultSurfaceAstBytes.Err
-                "surface ast: repeated encoding mismatch"))])])))
+              (Ok first)
+              (Err "surface ast: repeated encoding mismatch"))])])))
 
 (cfg
   compiler-surface-selftest
@@ -793,15 +775,15 @@
     [pools : ast.AstNodePoolContext]
     [ty : ast.AstType]) : bool
     (match ty
-      [(ast.AstType.Ref region inner)
+      [(Ref region inner)
         (and
           (surface_identity.surface-identity-string-eq?
             (ci.intern-str region)
             "borrow-region")
           (match (ast.ast-node-pool-context-type-get pools inner)
-            [(ast.AstType.Slice elem)
+            [(Slice elem)
               (match (ast.ast-node-pool-context-type-get pools elem)
-                [(ast.AstType.I64) true]
+                [(I64) true]
                 [_ false])]
             [_ false]))]
       [_ false])))
@@ -813,7 +795,7 @@
     [id : i64]
     [expected : i64]) : bool
     (match (ast.ast-node-pool-context-expr-get pools id)
-      [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value expected)]
+      [(Literal (Int value _)) (= value expected)]
       [_ false])))
 
 (cfg
@@ -829,7 +811,7 @@
         (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
           (begin
             (match (ast.ast-node-pool-context-expr-get pools id)
-              [(ast.AstExpr.StructSet target field value)
+              [(StructSet target field value)
                 (set!
                   ok
                   (and
@@ -852,18 +834,9 @@
         (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
           (begin
             (match (ast.ast-node-pool-context-expr-get pools id)
-              [(ast.AstExpr.SpmdCompact compact-box)
+              [(SpmdCompact compact-box)
                 (match (deref compact-box)
-                  [(ast.AstSpmdCompact.Compact
-                      index
-                      (ast.AstType.I64)
-                      start
-                      end
-                      slot
-                      (ast.AstType.I64)
-                      init
-                      keep
-                      body)
+                  [(Compact index (I64) start end slot (I64) init keep body)
                     (set!
                       ok
                       (and
@@ -877,11 +850,10 @@
                         (surface-ast-int-node-value? (& pools) end 22)
                         (surface-ast-int-node-value? (& pools) init 20)
                         (match (ast.ast-node-pool-context-expr-get pools keep)
-                          [(ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-                            true]
+                          [(Literal (Bool true)) true]
                           [_ false])
                         (match (ast.ast-node-pool-context-expr-get pools body)
-                          [(ast.AstExpr.Literal (ast.AstLiteral.Unit)) true]
+                          [(Literal (Unit)) true]
                           [_ false])))]
                   [_ unit])]
               [_ unit])
@@ -899,7 +871,7 @@
         (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
           (begin
             (match (ast.ast-node-pool-context-expr-get pools id)
-              [(ast.AstExpr.ForeachActive lane body)
+              [(ForeachActive lane body)
                 (set!
                   ok
                   (and
@@ -907,7 +879,7 @@
                       (ci.intern-str lane)
                       "active-lane")
                     (match (ast.ast-node-pool-context-expr-get pools body)
-                      [(ast.AstExpr.LaneValue value)
+                      [(LaneValue value)
                         (surface-ast-int-node-value? (& pools) value 20)]
                       [_ false])))]
               [_ unit])
@@ -921,7 +893,7 @@
     [params : (& params ast.AstParamList)]
     [index : i64]) : bool
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name (ast.AstType.Invalidate lifetime inner) false)
+      [(Param name (Invalidate lifetime inner) false)
         (and
           (surface_identity.surface-identity-string-eq?
             (ci.intern-str name)
@@ -930,7 +902,7 @@
             (ci.intern-str lifetime)
             "invalidated-region")
           (match (ast.ast-node-pool-context-type-get pools inner)
-            [(ast.AstType.I64) true]
+            [(I64) true]
             [_ false]))]
       [_ false])))
 
@@ -942,11 +914,11 @@
     [index : i64]
     [mode : ast.AstCFunctionMode]) : bool
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ (ast.AstType.CFunc signature actual-mode) false)
+      [(Param _ (CFunc signature actual-mode) false)
         (and
           (ast.ast-c-function-mode-eq? actual-mode mode)
           (match (ast.ast-node-pool-context-type-get pools signature)
-            [(ast.AstType.Func args result)
+            [(Func args result)
               (let
                 [items : ast.AstTypeList (deref args)]
                 (and
@@ -954,10 +926,10 @@
                   (match (ast.ast-node-pool-context-type-get
                     pools
                     (ast.ast-type-list-get (& items) 0 -1))
-                    [(ast.AstType.I64) true]
+                    [(I64) true]
                     [_ false])
                   (match (ast.ast-node-pool-context-type-get pools result)
-                    [(ast.AstType.Bool) true]
+                    [(Bool) true]
                     [_ false])))]
             [_ false]))]
       [_ false])))
@@ -987,15 +959,15 @@
       [left : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.Literal (ast.AstLiteral.Int 20 "20")))]
+          (Literal (Int 20 "20")))]
       [right : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.Literal (ast.AstLiteral.Int 22 "22")))]
+          (Literal (Int 22 "22")))]
       [sum-inner : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
+          (Binary Add left right))]
       [sum : i64
         (ast.ast-expr-spanned-with-pools
           source-pools
@@ -1021,45 +993,36 @@
             source-pools
             (ast.ast-type-cons-with-pools
               source-pools
-              ast.AstType.I64
+              I64
               (ast.ast-type-list-new))
-            ast.AstType.Bool))]
-      [slice-i64 : ast.AstType
-        (ast.ast-ty-slice-with-pools source-pools ast.AstType.I64)]
+            Bool))]
+      [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools source-pools I64)]
       [borrowed-slice : ast.AstType
         (ast.ast-ty-ref-with-pools source-pools borrow-lifetime-id slice-i64)]
       [body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.Borrow
+          (Borrow
             false
-            (ast.ast-borrow-lifetime-to-id
-              (ast.AstBorrowLifetime.Named borrow-lifetime-id))
+            (ast.ast-borrow-lifetime-to-id (Named borrow-lifetime-id))
             sum))]
       [tuple-set : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.StructSet
-            left
-            (ast.ast-tuple-set-field-id-from-index 3)
-            right))]
+          (StructSet left (ast.ast-tuple-set-field-id-from-index 3) right))]
       [compact-keep : i64
-        (ast.ast-node-pool-context-expr-push
-          source-pools
-          (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+        (ast.ast-node-pool-context-expr-push source-pools (Literal (Bool true)))]
       [compact-body : i64
-        (ast.ast-node-pool-context-expr-push
-          source-pools
-          (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+        (ast.ast-node-pool-context-expr-push source-pools (Literal Unit))]
       [compact : i64
         (ast.ast-expr-spmd-compact-id-with-pools
           source-pools
           compact-index-id
-          (ast.AstType.I64)
+          (I64)
           left
           right
           compact-slot-id
-          (ast.AstType.I64)
+          (I64)
           left
           compact-keep
           compact-body)]
@@ -1072,7 +1035,7 @@
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
-          (ast.AstExpr.Begin
+          (Begin
             (ast.AstExprList
               (owned_view.compiler-owned-shared-view body-items)
               4)))]
@@ -1109,7 +1072,7 @@
           (array-ref macro-param-slots 0)
           (ast.AstMacroParam.Param
             macro-param-id
-            (ast.AstType.Var macro-type-id)
+            (Var macro-type-id)
             false
             macro-type-kinds))
         (set!
@@ -1122,25 +1085,25 @@
           (array-ref view-param-slots 1)
           (ast.AstParam.Param
             nullable-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.Nullable)
+            (CFunc c-signature Nullable)
             false))
         (set!
           (array-ref view-param-slots 2)
           (ast.AstParam.Param
             nonnull-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.NonNull)
+            (CFunc c-signature NonNull)
             false))
         (set!
           (array-ref view-param-slots 3)
           (ast.AstParam.Param
             unsafe-nullable-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNullable)
+            (CFunc c-signature UnsafeNullable)
             false))
         (set!
           (array-ref view-param-slots 4)
           (ast.AstParam.Param
             unsafe-nonnull-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNonNull)
+            (CFunc c-signature UnsafeNonNull)
             false))
         (set!
           (array-ref view-param-slots 5)
@@ -1149,7 +1112,7 @@
             (ast.ast-ty-invalidate-with-pools
               source-pools
               invalidate-lifetime-id
-              ast.AstType.I64)
+              I64)
             false))
         (set!
           (array-ref decl-slots 0)
@@ -1159,23 +1122,21 @@
             (ast.AstParamList view-param-slots 6)
             borrowed-slice
             combined-body
-            ast.AstFnMetadata.No))
+            No))
         (set!
           (array-ref decl-slots 1)
           (ast.AstDecl.DefMacro
             (ast.ast-decl-meta-runtime-shared-view)
             macro-id
             (ast.AstMacroParamList macro-param-slots 1)
-            ast.AstType.Unit
+            Unit
             sum-outer))
         (set!
           (array-ref decl-slots 2)
           (ast.ast-decl-test-metadata-id
             test-id
             compact-body
-            (ast.ast-test-metadata-new
-              (ast.AstTestIgnoreReason.Some "surface reason")
-              true)
+            (ast.ast-test-metadata-new (Some "surface reason") true)
             (ast.ast-source-span 50 2 50 32)))
         (set!
           (array-ref decl-slots 3)
@@ -1183,15 +1144,12 @@
             (ast.ast-decl-def-struct-id
               struct-id
               (ast.ast-struct-repr-with-field-align
-                (ast.AstStructRepr.C 16 (ast.ast-no-field-aligns))
+                (C 16 (ast.ast-no-field-aligns))
                 0
                 8)
-              ast.AstStructCleanup.No
+              No
               (ast.ast-field-def-cons
-                (ast.AstFieldDef.Def
-                  (ci.intern-syntax-id-from-raw field-id)
-                  ast.AstType.I64
-                  ast.AstFieldCleanup.No)
+                (Def (ci.intern-syntax-id-from-raw field-id) I64 No)
                 (ast.ast-field-def-list-new)))
             1))
         (set! (array-ref path-slots 0) "test.tl")
@@ -1238,8 +1196,8 @@
             (cis.intern-structural-session-handle-from-source-names
               (ci.intern-source-name-session-handle-from-state intern-state))]
           (match (surface_identity.surface-identity-encode identity-payload)
-            [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
-            [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+            [(Err _) false]
+            [(Ok identity-bytes)
               (match (surface-ast-encode-deterministic
                 structural-session
                 decls
@@ -1249,8 +1207,8 @@
                 source-pools
                 source-count
                 identity-count)
-                [(surface_ast.ResultSurfaceAstBytes.Err _) false]
-                [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
+                [(Err _) false]
+                [(Ok ast-bytes)
                   (begin
                     (ci.intern-reset!)
                     (let
@@ -1258,13 +1216,9 @@
                       (match (surface_identity.surface-identity-hydrate
                         identity-bytes
                         key)
-                        [(surface_identity.ResultSurfaceIdentityHydration.Err _)
-                          false]
-                        [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
-                            _)
-                          false]
-                        [(surface_identity.ResultSurfaceIdentityHydration.Ok
-                            identity-hydration)
+                        [(Err _) false]
+                        [(KeyMismatch _) false]
+                        [(Ok identity-hydration)
                           (let
                             [dest-pools : ast.AstNodePoolContext
                               (ast.ast-node-pool-context-new-with-capacities
@@ -1281,10 +1235,8 @@
                               hydrated-session
                               identity-hydration.remap
                               dest-pools)
-                              [(surface_ast.ResultSurfaceAstHydration.Err _)
-                                false]
-                              [(surface_ast.ResultSurfaceAstHydration.Ok
-                                  hydration)
+                              [(Err _) false]
+                              [(Ok hydration)
                                 (and
                                   (=
                                     (ast.ast-node-pool-context-expr-len
@@ -1312,7 +1264,7 @@
                                   (match (owned_view.compiler-owned-array-element-shared-view
                                     hydration.decls.slots
                                     0)
-                                    [(ast.AstDecl.DefFn
+                                    [(DefFn
                                         _
                                         hydrated-name
                                         hydrated-params
@@ -1337,25 +1289,25 @@
                                             hydration.pools)
                                           (& hydrated-params)
                                           1
-                                          ast.AstCFunctionMode.Nullable)
+                                          Nullable)
                                         (surface-ast-c-function-param-ok?
                                           (owned_view.compiler-owned-shared-view
                                             hydration.pools)
                                           (& hydrated-params)
                                           2
-                                          ast.AstCFunctionMode.NonNull)
+                                          NonNull)
                                         (surface-ast-c-function-param-ok?
                                           (owned_view.compiler-owned-shared-view
                                             hydration.pools)
                                           (& hydrated-params)
                                           3
-                                          ast.AstCFunctionMode.UnsafeNullable)
+                                          UnsafeNullable)
                                         (surface-ast-c-function-param-ok?
                                           (owned_view.compiler-owned-shared-view
                                             hydration.pools)
                                           (& hydrated-params)
                                           4
-                                          ast.AstCFunctionMode.UnsafeNonNull)
+                                          UnsafeNonNull)
                                         (surface-ast-borrowed-slice-type-ok?
                                           (owned_view.compiler-owned-shared-view
                                             hydration.pools)
@@ -1364,7 +1316,7 @@
                                           (& hydrated-params)
                                           0
                                           (ast.ast-param-fallback))
-                                          [(ast.AstParam.Param
+                                          [(Param
                                               hydrated-param-name
                                               hydrated-param-ty
                                               false)
@@ -1381,14 +1333,14 @@
                                         (match (ast.ast-node-pool-context-expr-get
                                           hydration.pools
                                           hydrated-body)
-                                          [(ast.AstExpr.Begin hydrated-items)
+                                          [(Begin hydrated-items)
                                             (match (ast.ast-node-pool-context-expr-get
                                               hydration.pools
                                               (ast.ast-expr-list-get
                                                 hydrated-items
                                                 0
                                                 0))
-                                              [(ast.AstExpr.Borrow
+                                              [(Borrow
                                                   mutable
                                                   lifetime-id
                                                   hydrated-sum)
@@ -1396,8 +1348,7 @@
                                                   (not mutable)
                                                   (match (ast.ast-borrow-lifetime-from-id
                                                     lifetime-id)
-                                                    [(ast.AstBorrowLifetime.Named
-                                                        name)
+                                                    [(Named name)
                                                       (surface_identity.surface-identity-string-eq?
                                                         (ci.intern-str name)
                                                         "borrow-region")]
@@ -1405,7 +1356,7 @@
                                                   (match (ast.ast-node-pool-context-expr-get
                                                     hydration.pools
                                                     hydrated-sum)
-                                                    [(ast.AstExpr.Spanned
+                                                    [(Spanned
                                                         hydrated-inner
                                                         hydrated-span)
                                                       (and
@@ -1416,19 +1367,15 @@
                                                         (match (ast.ast-node-pool-context-expr-span-oracle
                                                           hydration.pools
                                                           hydrated-sum)
-                                                          [(ast.AstExprSpanOracleResult.CanonicalMatch)
+                                                          [(CanonicalMatch)
                                                             true]
                                                           [_ false])
                                                         (match (ast.ast-node-pool-context-expr-get
                                                           hydration.pools
                                                           hydrated-inner)
-                                                          [(ast.AstExpr.Binary
-                                                              op
-                                                              _
-                                                              _)
+                                                          [(Binary op _ _)
                                                             (match op
-                                                              [(ast.AstBinOp.Add)
-                                                                true]
+                                                              [(Add) true]
                                                               [_ false])]
                                                           [_ false]))]
                                                     [_ false]))]
@@ -1438,7 +1385,7 @@
                                   (match (owned_view.compiler-owned-array-element-shared-view
                                     hydration.decls.slots
                                     1)
-                                    [(ast.AstDecl.DefMacro
+                                    [(DefMacro
                                         _
                                         hydrated-macro-name
                                         hydrated-params
@@ -1455,13 +1402,12 @@
                                         (match (ast.ast-node-pool-context-expr-span-oracle
                                           hydration.pools
                                           hydrated-macro-body)
-                                          [(ast.AstExprSpanOracleResult.ReSpanMatch)
-                                            true]
+                                          [(ReSpanMatch) true]
                                           [_ false])
                                         (match (ast.ast-node-pool-context-expr-view-span
                                           hydration.pools
                                           hydrated-macro-body)
-                                          [(ast.AstMaybeSourceSpan.Some span)
+                                          [(Some span)
                                             (=
                                               (ast.ast-source-span-start-line
                                                 span)
@@ -1471,10 +1417,9 @@
                                           (& hydrated-params)
                                           0
                                           (ast.ast-macro-param-fallback))
-                                          [(ast.AstMacroParam.Param
+                                          [(Param
                                               hydrated-param-name
-                                              (ast.AstType.Var
-                                                hydrated-type-name)
+                                              (Var hydrated-type-name)
                                               false
                                               hydrated-kinds)
                                             (and
@@ -1516,7 +1461,7 @@
                                   (match (owned_view.compiler-owned-array-element-shared-view
                                     hydration.decls.slots
                                     2)
-                                    [(ast.AstDecl.Test
+                                    [(Test
                                         hydrated-test-name
                                         _
                                         hydrated-metadata
@@ -1533,7 +1478,7 @@
                                           hydrated-metadata)
                                         (match (ast.ast-test-metadata-ignore-reason
                                           hydrated-metadata)
-                                          [(ast.AstTestIgnoreReason.Some reason)
+                                          [(Some reason)
                                             (surface_identity.surface-identity-string-eq?
                                               reason
                                               "surface reason")]
@@ -1546,12 +1491,7 @@
                                   (match (ast.ast-decl-list-ref
                                     hydration.decls
                                     3)
-                                    [(ast.AstDecl.DefStruct
-                                        _
-                                        _
-                                        hydrated-repr
-                                        _
-                                        _)
+                                    [(DefStruct _ _ hydrated-repr _ _)
                                       (and
                                         (=
                                           (ast.ast-struct-repr-declared-align
@@ -1716,27 +1656,22 @@
         (match (surface_facts.surface-typecheck-facts-builder-append
           (surface_facts.surface-facts-shared-view builder)
           first)
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
-            (set! ok false)]
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next)
-            (set! builder next)])
+          [(Err _) (set! ok false)]
+          [(Ok next) (set! builder next)])
         ;; A rejected fragment leaves the completed prefix reusable.
         (match (surface_facts.surface-typecheck-facts-builder-append
           (surface_facts.surface-facts-shared-view builder)
           bad-order)
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _) unit]
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok _)
-            (set! ok false)])
+          [(Err _) unit]
+          [(Ok _) (set! ok false)])
         (match (surface_facts.surface-typecheck-facts-builder-append
           (surface_facts.surface-facts-shared-view builder)
           second)
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
-            (set! ok false)]
-          [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next)
-            (set! builder next)])
+          [(Err _) (set! ok false)]
+          [(Ok next) (set! builder next)])
         (match (surface_facts.surface-typecheck-facts-builder-finish builder)
-          [(surface_facts.ResultSurfaceTypecheckFacts.Err _) (set! ok false)]
-          [(surface_facts.ResultSurfaceTypecheckFacts.Ok composed)
+          [(Err _) (set! ok false)]
+          [(Ok composed)
             (begin
               (if (and
                 (= composed.macro-prefix-decl-count 6)
@@ -1855,9 +1790,8 @@
           (__tl_make-array root-id)
           (__tl_make-array 0))]
       (match (surface_identity.surface-identity-encode identity-payload)
-        [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-          (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
-        [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+        [(Err message) (Err message)]
+        [(Ok identity-bytes)
           (match (surface_ast.surface-ast-encode
             structural-session
             decls
@@ -1867,28 +1801,23 @@
             source-pools
             2
             2)
-            [(surface_ast.ResultSurfaceAstBytes.Err message)
-              (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
-            [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
+            [(Err message) (Err message)]
+            [(Ok ast-bytes)
               (match (surface_facts.surface-typecheck-facts-encode
                 first
                 structural-session
                 2
                 2)
-                [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-                  (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
-                [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok
-                    fact-one-bytes)
+                [(Err message) (Err message)]
+                [(Ok fact-one-bytes)
                   (match (surface_facts.surface-typecheck-facts-encode
                     second
                     structural-session
                     2
                     2)
-                    [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-                      (ResultCompilerSurfaceHydrateTestPayloads.Err message)]
-                    [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok
-                        fact-two-bytes)
-                      (ResultCompilerSurfaceHydrateTestPayloads.Ok
+                    [(Err message) (Err message)]
+                    [(Ok fact-two-bytes)
+                      (Ok
                         (CompilerSurfaceHydrateTestPayloads
                           identity-bytes
                           ast-bytes
@@ -1900,8 +1829,8 @@
   compiler-surface-selftest
   (define (compiler-surface-hydrate-tests-ok?) : bool
     (match (compiler-surface-hydrate-test-payloads)
-      [(ResultCompilerSurfaceHydrateTestPayloads.Err _) false]
-      [(ResultCompilerSurfaceHydrateTestPayloads.Ok payloads)
+      [(Err _) false]
+      [(Ok payloads)
         (let
           [prior : surface_facts.SurfaceTypecheckFacts
             (surface-typecheck-facts-test-fragment-one)]
@@ -1930,8 +1859,7 @@
               payloads.key
               structural-session
               pools)
-              [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)
-                (set! first-hydrated hydration.facts)]
+              [(Ok hydration) (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
             ;; A complete successful hydration is still pure: only the explicit
             ;; publisher may replace the previously active facts.
@@ -1955,7 +1883,7 @@
               payloads.key
               structural-session
               pools)
-              [(surface_hydrate.ResultCompilerSurfaceHydration.Err _) unit]
+              [(Err _) unit]
               [_ (set! ok false)])
             (if (and
               (surface_facts.surface-typecheck-facts-active?)
@@ -1971,7 +1899,7 @@
               payloads.key
               structural-session
               pools)
-              [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)
+              [(Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)
                   (if (surface_facts.surface-typecheck-facts-publish!
@@ -1984,7 +1912,7 @@
               payloads.key
               structural-session
               pools)
-              [(surface_hydrate.ResultCompilerSurfaceHydration.Missing) unit]
+              [(Missing) unit]
               [_ (set! ok false)])
             (if (and
               (surface_facts.surface-typecheck-facts-active?)

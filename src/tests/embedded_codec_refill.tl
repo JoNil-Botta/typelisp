@@ -30,9 +30,8 @@
                 : u8))
             (set! i (+ i 2)))))
       (match (codec.compiler-embedded-stdlib-tlci-codec-decode (& payload) n)
-        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
-          (test.assert-true false "valid exact-length literal frame")]
-        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes)
+        [(Err _) (test.assert-true false "valid exact-length literal frame")]
+        [(Ok bytes)
           (begin
             (test.assert-i64-eq (array-length bytes) n "decoded frame length")
             (set! i 0)

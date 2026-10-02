@@ -18,11 +18,11 @@
   [line : i64]
   [col : i64]) : bool
   (match origin
-    [(parser.CompilerParseMaybeDeclSpan.Some span)
+    [(Some span)
       (and
         (= (ast.ast-source-span-start-line span) line)
         (= (ast.ast-source-span-start-col span) col))]
-    [(parser.CompilerParseMaybeDeclSpan.None) false]))
+    [(None) false]))
 
 (define (compiler-parse-test-decl-origin-records-ok?) : bool
   (let
@@ -33,7 +33,7 @@
         "(module alpha)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))
 (defstruct RefBox (:lifetimes a a) (value (& a i64)))")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
@@ -83,7 +83,7 @@
                   (match (parser.compiler-parse-decl-origin-span
                     (& replacement)
                     1)
-                    [(parser.CompilerParseMaybeDeclSpan.None) true]
+                    [(None) true]
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
                     (parser.compiler-parse-decl-origin-span (& replacement) 2)
@@ -94,7 +94,7 @@
                     1
                     1)
                   (match (parser.compiler-parse-decl-origin-span (& alias2) 1)
-                    [(parser.CompilerParseMaybeDeclSpan.None) true]
+                    [(None) true]
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
                     (parser.compiler-parse-decl-origin-span (& alias2) 2)
@@ -107,9 +107,9 @@
                 (and
                   ok
                   (match (parser.compiler-parse-decl-origin-span (& decls) 0)
-                    [(parser.CompilerParseMaybeDeclSpan.None) true]
+                    [(None) true]
                     [_ false])))))]
-        [(parser.ResultAstProgram.Err _) (reader.sp-node-pool-truncate! mark)])
+        [(Err _) (reader.sp-node-pool-truncate! mark)])
       ok)))
 
 (define (compiler-parse-test-semantic-origin-inner-ok?
@@ -124,7 +124,7 @@
   [end-line : i64]
   [end-col : i64]) : bool
   (match (parser.compiler-parse-semantic-origin-run decls slot)
-    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+    [(Some run)
       (let
         [origin : parser.CompilerParseSemanticOrigin
           (parser.compiler-parse-semantic-origin-run-get
@@ -145,7 +145,7 @@
           (= (ast.ast-source-span-start-col span) start-col)
           (= (ast.ast-source-span-end-line span) end-line)
           (= (ast.ast-source-span-end-col span) end-col)))]
-    [(parser.CompilerParseMaybeSemanticOriginRun.None) false]))
+    [(None) false]))
 
 (define (compiler-parse-test-semantic-origin-ok?
   [decls : (& decls ast.AstDeclList)]
@@ -175,7 +175,7 @@
       (if ok
         unit
         (match (parser.compiler-parse-semantic-origin-run decls slot)
-          [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+          [(Some run)
             (let
               [origin : parser.CompilerParseSemanticOrigin
                 (parser.compiler-parse-semantic-origin-run-get
@@ -204,7 +204,7 @@
                   ":"
                   (string.int->string (ast.ast-source-span-end-col span))
                   "\n")))]
-          [(parser.CompilerParseMaybeSemanticOriginRun.None)
+          [(None)
             (io.print-error
               (str_cat.str-cat
                 "semantic origin mismatch: missing run for "
@@ -216,8 +216,8 @@
   [decls : (& decls ast.AstDeclList)]
   [slot : i64]) : bool
   (match (parser.compiler-parse-semantic-origin-run decls slot)
-    [(parser.CompilerParseMaybeSemanticOriginRun.Some _) false]
-    [(parser.CompilerParseMaybeSemanticOriginRun.None) true]))
+    [(Some _) false]
+    [(None) true]))
 
 (define (compiler-parse-semantic-origin-categories-ok?) : bool
   (let
@@ -245,7 +245,7 @@
       (set! (__tl_struct-get p left) y)
       (match (Some y)
         [(Some (None)) p]))))")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (set!
@@ -563,7 +563,7 @@
                   17
                   20
                   21))))]
-        [(parser.ResultAstProgram.Err message)
+        [(Err message)
           (io.print-error
             (str_cat.str-cat "semantic origin parse failed: " message "\n"))])
       (reader.sp-node-pool-truncate! mark)
@@ -580,7 +580,7 @@
   (quasiquote
     (ignored.field
       (unquote live.field))))")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (set!
@@ -621,7 +621,7 @@
                   21
                   4
                   26))))]
-        [(parser.ResultAstProgram.Err message)
+        [(Err message)
           (io.print-error
             (str_cat.str-cat
               "semantic origin quote-depth parse failed: "
@@ -639,7 +639,7 @@
       (match (parser.parse-ast-source
         "(module alias.test)
 (defstruct Pair (field dep.Thing))")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
@@ -701,7 +701,7 @@
                   ;; A one-to-many generated rewrite has no editable origins.
                   (compiler-parse-test-semantic-origin-none? (& generated) 0)
                   (compiler-parse-test-semantic-origin-none? (& generated) 1)))))]
-        [(parser.ResultAstProgram.Err _) unit])
+        [(Err _) unit])
       (reader.sp-node-pool-truncate! mark)
       (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
@@ -713,11 +713,11 @@
     (begin
       (match (parser.parse-ast-source
         "(module outer.inner (defstruct Inside (field dep.Type)))")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-              [(ast.AstDecl.ModuleBody _ body-box)
+              [(ModuleBody _ body-box)
                 (let
                   [body : ast.AstDeclList (deref body-box)]
                   (set!
@@ -768,7 +768,7 @@
                         1
                         54))))]
               [_ unit]))]
-        [(parser.ResultAstProgram.Err _) unit])
+        [(Err _) unit])
       (reader.sp-node-pool-truncate! mark)
       (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
@@ -799,7 +799,7 @@
 (module m17)
 (module m18)
 (module m19)")
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (begin
@@ -823,7 +823,7 @@
                 (and
                   ok
                   (compiler-parse-test-semantic-origin-none? (& decls) 19)))))]
-        [(parser.ResultAstProgram.Err _) unit])
+        [(Err _) unit])
       (if (> (reader.sp-node-pool-len) mark)
         (reader.sp-node-pool-truncate! mark)
         unit)
@@ -834,11 +834,11 @@
   (match (parser.parse-ast-source
     "(defstruct First (x i64))
 (defstruct Second (y i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
+          [(DefStruct decl-meta _ _ _ fields)
             (let
               [span : ast.AstSourceSpan
                 (parser.compiler-parse-field-def-list-span-get
@@ -849,12 +849,12 @@
                 (= (ast.ast-source-span-start-line span) 1)
                 (= (ast.ast-source-span-start-col span) 12)))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-test-name-id? [name-id : i64] [text : String]) : bool
   (match (ci.intern-lookup text)
-    [(ci.InternLookupFound expected-id) (= name-id expected-id)]
-    [(ci.InternLookupMissing) false]))
+    [(InternLookupFound expected-id) (= name-id expected-id)]
+    [(InternLookupMissing) false]))
 
 (define (compiler-parse-name-id-provenance-ok?) : bool
   ;; Keep the inline-test discovery marker split: this source is parser input,
@@ -867,52 +867,51 @@
 "
       "("
       "test parsed-test unit)"))
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-            [(ast.AstDecl.Module name)
-              (compiler-parse-test-name-id? name "parsed.module")]
+            [(Module name) (compiler-parse-test-name-id? name "parsed.module")]
             [_ false])
           (match (ast.ast-decl-list-get (& decls) 1 (ast.ast-decl-fallback))
-            [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
+            [(DefStruct decl-meta name _ _ fields)
               (and
                 (compiler-parse-test-name-id? name "ParsedType")
                 (match (ast.ast-field-def-list-get
                   (& fields)
                   0
                   (ast.ast-field-def-fallback))
-                  [(ast.AstFieldDef.Def field _ _)
+                  [(Def field _ _)
                     (compiler-parse-test-name-id?
                       (ci.intern-syntax-id-value field)
                       "parsed-field")]))]
             [_ false])
           (match (ast.ast-decl-list-get (& decls) 2 (ast.ast-decl-fallback))
-            [(ast.AstDecl.DefFn decl-meta name params ret _ _)
+            [(DefFn decl-meta name params ret _ _)
               (and
                 (compiler-parse-test-name-id? name "parsed-fn")
                 (match (ast.ast-param-list-get
                   (& params)
                   0
                   (ast.ast-param-fallback))
-                  [(ast.AstParam.Param param ty _)
+                  [(Param param ty _)
                     (and
                       (compiler-parse-test-name-id? param "parsed-param")
                       (match ty
-                        [(ast.AstType.Var type-name)
+                        [(Var type-name)
                           (compiler-parse-test-name-id? type-name "ParsedType")]
                         [_ false]))])
                 (match ret
-                  [(ast.AstType.Var type-name)
+                  [(Var type-name)
                     (compiler-parse-test-name-id? type-name "ParsedType")]
                   [_ false]))]
             [_ false])
           (match (ast.ast-decl-list-get (& decls) 3 (ast.ast-decl-fallback))
-            [(ast.AstDecl.Test name _ _ _)
+            [(Test name _ _ _)
               (compiler-parse-test-name-id? name "parsed-test")]
             [_ false])))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-removed-declaration-errors-ok?) : bool
   (and
@@ -939,9 +938,8 @@
     source
     (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(parser.ResultAstProgramDiagnostic.Ok _) "parse succeeded"]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (diagnostic.compiler-diagnostic-message (__tl-box-place diag))]))
+    [(Ok _) "parse succeeded"]
+    [(Err diag) (diagnostic.compiler-diagnostic-message (__tl-box-place diag))]))
 
 (define (compiler-parse-state-import-ok?
   [source : String]
@@ -955,20 +953,13 @@
     source
     (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(parser.ResultAstProgramDiagnostic.Err _) false]
-    [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
+    [(Err _) false]
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
-                _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Module)
-                  path
-                  (ast.AstMaybeModuleName.Some module-name)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+          [(Cons
+              (Import _ (Spec (Module) path (Some module-name) (Some alias) _))
               _)
             (and
               (string.eq path expected-path)
@@ -979,7 +970,7 @@
                 (ci.intern-compat-state-str intern-state alias)
                 expected-alias))]
           [_ false]))]
-    [(parser.ResultAstProgramDiagnostic.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-parse-state-source-ok?
   [source : String]
@@ -990,8 +981,8 @@
     source
     (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(parser.ResultAstProgramDiagnostic.Ok _) true]
-    [(parser.ResultAstProgramDiagnostic.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-parse-installed-owner-lex-sync-ok?) : bool
   (let

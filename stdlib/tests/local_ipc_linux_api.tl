@@ -52,58 +52,56 @@
 ;; 0 for success, otherwise kind * 100000 + host code.
 (define (status-code [status : local_ipc.LocalIpcStatus]) : i64
   (match status
-    [(local_ipc.LocalIpcStatus.Ok) 0]
-    [(local_ipc.LocalIpcStatus.Err failure) (failure-code failure)]))
+    [(Ok) 0]
+    [(Err failure) (failure-code failure)]))
 
 ;; Progress n is n; WouldBlock -1, Interrupted -2, PeerClosed -3, Pending -4;
 ;; a failure is minus its `error-code`.
 (define (io-step-code [step : local_ipc.LocalIpcIoStep]) : i64
   (match step
-    [(local_ipc.LocalIpcIoStep.Progress count) count]
-    [(local_ipc.LocalIpcIoStep.WouldBlock) -1]
-    [(local_ipc.LocalIpcIoStep.Interrupted) -2]
-    [(local_ipc.LocalIpcIoStep.PeerClosed) -3]
-    [(local_ipc.LocalIpcIoStep.Pending) -4]
-    [(local_ipc.LocalIpcIoStep.IoFailed failure) (- 0 (failure-code failure))]))
+    [(Progress count) count]
+    [(WouldBlock) -1]
+    [(Interrupted) -2]
+    [(PeerClosed) -3]
+    [(Pending) -4]
+    [(IoFailed failure) (- 0 (failure-code failure))]))
 
 ;; Done n is n; WouldBlock -1, Interrupted -2, Eof -3; a failure is minus its
 ;; `error-code`.
 (define (io-result-code [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Done count) count]
-    [(local_ipc.LocalIpcIoResult.WouldBlock) -1]
-    [(local_ipc.LocalIpcIoResult.Interrupted) -2]
-    [(local_ipc.LocalIpcIoResult.Eof) -3]
-    [(local_ipc.LocalIpcIoResult.Failed failure) (- 0 (failure-code failure))]))
+    [(Done count) count]
+    [(WouldBlock) -1]
+    [(Interrupted) -2]
+    [(Eof) -3]
+    [(Failed failure) (- 0 (failure-code failure))]))
 
 ;; Ready 0, NotReady 1, WaitInterrupted 2; a failure is its `error-code`.
 (define (wait-code [step : local_ipc.LocalIpcWaitStep]) : i64
   (match step
-    [(local_ipc.LocalIpcWaitStep.Ready) 0]
-    [(local_ipc.LocalIpcWaitStep.NotReady) 1]
-    [(local_ipc.LocalIpcWaitStep.WaitInterrupted) 2]
-    [(local_ipc.LocalIpcWaitStep.WaitFailed failure) (failure-code failure)]))
+    [(Ready) 0]
+    [(NotReady) 1]
+    [(WaitInterrupted) 2]
+    [(WaitFailed failure) (failure-code failure)]))
 
 ;; Connected 0, RetryConnect 1; a failure is its `error-code`.
 (define (connect-code [step : local_ipc.LocalIpcConnectStep]) : i64
   (match step
-    [(local_ipc.LocalIpcConnectStep.Connected _) 0]
-    [(local_ipc.LocalIpcConnectStep.RetryConnect) 1]
-    [(local_ipc.LocalIpcConnectStep.ConnectFailed failure)
-      (failure-code failure)]))
+    [(Connected _) 0]
+    [(RetryConnect) 1]
+    [(ConnectFailed failure) (failure-code failure)]))
 
 ;; A peer's pid, uid and gid packed as pid*2^40 + uid*2^20 + gid for small ids;
 ;; a failure is minus its `error-code`.
 (define (peer-code [step : local_ipc.LocalIpcPeerStep]) : i64
   (match step
-    [(local_ipc.LocalIpcPeerStep.PeerKnown peer)
+    [(PeerKnown peer)
       (if (= peer.session-id -1)
         (+
           (* peer.process-id 1099511627776)
           (+ (* peer.user-id 1048576) peer.group-id))
         -1)]
-    [(local_ipc.LocalIpcPeerStep.PeerFailed failure)
-      (- 0 (failure-code failure))]))
+    [(PeerFailed failure) (- 0 (failure-code failure))]))
 
 (define (connection-code
   [connection : (& connection local_ipc.LocalIpcConnection)]) : i64
@@ -625,8 +623,7 @@
   (test
     local-ipc-linux-windows-unsupported
     (let
-      [endpoint : local_ipc.LocalIpcEndpoint
-        (local_ipc.LocalIpcEndpoint.UnixPath "/tmp/agent.sock")]
+      [endpoint : local_ipc.LocalIpcEndpoint (UnixPath "/tmp/agent.sock")]
       (with
         ([connection
             (local_ipc.connect
@@ -878,8 +875,7 @@
     [deadline-ms : i64]
     [cancel-check : (-> bool)]) : local_ipc.LocalIpcConnection
     (let
-      [endpoint : local_ipc.LocalIpcEndpoint
-        (local_ipc.LocalIpcEndpoint.UnixPath (string.copy path))]
+      [endpoint : local_ipc.LocalIpcEndpoint (UnixPath (string.copy path))]
       (local_ipc.connect
         (linux.adapter policy)
         (& endpoint)
@@ -926,7 +922,7 @@
           local_ipc.family-unix-path
           (byte_buf.ByteBuf name (string.string-length path)))]
       (match reply.step
-        [(local_ipc.LocalIpcConnectStep.Connected token) token]
+        [(Connected token) token]
         [_ -1]))))
 
 ;; Adapter socket calls not yet matched by an adapter close.
@@ -1464,7 +1460,7 @@
         (linux.test-reset!)
         (let
           [target : local_ipc.LocalIpcEndpoint
-            (local_ipc.LocalIpcEndpoint.UnixPath (string.copy (& path)))]
+            (UnixPath (string.copy (& path)))]
           (with
             ([connection
                 (local_ipc.connect

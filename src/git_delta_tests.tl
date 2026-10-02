@@ -147,21 +147,21 @@
 
 (define (git-delta-test-bytes-error? [result : git_delta.ResultGitDeltaBytes]) : bool
   (match result
-    [(git_delta.ResultGitDeltaBytes.Err _) true]
-    [(git_delta.ResultGitDeltaBytes.Ok _) false]))
+    [(Err _) true]
+    [(Ok _) false]))
 
 (define (git-delta-test-resolve-error?
   [result : git_delta.ResultGitDeltaResolvedSet]) : bool
   (match result
-    [(git_delta.ResultGitDeltaResolvedSet.Err _) true]
-    [(git_delta.ResultGitDeltaResolvedSet.Ok _) false]))
+    [(Err _) true]
+    [(Ok _) false]))
 
 (define (git-delta-test-varint-value? [value : i64] [expected-length : i64]) : bool
   (let
     [encoded : String (git-delta-test-size-varint value)]
     (match (git_delta.git-delta-read-size-varint (& encoded) 0)
-      [(git_delta.ResultGitDeltaVarint.Err _) false]
-      [(git_delta.ResultGitDeltaVarint.Ok decoded)
+      [(Err _) false]
+      [(Ok decoded)
         (and (= decoded.value value) (= decoded.next expected-length))])))
 
 (define (git-delta-test-varints?) : bool
@@ -187,16 +187,16 @@
           (git-delta-test-varint-value? 16384 3)
           (git-delta-test-varint-value? 9223372036854775807 9)
           (match (git_delta.git-delta-read-size-varint (& truncated) 0)
-            [(git_delta.ResultGitDeltaVarint.Err _) true]
+            [(Err _) true]
             [_ false])
           (match (git_delta.git-delta-read-size-varint (& excessive) 0)
-            [(git_delta.ResultGitDeltaVarint.Err _) true]
+            [(Err _) true]
             [_ false])
           (match (git_delta.git-delta-read-size-varint (& overflow) 0)
-            [(git_delta.ResultGitDeltaVarint.Err _) true]
+            [(Err _) true]
             [_ false])
           (match (git_delta.git-delta-read-size-varint (& truncated) -1)
-            [(git_delta.ResultGitDeltaVarint.Err _) true]
+            [(Err _) true]
             [_ false]))))))
 
 (define (git-delta-test-ofs-value? [distance : i64]) : bool
@@ -207,8 +207,8 @@
         9223372036854775807
         (+ distance 5))]
     (match (git_delta.git-delta-read-ofs-base (& encoded) 0 object-offset)
-      [(git_delta.ResultGitDeltaOfsBase.Err _) false]
-      [(git_delta.ResultGitDeltaOfsBase.Ok decoded)
+      [(Err _) false]
+      [(Ok decoded)
         (and
           (= decoded.distance distance)
           (= decoded.base-offset (- object-offset distance))
@@ -228,16 +228,16 @@
       (git-delta-test-ofs-value? 16384)
       (git-delta-test-ofs-value? 9223372036854775807)
       (match (git_delta.git-delta-read-ofs-base (& zero) 0 10)
-        [(git_delta.ResultGitDeltaOfsBase.Err _) true]
+        [(Err _) true]
         [_ false])
       (match (git_delta.git-delta-read-ofs-base (& truncated) 0 10)
-        [(git_delta.ResultGitDeltaOfsBase.Err _) true]
+        [(Err _) true]
         [_ false])
       (match (git_delta.git-delta-read-ofs-base (& too-far) 0 128)
-        [(git_delta.ResultGitDeltaOfsBase.Err _) true]
+        [(Err _) true]
         [_ false])
       (match (git_delta.git-delta-read-ofs-base (& excessive) 0 1000)
-        [(git_delta.ResultGitDeltaOfsBase.Err _) true]
+        [(Err _) true]
         [_ false]))))
 
 (define (git-delta-test-copy-combinations?) : bool
@@ -280,8 +280,8 @@
           [delta : String (git-delta-test-copy-delta 132000 offset size mask)]
           (begin
             (match (git_delta.git-delta-apply (& base) (& delta) (& limits))
-              [(git_delta.ResultGitDeltaBytes.Err _) (set! ok false)]
-              [(git_delta.ResultGitDeltaBytes.Ok object)
+              [(Err _) (set! ok false)]
+              [(Ok object)
                 (if (or
                   (!= (string.string-length object) expected-size)
                   (!= (cast (string.string-ref object 0) : i64) 120))
@@ -352,7 +352,7 @@
       (set! invalid-limits.max-expansion-ratio 0)
       (and
         (match (git_delta.git-delta-apply (& base) (& valid) (& limits))
-          [(git_delta.ResultGitDeltaBytes.Ok object) (string.eq object "AB")]
+          [(Ok object) (string.eq object "AB")]
           [_ false])
         (git-delta-test-bytes-error?
           (git_delta.git-delta-apply (& base) (& empty) (& limits)))
@@ -453,71 +453,43 @@
     (begin
       (set!
         (array-ref entries 0)
-        (git_delta.GitDeltaEntry
-          10
-          "id-a"
-          (git_delta.GitDeltaEntryBody.Stored
-            (git_delta.GitDeltaObjectKind.Blob)
-            "A")))
+        (git_delta.GitDeltaEntry 10 "id-a" (Stored (Blob) "A")))
       (set!
         (array-ref entries 1)
         (git_delta.GitDeltaEntry
           20
           "id-b"
-          (git_delta.GitDeltaEntryBody.Ofs
-            10
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "AB"))))
+          (Ofs 10 (Any) (git-delta-test-insert-delta 1 "AB"))))
       (set!
         (array-ref entries 2)
         (git_delta.GitDeltaEntry
           30
           "id-c"
-          (git_delta.GitDeltaEntryBody.Ref
-            "id-b"
-            (git_delta.GitDeltaExpectedKind.Exact
-              (git_delta.GitDeltaObjectKind.Blob))
-            (git-delta-test-insert-delta 2 "ABC"))))
+          (Ref "id-b" (Exact (Blob)) (git-delta-test-insert-delta 2 "ABC"))))
       (set!
         (array-ref entries 3)
         (git_delta.GitDeltaEntry
           40
           "id-thin-child"
-          (git_delta.GitDeltaEntryBody.Ref
-            "id-thin"
-            (git_delta.GitDeltaExpectedKind.Exact
-              (git_delta.GitDeltaObjectKind.Tree))
-            (git-delta-test-insert-delta 1 "TX"))))
+          (Ref "id-thin" (Exact (Tree)) (git-delta-test-insert-delta 1 "TX"))))
       (set!
         (array-ref entries 4)
         (git_delta.GitDeltaEntry
           50
           "id-d"
-          (git_delta.GitDeltaEntryBody.Ref
-            "id-b"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 2 "ABD"))))
+          (Ref "id-b" (Any) (git-delta-test-insert-delta 2 "ABD"))))
       (set! (array-ref offsets 0) (git_delta.GitDeltaOffsetLookup 10 0))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "id-b" (git_delta.GitDeltaIdTarget.Entry 1)))
-      (set!
-        (array-ref ids 1)
-        (git_delta.GitDeltaIdLookup
-          "id-thin"
-          (git_delta.GitDeltaIdTarget.Thin 0)))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "id-b" (Entry 1)))
+      (set! (array-ref ids 1) (git_delta.GitDeltaIdLookup "id-thin" (Thin 0)))
       (set!
         (array-ref thin 0)
-        (git_delta.GitDeltaThinBase
-          "id-thin"
-          (git_delta.GitDeltaObjectKind.Tree)
-          "T"))
+        (git_delta.GitDeltaThinBase "id-thin" (Tree) "T"))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables offsets ids thin)]
         (match (git_delta.git-delta-resolve (& entries) (& tables) (& limits))
-          [(git_delta.ResultGitDeltaResolvedSet.Err _) false]
-          [(git_delta.ResultGitDeltaResolvedSet.Ok resolved)
+          [(Err _) false]
+          [(Ok resolved)
             (and
               (string.eq (array-ref resolved.objects 0) "A")
               (string.eq (array-ref resolved.objects 1) "AB")
@@ -542,21 +514,11 @@
         (git_delta.GitDeltaEntry
           10
           "child"
-          (git_delta.GitDeltaEntryBody.Ref
-            "base"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "B"))))
+          (Ref "base" (Any) (git-delta-test-insert-delta 1 "B"))))
       (set!
         (array-ref entries 1)
-        (git_delta.GitDeltaEntry
-          20
-          "base"
-          (git_delta.GitDeltaEntryBody.Stored
-            (git_delta.GitDeltaObjectKind.Blob)
-            "A")))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "base" (git_delta.GitDeltaIdTarget.Entry 1)))
+        (git_delta.GitDeltaEntry 20 "base" (Stored (Blob) "A")))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "base" (Entry 1)))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -564,8 +526,8 @@
             ids
             (git-delta-test-empty-thin))]
         (match (git_delta.git-delta-resolve (& entries) (& tables) (& limits))
-          [(git_delta.ResultGitDeltaResolvedSet.Err _) false]
-          [(git_delta.ResultGitDeltaResolvedSet.Ok resolved)
+          [(Err _) false]
+          [(Ok resolved)
             (and
               (string.eq (array-ref resolved.objects 0) "B")
               (= resolved.reconstructed 1))])))))
@@ -583,25 +545,15 @@
         (git_delta.GitDeltaEntry
           10
           "a"
-          (git_delta.GitDeltaEntryBody.Ref
-            "b"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "A"))))
+          (Ref "b" (Any) (git-delta-test-insert-delta 1 "A"))))
       (set!
         (array-ref entries 1)
         (git_delta.GitDeltaEntry
           20
           "b"
-          (git_delta.GitDeltaEntryBody.Ref
-            "a"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "B"))))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "a" (git_delta.GitDeltaIdTarget.Entry 0)))
-      (set!
-        (array-ref ids 1)
-        (git_delta.GitDeltaIdLookup "b" (git_delta.GitDeltaIdTarget.Entry 1)))
+          (Ref "a" (Any) (git-delta-test-insert-delta 1 "B"))))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "a" (Entry 0)))
+      (set! (array-ref ids 1) (git_delta.GitDeltaIdLookup "b" (Entry 1)))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -622,10 +574,7 @@
         (git_delta.GitDeltaEntry
           10
           "child"
-          (git_delta.GitDeltaEntryBody.Ref
-            "missing"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "A"))))
+          (Ref "missing" (Any) (git-delta-test-insert-delta 1 "A"))))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -645,27 +594,15 @@
     (begin
       (set!
         (array-ref entries 0)
-        (git_delta.GitDeltaEntry
-          10
-          "base"
-          (git_delta.GitDeltaEntryBody.Stored
-            (git_delta.GitDeltaObjectKind.Blob)
-            "A")))
+        (git_delta.GitDeltaEntry 10 "base" (Stored (Blob) "A")))
       (set!
         (array-ref entries 1)
         (git_delta.GitDeltaEntry
           20
           "child"
-          (git_delta.GitDeltaEntryBody.Ref
-            "base"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "B"))))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "base" (git_delta.GitDeltaIdTarget.Entry 0)))
-      (set!
-        (array-ref ids 1)
-        (git_delta.GitDeltaIdLookup "base" (git_delta.GitDeltaIdTarget.Entry 0)))
+          (Ref "base" (Any) (git-delta-test-insert-delta 1 "B"))))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "base" (Entry 0)))
+      (set! (array-ref ids 1) (git_delta.GitDeltaIdLookup "base" (Entry 0)))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -688,10 +625,7 @@
         (git_delta.GitDeltaEntry
           10
           "child"
-          (git_delta.GitDeltaEntryBody.Ofs
-            20
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "A"))))
+          (Ofs 20 (Any) (git-delta-test-insert-delta 1 "A"))))
       (set! (array-ref offsets 0) (git_delta.GitDeltaOffsetLookup 20 9))
       (let
         [tables : git_delta.GitDeltaLookupTables
@@ -717,20 +651,9 @@
         (git_delta.GitDeltaEntry
           10
           "child"
-          (git_delta.GitDeltaEntryBody.Ref
-            "thin"
-            (git_delta.GitDeltaExpectedKind.Exact
-              (git_delta.GitDeltaObjectKind.Blob))
-            (git-delta-test-insert-delta 1 "B"))))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "thin" (git_delta.GitDeltaIdTarget.Thin 0)))
-      (set!
-        (array-ref thin 0)
-        (git_delta.GitDeltaThinBase
-          "thin"
-          (git_delta.GitDeltaObjectKind.Tree)
-          "T"))
+          (Ref "thin" (Exact (Blob)) (git-delta-test-insert-delta 1 "B"))))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "thin" (Thin 0)))
+      (set! (array-ref thin 0) (git_delta.GitDeltaThinBase "thin" (Tree) "T"))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -751,36 +674,21 @@
       (set! limits.max-depth 1)
       (set!
         (array-ref entries 0)
-        (git_delta.GitDeltaEntry
-          10
-          "a"
-          (git_delta.GitDeltaEntryBody.Stored
-            (git_delta.GitDeltaObjectKind.Blob)
-            "A")))
+        (git_delta.GitDeltaEntry 10 "a" (Stored (Blob) "A")))
       (set!
         (array-ref entries 1)
         (git_delta.GitDeltaEntry
           20
           "b"
-          (git_delta.GitDeltaEntryBody.Ref
-            "a"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "B"))))
+          (Ref "a" (Any) (git-delta-test-insert-delta 1 "B"))))
       (set!
         (array-ref entries 2)
         (git_delta.GitDeltaEntry
           30
           "c"
-          (git_delta.GitDeltaEntryBody.Ref
-            "b"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-insert-delta 1 "C"))))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "a" (git_delta.GitDeltaIdTarget.Entry 0)))
-      (set!
-        (array-ref ids 1)
-        (git_delta.GitDeltaIdLookup "b" (git_delta.GitDeltaIdTarget.Entry 1)))
+          (Ref "b" (Any) (git-delta-test-insert-delta 1 "C"))))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "a" (Entry 0)))
+      (set! (array-ref ids 1) (git_delta.GitDeltaIdLookup "b" (Entry 1)))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables
@@ -806,33 +714,20 @@
       (set! limits.max-instructions instruction-limit)
       (set!
         (array-ref entries 0)
-        (git_delta.GitDeltaEntry
-          10
-          "base"
-          (git_delta.GitDeltaEntryBody.Stored
-            (git_delta.GitDeltaObjectKind.Blob)
-            "A")))
+        (git_delta.GitDeltaEntry 10 "base" (Stored (Blob) "A")))
       (set!
         (array-ref entries 1)
         (git_delta.GitDeltaEntry
           20
           "one"
-          (git_delta.GitDeltaEntryBody.Ref
-            "base"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-copy-delta 1 0 1 16))))
+          (Ref "base" (Any) (git-delta-test-copy-delta 1 0 1 16))))
       (set!
         (array-ref entries 2)
         (git_delta.GitDeltaEntry
           30
           "two"
-          (git_delta.GitDeltaEntryBody.Ref
-            "base"
-            (git_delta.GitDeltaExpectedKind.Any)
-            (git-delta-test-copy-delta 1 0 1 16))))
-      (set!
-        (array-ref ids 0)
-        (git_delta.GitDeltaIdLookup "base" (git_delta.GitDeltaIdTarget.Entry 0)))
+          (Ref "base" (Any) (git-delta-test-copy-delta 1 0 1 16))))
+      (set! (array-ref ids 0) (git_delta.GitDeltaIdLookup "base" (Entry 0)))
       (let
         [tables : git_delta.GitDeltaLookupTables
           (git_delta.GitDeltaLookupTables

@@ -30,8 +30,8 @@
   (with
     ([step (tokens.into-next iter) tokens.cleanup-into-next])
     (match (& step)
-      [(tokens.IntoNext.Done) fallback]
-      [(tokens.IntoNext.Item token) (__tl-project-field token value)])))
+      [(Done) fallback]
+      [(Item token) (__tl-project-field token value)])))
 
 (define (empty-and-repeated-exhaustion) : unit
   (with
@@ -168,7 +168,7 @@
           "cleanup mutable view value")))))
 
 (define (enum-payload-cleanup) : unit
-  (with ([pair (CleanupPair.Both 4000000 5000000) cleanup-pair]) unit))
+  (with ([pair (Both 4000000 5000000) cleanup-pair]) unit))
 
 (define (main) : i64
   (begin

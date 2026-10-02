@@ -25,12 +25,12 @@
           source-hash
           build-hash
           (string.eq target "windows"))
-          [(prelude_surface_producer.ResultPreludeSurface.Err message)
+          [(Err message)
             (begin
               (io.print-error
                 (str_cat.str-cat "prelude surface: " message "\n"))
               1)]
-          [(prelude_surface_producer.ResultPreludeSurface.Ok bytes)
+          [(Ok bytes)
             (let
               [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
               (begin

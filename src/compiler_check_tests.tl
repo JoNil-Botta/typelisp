@@ -66,8 +66,8 @@
         (cdiag.compiler-diagnostic-span-end-col span))]
     [source-len : i64 (string.string-length source)]
     (if (or (< start 0) (< end start))
-      cdiag.CompilerDiagnosticNoString
-      (cdiag.CompilerDiagnosticSomeString
+      CompilerDiagnosticNoString
+      (CompilerDiagnosticSomeString
         (str_cat.str-cat
           (string.substring source 0 start)
           (cdiag.compiler-diagnostic-text-edit-replacement edit)
@@ -85,8 +85,8 @@
     (match (check_core.compiler-check-source
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source))
-      [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-      [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
+      [(Ok _ _) false]
+      [(Err diag-box _)
         (let
           [diag : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-list-first (deref diag-box))]
@@ -106,7 +106,7 @@
                     (cdiag.compiler-diagnostic-place-shared-view fix))
                   "Replace misspelled name")
                 (match (cdiag.compiler-diagnostic-fix-applicability fix)
-                  [cdiag.CompilerDiagnosticMachineApplicable true]
+                  [CompilerDiagnosticMachineApplicable true]
                   [_ false])
                 (= edits.len 1)
                 (let
@@ -126,7 +126,7 @@
                         (cdiag.compiler-diagnostic-place-shared-view edit))
                       "render-value")
                     (match (compiler-check-fix-test-apply source edit)
-                      [(cdiag.CompilerDiagnosticSomeString updated)
+                      [(CompilerDiagnosticSomeString updated)
                         (and
                           (string.eq
                             updated
@@ -136,14 +136,14 @@
 (define (main) : i64
   (render-value 42))")
                           (compiler-check-source-ok? path updated))]
-                      [cdiag.CompilerDiagnosticNoString false])))))))])))
+                      [CompilerDiagnosticNoString false])))))))])))
 
 (define (compiler-check-stdlib-import-help-not-machine-fix-ok?) : bool
   (match (check_core.compiler-check-source
     "tests/import_help_only.tl"
     "(define (main) : i64 (begin (println \"value\") 0))")
-    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -160,8 +160,8 @@
   (match (check_core.compiler-check-source
     (tc_core.tc-global-shared-view path)
     source)
-    [(check_core.ResultCompilerCheck.Ok _ _) false]
-    [(check_core.ResultCompilerCheck.Err diagnostics-box _)
+    [(Ok _ _) false]
+    [(Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -246,8 +246,8 @@
   (begin
     (io.emti \"hello\")
     0))")
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
+    [(Ok _) false]
+    [(Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -287,8 +287,8 @@
   (begin
     (io.missing \"hello\")
     0))")
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
+    [(Ok _) false]
+    [(Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -311,8 +311,8 @@
     "(defstruct Point (x i64))
 (defstruct Point (y i64))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
+    [(Ok _ _) false]
+    [(Err diag-box _)
       (let
         [diag : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag-box))]
@@ -331,8 +331,8 @@
 (define (b) : i64 (unknown-two 2))
 (define (c) : i64 (+ \"str\" 1))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
+    [(Ok _ _) false]
+    [(Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -360,8 +360,8 @@
 (define (compiler-check-parser-recovery-result-ok?
   [result : compiler_check_core.ResultCompilerCheck]) : bool
   (match result
-    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
+    [(Ok _ _) false]
+    [(Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -419,8 +419,8 @@
 (define (derived-two) : i64 (+ (derived-one) 1))
 (define (derived-three) : i64 (derived-two))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
+    [(Ok _ _) false]
+    [(Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -435,10 +435,10 @@
 (define (compiler-check-semantic-access-code
   [access : semantic_index.CompilerSemanticAccess]) : i64
   (match access
-    [(semantic_index.CompilerSemanticAccess.None) 0]
-    [(semantic_index.CompilerSemanticAccess.Read) 1]
-    [(semantic_index.CompilerSemanticAccess.Write) 2]
-    [(semantic_index.CompilerSemanticAccess.ReadWrite) 3]))
+    [(None) 0]
+    [(Read) 1]
+    [(Write) 2]
+    [(ReadWrite) 3]))
 
 (define (compiler-check-semantic-record-access?
   [index : (& index semantic_index.CompilerSemanticSourceIndex)]
@@ -488,21 +488,21 @@
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source)
       (svec.new))
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+      [(Ok _ index)
         (let
           [slot-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "slot"
-              semantic_index.CompilerSemanticRecordRole.Definition
+              Definition
               0)]
           [slot-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "slot"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               0)]
           [slot-write-record : semantic_index.CompilerSemanticRecord
             (semantic_index.compiler-semantic-source-index-get
@@ -513,70 +513,70 @@
               (& index)
               path
               "slot"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               1)]
           [slot-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "slot"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               2)]
           [shadow-param-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Definition
+              Definition
               0)]
           [shadow-local-definition : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Definition
+              Definition
               1)]
           [shadow-param-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               0)]
           [shadow-local-write : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               1)]
           [shadow-local-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               2)]
           [shadow-local-result-read : i64
             (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
               path
               "shadowed"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               3)]
           [bump-read : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               path
               "bump"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               -1)]
           [import-read : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               path
               "imported-value"
-              semantic_index.CompilerSemanticRecordRole.Use
+              Use
               -1)]
           [macro-read : i64
             (sem_tests.compiler-semantic-source-index-find-macro-use
@@ -595,7 +595,7 @@
               (& index)
               ""
               "generated-from-macro"
-              semantic_index.CompilerSemanticRecordRole.Definition
+              Definition
               -1)]
           [unknown-ok : bool
             (match (sem_tests.compiler-check-source-index-with-roots
@@ -603,9 +603,7 @@
               "(module semantic.access.unknown)
 (define (broken) : i64 unresolved-name)"
               (svec.new))
-              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial
-                  _
-                  partial)
+              [(Partial _ partial)
                 (let
                   [ok : bool
                     (<
@@ -613,22 +611,19 @@
                         (& partial)
                         "src/tests/semantic_access_unknown.tl"
                         "unresolved-name"
-                        semantic_index.CompilerSemanticRecordRole.Use
+                        Use
                         0)
                       0)]
                   (begin
                     (semantic_index.compiler-semantic-source-index-release!
                       (&mut partial))
                     ok))]
-              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
-                  _
-                  complete)
+              [(Ok _ complete)
                 (begin
                   (semantic_index.compiler-semantic-source-index-release!
                     (&mut complete))
                   false)]
-              [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _)
-                false])]
+              [(Err _) false])]
           [ok : bool
             (and
               (compiler-check-semantic-record-access?
@@ -718,12 +713,12 @@
             (semantic_index.compiler-semantic-source-index-release!
               (&mut index))
             ok))]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+      [(Partial _ partial)
         (begin
           (semantic_index.compiler-semantic-source-index-release!
             (&mut partial))
           false)]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-check-advisory-result-ok?) : bool
   (let
@@ -735,7 +730,7 @@
           1
           1
           "successful check advisory")
-        cdiag.CompilerDiagnosticWarning)]
+        CompilerDiagnosticWarning)]
     [fatal : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple
         "tests/check_advisory.tl"
@@ -745,25 +740,25 @@
     [_append : bool
       (cdiag_tests.compiler-advisory-sink-push!
         (tc_core.tc-job-state-advisory-sink job)
-        cdiag.CompilerAdvisoryPhase.Semantic
+        Semantic
         (& warning))]
     [success : check_core.ResultCompilerCheck
-      (check_core.ResultCompilerCheck.Ok
-        (tc_core.CompilerTypecheckSummary 1 0 0)
+      (Ok
+        (CompilerTypecheckSummary 1 0 0)
         (check_core.compiler-check-advisories-for-job job))]
     [failure : check_core.ResultCompilerCheck
-      (check_core.ResultCompilerCheck.Err
+      (Err
         (cdiag.compiler-diagnostic-list-box-single (box fatal))
         (check_core.compiler-check-advisories-for-job job))]
     [carried? : bool
       (and
         (match success
-          [(check_core.ResultCompilerCheck.Ok _ advisories)
+          [(Ok _ advisories)
             (= (cdiag.compiler-advisory-list-count (& advisories)) 1)]
-          [(check_core.ResultCompilerCheck.Err _ _) false])
+          [(Err _ _) false])
         (match failure
-          [(check_core.ResultCompilerCheck.Ok _ _) false]
-          [(check_core.ResultCompilerCheck.Err _ advisories)
+          [(Ok _ _) false]
+          [(Err _ advisories)
             (= (cdiag.compiler-advisory-list-count (& advisories)) 1)]))]
     (begin
       (tc_core.tc-job-state-reset-file-state! job)
@@ -795,16 +790,16 @@
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (check_core.compiler-check-source path source)
-    [(check_core.ResultCompilerCheck.Ok _ _) true]
-    [(check_core.ResultCompilerCheck.Err _ _) false]))
+    [(Ok _ _) true]
+    [(Err _ _) false]))
 
 (define (compiler-check-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (check_core.compiler-check-source path source)
-    [(check_core.ResultCompilerCheck.Ok _ _) false]
-    [(check_core.ResultCompilerCheck.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -829,11 +824,11 @@
       (owned_view.compiler-owned-shared-view path)
       source
       (check_core.compiler-check-language-cfgs))
-      [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
+      [(Parsed program diagnostics)
         (check_core.compiler-check-result-with-parse-diagnostics
           (deref diagnostics)
           (match program
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (check_core.compiler-check-program
                 path
                 (ast.ast-decl-list-box-shared-view decls-box)
@@ -845,15 +840,13 @@
                   (svec.new)
                   (check_core.compiler-check-language-cfgs))
                 (tc_core.tc-serial-job-state))]))]
-      [(parser.ResultAstProgramRecovery.Fatal diagnostics)
-        (check_core.ResultCompilerCheck.Err
-          diagnostics
-          (check_core.compiler-check-serial-advisories))])))
+      [(Fatal diagnostics)
+        (Err diagnostics (check_core.compiler-check-serial-advisories))])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(check_core.ResultCompilerCheck.Ok _ _) true]
-    [(check_core.ResultCompilerCheck.Err _ _) false]))
+    [(Ok _ _) true]
+    [(Err _ _) false]))
 
 ;; The implicit core prelude and compiler-private dynamic-buffer forms compose
 ;; without any compatibility-module import.
@@ -884,15 +877,14 @@
   (match (check_core.compiler-check-source
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
-    [(check_core.ResultCompilerCheck.Ok summary _)
-      (> (tc_api.compiler-typecheck-summary-score summary) 0)]
-    [(check_core.ResultCompilerCheck.Err _ _) false]))
+    [(Ok summary _) (> (tc_api.compiler-typecheck-summary-score summary) 0)]
+    [(Err _ _) false]))
 
 (define (compiler-check-inline-layout-name-ok?
   [ctx : tc_core.TcContext]
   [name : String]) : bool
   (match (tc_api.compiler-typecheck-context-program ctx)
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
@@ -904,25 +896,25 @@
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
               (begin
                 (match decl
-                  [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                  [(DefStruct decl-meta candidate _ _ _)
                     (if (string.eq
                       (tc_core.tc-env-key-name-text candidate)
                       name)
                       (set! name-id candidate)
                       unit)]
-                  [(ast.AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
+                  [(DefStructLifetimes decl-meta candidate _ _ _ _)
                     (if (string.eq
                       (tc_core.tc-env-key-name-text candidate)
                       name)
                       (set! name-id candidate)
                       unit)]
-                  [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                  [(DefEnum decl-meta candidate _ _)
                     (if (string.eq
                       (tc_core.tc-env-key-name-text candidate)
                       name)
                       (set! name-id candidate)
                       unit)]
-                  [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                  [(DefEnumLifetimes decl-meta candidate _ _ _)
                     (if (string.eq
                       (tc_core.tc-env-key-name-text candidate)
                       name)
@@ -936,21 +928,21 @@
               ctx
               name
               name-id)
-              [(tc_core.ResultTcUnit.Ok) true]
-              [(tc_core.ResultTcUnit.Err _) false]))))]))
+              [(Ok) true]
+              [(Err _) false]))))]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler_load.compiler-load-source-with-paths
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source)
     (sym_i64_env.sym-i64-empty))
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
+    [(Ok decls _ _ _)
       (let
         [program : ast.AstProgram (ast.ast-program decls)]
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -969,9 +961,9 @@
                     (compiler-check-inline-layout-name-ok?
                       ctx
                       "AstVariantDefList")))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false]))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))
+              [(Err _) false])]
+          [(Err _) false]))]
+    [(Err _) false]))
 
 (define (compiler-check-export-ok?) : bool
   (match (check_core.compiler-check-source
@@ -980,9 +972,8 @@
 (defenum Maybe (Present i64))
 (define answer : i64 42)
 (define (main) : i64 answer)")
-    [(check_core.ResultCompilerCheck.Ok summary _)
-      (> (tc_api.compiler-typecheck-summary-score summary) 0)]
-    [(check_core.ResultCompilerCheck.Err _ _) false]))
+    [(Ok summary _) (> (tc_api.compiler-typecheck-summary-score summary) 0)]
+    [(Err _ _) false]))
 
 (define (compiler-check-qualified-export-cache-reset-ok?) : bool
   (and
@@ -1007,8 +998,8 @@
   (match (check_core.compiler-check-source
     "docs/examples/bad_type.tl"
     "(define (main) : i64 true)")
-    [(check_core.ResultCompilerCheck.Ok _ _) false]
-    [(check_core.ResultCompilerCheck.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -1079,14 +1070,14 @@
       (owned_view.compiler-owned-shared-view path)
       (owned_view.compiler-owned-shared-view source)
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoad.Ok _ seen)
+      [(Ok _ seen)
         (match (compiler_load.compiler-load-source path source seen)
-          [(compiler_load.ResultCompilerLoad.Ok decls _)
+          [(Ok decls _)
             (match (ast.ast-decl-list-step decls)
-              [(ast.AstDeclListStep.Nil) true]
+              [(Nil) true]
               [_ false])]
-          [(compiler_load.ResultCompilerLoad.Err _) false])]
-      [(compiler_load.ResultCompilerLoad.Err _) false])))
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let
@@ -1096,18 +1087,18 @@
       (match (check_core.compiler-check-source
         "tests/pool_reset_a.tl"
         (owned_view.compiler-owned-shared-view source))
-        [(check_core.ResultCompilerCheck.Ok _ _)
+        [(Ok _ _)
           (let
             [first-len : i64 (ast.ty-node-pool-len)]
             (match (check_core.compiler-check-source
               "tests/pool_reset_b.tl"
               source)
-              [(check_core.ResultCompilerCheck.Ok _ _)
+              [(Ok _ _)
                 (let
                   [second-len : i64 (ast.ty-node-pool-len)]
                   (and (> first-len 0) (= first-len second-len)))]
-              [(check_core.ResultCompilerCheck.Err _ _) false]))]
-        [(check_core.ResultCompilerCheck.Err _ _) false]))))
+              [(Err _ _) false]))]
+        [(Err _ _) false]))))
 
 (define (compiler-check-target-cfg-ok?) : bool
   (let
@@ -1125,19 +1116,17 @@
           (owned_view.compiler-owned-shared-view source)
           (svec.new)
           (target_cfg.compiler-target-cfgs-with-names
-            target_cfg.CompilerTargetCfg.Linux
+            Linux
             (owned_view.compiler-owned-shared-view names)))
-          [(check_core.ResultCompilerCheck.Ok _ _) true]
-          [(check_core.ResultCompilerCheck.Err _ _) false])
+          [(Ok _ _) true]
+          [(Err _ _) false])
         (match (check_core.compiler-check-source-with-roots-and-cfg
           "tests/check_cfg_windows.tl"
           source
           (svec.new)
-          (target_cfg.compiler-target-cfgs-with-names
-            target_cfg.CompilerTargetCfg.Windows
-            names))
-          [(check_core.ResultCompilerCheck.Ok _ _) true]
-          [(check_core.ResultCompilerCheck.Err _ _) false])))))
+          (target_cfg.compiler-target-cfgs-with-names Windows names))
+          [(Ok _ _) true]
+          [(Err _ _) false])))))
 
 (define (compiler-check-self-test) : i64
   (begin

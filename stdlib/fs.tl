@@ -1792,8 +1792,8 @@
             unit)
           (begin
             (match (svec.pop-ref! segments)
-              [(svec.Pop.Ok _) unit]
-              [svec.Pop.Empty unit])
+              [(Ok _) unit]
+              [Empty unit])
             unit)))]))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
@@ -2030,14 +2030,14 @@
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.mkdir-status-owned status-path)]
         [error : io.IoError (io.error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Create `path` as a directory when it is missing.
 ;:
@@ -2046,7 +2046,7 @@
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.mkdir-status-owned status-path)]
@@ -2054,36 +2054,36 @@
         (if (or
           (= status io.io-status-ok)
           (= status stdlib.fs.fs-status-already-exists))
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Remove a file path, returning a structured status.
 (define (try-remove-file [path : (& path str)]) : io.ResultIoUnit
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.remove-file-status-owned status-path)]
         [error : io.IoError (io.error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Remove an empty directory path, returning a structured status.
 (define (try-remove-dir [path : (& path str)]) : io.ResultIoUnit
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.remove-dir-status-owned status-path)]
         [error : io.IoError (io.error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
@@ -2093,9 +2093,9 @@
   [source : (& source str)]
   [destination : (& destination str)]) : io.ResultIoUnit
   (if (= (string-length source) 0)
-    (io.ErrIoUnit (io.IoInvalidPath (string.copy source)))
+    (ErrIoUnit (IoInvalidPath (string.copy source)))
     (if (= (string-length destination) 0)
-      (io.ErrIoUnit (io.IoInvalidPath (string.copy destination)))
+      (ErrIoUnit (IoInvalidPath (string.copy destination)))
       (let
         [source-text : String (string.copy source)]
         [destination-text : String (string.copy destination)]
@@ -2105,8 +2105,8 @@
         [status : i64
           (stdlib.fs.rename-status-owned source-text destination-text)]
         (if (= status io.io-status-ok)
-          io.OkIoUnit
-          (io.ErrIoUnit (io.error-from-owned-status path status)))))))
+          OkIoUnit
+          (ErrIoUnit (io.error-from-owned-status path status)))))))
 
 ;: Atomically replace `destination` with the sibling file at `source`.
 ;:
@@ -2119,9 +2119,9 @@
   [source : (& source str)]
   [destination : (& destination str)]) : io.ResultIoUnit
   (if (= (string-length source) 0)
-    (io.ErrIoUnit (io.IoInvalidPath (string.copy source)))
+    (ErrIoUnit (IoInvalidPath (string.copy source)))
     (if (= (string-length destination) 0)
-      (io.ErrIoUnit (io.IoInvalidPath (string.copy destination)))
+      (ErrIoUnit (IoInvalidPath (string.copy destination)))
       (let
         [source-text : String (string.copy source)]
         [destination-text : String (string.copy destination)]
@@ -2131,8 +2131,8 @@
         [status : i64
           (stdlib.fs.atomic-replace-status-owned source-text destination-text)]
         (if (= status io.io-status-ok)
-          io.OkIoUnit
-          (io.ErrIoUnit (io.error-from-owned-status path status)))))))
+          OkIoUnit
+          (ErrIoUnit (io.error-from-owned-status path status)))))))
 
 ;: Acquire a blocking cross-process advisory lock on `path`.
 ;:
@@ -2159,8 +2159,8 @@
       (unsafe
         (stdlib.fs.file-lock-close-status lock.handle))]
     (if (= status io.io-status-ok)
-      io.OkIoUnit
-      (io.ErrIoUnit (io.error-from-label "file-lock-release" status)))))
+      OkIoUnit
+      (ErrIoUnit (io.error-from-label "file-lock-release" status)))))
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:
@@ -2288,28 +2288,28 @@
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.remove-file-status-owned status-path)]
         [error : io.IoError (io.error-from-owned-status path-text status)]
         (if (or (= status io.io-status-ok) (io.status-expected-absence? status))
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Remove an empty directory if present. Missing paths are considered cleaned.
 (define (try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (io.ErrIoUnit (io.invalid-path-error path))
+      (ErrIoUnit (io.invalid-path-error path))
       (let
         [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.remove-dir-status-owned status-path)]
         [error : io.IoError (io.error-from-owned-status path-text status)]
         (if (or (= status io.io-status-ok) (io.status-expected-absence? status))
-          io.OkIoUnit
-          (io.ErrIoUnit error))))))
+          OkIoUnit
+          (ErrIoUnit error))))))
 
 ;: Return the host temporary root used by `try-create-temp-dir`.
 (define (temp-root) : String
@@ -2317,18 +2317,18 @@
     (let
       [name : String "TEMP"]
       (match (env.get (& name))
-        [(env.EnvSomeString value) value]
-        [(env.EnvNoString)
+        [(EnvSomeString value) value]
+        [(EnvNoString)
           (let
             [name : String "TMP"]
             (match (env.get (& name))
-              [(env.EnvSomeString value) value]
-              [(env.EnvNoString) "."]))]))
+              [(EnvSomeString value) value]
+              [(EnvNoString) "."]))]))
     (let
       [name : String "TMPDIR"]
       (match (env.get (& name))
-        [(env.EnvSomeString value) value]
-        [(env.EnvNoString) "/tmp"]))))
+        [(EnvSomeString value) value]
+        [(EnvNoString) "/tmp"]))))
 
 ;: Return the process current directory as an owned active-arena String.
 ;:
@@ -2338,8 +2338,8 @@
   (let
     [status : i64 (stdlib.fs.current-dir-status)]
     (if (= status io.io-status-ok)
-      (io.OkIoString (stdlib.fs.current-dir))
-      (io.ErrIoString (io.error-from-label "current directory" status)))))
+      (OkIoString (stdlib.fs.current-dir))
+      (ErrIoString (io.error-from-label "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (temp-name [prefix : (& prefix str)] [pid : i64] [attempt : i64]) : String
@@ -2358,8 +2358,8 @@
   [pid : i64]
   [attempt : i64]) : io.ResultIoString
   (if (>= attempt stdlib.fs.fs-temp-attempt-limit)
-    (io.ErrIoString
-      (io.IoSystemCode stdlib.fs.fs-status-already-exists (string.copy prefix)))
+    (ErrIoString
+      (IoSystemCode stdlib.fs.fs-status-already-exists (string.copy prefix)))
     (let
       [name : String (stdlib.fs.temp-name prefix pid attempt)]
       [path : String
@@ -2383,10 +2383,10 @@
               (str_cat.str-cat root-with-separator name))])]
       [status : i64 (stdlib.fs.mkdir-status-owned (string.copy path))]
       (if (= status io.io-status-ok)
-        (io.OkIoString path)
+        (OkIoString path)
         (if (= status stdlib.fs.fs-status-already-exists)
           (stdlib.fs.create-temp-dir-loop root prefix pid (+ attempt 1))
-          (io.ErrIoString (io.error-from-owned-status path status)))))))
+          (ErrIoString (io.error-from-owned-status path status)))))))
 
 ;: Create a unique temporary directory for tool artifacts.
 ;:
@@ -2396,7 +2396,7 @@
 ;: Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : (& prefix str)]) : io.ResultIoString
   (if (= (string-length prefix) 0)
-    (io.ErrIoString (io.IoInvalidPath (string.copy prefix)))
+    (ErrIoString (IoInvalidPath (string.copy prefix)))
     (let
       [root : String (stdlib.fs.temp-root)]
       (stdlib.fs.create-temp-dir-loop (& root) prefix (stdlib.fs.process-id) 0))))
@@ -2503,8 +2503,8 @@
     [result : io.ResultIoUnit]
     [message : (& message str)]) : unit
     (match result
-      [(io.OkIoUnit) unit]
-      [(io.ErrIoUnit error) (io.panic message)])))
+      [(OkIoUnit) unit]
+      [(ErrIoUnit error) (io.panic message)])))
 
 (cfg
   test
@@ -2512,8 +2512,8 @@
     [result : io.ResultIoUnit]
     [message : (& message str)]) : unit
     (match result
-      [(io.OkIoUnit) (io.panic message)]
-      [(io.ErrIoUnit error) unit])))
+      [(OkIoUnit) (io.panic message)]
+      [(ErrIoUnit error) unit])))
 
 (cfg
   test
@@ -2521,8 +2521,8 @@
     [result : io.ResultIoUnit]
     [message : (& message str)]) : unit
     (match result
-      [(io.OkIoUnit) (io.panic message)]
-      [(io.ErrIoUnit error) unit])))
+      [(OkIoUnit) (io.panic message)]
+      [(ErrIoUnit error) unit])))
 
 (cfg
   test
@@ -2530,8 +2530,8 @@
     [result : io.ResultIoString]
     [message : (& message str)]) : String
     (match result
-      [(io.OkIoString value) value]
-      [(io.ErrIoString error) (io.panic message)])))
+      [(OkIoString value) value]
+      [(ErrIoString error) (io.panic message)])))
 
 (cfg
   test
@@ -2744,8 +2744,8 @@
     [expected : bool]
     [message : String]) : unit
     (match (fs-api-test-try-file-exists? path)
-      [(io.OkIoBool exists) (fs-test-assert-bool-eq exists expected message)]
-      [(io.ErrIoBool error) (io.panic message)])))
+      [(OkIoBool exists) (fs-test-assert-bool-eq exists expected message)]
+      [(ErrIoBool error) (io.panic message)])))
 
 (cfg
   test
@@ -2930,12 +2930,12 @@
     [expected : String]
     [message : String]) : unit
     (match (fs-api-test-try-read-file path)
-      [(io.OkIoBytes contents)
+      [(OkIoBytes contents)
         (fs-test-assert-owned-string-eq
           (byte_buf.to-string contents)
           expected
           message)]
-      [(io.ErrIoBytes error) (io.panic message)])))
+      [(ErrIoBytes error) (io.panic message)])))
 
 (cfg
   test
@@ -2960,8 +2960,8 @@
   test
   (define (fs-test-assert-invalid-temp-dir) : unit
     (match (fs-api-test-try-create-temp-dir "")
-      [(io.ErrIoString _) unit]
-      [(io.OkIoString _) (io.panic "empty temp prefix unexpectedly succeeded")])))
+      [(ErrIoString _) unit]
+      [(OkIoString _) (io.panic "empty temp prefix unexpectedly succeeded")])))
 
 (cfg
   test
@@ -3185,7 +3185,7 @@
           (> (string-length direct-cwd) 0)
           "direct current dir is non-empty"))
       (match (stdlib.fs.try-current-dir)
-        [(io.OkIoString cwd)
+        [(OkIoString cwd)
           (begin
             (fs-test-assert-true
               (> (string-length cwd) 0)
@@ -3197,7 +3197,7 @@
                   (fs-test-drive-absolute? cwd))
                 (fs-api-test-fs-path-starts-separator? cwd))
               "current dir has rooted shape"))]
-        [(io.ErrIoString _)
+        [(ErrIoString _)
           (fs-test-assert-true false "current dir unexpectedly failed")]))))
 
 (cfg

@@ -32,7 +32,7 @@
                 (clone target)
                 (tltest_tests.tltest-roots-for-self-test)
                 1
-                (compiler_backend.CompilerBackendMode.Scalar)
+                (Scalar)
                 backend-target)
               1)
             (io.panic

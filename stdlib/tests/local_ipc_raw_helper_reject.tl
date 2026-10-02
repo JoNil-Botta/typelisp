@@ -5,7 +5,7 @@
 (import stdlib.local_ipc_fake as fake)
 
 (define agent-socket : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.UnixPath "/run/agent.sock"))
+  (UnixPath "/run/agent.sock"))
 
 (define (main) : i64
   (let

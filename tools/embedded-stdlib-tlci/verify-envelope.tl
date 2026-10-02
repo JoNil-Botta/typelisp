@@ -31,11 +31,11 @@
       (match (codec.compiler-embedded-stdlib-tlci-codec-decode
         (& envelope)
         268435456)
-        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err message)
+        [(Err message)
           (begin
             (io.print-error (str_cat.str-cat message "\n"))
             1)]
-        [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok expanded)
+        [(Ok expanded)
           (if (embedded-stdlib-tlci-envelope-eq? (& raw) (& expanded))
             0
             (begin

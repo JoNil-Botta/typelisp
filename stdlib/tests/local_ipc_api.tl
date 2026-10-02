@@ -16,38 +16,37 @@
 
 (define (io-kind [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Failed failure)
-      (local_ipc.error-kind-code failure.kind)]
+    [(Failed failure) (local_ipc.error-kind-code failure.kind)]
     [_ 0]))
 
 (define (io-done [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Done count) count]
+    [(Done count) count]
     [_ -1]))
 
 (define (io-host-code [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Failed failure) failure.host-code]
+    [(Failed failure) failure.host-code]
     [_ -1]))
 
 (define (io-would-block? [result : local_ipc.LocalIpcIoResult]) : bool
   (match result
-    [(local_ipc.LocalIpcIoResult.WouldBlock) true]
+    [(WouldBlock) true]
     [_ false]))
 
 (define (io-interrupted? [result : local_ipc.LocalIpcIoResult]) : bool
   (match result
-    [(local_ipc.LocalIpcIoResult.Interrupted) true]
+    [(Interrupted) true]
     [_ false]))
 
 (define (io-eof? [result : local_ipc.LocalIpcIoResult]) : bool
   (match result
-    [(local_ipc.LocalIpcIoResult.Eof) true]
+    [(Eof) true]
     [_ false]))
 
 (define (status-host-code [status : local_ipc.LocalIpcStatus]) : i64
   (match status
-    [(local_ipc.LocalIpcStatus.Err failure) failure.host-code]
+    [(Err failure) failure.host-code]
     [_ -1]))
 
 ;; Sum of the bytes of `text`.
@@ -126,13 +125,13 @@
 (define far-deadline : i64
   1000000)
 (define agent-socket : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.UnixPath "/run/agent.sock"))
+  (UnixPath "/run/agent.sock"))
 (define agent-pipe : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.WindowsPipe "\\\\.\\pipe\\agent"))
+  (WindowsPipe "\\\\.\\pipe\\agent"))
 (define remote-pipe : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.WindowsPipe "\\\\server\\pipe\\agent"))
+  (WindowsPipe "\\\\server\\pipe\\agent"))
 (define dotted-socket : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.UnixPath "/run/../agent.sock"))
+  (UnixPath "/run/../agent.sock"))
 
 ;; Connect on `context`; cleanup-owning values live in a `with` scope.
 (define (open [context : i64]) : local_ipc.LocalIpcConnection
@@ -1565,12 +1564,9 @@
 ;; Errors carry a kind and a bounded host code, never text.
 (define (case-stable-errors) : i64
   (let
-    [kept : local_ipc.LocalIpcError
-      (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Busy) 65535)]
-    [too-large : local_ipc.LocalIpcError
-      (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Busy) 65536)]
-    [negative : local_ipc.LocalIpcError
-      (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Busy) -1)]
+    [kept : local_ipc.LocalIpcError (local_ipc.make-error (Busy) 65535)]
+    [too-large : local_ipc.LocalIpcError (local_ipc.make-error (Busy) 65536)]
+    [negative : local_ipc.LocalIpcError (local_ipc.make-error (Busy) -1)]
     [code : i64 1]
     [names-ok : bool true]
     [failed : i64 0]
@@ -1596,8 +1592,7 @@
         (first-failure
           failed
           (string.eq
-            (local_ipc.error-kind-name
-              (local_ipc.LocalIpcErrorKind.PermissionDenied))
+            (local_ipc.error-kind-name (PermissionDenied))
             "permission-denied")
           224))
       failed)))

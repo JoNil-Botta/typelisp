@@ -44,8 +44,8 @@
   [raw-limit : i64]
   [expected : String]) : bool
   (match (lzss.compiler-lzss-decode (& payload) raw-limit)
-    [(lzss.CompilerLzssBytes.Err message) (string.eq message expected)]
-    [(lzss.CompilerLzssBytes.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (compiler-lzss-test-decode
   [payload : (__tl_dyn-array u8)]
@@ -58,20 +58,20 @@
         (match (compiler-lzss-test-decode
           (compiler-lzss-test-payload "6\n" (__tl_make-array 7 65 66 67 0 32))
           64)
-          [(lzss.CompilerLzssBytes.Ok bytes)
+          [(Ok bytes)
             (and
               (= (array-length bytes) 6)
               (= (array-ref bytes 0) (cast 65 : u8))
               (= (array-ref bytes 3) (cast 65 : u8))
               (= (array-ref bytes 5) (cast 67 : u8)))]
-          [(lzss.CompilerLzssBytes.Err _) false]))
+          [(Err _) false]))
       1]
     [(not
         (match (compiler-lzss-test-decode
           (compiler-lzss-test-payload "0\n" (__tl_make-array))
           0)
-          [(lzss.CompilerLzssBytes.Ok bytes) (= (array-length bytes) 0)]
-          [(lzss.CompilerLzssBytes.Err _) false]))
+          [(Ok bytes) (= (array-length bytes) 0)]
+          [(Err _) false]))
       2]
     [(not
         (compiler-lzss-test-rejects?

@@ -13,8 +13,8 @@
 
 (define (macro-template-shape-sum [shape : MacroTemplateShape]) : i64
   (match shape
-    [(MacroTemplateShape.Dot a) a]
-    [(MacroTemplateShape.Pair a b) (+ a b)]))
+    [(Dot a) a]
+    [(Pair a b) (+ a b)]))
 
 (define (macro-template-shape-double [x : i64]) : i64
   (* x 2))

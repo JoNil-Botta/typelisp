@@ -31,12 +31,12 @@
   (let
     [f : (CFunc non-null (-> i64 i64)) (dep.relay (c-fn-check saved))]
     [table : Table (Table f)]
-    [choice : Choice (Choice.Ready f)]
+    [choice : Choice (Ready f)]
     [call : (-> i64 i64) (make-call (c-fn-check (resolve)))]
     [enum-score : i64
       (match choice
-        [(Choice.Missing) 0]
-        [(Choice.Ready selected) (selected 41)])]
+        [(Missing) 0]
+        [(Ready selected) (selected 41)])]
     (if (and
       (= (resolve-count) 2)
       (=

@@ -2,7 +2,6 @@
 ;; starting decl list must succeed.
 (import stdlib.vector)
 (import (vector.vector String) as svec)
-(import compiler_load)
 (import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg)
@@ -23,5 +22,5 @@
     (svec.new)
     "src/tests"
     (cfg.compiler-cfg-empty))
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ _) 42]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err _) 1]))
+    [(Ok _ _ _ _) 42]
+    [(Err _) 1]))

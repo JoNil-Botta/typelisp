@@ -30,12 +30,12 @@
         (ci.intern-compat-state-capture-active))]
     [externs
       (ir.compiler-ir-extern-seq1
-        (ir.CompilerIrExtern.Extern
+        (Extern
           alias
           source
           name
-          (ast.AstType.Unit)
-          (ast.AstExternAbi.C)
+          (Unit)
+          (C)
           link
           (ast.ast-extern-link-input-list-new)
           false))]
@@ -50,15 +50,15 @@
           index
           (backend.compiler-backend-runtime-index-instr
             index
-            (ir.CompilerIrInstr.Call
+            (Call
               0
               (if (= mode 1)
                 link
                 (if (= mode 2)
                   alias
                   source))
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit)))))
+              (Nil)
+              (Unit)))))
       (when
         (and (>= mode 4) (<= mode 6))
         (begin
@@ -76,10 +76,7 @@
           index
           (backend.compiler-backend-runtime-index-instr
             index
-            (ir.CompilerIrInstr.TailCall
-              alias
-              (ir.CompilerIrCallArgs.Nil)
-              (ast.AstType.Unit)))))
+            (TailCall alias (Nil) (Unit)))))
       (test.assert-i64-eq
         (backend.compiler-backend-runtime-used-leaf-mask
           state
@@ -165,11 +162,11 @@
           (ci.intern-compat-state-capture-active))
         (ir.compiler-ir-function-seq-empty)
         (owned.compiler-owned-shared-view externs))
-        [(backend.ResultBackendRuntimePlan.Ok plan)
+        [(Ok plan)
           (let
             [executable
               (backend.compiler-backend-runtime-features-for-emission
-                (backend.CompilerBackendTarget.Linux)
+                (Linux)
                 plan
                 state
                 index
@@ -178,7 +175,7 @@
                 true)]
             [library
               (backend.compiler-backend-runtime-features-for-emission
-                (backend.CompilerBackendTarget.Linux)
+                (Linux)
                 plan
                 state
                 index
@@ -187,7 +184,7 @@
                 false)]
             [win
               (backend.compiler-backend-runtime-features-for-emission
-                (backend.CompilerBackendTarget.Windows)
+                (Windows)
                 plan
                 state
                 index

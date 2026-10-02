@@ -10,7 +10,6 @@
 (import compiler_load as load)
 (import compiler_parse_core as parser)
 (import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc_core)
 (import sym_i64_env)
 
 (define (macro-diagnostic-write-text [path : (& path str)] [contents : String]) : unit
@@ -51,7 +50,7 @@
   [second-col : i64]
   [second-name : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+    [(Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
@@ -84,7 +83,7 @@
               second-line
               second-col
               second-name))))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (macro-diagnostic-generated-frame-ok?) : bool
   (macro-diagnostic-source-shape?
@@ -210,11 +209,11 @@
     (sym_i64_env.sym-i64-empty)
     roots
     (parser.compiler-cfg-empty))
-    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(Ok decls paths _ _)
       (match (tc_api.typecheck-compiler-program-with-paths
         (ast.ast-program decls)
         paths)
-        [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+        [(Err diagnostics)
           (let
             [diag : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
@@ -247,8 +246,8 @@
                     (diagnostic.compiler-diagnostic-render diag)
                     "\n"))
                 false)))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(load.ResultCompilerLoadWithPaths.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (macro-diagnostic-import-frames-ok?) : bool
   (let

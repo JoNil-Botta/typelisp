@@ -21,8 +21,7 @@
   (regalloc.compiler-reg-assignments-prepend
     (regalloc.CompilerRegAssignment
       var
-      (regalloc.CompilerRegLocation.Register
-        (cabi.compiler-abi-register-id-from-spelling spelling)))
+      (Register (cabi.compiler-abi-register-id-from-spelling spelling)))
     table))
 
 (define (seh-oracle-function
@@ -34,8 +33,7 @@
   (let
     [entry : String
       (backend.compiler-backend-emit-function-entry
-        (backend.compiler-backend-target-policy-new
-          backend.CompilerBackendTarget.Windows)
+        (backend.compiler-backend-target-policy-new Windows)
         (string.copy symbol)
         frame
         assignments
@@ -56,7 +54,7 @@
       symbol
       (cdiag.compiler-diagnostic-at-start "" "")
       state)
-      [(backend.ResultCompilerBackend.Ok described)
+      [(Ok described)
         (str_cat.str-cat
           ".globl "
           symbol
@@ -64,7 +62,7 @@
           entry
           described
           "    .seh_endproc\n")]
-      [(backend.ResultCompilerBackend.Err _) ""])))
+      [(Err _) ""])))
 
 (define (seh-oracle-asm [state : backend.CompilerBackendState]) : String
   (let

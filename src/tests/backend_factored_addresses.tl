@@ -24,18 +24,15 @@
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [ty : ast.AstType
-      (cond
-        [(= mode 5) (ast.AstType.I32)]
-        [(= mode 16) (ast.AstType.U64)]
-        [else (ast.AstType.I64)])]
+      (cond [(= mode 5) (I32)] [(= mode 16) (U64)] [else (I64)])]
     [elem : ast.AstType
       (if (= mode 3)
-        (ast.AstType.I64)
-        (ast.AstType.U8))]
+        (I64)
+        (U8))]
     [rhs : ir.CompilerIrValue
       (if (= mode 20)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 factor))]
+        (Var 0)
+        (I64 factor))]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr 4)]
     [homes : (__tl_dyn-array i64) (__tl_make-array i64 4)]
@@ -80,46 +77,39 @@
               (set!
                 assignments
                 (reg.compiler-reg-assignments-prepend
-                  (reg.CompilerRegAssignment
-                    i
-                    (reg.CompilerRegLocation.Register (array-ref homes i)))
+                  (reg.CompilerRegAssignment i (Register (array-ref homes i)))
                   assignments)))
             (set! i (+ i 1)))))
       (set!
         (array-ref slots 0)
         (ir.CompilerIrInstr.BinOp
           2
-          (ir.CompilerIrBinOp.Mul)
-          (ir.CompilerIrValue.Var 0)
+          (Mul)
+          (Var 0)
           (view.compiler-owned-shared-view rhs)
           (view.compiler-owned-shared-view ty)))
       (set!
         (array-ref slots 1)
         (if (= mode 14)
-          (ir.CompilerIrInstr.Mov
-            3
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Mov 3 (Var 2) (I64))
           (ir.CompilerIrInstr.Gep
             3
-            (ir.CompilerIrValue.Var 1)
-            (ir.CompilerIrValue.Var
+            (Var 1)
+            (Var
               (if (= mode 4)
                 0
                 2))
             elem)))
-      (set!
-        (array-ref slots 2)
-        (ir.CompilerIrInstr.Mov 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I64)))
+      (set! (array-ref slots 2) (ir.CompilerIrInstr.Mov 4 (Var 3) (I64)))
       (set!
         (array-ref slots 3)
         (ir.CompilerIrInstr.Mov
           5
-          (ir.CompilerIrValue.Var
+          (Var
             (if (= mode 2)
               0
               3))
-          (ast.AstType.I64)))
+          (I64)))
       (set!
         (array-ref disps 0)
         (if (= mode 13)
@@ -157,8 +147,7 @@
                 (ir.CompilerIrBlock.Block
                   1
                   (fixtures.compiler-backend-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+                    (Return (Some (Var 2)))
                     (ir.compiler-ir-instr-seq-empty))))
               (ir.compiler-ir-block-list-empty))
             (ir.CompilerIrBlock.Block
@@ -173,8 +162,8 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             (backend.compiler-backend-target-policy-new
               (if windows
-                (backend.CompilerBackendTarget.Windows)
-                (backend.CompilerBackendTarget.Linux)))
+                (Windows)
+                (Linux)))
             "_tl_test"
             (ci.intern "test")
             blocks
@@ -182,8 +171,8 @@
             assignments
             6
             (reg.compiler-reg-var-types-empty)
-            (backend.CompilerBackendGlobalTypeTable.Empty)
-            (ast.AstType.I64)
+            (Empty)
+            (I64)
             (fixtures.compiler-backend-runtime-helper-full-plan)
             (ir.compiler-ir-function-seq-empty)
             (ir.compiler-ir-extern-seq-empty)
@@ -219,7 +208,7 @@
           (backend.compiler-backend-mul-gep-asm
             ctx
             2
-            (ir.CompilerIrValue.Var 0)
+            (Var 0)
             rhs
             ty
             instrs
@@ -230,11 +219,11 @@
           (test.assert-bool-eq
             accepted
             (match result
-              [(backend.CompilerBackendMaybeAsm.Some text)
+              [(Some text)
                 (and
                   (backend.compiler-backend-string-contains? text "    leaq (")
                   (not (backend.compiler-backend-string-contains? text "imul")))]
-              [(backend.CompilerBackendMaybeAsm.No) false])
+              [(No) false])
             "factoring admission")
           (test.assert-i64-eq
             (if accepted

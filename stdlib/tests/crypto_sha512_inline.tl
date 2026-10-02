@@ -15,8 +15,8 @@
   test
   (define (test-require-update [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateOk) unit]
-      [(sha.Sha512UpdateErr _)
+      [(Sha512UpdateOk) unit]
+      [(Sha512UpdateErr _)
         (test.assert-true false "SHA-512 update should succeed")])))
 
 ;: Extract one successful final digest in inline tests.
@@ -24,8 +24,8 @@
   test
   (define (test-require-finalize [result : sha.Sha512FinalizeResult]) : sha.Sha512Digest
     (match result
-      [(sha.Sha512FinalizeOk value) value]
-      [(sha.Sha512FinalizeErr _)
+      [(Sha512FinalizeOk value) value]
+      [(Sha512FinalizeErr _)
         (test-zero-digest "SHA-512 finalization should succeed")])))
 
 ;: Hash one borrowed test byte range.
@@ -125,7 +125,7 @@
   test
   (define (test-assert-finalized-update [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateErr (sha.Sha512Finalized)) unit]
+      [(Sha512UpdateErr (Sha512Finalized)) unit]
       [_ (test.assert-true false "expected finalized SHA-512 update error")])))
 
 ;: Require the common finalized-state finalization error.
@@ -133,7 +133,7 @@
   test
   (define (test-assert-finalized-finalize [result : sha.Sha512FinalizeResult]) : unit
     (match result
-      [(sha.Sha512FinalizeErr (sha.Sha512Finalized)) unit]
+      [(Sha512FinalizeErr (Sha512Finalized)) unit]
       [_
         (test.assert-true false "expected finalized SHA-512 finalization error")])))
 
@@ -142,7 +142,7 @@
   test
   (define (test-assert-length-error [result : sha.Sha512LengthResult]) : unit
     (match result
-      [(sha.Sha512LengthErr (sha.Sha512MessageTooLong _ _ _)) unit]
+      [(Sha512LengthErr (Sha512MessageTooLong _ _ _)) unit]
       [_ (test.assert-true false "expected SHA-512 length error")])))
 
 ;: Require a raw-source validation error without inspecting pointer contents.
@@ -150,8 +150,8 @@
   test
   (define (test-assert-source-error [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateErr (sha.Sha512InvalidSource)) unit]
-      [(sha.Sha512UpdateErr (sha.Sha512InvalidSourceLength _)) unit]
+      [(Sha512UpdateErr (Sha512InvalidSource)) unit]
+      [(Sha512UpdateErr (Sha512InvalidSourceLength _)) unit]
       [_ (test.assert-true false "expected SHA-512 source error")])))
 
 ;: Require an exact-output validation error without inspecting sink contents.
@@ -159,8 +159,8 @@
   test
   (define (test-assert-output-error [result : sha.Sha512FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha512FinalizeIntoErr (sha.Sha512InvalidOutput)) unit]
-      [(sha.Sha512FinalizeIntoErr (sha.Sha512InvalidOutputLength _)) unit]
+      [(Sha512FinalizeIntoErr (Sha512InvalidOutput)) unit]
+      [(Sha512FinalizeIntoErr (Sha512InvalidOutputLength _)) unit]
       [_ (test.assert-true false "expected SHA-512 output error")])))
 
 ;: Require successful finalization through the raw exact-sink seam.
@@ -168,8 +168,8 @@
   test
   (define (test-require-finalize-into [result : sha.Sha512FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha512FinalizeIntoOk) unit]
-      [(sha.Sha512FinalizeIntoErr _)
+      [(Sha512FinalizeIntoOk) unit]
+      [(Sha512FinalizeIntoErr _)
         (test.assert-true false "SHA-512 sink finalization should succeed")])))
 
 (cfg
@@ -354,7 +354,7 @@
         (cast 7 : u64)
         (cast 0xffffffffffffffff : u64)
         (cast 1 : u64))
-        [(sha.Sha512LengthOk length)
+        [(Sha512LengthOk length)
           (begin
             (test.assert-true
               (= length.high (cast 8 : u64))
@@ -362,19 +362,19 @@
             (test.assert-true
               (= length.low (cast 0 : u64))
               "SHA-512 low-half carry low"))]
-        [(sha.Sha512LengthErr _)
+        [(Sha512LengthErr _)
           (test.assert-true false "SHA-512 carry should be admitted")])
       (match (sha.length-add
         (sha.max-byte-length-high)
         (cast 0xfffffffffffffffe : u64)
         (cast 1 : u64))
-        [(sha.Sha512LengthOk length)
+        [(Sha512LengthOk length)
           (test.assert-true
             (and
               (= length.high (sha.max-byte-length-high))
               (= length.low (cast 0xffffffffffffffff : u64)))
             "SHA-512 maximum byte length should be admitted")]
-        [(sha.Sha512LengthErr _)
+        [(Sha512LengthErr _)
           (test.assert-true false "SHA-512 maximum should be admitted")])
       (test-assert-length-error
         (sha.length-add
@@ -391,7 +391,7 @@
           (set! state.byte-length-low (cast 0xffffffffffffffff : u64))
           (set! state.block-length 127)
           (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
-            [(sha.Sha512UpdateErr (sha.Sha512MessageTooLong _ _ _)) unit]
+            [(Sha512UpdateErr (Sha512MessageTooLong _ _ _)) unit]
             [_
               (test.assert-true
                 false

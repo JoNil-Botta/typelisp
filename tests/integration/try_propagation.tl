@@ -50,64 +50,64 @@
 
 (define (read [x : i64]) : ReadResult
   (if (>= x 0)
-    (ReadResult.Ok x)
-    (ReadResult.Err (Diag 3 x 9))))
+    (Ok x)
+    (Err (Diag 3 x 9))))
 
 (define (check [x : i64]) : CheckResult
   (if (< x 100)
-    CheckResult.Ok
-    (CheckResult.Err (Diag 4 x 1))))
+    Ok
+    (Err (Diag 4 x 1))))
 
 (define (read-word [x : i64]) : WordResult
   (if (>= x 0)
-    (WordResult.Ok x)
-    (WordResult.Err (- 0 x))))
+    (Ok x)
+    (Err (- 0 x))))
 
 (define (find-diag [x : i64]) : MaybeDiag
   (if (> x 0)
-    (MaybeDiag.Some (Diag x 0 0))
-    MaybeDiag.None))
+    (Some (Diag x 0 0))
+    None))
 
 (define (diag-score [d : Diag]) : i64
   (+ (* 100 d.code) (* 10 d.line) d.col))
 
 (define (read-score [r : ReadResult]) : i64
   (match r
-    [(ReadResult.Ok v) v]
-    [(ReadResult.Err d) (- 0 (diag-score d))]))
+    [(Ok v) v]
+    [(Err d) (- 0 (diag-score d))]))
 
 (define (flag-score [r : FlagResult]) : i64
   (match r
-    [(FlagResult.Ok b)
+    [(Ok b)
       (if b
         1
         2)]
-    [(FlagResult.Err d) (- 0 (diag-score d))]))
+    [(Err d) (- 0 (diag-score d))]))
 
 (define (check-score [r : CheckResult]) : i64
   (match r
-    [CheckResult.Ok 0]
-    [(CheckResult.Err d) (- 0 (diag-score d))]))
+    [Ok 0]
+    [(Err d) (- 0 (diag-score d))]))
 
 (define (word-score [r : WordResult]) : i64
   (match r
-    [(WordResult.Ok v) v]
-    [(WordResult.Err e) (- 0 e)]))
+    [(Ok v) v]
+    [(Err e) (- 0 e)]))
 
 (define (word-check-score [r : WordCheck]) : i64
   (match r
-    [WordCheck.Ok 0]
-    [(WordCheck.Err e) (- 0 e)]))
+    [Ok 0]
+    [(Err e) (- 0 e)]))
 
 (define (maybe-diag-score [m : MaybeDiag]) : i64
   (match m
-    [(MaybeDiag.Some d) (diag-score d)]
-    [MaybeDiag.None -1]))
+    [(Some d) (diag-score d)]
+    [None -1]))
 
 (define (maybe-word-score [m : MaybeWord]) : i64
   (match m
-    [(MaybeWord.Some v) v]
-    [MaybeWord.None -1]))
+    [(Some v) v]
+    [None -1]))
 
 ;; A `*-shared-view`-style place macro, `cond` and `and` inside try operands.
 (defmacro (word-view [place : Expr]) : Expr
@@ -124,7 +124,7 @@
           (if (and (> a 0) (> b 0))
             (+ a b)
             (- a 1))))]
-    (FlagResult.Ok (> c 5))))
+    (Ok (> c 5))))
 
 ;; The enclosing family's Ok has no payload; a unit try yields `unit`.
 (define (validate [x : i64]) : CheckResult
@@ -132,48 +132,48 @@
     [_ : i64 (try (read x))]
     (begin
       (try (check x))
-      CheckResult.Ok)))
+      Ok)))
 
 (define (double-checked [x : i64]) : ReadResult
   (let
     [_ : unit (try (check x))]
-    (ReadResult.Ok (* 2 x))))
+    (Ok (* 2 x))))
 
 ;; The enclosing family's Ok variant may carry several payloads.
 (define (span [x : i64] [y : i64]) : SpanResult
-  (SpanResult.Ok (try (read x)) (try (read y))))
+  (Ok (try (read x)) (try (read y))))
 
 (define (span-score [r : SpanResult]) : i64
   (match r
-    [(SpanResult.Ok from to) (+ (* 100 from) to)]
-    [(SpanResult.Err d) (- 0 (diag-score d))]))
+    [(Ok from to) (+ (* 100 from) to)]
+    [(Err d) (- 0 (diag-score d))]))
 
 ;; Register-group families on both sides, with a unit success.
 (define (word-sum [x : i64] [y : i64]) : WordResult
-  (WordResult.Ok (+ (try (read-word x)) (try (read-word y)))))
+  (Ok (+ (try (read-word x)) (try (read-word y)))))
 
 (define (word-validate [x : i64]) : WordCheck
   (let
     [_ : i64 (try (read-word x))]
-    WordCheck.Ok))
+    Ok))
 
 ;; Option-like families propagate absence across families as well, returned
 ;; in memory (`MaybeDiag`) and in a register group (`MaybeWord`).
 (define (find-word [x : i64]) : MaybeWord
   (let
     [d : Diag (try (find-diag x))]
-    (MaybeWord.Some (+ d.code 1))))
+    (Some (+ d.code 1))))
 
 (define (find-diag-again [x : i64]) : MaybeDiag
   (let
     [w : i64 (try (find-word x))]
-    (MaybeDiag.Some (Diag w w w))))
+    (Some (Diag w w w))))
 
 (define (lambda-flag [x : i64]) : FlagResult
   (let
     [f
       (lambda ([y : i64]) : FlagResult
-        (FlagResult.Ok (> (try (read y)) 2)))]
+        (Ok (> (try (read y)) 2)))]
     (f x)))
 
 (define (sum-down [n : i64] [start : i64]) : ReadResult
@@ -185,7 +185,7 @@
         (begin
           (set! acc (+ acc (try (read (- start i)))))
           (set! i (+ i 1))))
-      (ReadResult.Ok acc))))
+      (Ok acc))))
 
 (define cleanups : i64
   0)
@@ -197,13 +197,13 @@
 (define (with-cleanup [x : i64]) : ReadResult
   (with
     ([outer 1 release] [inner 2 release])
-    (ReadResult.Ok (+ outer inner (try (read x))))))
+    (Ok (+ outer inner (try (read x))))))
 
 ;; A failing later initializer releases the bindings already made.
 (define (with-init-cleanup [x : i64]) : ReadResult
   (with
     ([first 3 release] [second (try (read x)) release])
-    (ReadResult.Ok (+ first second))))
+    (Ok (+ first second))))
 
 ;; The error path leaves the scratch arena reset and the outer arena current.
 (define (arena-step [x : i64]) : ReadResult
@@ -214,7 +214,7 @@
         (let
           [text : String (string.int->string x)]
           (+ (string.string-length text) (try (read x)))))]
-    (ReadResult.Ok n)))
+    (Ok n)))
 
 (define (main) : i64
   (let

@@ -80,7 +80,7 @@
 (define color : Color
   Green)
 (define qualified-color : Color
-  Color.Blue)
+  Blue)
 (define callback : (-> i64 i64)
   inc)
 (define callback-copy : (-> i64 i64)

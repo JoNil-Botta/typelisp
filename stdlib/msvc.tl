@@ -244,8 +244,8 @@
 ;: Return true when `path` exists, mapping probe errors to false.
 (define (path-exists? [path : (& path str)]) : bool
   (match (io.try-file-exists? path)
-    [(io.OkIoBool exists) exists]
-    [(io.ErrIoBool _) false]))
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
 
 ;: Return true when an owned path exists through the borrowed public helper.
 (define (path-exists-owned? [path : String]) : bool
@@ -325,14 +325,14 @@
   (let
     [name : String "PATH"]
     (match (env.path-list-vec (& name))
-      [(env.EnvNoStringVec) (MsvcNoString)]
-      [(env.EnvSomeStringVec dirs) (search-dirs-vec dirs tool)])))
+      [(EnvNoStringVec) (MsvcNoString)]
+      [(EnvSomeStringVec dirs) (search-dirs-vec dirs tool)])))
 
 ;: Read an environment variable or the empty string when it is unset.
 (define (env-or-empty [name : (& name str)]) : String
   (match (env.get name)
-    [(env.EnvSomeString value) value]
-    [(env.EnvNoString) ""]))
+    [(EnvSomeString value) value]
+    [(EnvNoString) ""]))
 
 ;: Read an owned environment variable name or the empty string when it is unset.
 (define (env-or-empty-owned [name : String]) : String
@@ -390,19 +390,19 @@
   (let
     [name : String "LIB"]
     (match (env.get (& name))
-      [(env.EnvNoString)
+      [(EnvNoString)
         (ErrMsvcTool
           (MsvcMissingEnvironment
             "msvc: LIB is not set; run from a Developer Command Prompt or use auto-discovery"))]
-      [(env.EnvSomeString lib)
+      [(EnvSomeString lib)
         (let
           [name : String "INCLUDE"]
           (match (env.get (& name))
-            [(env.EnvNoString)
+            [(EnvNoString)
               (ErrMsvcTool
                 (MsvcMissingEnvironment
                   "msvc: INCLUDE is not set; run from a Developer Command Prompt or use auto-discovery"))]
-            [(env.EnvSomeString include)
+            [(EnvSomeString include)
               (OkMsvcTool
                 (MsvcTool executable (env-or-empty-owned "PATH") lib include))]))])))
 
@@ -531,9 +531,9 @@
     (begin
       ;; Keep the explicit result local: aggregate match-arm returns are not supported.
       (match (fs.try-read-dir-vec (& parent))
-        [(fs.OkIoStringVector entries)
+        [(OkIoStringVector entries)
           (set! result (toolset-scan-entries entries 0 parent tool "" "" false))]
-        [(fs.ErrIoStringVector _) (set! result (MsvcNoToolset))])
+        [(ErrIoStringVector _) (set! result (MsvcNoToolset))])
       result)))
 
 ;: Return true when `candidate` should replace the current best toolset.
@@ -682,9 +682,9 @@
   (let
     [lib-dir : String (path-join (msvc-shared-view sdk-root) "Lib")]
     (match (fs.try-read-dir-vec (& lib-dir))
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (sdk-scan-entries entries 0 sdk-root "" false)]
-      [(fs.ErrIoStringVector _) (MsvcNoSdk)])))
+      [(ErrIoStringVector _) (MsvcNoSdk)])))
 
 ;: Return true when `candidate` should replace the current best SDK.
 (define (sdk-candidate-newer?
@@ -822,14 +822,14 @@
 ;: Inline test helper to unwrap `ResultIoString`.
 (define (test-expect-ok-string [result : io.ResultIoString]) : String
   (match result
-    [(io.OkIoString value) value]
-    [(io.ErrIoString _) ""]))
+    [(OkIoString value) value]
+    [(ErrIoString _) ""]))
 
 ;: Inline test helper to assert `ResultIoUnit`.
 (define (test-assert-ok-unit [result : io.ResultIoUnit]) : unit
   (match result
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) (test-fail)]))
+    [(OkIoUnit) unit]
+    [(ErrIoUnit _) (test-fail)]))
 
 ;: Inline test mkdir helper.
 (define (test-mkdir [path : String]) : unit
@@ -1010,12 +1010,12 @@
         "14.99.0"
         false)
       (match (fs.try-read-dir-vec (& toolset-parent))
-        [(fs.OkIoStringVector entries)
+        [(OkIoStringVector entries)
           (begin
             (test-assert (fs.string-vector-contains? (& entries) "14.10.0"))
             (test-assert (fs.string-vector-contains? (& entries) "14.20.0"))
             (test-assert (fs.string-vector-contains? (& entries) "14.99.0")))]
-        [(fs.ErrIoStringVector _) (test-fail)]))))
+        [(ErrIoStringVector _) (test-fail)]))))
 
 ;: Inline test: scan already-read fake toolset entries.
 (define (test-toolset-scan-entries-main) : unit
@@ -1042,7 +1042,7 @@
             "14.99.0"
             false)]
         (match (fs.try-read-dir-vec (& toolset-parent))
-          [(fs.OkIoStringVector entries)
+          [(OkIoStringVector entries)
             (match (toolset-scan-entries
               entries
               0
@@ -1059,7 +1059,7 @@
                     (msvc-shared-view new-root))
                   (test-assert (not (string.eq old-root new-root))))]
               [(MsvcNoToolset) (test-fail)])]
-          [(fs.ErrIoStringVector _) (test-fail)])))))
+          [(ErrIoStringVector _) (test-fail)])))))
 
 ;: Inline test: choose the newest complete fake Windows SDK version.
 (define (test-sdk-scan-main) : unit

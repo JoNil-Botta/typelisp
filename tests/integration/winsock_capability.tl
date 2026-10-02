@@ -60,36 +60,36 @@
   (define (winsock-runtime-smoke) : i64
     (match (unsafe
       (winsock.winsock-acquire-with-fault 1))
-      [(winsock.WinsockAcquireErr (winsock.WinsockStartupFailed code))
+      [(WinsockAcquireErr (WinsockStartupFailed code))
         (when (!= code (cast 10093 : i32)) (return 1))]
-      [(winsock.WinsockAcquired lease)
+      [(WinsockAcquired lease)
         (with ([owned lease winsock.cleanup-winsock-lease]) (return 2))]
       [_ (return 2)])
     (match (unsafe
       (winsock.winsock-acquire-with-fault 2))
-      [(winsock.WinsockAcquireErr (winsock.WinsockVersionMismatch version))
+      [(WinsockAcquireErr (WinsockVersionMismatch version))
         (when (!= version (cast 257 : u16)) (return 3))]
-      [(winsock.WinsockAcquired lease)
+      [(WinsockAcquired lease)
         (with ([owned lease winsock.cleanup-winsock-lease]) (return 4))]
       [_ (return 4)])
     (match (winsock.winsock-acquire)
-      [(winsock.WinsockAcquireErr _) 5]
-      [(winsock.WinsockAcquired first)
+      [(WinsockAcquireErr _) 5]
+      [(WinsockAcquired first)
         (with
           ([first-lease first winsock.cleanup-winsock-lease])
           (match (winsock.winsock-acquire)
-            [(winsock.WinsockAcquireErr _) 6]
-            [(winsock.WinsockAcquired second)
+            [(WinsockAcquireErr _) 6]
+            [(WinsockAcquired second)
               (with
                 ([second-lease second winsock.cleanup-winsock-lease])
                 (match (unsafe
                   (winsock.winsock-table-for-lease (& first-lease)))
-                  [(winsock.WinsockTableErr _) 7]
-                  [(winsock.WinsockTableOk first-table)
+                  [(WinsockTableErr _) 7]
+                  [(WinsockTableOk first-table)
                     (match (unsafe
                       (winsock.winsock-table-for-lease (& second-lease)))
-                      [(winsock.WinsockTableErr _) 8]
-                      [(winsock.WinsockTableOk second-table)
+                      [(WinsockTableErr _) 8]
+                      [(WinsockTableOk second-table)
                         (if (and
                           (!= first-table.module (cast 0 : u64))
                           (= first-table.module second-table.module))
@@ -102,6 +102,6 @@
       windows
       (winsock-runtime-smoke)
       (match (winsock.winsock-acquire)
-        [(winsock.WinsockAcquireErr (winsock.WinsockUnsupportedTarget)) 42]
+        [(WinsockAcquireErr (WinsockUnsupportedTarget)) 42]
         [_ 11]))
     10))

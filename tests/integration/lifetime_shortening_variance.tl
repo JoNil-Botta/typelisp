@@ -51,8 +51,7 @@
     [_short-view : (SharedView short-owner) view]
     [_short-choice : (SharedChoice short-owner) choice]
     [_constructed-view : (SharedView short-owner) (SharedView shared)]
-    [_constructed-choice : (SharedChoice short-owner)
-      (SharedChoice.Borrowed shared)]
+    [_constructed-choice : (SharedChoice short-owner) (Borrowed shared)]
     [_short-tuple : (Tuple (& short-owner i64)) tuple-value]
     [_short-array : (Array (& short-owner i64) 1) array-value]
     [_short-dyn-array : (__tl_dyn-array (& short-owner i64)) dyn-array-value]
@@ -78,8 +77,8 @@
         short-shared)]
     [_matched : (& short-owner i64)
       (match choice
-        [(SharedChoice.Borrowed value) value]
-        [(SharedChoice.Empty) short-shared])]
+        [(Borrowed value) value]
+        [(Empty) short-shared])]
     [_captured : (-> (& short-owner i64))
       (lambda () : (& short-owner i64)
         shared)]

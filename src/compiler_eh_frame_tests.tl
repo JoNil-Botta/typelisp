@@ -64,8 +64,8 @@
   (let
     [limits : eh.CompilerEhFrameLimits (eh.compiler-eh-frame-default-limits)]
     (match (eh.compiler-eh-frame-decode bytes input (& limits))
-      [(eh.ResultCompilerEhFrameImage.Ok image) image]
-      [(eh.ResultCompilerEhFrameImage.Err error) (io.panic error.message)])))
+      [(Ok image) image]
+      [(Err error) (io.panic error.message)])))
 
 ;; The decode error code at `offset`, after setting `bytes[at]` to `value`.
 (define (eh-frame-test-mutant-error
@@ -78,9 +78,8 @@
     (begin
       (when (>= at 0) (set! (array-ref bytes at) (cast value : u8)))
       (match (eh.compiler-eh-frame-decode (& bytes) 7 limits)
-        [(eh.ResultCompilerEhFrameImage.Ok _)
-          (eh.CompilerEhFrameError 0 -1 -1 -1 "decoded")]
-        [(eh.ResultCompilerEhFrameImage.Err error) error]))))
+        [(Ok _) (eh.CompilerEhFrameError 0 -1 -1 -1 "decoded")]
+        [(Err error) error]))))
 
 (define (eh-frame-test-range-eq?
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -234,8 +233,8 @@
           (& header)
           0x402000
           (& limits))
-          [(eh.ResultCompilerEhFrameHeader.Err error) (io.panic error.message)]
-          [(eh.ResultCompilerEhFrameHeader.Ok decoded)
+          [(Err error) (io.panic error.message)]
+          [(Ok decoded)
             (begin
               (test.assert-i64-eq
                 decoded.eh-frame-address
@@ -271,8 +270,8 @@
       selections
       section-address
       (& limits))
-      [(eh.ResultCompilerEhFrameOutput.Ok output) output]
-      [(eh.ResultCompilerEhFrameOutput.Err error) (io.panic error.message)])))
+      [(Ok output) output]
+      [(Err error) (io.panic error.message)])))
 
 (cfg
   test
@@ -336,12 +335,12 @@
               0x400000
               0x402020
               (& limits))
-              [(eh.ResultCompilerEhFrameHeaderBytes.Ok header)
+              [(Ok header)
                 (match (eh.compiler-eh-frame-decode-header
                   (& header)
                   0x400000
                   (& limits))
-                  [(eh.ResultCompilerEhFrameHeader.Ok table)
+                  [(Ok table)
                     (begin
                       (test.assert-i64-eq
                         table.eh-frame-address
@@ -355,8 +354,7 @@
                         (array-ref table.rows 1).fde-address
                         0x402050
                         "header row FDE"))]
-                  [(eh.ResultCompilerEhFrameHeader.Err error)
-                    (io.panic error.message)])]
+                  [(Err error) (io.panic error.message)])]
               [_ (io.panic "expected a header")])))))))
 
 (cfg
@@ -661,8 +659,8 @@
   [bytes : (& bytes (__tl_dyn-array u8))]
   [limits : eh.CompilerEhFrameLimits]) : i64
   (match (eh.compiler-eh-frame-decode bytes 1 (& limits))
-    [(eh.ResultCompilerEhFrameImage.Err error) error.code]
-    [(eh.ResultCompilerEhFrameImage.Ok _) 0]))
+    [(Err error) error.code]
+    [(Ok _) 0]))
 
 (cfg
   test
@@ -725,9 +723,9 @@
       header-address
       eh-frame-address
       (& limits))
-      [(eh.ResultCompilerEhFrameHeaderBytes.Err error) error.code]
-      [(eh.ResultCompilerEhFrameHeaderBytes.NoHeader) -1]
-      [(eh.ResultCompilerEhFrameHeaderBytes.Ok _) 0])))
+      [(Err error) error.code]
+      [(NoHeader) -1]
+      [(Ok _) 0])))
 
 (cfg
   test
@@ -791,7 +789,7 @@
           (& unsorted)
           0x402000
           (& limits))
-          [(eh.ResultCompilerEhFrameHeader.Err error)
+          [(Err error)
             (test.assert-i64-eq
               error.code
               eh.compiler-eh-frame-error-header-order
@@ -801,7 +799,7 @@
           (& short)
           0x402000
           (& limits))
-          [(eh.ResultCompilerEhFrameHeader.Err error)
+          [(Err error)
             (test.assert-i64-eq
               error.code
               eh.compiler-eh-frame-error-header
@@ -811,7 +809,7 @@
           (& version)
           0x402000
           (& limits))
-          [(eh.ResultCompilerEhFrameHeader.Err error)
+          [(Err error)
             (test.assert-i64-eq
               error.code
               eh.compiler-eh-frame-error-header
@@ -874,8 +872,8 @@
     selections
     section-address
     (& limits))
-    [(eh.ResultCompilerEhFrameOutput.Err error) error.code]
-    [(eh.ResultCompilerEhFrameOutput.Ok _) 0]))
+    [(Err error) error.code]
+    [(Ok _) 0]))
 
 (cfg
   test
@@ -942,10 +940,10 @@
           (& none)
           0x2000
           (& defaults))
-          [(eh.ResultCompilerEhFrameOutput.Ok output)
+          [(Ok output)
             (begin
               (test.assert-true
                 (eh-frame-test-bytes-eq? (& output.bytes) "00000000")
                 "an empty selection is only the terminator")
               (test.assert-i64-eq (array-length output.rows) 0 "no rows"))]
-          [(eh.ResultCompilerEhFrameOutput.Err error) (io.panic error.message)])))))
+          [(Err error) (io.panic error.message)])))))

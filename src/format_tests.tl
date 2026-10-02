@@ -16,8 +16,8 @@
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fcli.fmt-try-write-formatted-file "" "(define x 1)\n")
-    [(fcli.ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
-    [(fcli.ResultFmtWrite.Err message)
+    [(Ok) (io.panic "fmt write unexpectedly succeeded")]
+    [(Err message)
       (if (string.eq message "fmt: failed to write : io: invalid path: ")
         unit
         (io.panic (string.copy message)))]))
@@ -27,9 +27,8 @@
   (match (format_rules.format-rules-render-source-width-result
     "(define x\n  ]"
     80)
-    [(format_rules.ResultFormatString.Ok _)
-      (io.panic "fmt parse unexpectedly succeeded")]
-    [(format_rules.ResultFormatString.Err err)
+    [(Ok _) (io.panic "fmt parse unexpectedly succeeded")]
+    [(Err err)
       (let
         [message : String (fcli.fmt-source-error-message "bad.tl" err)]
         (if (string.eq
@@ -40,8 +39,8 @@
 
 (define (fmt-malformed-int-error? [source : String]) : bool
   (match (format_rules.format-rules-render-source-width-result source 80)
-    [(format_rules.ResultFormatString.Ok _) false]
-    [(format_rules.ResultFormatString.Err err)
+    [(Ok _) false]
+    [(Err err)
       (string.eq
         (tokens.format-source-error-message err)
         "format lexer: malformed integer literal")]))
@@ -61,59 +60,55 @@
 
 (define (fmt-cst-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 1]
-    [(cst.FormatCst.Comment _) 1]
-    [(cst.FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
-    [(cst.FormatCst.Projection child _) (+ 1 (fmt-cst-count (deref child)))]
-    [(cst.FormatCst.List items) (+ 1 (fmt-cst-list-total (deref items)))]
-    [(cst.FormatCst.BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
-    [(cst.FormatCst.Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
+    [(Atom _) 1]
+    [(Comment _) 1]
+    [(Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
+    [(Projection child _) (+ 1 (fmt-cst-count (deref child)))]
+    [(List items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
 
 (define (fmt-cst-list-total [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
-      (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
+    [(Empty) 0]
+    [(Item node rest) (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
 
 (define (fmt-cst-comment-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 0]
-    [(cst.FormatCst.Comment _) 1]
-    [(cst.FormatCst.Prefix _ child) (fmt-cst-comment-count (deref child))]
-    [(cst.FormatCst.Projection child _) (fmt-cst-comment-count (deref child))]
-    [(cst.FormatCst.List items) (fmt-cst-list-comment-count (deref items))]
-    [(cst.FormatCst.BracketList items)
-      (fmt-cst-list-comment-count (deref items))]
-    [(cst.FormatCst.Forms items) (fmt-cst-list-comment-count (deref items))]))
+    [(Atom _) 0]
+    [(Comment _) 1]
+    [(Prefix _ child) (fmt-cst-comment-count (deref child))]
+    [(Projection child _) (fmt-cst-comment-count (deref child))]
+    [(List items) (fmt-cst-list-comment-count (deref items))]
+    [(BracketList items) (fmt-cst-list-comment-count (deref items))]
+    [(Forms items) (fmt-cst-list-comment-count (deref items))]))
 
 (define (fmt-cst-list-comment-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
+    [(Empty) 0]
+    [(Item node rest)
       (+ (fmt-cst-comment-count node) (fmt-cst-list-comment-count rest))]))
 
 (define (fmt-cst-bracket-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 0]
-    [(cst.FormatCst.Comment _) 0]
-    [(cst.FormatCst.Prefix _ child) (fmt-cst-bracket-count (deref child))]
-    [(cst.FormatCst.Projection child _) (fmt-cst-bracket-count (deref child))]
-    [(cst.FormatCst.List items) (fmt-cst-list-bracket-count (deref items))]
-    [(cst.FormatCst.BracketList items)
-      (+ 1 (fmt-cst-list-bracket-count (deref items)))]
-    [(cst.FormatCst.Forms items) (fmt-cst-list-bracket-count (deref items))]))
+    [(Atom _) 0]
+    [(Comment _) 0]
+    [(Prefix _ child) (fmt-cst-bracket-count (deref child))]
+    [(Projection child _) (fmt-cst-bracket-count (deref child))]
+    [(List items) (fmt-cst-list-bracket-count (deref items))]
+    [(BracketList items) (+ 1 (fmt-cst-list-bracket-count (deref items)))]
+    [(Forms items) (fmt-cst-list-bracket-count (deref items))]))
 
 (define (fmt-cst-list-bracket-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
+    [(Empty) 0]
+    [(Item node rest)
       (+ (fmt-cst-bracket-count node) (fmt-cst-list-bracket-count rest))]))
 
 (define (parse-format-source [src : String]) : cst.FormatCst
   (match (cst.parse-format-source-result src)
-    [(cst.ResultFormatCst.Ok tree) tree]
-    [(cst.ResultFormatCst.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok tree) tree]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import std)
@@ -169,8 +164,8 @@
 
 (define (format-cst-error-location-ok?) : bool
   (match (cst.parse-format-source-result "(define x\n  ]")
-    [(cst.ResultFormatCst.Ok _) false]
-    [(cst.ResultFormatCst.Err err)
+    [(Ok _) false]
+    [(Err err)
       (and
         (string.eq
           (tokens.format-source-error-message
@@ -181,27 +176,27 @@
 (define (format-cst-legacy-char-rejected-ok?) : bool
   (and
     (match (cst.parse-format-source-result "#x'")
-      [(cst.ResultFormatCst.Ok _) false]
-      [(cst.ResultFormatCst.Err err)
+      [(Ok _) false]
+      [(Err err)
         (string.eq
           (tokens.format-source-error-message err)
           "format lexer: unexpected character")])
     (match (cst.parse-format-source-result "#\\space'")
-      [(cst.ResultFormatCst.Ok _) false]
-      [(cst.ResultFormatCst.Err err)
+      [(Ok _) false]
+      [(Err err)
         (string.eq
           (tokens.format-source-error-message err)
           "format lexer: unexpected character")])))
 
 (define (format-cst-dense-storage-ok?) : bool
   (match (parse-format-source "(a b c)")
-    [(cst.FormatCst.Forms forms)
+    [(Forms forms)
       (and
         (= (fmt-list-count (owned_view.compiler-owned-box-shared-view forms)) 1)
         (match (cst.fmt-cst-list-step (deref forms))
-          [(cst.FormatCstListStep.Item node _)
+          [(Item node _)
             (match node
-              [(cst.FormatCst.List items) (= (fmt-list-count (deref items)) 3)]
+              [(List items) (= (fmt-list-count (deref items)) 3)]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -237,9 +232,8 @@
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (rules.format-rules-render-source-width-result src width)
-    [(rules.ResultFormatString.Ok formatted) formatted]
-    [(rules.ResultFormatString.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok formatted) formatted]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-rules-decls-expected) : String
   "(import std)\n(import ffi)\n\n(extern (io.emit-string [arg0 : String]) : unit (:abi c) (:symbol \"external_emit_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
@@ -322,9 +316,9 @@
 
 (define (format-rules-offset-slice-preserved?) : bool
   (let
-    [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
-    [colon : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Colon))]
-    [typ : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "i64"))]
+    [head : cst.FormatCst (Atom (Symbol "x"))]
+    [colon : cst.FormatCst (Atom (Colon))]
+    [typ : cst.FormatCst (Atom (Symbol "i64"))]
     [dense-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst)
@@ -339,11 +333,11 @@
       (let
         [dense-render : String
           (format-rules-render-width
-            (cst.FormatCst.List (box (cst.FormatCstList dense-slots 0 3)))
+            (List (box (cst.FormatCstList dense-slots 0 3)))
             80)]
         [offset-render : String
           (format-rules-render-width
-            (cst.FormatCst.List (box (cst.FormatCstList offset-slots 1 3)))
+            (List (box (cst.FormatCstList offset-slots 1 3)))
             80)]
         (and
           (string.eq dense-render "(x : i64)")
@@ -468,6 +462,5 @@
 
 (define (format-lex [src : String]) : tokens.FormatTokenStream
   (match (tokens.format-lex-result src)
-    [(tokens.ResultFormatTokenStream.Ok stream) stream]
-    [(tokens.ResultFormatTokenStream.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok stream) stream]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))

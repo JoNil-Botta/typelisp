@@ -3,8 +3,5 @@
 
 (define (dotted-nested-variant-value [value : provider.DottedNestedRoot]) : i64
   (match value
-    [(provider.DottedNestedRoot.Root
-        (provider.DottedNestedEnvelope.Wrap
-          (provider.DottedNestedVariant.Some inner)))
-      inner]
+    [(Root (Wrap (Some inner))) inner]
     [_ 0]))

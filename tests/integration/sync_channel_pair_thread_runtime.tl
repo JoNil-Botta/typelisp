@@ -32,15 +32,15 @@
 (define (sync-pair-integration-send-ok?
   [result : sync.ChannelI64PairSendResult]) : bool
   (match result
-    [(sync.ChannelI64PairSendOk) true]
-    [(sync.ChannelI64PairSendErr _) false]))
+    [(ChannelI64PairSendOk) true]
+    [(ChannelI64PairSendErr _) false]))
 
 (define (sync-pair-integration-recv-value-or
   [result : sync.ChannelI64PairRecvResult]
   [fallback : sync.ChannelI64Pair]) : sync.ChannelI64Pair
   (match result
-    [(sync.ChannelI64PairRecvOk value) value]
-    [(sync.ChannelI64PairRecvErr _) fallback]))
+    [(ChannelI64PairRecvOk value) value]
+    [(ChannelI64PairRecvErr _) fallback]))
 
 (define (sync-pair-integration-message-sum [value : sync.ChannelI64Pair]) : i64
   (+ value.left value.right))
@@ -185,5 +185,5 @@
 
 (define (main) : i64
   (match (sync.channel-i64-pair-create 8)
-    [(sync.ChannelI64PairCreateErr _) 1]
-    [(sync.ChannelI64PairCreateOk channel) (sync-pair-integration-run channel)]))
+    [(ChannelI64PairCreateErr _) 1]
+    [(ChannelI64PairCreateOk channel) (sync-pair-integration-run channel)]))

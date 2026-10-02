@@ -137,5 +137,5 @@
 
 (define (main) : i64
   (match (mutex_i64.create 0)
-    [(mutex_i64.CreateErr _) 1]
-    [(mutex_i64.CreateOk mutex) (sync-mutex-integration-run (& mutex))]))
+    [(CreateErr _) 1]
+    [(CreateOk mutex) (sync-mutex-integration-run (& mutex))]))

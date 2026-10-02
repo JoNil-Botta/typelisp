@@ -19,7 +19,7 @@
   [expected-stdout : String]
   [expected-stderr : String]) : unit
   (match result
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (begin
         (test.assert-i64-eq
           (process.output-status output)
@@ -33,11 +33,11 @@
           (process.output-stderr output)
           expected-stderr
           "process output stderr"))]
-    [(process.ErrProcessOutput error) (io.panic (process.error-message error))]))
+    [(ErrProcessOutput error) (io.panic (process.error-message error))]))
 
 (define (assert-process-spawn-failed [result : process.ResultProcessOutput]) : unit
   (match result
-    [(process.ErrProcessOutput error)
+    [(ErrProcessOutput error)
       (begin
         (test.assert-true
           (process.error-spawn-failed? (clone error))
@@ -46,18 +46,17 @@
           (process.error-message error)
           "process: spawn failed"
           "process spawn failed message"))]
-    [(process.OkProcessOutput _)
-      (io.panic "process missing executable should fail")]))
+    [(OkProcessOutput _) (io.panic "process missing executable should fail")]))
 
 (define (assert-process-child-result [result : process.ResultProcessChild]) : process.ProcessChild
   (match result
-    [(process.OkProcessChild child) child]
-    [(process.ErrProcessChild error) (io.panic (process.error-message error))]))
+    [(OkProcessChild child) child]
+    [(ErrProcessChild error) (io.panic (process.error-message error))]))
 
 (define (assert-process-child-spawn-failed
   [result : process.ResultProcessChild]) : unit
   (match result
-    [(process.ErrProcessChild error)
+    [(ErrProcessChild error)
       (begin
         (test.assert-true
           (process.error-spawn-failed? (clone error))
@@ -66,12 +65,12 @@
           (process.error-message error)
           "process: spawn failed"
           "process async spawn failed message"))]
-    [(process.OkProcessChild _)
+    [(OkProcessChild _)
       (io.panic "process async missing executable should fail")]))
 
 (define (assert-process-child-unsupported [result : process.ResultProcessChild]) : unit
   (match result
-    [(process.ErrProcessChild error)
+    [(ErrProcessChild error)
       (begin
         (test.assert-true
           (process.error-unsupported? (clone error))
@@ -80,13 +79,12 @@
           (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async unsupported message"))]
-    [(process.OkProcessChild _)
-      (io.panic "process async should be unsupported")]))
+    [(OkProcessChild _) (io.panic "process async should be unsupported")]))
 
 (define (assert-process-output-unsupported
   [result : process.ResultProcessOutput]) : unit
   (match result
-    [(process.ErrProcessOutput error)
+    [(ErrProcessOutput error)
       (begin
         (test.assert-true
           (process.error-unsupported? (clone error))
@@ -95,14 +93,13 @@
           (process.error-message error)
           "process: async child handles are not supported by this runtime"
           "process async wait unsupported message"))]
-    [(process.OkProcessOutput _)
-      (io.panic "process async wait should be unsupported")]))
+    [(OkProcessOutput _) (io.panic "process async wait should be unsupported")]))
 
 (define (assert-process-output-invalid-child
   [result : process.ResultProcessOutput]
   [message : String]) : unit
   (match result
-    [(process.ErrProcessOutput error)
+    [(ErrProcessOutput error)
       (begin
         (test.assert-true
           (process.error-wait-failed? (clone error))
@@ -111,7 +108,7 @@
           (process.error-message error)
           "process: invalid or consumed child capability"
           message))]
-    [(process.OkProcessOutput _)
+    [(OkProcessOutput _)
       (io.panic "invalid child capability should not reach the OS")]))
 
 (define (windows-process-command) : process.ProcessCommand

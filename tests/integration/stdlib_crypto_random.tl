@@ -3,8 +3,8 @@
 
 (define (fill-ok? [buf : (&mut buf byte_buf.ByteBuf)]) : bool
   (match (crypto_random.fill-random! (byte_buf.as-mut-bytes buf))
-    [(crypto_random.OkFillRandom) true]
-    [(crypto_random.ErrFillRandom _) false]))
+    [(OkFillRandom) true]
+    [(ErrFillRandom _) false]))
 
 (define (main) : i64
   (let

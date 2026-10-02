@@ -146,11 +146,11 @@
       3
       6
       "(define (baz) : i64 4)")
-      [(lsp.LspEditResult.Ok replaced)
+      [(Ok replaced)
         (and
           (string.eq name "foo")
           (string.eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)"))]
-      [(lsp.LspEditResult.Err _) false])))
+      [(Err _) false])))
 
 (define (main) : i64
   (begin

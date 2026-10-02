@@ -35,7 +35,7 @@
       (set! (array-ref items 1) (string.append "ar" "ray"))
       (HTTPPacket
         (Leaf (string.append "le" "af") 7)
-        (Choice.Item (Leaf (string.append "en" "um") 9) "payload")
+        (Item (Leaf (string.append "en" "um") 9) "payload")
         (tuple (string.append "tu" "ple") 11)
         (array (string.append "fi" "xed") "array")
         items
@@ -46,8 +46,8 @@
     (string.eq packet.leaf.label "leaf")
     (= packet.leaf.rank 7)
     (match packet.choice
-      [(Choice.Empty) false]
-      [(Choice.Item leaf text)
+      [(Empty) false]
+      [(Item leaf text)
         (and
           (string.eq leaf.label "enum")
           (= leaf.rank 9)

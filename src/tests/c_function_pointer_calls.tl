@@ -1,24 +1,23 @@
 (import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)
 (import stdlib.test)
 
 (define (c-function-call-checks? [source : String]) : bool
   (match (tc_api.typecheck-compiler-source source)
-    [(tc.ResultCompilerTypecheck.Ok _) true]
-    [(tc.ResultCompilerTypecheck.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (c-function-call-error? [source : String] [expected : String]) : bool
   (match (tc_api.typecheck-compiler-source source)
-    [(tc.ResultCompilerTypecheck.Err diagnostics)
+    [(Err diagnostics)
       (let
         [first : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         (string.contains
           (diagnostic.compiler-diagnostic-message first)
           expected))]
-    [(tc.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (test
   c-function-calls-checked-modes

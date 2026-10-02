@@ -40,14 +40,12 @@
             pools
             intern-state))]
       (match parsed
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (match (ast.ast-decl-list-step (deref decls-box))
-            [(ast.AstDeclListStep.Cons
-                (ast.AstDecl.DefMacro decl-meta _ params _ _)
-                rest)
+            [(Cons (DefMacro decl-meta _ params _ _) rest)
               (and
                 (match (ast.ast-decl-list-step rest)
-                  [(ast.AstDeclListStep.Nil) true]
+                  [(Nil) true]
                   [_ false])
                 (= (ast.ast-macro-param-list-len (& params)) 1)
                 (string.eq
@@ -59,7 +57,7 @@
                       (ast.ast-macro-param-fallback)))
                   "[T : type (:kind i64 struct)]"))]
             [_ false])]
-        [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false]))
     (io.panic "doc-expand: macro type-kind constraint signature mismatch")))
 
 (test
@@ -77,16 +75,14 @@
             pools
             intern-state))]
       (match parsed
-        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        [(Ok (Program decls-box))
           (match (ast.ast-decl-list-step (deref decls-box))
-            [(ast.AstDeclListStep.Cons
-                (ast.AstDecl.DefStruct _ name repr _ fields)
-                _)
+            [(Cons (DefStruct _ name repr _ fields) _)
               (string.eq
                 (doc_expand.doc-ast-struct-signature ctx name "" repr fields)
                 "(defstruct Frame (:repr c) (:align 8)\n  (id u32)\n  (data (Array u8 8) (:align 8)))")]
             [_ false])]
-        [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false]))
     (io.panic "doc-expand: aligned struct signature mismatch")))
 
 (test
@@ -106,7 +102,7 @@
           (doc_item_vec.push-ref!
             (&mut items)
             (doc_extract.DocItem.Item
-              (doc_extract.DocItemKind.Define)
+              (Define)
               (string.int->string index)
               ""
               ""
@@ -183,18 +179,14 @@
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
-    [type-a : i64
-      (ast.ast-node-pool-context-type-push pools-a (ast.AstType.Struct name-a))]
-    [type-b : i64
-      (ast.ast-node-pool-context-type-push pools-b (ast.AstType.I64))]
+    [type-a : i64 (ast.ast-node-pool-context-type-push pools-a (Struct name-a))]
+    [type-b : i64 (ast.ast-node-pool-context-type-push pools-b (I64))]
     [expr-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.TypeLiteral type-a))]
+      (ast.ast-node-pool-context-expr-push pools-a (TypeLiteral type-a))]
     [expr-b : i64
       (ast.ast-node-pool-context-expr-push
         pools-b
-        (ast.AstExpr.Literal (ast.ast-lit-int 99)))]
+        (Literal (ast.ast-lit-int 99)))]
     [ctx-a : doc_expand.DocExpandContext
       (doc_expand.doc-expand-context-from-pools-and-intern-state
         pools-a
@@ -262,7 +254,7 @@
 (import (boxmod i64) as ibox)"
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view roots))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(Ok decls paths _ _)
         (let
           [pools : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
@@ -276,7 +268,7 @@
             roots
             pools
             intern-state)
-            [(doc_expand.ResultDocExpandedModules.Ok modules)
+            [(Ok modules)
               (let
                 [rendered : String
                   (doc_render.doc-render-module-graph-markdown modules)]
@@ -288,10 +280,10 @@
                   (string.contains rendered "### new"))
                   42
                   (io.panic "doc-expand: generated module docs smoke mismatch")))]
-            [(doc_expand.ResultDocExpandedModules.Err message)
+            [(Err message)
               (io.panic
                 (doc_expand.doc-cat2 "doc-expand: expansion failed: " message))]))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+      [(Err diag)
         (io.panic
           (doc_expand.doc-cat2
             "doc-expand: load failed: "

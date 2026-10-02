@@ -27,8 +27,8 @@
 
 (define (env-arena-value-is? [name : String] [want : String]) : bool
   (match (env.get (& name))
-    [(env.EnvSomeString actual) (string.eq actual want)]
-    [(env.EnvNoString) false]))
+    [(EnvSomeString actual) (string.eq actual want)]
+    [(EnvNoString) false]))
 
 ;; A spawned child inherits the published table.
 (define (env-arena-child-sees? [name : String] [want : String]) : bool
@@ -40,11 +40,11 @@
         (process.args-cons
           (str_cat.str-cat "printf '%s' \"$" name "\"")
           (process.args-empty)))))
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (and
         (= (process.output-status output) 0)
         (string.eq (process.output-stdout output) want))]
-    [(process.ErrProcessOutput _) false]))
+    [(ErrProcessOutput _) false]))
 
 ;; One job: 0 on success, otherwise the code of the first failed check.
 (define (env-arena-job [job : i64]) : i64

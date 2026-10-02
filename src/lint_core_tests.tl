@@ -34,7 +34,7 @@
   (lint_core.lint-walk-tail-expr (ast.ast-node-get e) threshold acc))
 
 (define (lint-test-var [name : String]) : i64
-  (ast.ast-node-push (ast.AstExpr.Var (ci.intern-generated-name name))))
+  (ast.ast-node-push (Var (ci.intern-generated-name name))))
 
 (define (lint-test-source-view [inner : i64] [span : ast.AstSourceSpan]) : i64
   (let
@@ -104,7 +104,7 @@
       "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
       "lint: nested-if-ladder message should be registered")
     (match (lint_core.lint-rule-find (lint_core.lint-rule-nested-if-ladder-id))
-      [(lint_core.LintMaybeRule.Found rule)
+      [(Found rule)
         (unless
           (and
             (string.eq rule.rule-id (lint_core.lint-rule-nested-if-ladder-id))
@@ -116,8 +116,7 @@
               (lint_core.lint-rule-nested-if-ladder-suggestion)))
           (io.panic
             "lint: nested-if-ladder registry entry should match metadata"))]
-      [(lint_core.LintMaybeRule.NotFound)
-        (io.panic "lint: nested-if-ladder should be registered")])
+      [(NotFound) (io.panic "lint: nested-if-ladder should be registered")])
     (lint-test-expect-registry-text
       (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-let-id))
       "merge the nested let bindings into one sequential let"
@@ -251,9 +250,8 @@
       ""
       "lint: unknown rule should have no message")
     (match (lint_core.lint-rule-find "unknown-rule")
-      [(lint_core.LintMaybeRule.NotFound) unit]
-      [(lint_core.LintMaybeRule.Found _)
-        (io.panic "lint: unknown rule should not be found")])
+      [(NotFound) unit]
+      [(Found _) (io.panic "lint: unknown rule should not be found")])
     unit))
 
 ;; Keep discarded-value fixture construction beside the no-effect assertions.
@@ -264,55 +262,55 @@
   [unit-expr : i64]
   [set-ok-false : i64]) : unit
   (let
-    [discarded-add : i64 (ast.ast-expr-binary (ast.AstBinOp.Add) one vx)]
-    [discarded-cast : i64 (ast.ast-expr-cast one (ast.AstType.I64))]
+    [discarded-add : i64 (ast.ast-expr-binary (Add) one vx)]
+    [discarded-cast : i64 (ast.ast-expr-cast one (I64))]
     [discarded-call : i64
       (ast.ast-expr-call (lint-test-var "side-effect?") (ast.ast-expr-list-new))]
     [no-effect-literal-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [no-effect-var-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons vx (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
     [no-effect-add-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             discarded-add
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [no-effect-cast-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             discarded-cast
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [no-effect-tail-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             unit-expr
             (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
     [no-effect-clean-call-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             discarded-call
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [no-effect-clean-mutation-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             set-ok-false
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [no-effect-unsafe-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Unsafe
+        (Unsafe
           (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [spanned-no-effect-var : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             (lint-test-source-view vx (ast.ast-source-span 31 9 31 10))
             (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
@@ -332,7 +330,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -340,7 +338,7 @@
               (string.eq finding.rule-id (lint_core.lint-rule-no-effect-id)))
               unit
               (io.panic "lint: no-effect finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
+        [(No)
           (io.panic
             "lint: discarded variable should produce a no-effect finding")])
       (if (=
@@ -421,7 +419,7 @@
       (lint-test-source-view vx (ast.ast-source-span 41 9 41 10))]
     [unreachable-return-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             return-one
             (ast.ast-expr-cons
@@ -443,31 +441,31 @@
         (ast.ast-source-span 44 9 44 27))]
     [redundant-padding-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             spanned-panic-call
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [qualified-padding-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             spanned-qualified-panic-call
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [clean-panic-tail-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             unit-expr
             (ast.ast-expr-cons spanned-panic-call (ast.ast-expr-list-new)))))]
     [unreachable-panic-unsafe : i64
       (ast.ast-node-push
-        (ast.AstExpr.Unsafe
+        (Unsafe
           (ast.ast-expr-cons
             panic-call
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [branch-local-return-begin : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             (ast.ast-expr-if vx return-one return-one)
             (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
@@ -488,7 +486,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -499,8 +497,7 @@
               unit
               (io.panic
                 "lint: unreachable-code finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: unreachable-code should produce a finding")])
+        [(No) (io.panic "lint: unreachable-code should produce a finding")])
       (if (=
         (lint_core.lint-findings-count
           (lint-test-walk-tail
@@ -535,7 +532,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -546,7 +543,7 @@
               unit
               (io.panic
                 "lint: redundant divergence padding finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
+        [(No)
           (io.panic
             "lint: redundant divergence padding should produce a finding")])
       (if (=
@@ -655,7 +652,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -669,15 +666,14 @@
                 "cascading and: prefer flat n-ary form (and x y z)"))
               unit
               (io.panic "lint: cascading-and-or finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned and cascade should produce a finding")])
+        [(No) (io.panic "lint: spanned and cascade should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
           core-and-cascade
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (string.eq
             finding.message
             (str_cat.str-cat
@@ -686,15 +682,14 @@
               " x y z)"))
             unit
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: core/and cascade should produce a finding")])
+        [(No) (io.panic "lint: core/and cascade should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
           spanned-core-cond-dotted-call
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -715,7 +710,7 @@
               unit
               (io.panic
                 "lint: transitional core macro finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
+        [(No)
           (io.panic
             "lint: core.cond call should produce transitional qualifier finding")])
       unit)))
@@ -777,17 +772,14 @@
         (ast.ast-expr-if vx one (ast.ast-expr-if vx one one)))]
     [nested : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             unit-expr
             (ast.ast-expr-cons ladder3 (ast.ast-expr-list-new)))))]
     [in-let : i64
       (ast.ast-expr-let
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id
-            (ci.intern-generated-name "y")
-            (ast.AstMaybeType.No)
-            ladder3)
+          (ast.ast-let-binding-id (ci.intern-generated-name "y") (No) ladder3)
           (ast.ast-let-binding-list-new))
         vx)]
     [spanned : i64
@@ -820,7 +812,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (and
             (= finding.depth 3)
             (string.eq
@@ -831,15 +823,14 @@
               (lint_core.lint-rule-nested-if-ladder-value-message)))
             unit
             (io.panic "lint: 3-deep value ladder finding metadata mismatch"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: 3-deep ladder should produce a finding")])
+        [(No) (io.panic "lint: 3-deep ladder should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
           guard-ladder3
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (and
             (= finding.depth 3)
             (string.eq
@@ -850,15 +841,14 @@
               (lint_core.lint-rule-nested-if-ladder-guard-message)))
             unit
             (io.panic "lint: guard ladder finding metadata mismatch"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: guard ladder should produce a finding")])
+        [(No) (io.panic "lint: guard ladder should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
           ambiguous-ladder3
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (and
             (= finding.depth 3)
             (string.eq
@@ -869,8 +859,7 @@
               (lint_core.lint-rule-nested-if-ladder-message)))
             unit
             (io.panic "lint: ambiguous ladder should keep generic message"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: ambiguous ladder should produce a finding")])
+        [(No) (io.panic "lint: ambiguous ladder should produce a finding")])
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
         (lint_core.lint-findings-count
@@ -942,7 +931,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -953,8 +942,7 @@
               unit
               (io.panic
                 "lint: spanned ladder finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned ladder should produce a finding")])
+        [(No) (io.panic "lint: spanned ladder should produce a finding")])
       unit)))
 
 ;; Return-path chains are reported only in tail position.
@@ -992,14 +980,13 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (string.eq
             finding.rule-id
             (lint_core.lint-rule-return-path-chain-id))
             unit
             (io.panic "lint: return-path chain should report its rule id"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: return-path chain should produce a finding")])
+        [(No) (io.panic "lint: return-path chain should produce a finding")])
       unit)))
 
 ;; Unit-branch `if` guards, including the inverted `set!` guard and value
@@ -1011,7 +998,7 @@
   [return-one : i64]
   [set-ok-false : i64]) : unit
   (let
-    [not-vx : i64 (ast.ast-expr-unary (ast.AstUnOp.Not) vx)]
+    [not-vx : i64 (ast.ast-expr-unary (Not) vx)]
     [unit-then-guard : i64 (ast.ast-expr-if vx unit-expr return-one)]
     [unit-else-guard : i64 (ast.ast-expr-if vx return-one unit-expr)]
     [unit-value-guard : i64 (ast.ast-expr-if vx one unit-expr)]
@@ -1032,12 +1019,11 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (if (string.eq finding.rule-id (lint_core.lint-rule-unit-if-guard-id))
             unit
             (io.panic "lint: unit-if guard should report its rule id"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: unit-if guard should produce a finding")])
+        [(No) (io.panic "lint: unit-if guard should produce a finding")])
       (if (=
         (lint_core.lint-findings-count
           (lint-test-walk
@@ -1063,12 +1049,10 @@
 (define (lint-single-begin-smoke [vx : i64]) : unit
   (let
     [single-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
+      (ast.ast-node-push (Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
     [spanned-single-begin : i64
       (lint-test-source-view single-begin (ast.ast-source-span 51 3 51 13))]
-    [empty-begin : i64
-      (ast.ast-node-push (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
+    [empty-begin : i64 (ast.ast-node-push (Begin (ast.ast-expr-list-new)))]
     (begin
       (if (=
         (lint_core.lint-findings-count
@@ -1103,7 +1087,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -1112,8 +1096,7 @@
               unit
               (io.panic
                 "lint: single-begin finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned single begin should produce a finding")])
+        [(No) (io.panic "lint: spanned single begin should produce a finding")])
       unit)))
 
 ;; Body-only nested `let`: the flagged shape, shadowing and non-trivial
@@ -1123,18 +1106,15 @@
     [nested-a-id : i64 (ci.intern-generated-name "a")]
     [outer-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
+        (ast.ast-let-binding-id nested-a-id (No) one)
         (ast.ast-let-binding-list-new))]
     [inner-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id
-          (ci.intern-generated-name "b")
-          (ast.AstMaybeType.No)
-          vx)
+        (ast.ast-let-binding-id (ci.intern-generated-name "b") (No) vx)
         (ast.ast-let-binding-list-new))]
     [shadowing-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
+        (ast.ast-let-binding-id nested-a-id (No) one)
         (ast.ast-let-binding-list-new))]
     [nested-let : i64
       (ast.ast-expr-let
@@ -1148,7 +1128,7 @@
       (ast.ast-expr-let
         outer-let-bindings
         (ast.ast-node-push
-          (ast.AstExpr.Begin
+          (Begin
             (ast.ast-expr-cons
               (ast.ast-expr-let inner-let-bindings vx)
               (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
@@ -1188,7 +1168,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [fspan : ast.AstSourceSpan finding.span]
             (if (and
@@ -1197,8 +1177,7 @@
               unit
               (io.panic
                 "lint: nested-let finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned nested let should produce a finding")])
+        [(No) (io.panic "lint: spanned nested let should produce a finding")])
       unit)))
 
 ;; Builds the leaf fixtures the families share and runs every family. Each
@@ -1209,14 +1188,13 @@
     [vx : i64 (lint-test-var "x")]
     [vy : i64 (lint-test-var "y")]
     [vz : i64 (lint-test-var "z")]
-    [one : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [unit-expr : i64
-      (ast.ast-node-push (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [one : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 1)))]
+    [unit-expr : i64 (ast.ast-node-push (Literal Unit))]
     [return-one : i64 (ast.ast-expr-return one)]
     [set-ok-false : i64
       (ast.ast-expr-set-id
         (ci.intern-generated-name "ok")
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Bool false))))]
+        (ast.ast-node-push (Literal (Bool false))))]
     (begin
       (unless
         (lint-name-set-smoke-ok?)
@@ -1241,7 +1219,7 @@
     finding.rule-id
     finding.depth
     finding.span
-    (lint_core.LintFixDecision.LintFixAvailable fix)))
+    (LintFixAvailable fix)))
 
 (define (lint-level-eq?
   [left : (& left lint_core.LintLevel)]
@@ -1252,8 +1230,8 @@
 ;: that accept user policy must also report the unknown id structurally.
 (define (lint-rule-default-level [rule-id : String]) : lint_core.LintLevel
   (match (lint_core.lint-rule-find rule-id)
-    [(lint_core.LintMaybeRule.Found rule) rule.default-level]
-    [(lint_core.LintMaybeRule.NotFound) lint_core.LintLevel.Allow]))
+    [(Found rule) rule.default-level]
+    [(NotFound) Allow]))
 
 (define (lint-findings-get [items : lint_core.LintFindings] [index : i64]) : lint_core.LintMaybeFinding
   (if (if (>= index 0)
@@ -1262,5 +1240,5 @@
       (lint_core.lint-findings-count
         (owned_view.compiler-owned-shared-view items)))
     false)
-    (lint_core.LintMaybeFinding.Some (lint_core.lint-findings-ref items index))
-    (lint_core.LintMaybeFinding.No)))
+    (Some (lint_core.lint-findings-ref items index))
+    (No)))

@@ -44,11 +44,11 @@
 ;; `(cast ,value : i64)` for every non-u64 width.
 (define (round-trip [value : Widths]) : i64
   (match (widths_json.decode (widths_json.encode value))
-    [(widths_json.Ok decoded)
+    [(Ok decoded)
       (if (and (= decoded.small value.small) (= decoded.medium value.medium))
         decoded.medium
         -1)]
-    [(widths_json.Err _) -2]))
+    [(Err _) -2]))
 
 (define (main) : i64
   (let

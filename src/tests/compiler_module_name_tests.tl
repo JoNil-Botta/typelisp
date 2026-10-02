@@ -3,7 +3,6 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import lsp_frame_core as lsp)
-(import read as reader)
 (import token)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -26,7 +25,7 @@
       (string.copy (& item.name)))
     (test.assert-bool-eq
       (match (lsp.lsp-dotted-import-name-kind (& item.name) true)
-        [(lsp.LspDottedImportNameKind.Complete) true]
+        [(Complete) true]
         [_ false])
       item.valid
       "complete LSP name agrees with grammar")
@@ -38,17 +37,10 @@
         (& item.name)
         0
         (string.string-length (& item.name)))
-      (reader.SpannedSexpr.List 0 0 (token.SourceSpan 2 3 4 5))
+      (List 0 0 (token.SourceSpan 2 3 4 5))
       (ast.ast-source-span 2 3 4 5))
-      [(parser.ResultAstDecl.Ok
-          (ast.AstDecl.Import
-            _
-            (ast.AstImportSpec.Spec
-              kind
-              path
-              (ast.AstMaybeModuleName.Some module-id)
-              (ast.AstMaybeImportAlias.Some alias-id)
-              span-box)))
+      [(Ok
+          (Import _ (Spec kind path (Some module-id) (Some alias-id) span-box)))
         (begin
           (test.assert-true item.valid "parser must reject invalid names")
           (test.assert-true
@@ -62,8 +54,8 @@
             "default alias metadata")
           (test.assert-bool-eq
             (match kind
-              [(ast.AstImportKind.ModuleAll) true]
-              [(ast.AstImportKind.Module) false]
+              [(ModuleAll) true]
+              [(Module) false]
               [_
                 (begin
                   (test.assert-true false "named import kind")
@@ -75,7 +67,7 @@
               (deref span-box)
               (ast.ast-source-span 2 3 4 5))
             "import span remains intact"))]
-      [(parser.ResultAstDecl.Err message)
+      [(Err message)
         (begin
           (test.assert-true (not item.valid) "parser must accept valid names")
           (test.assert-true
@@ -89,7 +81,7 @@
         (begin
           (test.assert-bool-eq
             (match (parser.parse-ast-source (string.copy (& text)))
-              [(parser.ResultAstProgram.Ok _) true]
+              [(Ok _) true]
               [_ false])
             item.valid
             "complete source parser acceptance")
@@ -98,7 +90,7 @@
             "__7525__/main.tl"
             (svec.new)
             8)
-            [(lsp.LspImportTarget.Found _ start end)
+            [(Found _ start end)
               (begin
                 (test.assert-true
                   item.valid
@@ -108,7 +100,7 @@
                   end
                   (+ 8 (string.string-length (& item.name)))
                   "complete import operand end"))]
-            [(lsp.LspImportTarget.Missing)
+            [(Missing)
               (test.assert-true
                 (not item.valid)
                 "valid complete operand missing")])))
@@ -197,7 +189,7 @@
     (begin
       (test.assert-true
         (match (lsp.lsp-dotted-import-name-kind "probe" false)
-          [(lsp.LspDottedImportNameKind.Complete) true]
+          [(Complete) true]
           [_ false])
         "valid name remains complete in an unfinished form")
       (while (< index (array-length cases))
@@ -207,7 +199,7 @@
             "__7525__/main.tl"
             (svec.new)
             8)
-            [(lsp.LspImportTarget.Found _ start end)
+            [(Found _ start end)
               (begin
                 (test.assert-i64-eq start 8 "editor operand start")
                 (test.assert-i64-eq end 13 "editor operand end"))]
@@ -236,13 +228,13 @@
         (begin
           (test.assert-bool-eq
             (match (lsp.lsp-dotted-import-name-kind (& item.name) false)
-              [(lsp.LspDottedImportNameKind.Prefix) true]
+              [(Prefix) true]
               [_ false])
             item.prefix
             "editor prefix classification")
           (test.assert-true
             (match (lsp.lsp-dotted-import-name-kind (& item.name) true)
-              [(lsp.LspDottedImportNameKind.Invalid) true]
+              [(Invalid) true]
               [_ false])
             "closed invalid name cannot be an editor prefix")
           (test.assert-true
@@ -251,7 +243,7 @@
               "__7525__/main.tl"
               (svec.new)
               8)
-              [(lsp.LspImportTarget.Missing) true]
+              [(Missing) true]
               [_ false])
             "incomplete invalid name cannot resolve a valid prefix")
           (set! index (+ index 1)))))))
@@ -276,7 +268,7 @@
               "__7525__/main.tl"
               (svec.new)
               8)
-              [(lsp.LspImportTarget.Missing) true]
+              [(Missing) true]
               [_ false])
             "unsupported byte cannot delimit a valid import prefix")
           (set! index (+ index 1)))))))

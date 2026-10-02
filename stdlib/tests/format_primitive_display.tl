@@ -192,8 +192,8 @@
     (let
       [text : String (format.format "{}" (math.f64-from-bits bits))]
       (match (io.float-parse-f64 text)
-        [(io.IoFloatSomeF64 value) (= (math.f64-to-bits value) bits)]
-        [(io.IoFloatNoF64) false]))))
+        [(IoFloatSomeF64 value) (= (math.f64-to-bits value) bits)]
+        [(IoFloatNoF64) false]))))
 
 (define (f32-roundtrip-ok? [bits : u32]) : bool
   (if (= (bit-and (shr bits 23) (cast 0xff : u32)) (cast 0xff : u32))
@@ -201,9 +201,8 @@
     (let
       [text : String (format.format "{}" (math.f32-from-bits bits))]
       (match (io.float-parse-f64 text)
-        [(io.IoFloatSomeF64 value)
-          (= (math.f32-to-bits (cast value : f32)) bits)]
-        [(io.IoFloatNoF64) false]))))
+        [(IoFloatSomeF64 value) (= (math.f32-to-bits (cast value : f32)) bits)]
+        [(IoFloatNoF64) false]))))
 
 (define (float-roundtrip-property-ok?) : bool
   (let

@@ -33,8 +33,8 @@
     "package tlci transition"
     manifest-path
     true)
-    [(package_source.ResultPackageSourceSet.Ok source-set) source-set]
-    [(package_source.ResultPackageSourceSet.Err message) (io.panic message)]))
+    [(Ok source-set) source-set]
+    [(Err message) (io.panic message)]))
 
 (define (package-dependency-transition-capability
   [state : (& state load.CompilerLoadSessionState)]
@@ -47,17 +47,16 @@
       state
       slot
       identity)
-      [(load.CompilerLoadDependencyCatalogLookup.Resolved capability)
-        capability]
+      [(Resolved capability) capability]
       [_ (io.panic "package tlci transition: macro was not a native result")])))
 
 (define (package-dependency-transition-stale
   [state : load.CompilerLoadSessionState]
   [slot : i64]) : PackageDependencyTransitionStale
   (match (load.compiler-load-dependency-catalog-admitted-image state slot)
-    [(load.CompilerLoadDependencyCatalogAdmittedImage.Unavailable failure)
+    [(Unavailable failure)
       (match failure
-        [(load.CompilerLoadDependencyCatalogFailure.StaleSource expected actual)
+        [(StaleSource expected actual)
           (PackageDependencyTransitionStale expected actual)]
         [_
           (io.panic
@@ -252,9 +251,8 @@
                       "\n"))
                   (match (load.compiler-load-session-state-dependency-catalog-release!
                     (owned_view.compiler-owned-shared-view state))
-                    [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) 0]
-                    [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
-                      (io.panic message)]))))))))))
+                    [(Ok) 0]
+                    [(Err message) (io.panic message)]))))))))))
 
 (define (main) : i64
   (if (= (io.arg-count) 1)

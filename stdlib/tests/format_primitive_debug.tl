@@ -34,12 +34,11 @@
   (let
     [common : format.FormatOptions
       (format.FormatOptions ' ' 0 0 true false 0 false 0)]
-    [options : format.DebugOptions
-      (format.DebugOptions common (format.DebugUpperHex))]
+    [options : format.DebugOptions (format.DebugOptions common (DebugUpperHex))]
     (and
       options.format-options.alternate
       (match options.integer-mode
-        [(format.DebugUpperHex) true]
+        [(DebugUpperHex) true]
         [_ false]))))
 
 (define (debug-integer-ok?) : bool

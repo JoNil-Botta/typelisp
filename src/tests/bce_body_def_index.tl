@@ -2,7 +2,6 @@
 ;; original instruction walk, including duplicate defs and unused spare slots.
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
-(import compiler_ast_types as ast)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as imap)
 (import stdlib.test)
@@ -10,11 +9,8 @@
 
 (define (make-instr [kind : i64] [v : i64]) : ir.CompilerIrInstr
   (if (= kind 0)
-    (ir.CompilerIrInstr.Mov v (ir.CompilerIrValue.I64 7) (ast.AstType.I64))
-    (ir.CompilerIrInstr.StorePtr
-      (ir.CompilerIrValue.Var v)
-      (ir.CompilerIrValue.I64 7)
-      (ast.AstType.I64))))
+    (Mov v (I64 7) (I64))
+    (StorePtr (Var v) (I64 7) (I64))))
 
 (define (make-blocks [n : i64] [kind : i64] [duplicate : bool]) : ir.CompilerIrBlockList
   (let
@@ -34,21 +30,15 @@
             (set! (array-ref is 0) (make-instr kind dst))
             (set!
               (array-ref is 1)
-              (ir.CompilerIrInstr.Mov
-                (+ dst 7)
-                (ir.CompilerIrValue.I64 i)
-                (ast.AstType.I64)))
+              (ir.CompilerIrInstr.Mov (+ dst 7) (I64 i) (I64)))
             (set!
               (array-ref is 2)
-              (ir.CompilerIrInstr.Mov
-                999999
-                (ir.CompilerIrValue.I64 0)
-                (ast.AstType.I64)))
+              (ir.CompilerIrInstr.Mov 999999 (I64 0) (I64)))
             (set!
               (array-ref slots i)
               (ir.CompilerIrBlock.Block i (ir.CompilerIrInstrSeq is 2)))
             (set! i (+ i 1)))))
-      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots n)))))
+      (Array (ir.CompilerIrBlockSeq slots n)))))
 
 (define (seed) : opt.OptBceMbVarList
   (opt.opt-bce-mb-var-list-prepend

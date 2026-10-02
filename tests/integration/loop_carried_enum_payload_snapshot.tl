@@ -19,8 +19,8 @@
 
 (define (advance [cursor : Cursor]) : Step
   (if (= cursor.remaining 0)
-    (Step.Stop)
-    (Step.Next
+    (Stop)
+    (Next
       (WrappedCursor
         77
         (array (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99))))))
@@ -35,8 +35,8 @@
     (begin
       (while (< index count)
         (match (advance (shared-view cursor))
-          [(Step.Stop) (set! index count)]
-          [(Step.Next rest)
+          [(Stop) (set! index count)]
+          [(Next rest)
             (begin
               ;; Raw pointer assignment copies the address, not the pointee.
               (set!

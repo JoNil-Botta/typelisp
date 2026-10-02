@@ -19,9 +19,9 @@
     [ss : shades.Vec (shades.new)]
     (begin
       (points.push! ps (Point 40 2))
-      (shades.push! ss (Shade.Dark))
+      (shades.push! ss (Dark))
       (if (and
         (points.contains? (& ps) (Point 40 2))
-        (shades.contains? (& ss) (Shade.Dark)))
+        (shades.contains? (& ss) (Dark)))
         42
         1))))

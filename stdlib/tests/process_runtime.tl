@@ -44,15 +44,15 @@
   [result : process.ResultProcessOutput]
   [message : String]) : unit
   (match result
-    [(process.OkProcessOutput _) unit]
-    [(process.ErrProcessOutput _) (io.panic message)]))
+    [(OkProcessOutput _) unit]
+    [(ErrProcessOutput _) (io.panic message)]))
 
 (define (assert-process-child-ok
   [result : process.ResultProcessChild]
   [message : String]) : process.ProcessChild
   (match result
-    [(process.OkProcessChild child) child]
-    [(process.ErrProcessChild error)
+    [(OkProcessChild child) child]
+    [(ErrProcessChild error)
       (io.panic (str_cat.str-cat message (process.error-message error)))]))
 
 (define (assert-process-child-spawn-failed
@@ -240,7 +240,7 @@
     [target : String "x86_64-pc-windows-msvc"]
     [tool : String "link.exe"]
     (match (msvc.find-tool (& target) (& tool))
-      [(msvc.OkMsvcTool resolved)
+      [(OkMsvcTool resolved)
         (assert-process-spawned
           (process.output
             (process.command-with-env-list
@@ -251,7 +251,7 @@
                   (process.args-cons "/?" (process.args-empty))))
               (msvc.tool-process-env resolved)))
           "windows msvc process env output")]
-      [(msvc.ErrMsvcTool _) unit])))
+      [(ErrMsvcTool _) unit])))
 
 (define (main) : i64
   (if (string.eq (env.path-list-separator) ";")

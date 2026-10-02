@@ -80,7 +80,7 @@
                   (cast (array-ref src (+ i 2)) : i64)
                   (cast (array-ref src (+ i 3)) : i64)))
               acc))
-          (set! (array-ref out i) (GfoTok.Int acc))
+          (set! (array-ref out i) (Int acc))
           (set! i (+ i 1))))
       acc)))
 
@@ -116,14 +116,14 @@
                 (set! x (+ (* acc 31) (- c 100)))
                 (set! acc (+ (- x (* (/ x 1000003) 1000003)) 2)))
               (set! acc (+ acc c))))
-          (set! (array-ref out i) (GfoTok.Int acc))
+          (set! (array-ref out i) (Int acc))
           (set! i (+ i 1))))
       acc)))
 
 (define (gfo-tok-value [t : GfoTok]) : i64
   (match t
-    [(GfoTok.Int v) v]
-    [(GfoTok.Punct v) (- 0 v)]))
+    [(Int v) v]
+    [(Punct v) (- 0 v)]))
 
 ;; A runtime-filled source: the optimizer does not constant-fold loads out of a
 ;; dynamically allocated array, so both scanners really run.

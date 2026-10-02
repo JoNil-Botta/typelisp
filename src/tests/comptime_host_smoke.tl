@@ -71,10 +71,10 @@
     ok))
 
 (define (host-smoke-var [pools : ast.AstNodePoolContext] [name : String]) : i64
-  (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var (ci.intern name))))
+  (ast.ast-node-pool-context-expr-push pools (Var (ci.intern name))))
 
 (define (host-smoke-expr [node : i64]) : ctfe.CompilerCtfeValue
-  (ctfe.CompilerCtfeValue.Expr node (ast.AstType.Expr)))
+  (Expr node (Expr)))
 
 (define (host-smoke-syntax-name-text [name-id : i64]) : String
   (let
@@ -374,12 +374,12 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [operand-node : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.Call callee-id args)
+        [(Call callee-id args)
           (and
             (match (ast.ast-node-pool-context-expr-get pools callee-id)
-              [(ast.AstExpr.Var name-id)
+              [(Var name-id)
                 (=
                   name-id
                   (host.compiler-comptime-host-template-source-id
@@ -392,8 +392,7 @@
 
 (define (host-smoke-result-is-hygiene-free?) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
-      (= node (ctfe.ctfe-result-hygiene-free-node-id))]
+    [(Expr node _) (= node (ctfe.ctfe-result-hygiene-free-node-id))]
     [_ false]))
 
 ;; Reflection probes return 1/0 as data rather than callback statuses. A true
@@ -408,9 +407,7 @@
     [i64-kind : String "i64"]
     [string-kind : String "string"]
     (begin
-      (set!
-        (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.I64)))
+      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Type (I64)))
       (host-smoke-open! pools operands 1 8)
       (host-smoke-close
         (and
@@ -460,53 +457,37 @@
         fields
         (ctfe.ctfe-reflect-field-list-push
           fields
-          (ctfe.CtfeReflectField.Field (ci.intern "alpha") (ast.AstType.I64))))
+          (Field (ci.intern "alpha") (I64))))
       (set!
         fields
         (ctfe.ctfe-reflect-field-list-push
           fields
-          (ctfe.CtfeReflectField.Field (ci.intern "beta") (ast.AstType.Bool))))
+          (Field (ci.intern "beta") (Bool))))
       (ast.ast-type-list-push
         (&mut payloads)
-        (ast.ast-node-pool-context-type-push pools (ast.AstType.I64)))
+        (ast.ast-node-pool-context-type-push pools (I64)))
       (ast.ast-type-list-push
         (&mut payloads)
-        (ast.ast-node-pool-context-type-push pools (ast.AstType.Bool)))
+        (ast.ast-node-pool-context-type-push pools (Bool)))
       (set!
         variants
         (ctfe.ctfe-reflect-variant-list-push
           variants
-          (ctfe.CtfeReflectVariant.Variant (ci.intern "Some") payloads)))
+          (Variant (ci.intern "Some") payloads)))
       (set!
         variants
         (ctfe.ctfe-reflect-variant-list-push
           variants
-          (ctfe.CtfeReflectVariant.Variant
-            (ci.intern "None")
-            (ast.ast-type-list-new))))
+          (Variant (ci.intern "None") (ast.ast-type-list-new))))
       (set!
         infos
         (ctfe.ctfe-reflect-info-list-push-id
           infos
-          (ctfe.CtfeReflectInfo.Struct
-            "HostSmokePair"
-            ""
-            "HostSmokePair"
-            pair-id
-            (ctfe.CtfeReflectCleanup.No)
-            fields
-            0)
+          (Struct "HostSmokePair" "" "HostSmokePair" pair-id (No) fields 0)
           pair-id))
       (ctfe.ctfe-reflect-info-list-push-id
         infos
-        (ctfe.CtfeReflectInfo.Enum
-          "HostSmokeChoice"
-          ""
-          "HostSmokeChoice"
-          choice-id
-          (ctfe.CtfeReflectCleanup.No)
-          variants
-          0)
+        (Enum "HostSmokeChoice" "" "HostSmokeChoice" choice-id (No) variants 0)
         choice-id))))
 
 ;; The reflection builder test below batches several independent logical
@@ -519,28 +500,28 @@
 
 (define (host-smoke-result-name? [expected : String]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Name text _) (string.eq text expected)]
-    [(ctfe.CompilerCtfeValue.String text _) (string.eq text expected)]
+    [(Name text _) (string.eq text expected)]
+    [(String text _) (string.eq text expected)]
     [_ false]))
 
 (define (host-smoke-result-type? [expected-bool : bool]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Type ty)
+    [(Type ty)
       (if expected-bool
         (match ty
-          [(ast.AstType.Bool) true]
+          [(Bool) true]
           [_ false])
         (match ty
-          [(ast.AstType.I64) true]
+          [(I64) true]
           [_ false]))]
     [_ false]))
 
 (define (host-smoke-result-slice-i64?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Type (ast.AstType.Slice elem))
+    [(Type (Slice elem))
       (match (ast.ast-node-pool-context-type-get pools elem)
-        [(ast.AstType.I64) true]
+        [(I64) true]
         [_ false])]
     [_ false]))
 
@@ -563,7 +544,7 @@
 (define (host-smoke-result-tuple-bool-t?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Type (ast.AstType.Tuple elems-box))
+    [(Type (Tuple elems-box))
       (let
         [elems : ast.AstTypeList (deref elems-box)]
         (and
@@ -571,12 +552,12 @@
           (match (ast.ast-node-pool-context-type-get
             pools
             (ast.ast-type-list-get (& elems) 0 (ast.ast-type-id-fallback)))
-            [(ast.AstType.Bool) true]
+            [(Bool) true]
             [_ false])
           (match (ast.ast-node-pool-context-type-get
             pools
             (ast.ast-type-list-get (& elems) 1 (ast.ast-type-id-fallback)))
-            [(ast.AstType.Var name-id)
+            [(Var name-id)
               (string.eq (host-smoke-syntax-name-text name-id) "T")]
             [_ false])))]
     [_ false]))
@@ -625,7 +606,7 @@
   [expected-second : String]
   [expected-count : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Type (ast.AstType.VarArgs name lifetimes-box))
+    [(Type (VarArgs name lifetimes-box))
       (let
         [lifetimes : ast.AstLifetimeList (deref lifetimes-box)]
         (and
@@ -697,9 +678,9 @@
   [live : i64]
   [index : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.ArrayTake actual-target actual-live actual-index)
+        [(ArrayTake actual-target actual-live actual-index)
           (and
             (= actual-target target)
             (= actual-live live)
@@ -747,13 +728,12 @@
 
 (define (host-smoke-result-expr-typed-binding? [expected-init : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.LetBinding
-        (ast.AstLetBinding.Binding name maybe-ty init))
+    [(LetBinding (Binding name maybe-ty init))
       (and
         (string.eq (host-smoke-syntax-name-text name) "out")
         (= init expected-init)
         (match maybe-ty
-          [(ast.AstMaybeType.Some (ast.AstType.Var type-name))
+          [(Some (Var type-name))
             (string.eq (host-smoke-syntax-name-text type-name) "Vec")]
           [_ false]))]
     [_ false]))
@@ -767,9 +747,7 @@
     [init-node : i64 (host-smoke-var pools "with-capacity")]
     [type-node : i64 (host-smoke-var pools "Vec")]
     [bad-type-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 3)]
     [binding-name : String "out"]
@@ -808,7 +786,7 @@
 
 (define (host-smoke-result-bool? [expected : bool]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Bool value)
+    [(Bool value)
       (if expected
         value
         (not value))]
@@ -816,7 +794,7 @@
 
 (define (host-smoke-result-captured-begin-items? [expected-node : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.CapturedExprList items _)
+    [(CapturedExprList items _)
       (and
         (= (ctfe.ctfe-expr-list-length items) 1)
         (= (ctfe.ctfe-expr-list-nth items 0) expected-node))]
@@ -831,13 +809,9 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [var-node : i64 (host-smoke-var pools "core")]
     [item-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))]
     [int-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.ast-lit-int 73)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 73)))]
     [items : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
     [begin-node : i64 0]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
@@ -846,14 +820,11 @@
       (ast.ast-expr-list-push (&mut items) item-node)
       (set!
         begin-node
-        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items)))
+        (ast.ast-node-pool-context-expr-push pools (Begin items)))
       (set! (array-ref operands 0) (host-smoke-expr var-node))
       (set!
         (array-ref operands 1)
-        (ctfe.CompilerCtfeValue.CapturedExpr
-          begin-node
-          (ast.AstType.Expr)
-          pools))
+        (ctfe.CompilerCtfeValue.CapturedExpr begin-node (Expr) pools))
       (set! (array-ref operands 2) (ctfe.CompilerCtfeValue.Bool true))
       (set! (array-ref operands 3) (host-smoke-expr int-node))
       (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 32)
@@ -1032,11 +1003,11 @@
   [init-node : i64]
   [body-node : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr result-node _)
+    [(Expr result-node _)
       (match (ast.ast-node-pool-context-expr-get pools result-node)
-        [(ast.AstExpr.Let let-box)
+        [(Let let-box)
           (match (deref let-box)
-            [(ast.AstLet.Let bindings actual-body)
+            [(Let bindings actual-body)
               (and
                 (= actual-body body-node)
                 (= (ast.ast-let-binding-list-len (& bindings)) 1)
@@ -1044,20 +1015,17 @@
                   (& bindings)
                   0
                   (ast.ast-let-binding-fallback))
-                  [(ast.AstLetBinding.Binding
-                      actual-name
-                      (ast.AstMaybeType.No)
-                      borrow-node)
+                  [(Binding actual-name (No) borrow-node)
                     (and
                       (= actual-name binding-name)
                       (match (ast.ast-node-pool-context-expr-get
                         pools
                         borrow-node)
-                        [(ast.AstExpr.Borrow mutable? lifetime-id actual-init)
+                        [(Borrow mutable? lifetime-id actual-init)
                           (and
                             (not mutable?)
                             (match (ast.ast-borrow-lifetime-from-id lifetime-id)
-                              [(ast.AstBorrowLifetime.Inferred) true]
+                              [(Inferred) true]
                               [_ false])
                             (= actual-init init-node))]
                         [_ false]))]
@@ -1074,7 +1042,7 @@
     [binding-name : i64 (ci.intern "shared")]
     [init-node : i64 (host-smoke-var pools "owner")]
     [body-node : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var binding-name))]
+      (ast.ast-node-pool-context-expr-push pools (Var binding-name))]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 3)]
     (begin
@@ -1105,9 +1073,9 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [target : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.StructGet actual field)
+        [(StructGet actual field)
           (and
             (= actual target)
             (string.eq (host-smoke-syntax-name-text field) "alpha"))]
@@ -1120,9 +1088,9 @@
   [field-id : i64]
   [value : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node (ast.AstType.Unit))
+    [(Expr node (Unit))
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.StructSet actual-target actual-field actual-value)
+        [(StructSet actual-target actual-field actual-value)
           (and
             (= actual-target target)
             (= actual-field field-id)
@@ -1178,10 +1146,9 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [target : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.TupleRef actual index)
-          (and (= actual target) (= index 1))]
+        [(TupleRef actual index) (and (= actual target) (= index 1))]
         [_ false])]
     [_ false]))
 
@@ -1190,20 +1157,20 @@
   [scrutinee : i64]
   [body : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
-    [(ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (ast.ast-node-pool-context-expr-get pools node)
-        [(ast.AstExpr.Match match-box)
+        [(Match match-box)
           (match (deref match-box)
-            [(ast.AstMatch.Match actual arms)
+            [(Match actual arms)
               (and
                 (= actual scrutinee)
                 (= arms.len 1)
                 (match (array-ref arms.slots 0)
-                  [(ast.AstMatchArm.Arm pattern actual-body)
+                  [(Arm pattern actual-body)
                     (and
                       (= actual-body body)
                       (match pattern
-                        [(ast.AstPattern.Variant name args-box)
+                        [(Variant name args-box)
                           (let
                             [args : ast.AstPatternList (deref args-box)]
                             (and
@@ -1212,13 +1179,13 @@
                                 "Some")
                               (= args.len 2)
                               (match (array-ref args.slots 0)
-                                [(ast.AstPattern.Binding first)
+                                [(Binding first)
                                   (string.eq
                                     (host-smoke-syntax-name-text first)
                                     "p0")]
                                 [_ false])
                               (match (array-ref args.slots 1)
-                                [(ast.AstPattern.Binding second)
+                                [(Binding second)
                                   (string.eq
                                     (host-smoke-syntax-name-text second)
                                     "p1")]
@@ -1241,9 +1208,7 @@
     [tuple-items : ast.AstTypeList (ast.ast-type-list-with-capacity 2)]
     [value-node : i64 (host-smoke-var pools "value")]
     [body-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Bool true)))]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 5)]
     [dot : String "."]
@@ -1251,23 +1216,23 @@
     (begin
       (ast.ast-type-list-push
         (&mut tuple-items)
-        (ast.ast-node-pool-context-type-push pools (ast.AstType.I64)))
+        (ast.ast-node-pool-context-type-push pools (I64)))
       (ast.ast-type-list-push
         (&mut tuple-items)
-        (ast.ast-node-pool-context-type-push pools (ast.AstType.Bool)))
+        (ast.ast-node-pool-context-type-push pools (Bool)))
       (set!
         (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.Struct pair-id)))
+        (ctfe.CompilerCtfeValue.Type (Struct pair-id)))
       (set!
         (array-ref operands 1)
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.Enum choice-id)))
+        (ctfe.CompilerCtfeValue.Type (Enum choice-id)))
       (set!
         (array-ref operands 2)
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.Tuple (box tuple-items))))
+        (ctfe.CompilerCtfeValue.Type (Tuple (box tuple-items))))
       (set! (array-ref operands 3) (host-smoke-expr value-node))
       (set!
         (array-ref operands 4)
-        (ctfe.CompilerCtfeValue.Expr body-node (ast.AstType.Bool)))
+        (ctfe.CompilerCtfeValue.Expr body-node (Bool)))
       (host.compiler-comptime-host-session-open!
         pools
         operands
@@ -1481,9 +1446,7 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [condition-node : i64 (host-smoke-var pools "flag")]
     [result-node : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Bool true)))]
     [else-node : i64 (host-smoke-var pools "else")]
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
@@ -1662,8 +1625,8 @@
 (define (host-smoke-table-ok?) : bool
   (match (tlci.tlci-validate-host-callback-table
     (host.compiler-comptime-host-table))
-    [(tlci.ResultTlciHostAbi.Ok) true]
-    [(tlci.ResultTlciHostAbi.Err _) false]))
+    [(Ok) true]
+    [(Err _) false]))
 
 (define (main) : i64
   (cond

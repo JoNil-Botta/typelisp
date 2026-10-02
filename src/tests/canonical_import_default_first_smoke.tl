@@ -7,8 +7,8 @@
 (define (canonical-import-default-first-read
   [choice : shared.CanonicalImportChoice]) : i64
   (match choice
-    [(shared.CanonicalImportChoice.Chosen item) item.value]
-    [(shared.CanonicalImportChoice.Missing) 0]))
+    [(Chosen item) item.value]
+    [(Missing) 0]))
 
 (define (main) : i64
   (let

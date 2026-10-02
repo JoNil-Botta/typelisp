@@ -49,7 +49,7 @@
       (codec.surface-ast-reader-valid? (& reader))
       (= (codec.surface-ast-reader-offset (& reader)) 24)
       (match decoded
-        [(ast.AstType.CFunc signature actual)
+        [(CFunc signature actual)
           (and (= signature 17) (ast.ast-c-function-mode-eq? actual mode))]
         [_ false]))))
 
@@ -69,17 +69,13 @@
 (test
   c-function-codec-mode-decode
   (begin
+    (test.assert-true (c-function-codec-decode Nullable) "nullable decode")
+    (test.assert-true (c-function-codec-decode NonNull) "non-null decode")
     (test.assert-true
-      (c-function-codec-decode ast.AstCFunctionMode.Nullable)
-      "nullable decode")
-    (test.assert-true
-      (c-function-codec-decode ast.AstCFunctionMode.NonNull)
-      "non-null decode")
-    (test.assert-true
-      (c-function-codec-decode ast.AstCFunctionMode.UnsafeNullable)
+      (c-function-codec-decode UnsafeNullable)
       "unsafe nullable decode")
     (test.assert-true
-      (c-function-codec-decode ast.AstCFunctionMode.UnsafeNonNull)
+      (c-function-codec-decode UnsafeNonNull)
       "unsafe non-null decode")))
 
 (test
@@ -102,15 +98,13 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 1)]
-    [scalar : i64 (ast.ast-node-pool-context-type-push pools ast.AstType.I64)]
+    [scalar : i64 (ast.ast-node-pool-context-type-push pools I64)]
     [_function : i64
       (ast.ast-node-pool-context-type-push
         pools
-        (ast.AstType.Func (box (ast.ast-type-list-new)) scalar))]
+        (Func (box (ast.ast-type-list-new)) scalar))]
     [_pointer : i64
-      (ast.ast-node-pool-context-type-push
-        pools
-        (ast.AstType.CFunc 1 ast.AstCFunctionMode.NonNull))]
+      (ast.ast-node-pool-context-type-push pools (CFunc 1 NonNull))]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new
         (c-function-codec-bytes signature 1 true)

@@ -22,28 +22,28 @@
     [slots : (__tl_dyn-array json.JsonMember)
       (__tl_make-array json.JsonMember 4)]
     (begin
-      (set! (array-ref slots 0) (json.JsonMember "x" (json.JsonNumber "1")))
-      (set! (array-ref slots 1) (json.JsonMember "x" (json.JsonNumber "2")))
+      (set! (array-ref slots 0) (json.JsonMember "x" (JsonNumber "1")))
+      (set! (array-ref slots 1) (json.JsonMember "x" (JsonNumber "2")))
       (set!
         (array-ref slots 2)
         (json.JsonMember
           "poison"
-          (json.JsonObject
+          (JsonObject
             (box (json.JsonMemberSeq (__tl_make-array json.JsonMember 0) -1)))))
       (json.JsonMemberSeq slots 2))))
 
 (define (assert-found [result : json.JsonLookup] [expected : String]) : unit
   (match result
-    [(json.JsonFound value)
+    [(JsonFound value)
       (test.assert-string-eq
         (json.stringify value)
         expected
         "owned JSON lookup")]
-    [(json.JsonMissing) (test.assert-true false "missing JSON lookup")]))
+    [(JsonMissing) (test.assert-true false "missing JSON lookup")]))
 
 (define (assert-missing [result : json.JsonLookup]) : unit
   (match result
-    [(json.JsonMissing) unit]
+    [(JsonMissing) unit]
     [_ (test.assert-true false "lookup outside live prefix")]))
 
 (define (check-arrays) : unit
@@ -76,7 +76,7 @@
         "\"x\""
         "rest live prefix")
       (test.assert-string-eq
-        (json.stringify-list (json.list-cons json.JsonNull (array-prefix)))
+        (json.stringify-list (json.list-cons JsonNull (array-prefix)))
         "null,1,\"x\""
         "prepend live prefix")
       (test.assert-string-eq
@@ -108,20 +108,18 @@
     [owned : json.JsonLookup
       (json.member-list-get-value-owned (& items) (& key))]
     (begin
-      (set! (array-ref items.slots 0) (json.JsonMember "x" json.JsonNull))
+      (set! (array-ref items.slots 0) (json.JsonMember "x" JsonNull))
       (assert-found owned "1")
       (assert-found (json.member-list-get (member-prefix) (& key)) "1")
       (assert-found (json.member-list-get-owned (member-prefix) "x") "1")
       (assert-found
-        (json.object-get (json.JsonObject (box (member-prefix))) (& key))
+        (json.object-get (JsonObject (box (member-prefix))) (& key))
         "1")
       (assert-found
-        (json.object-get-owned (json.JsonObject (box (member-prefix))) "x")
+        (json.object-get-owned (JsonObject (box (member-prefix))) "x")
         "1")
       (assert-found
-        (json.object-get-value-owned
-          (json.JsonObject (box (member-prefix)))
-          "x")
+        (json.object-get-value-owned (JsonObject (box (member-prefix))) "x")
         "1")
       (test.assert-i64-eq
         (json.member-list-count (member-prefix))
@@ -137,7 +135,7 @@
         "reverse duplicates")
       (test.assert-string-eq
         (json.stringify-members
-          (json.member-cons "head" json.JsonNull (member-prefix)))
+          (json.member-cons "head" JsonNull (member-prefix)))
         "\"head\":null,\"x\":1,\"x\":2"
         "member prepend")
       (test.assert-string-eq
@@ -226,13 +224,13 @@
   (begin
     (set! finish-evaluations 0)
     (match (json.sequence-finish (array-once))
-      [(json.JsonValue value)
+      [(JsonValue value)
         (test.assert-string-eq
           (json.stringify value)
           "[1,\"x\"]"
           "sequence finish")])
     (match (json.object-finish (members-once))
-      [(json.JsonValue value)
+      [(JsonValue value)
         (test.assert-string-eq
           (json.stringify value)
           "{\"x\":1,\"x\":2}"
@@ -253,13 +251,13 @@
       4
       "validation operands evaluated once")
     (match (sample_json.encode (Sample (array 4 5) true))
-      [(json.JsonValue value)
+      [(JsonValue value)
         (test.assert-string-eq
           (json.stringify value)
           "{\"numbers\":[4,5],\"enabled\":true}"
           "generated encoder")])
     (match (sample_json.decode (sample_json.encode (Sample (array 4 5) true)))
-      [(sample_json.Ok value)
+      [(Ok value)
         (begin
           (test.assert-i64-eq (array-ref value.numbers 0) 4 "decoded first")
           (test.assert-i64-eq (array-ref value.numbers 1) 5 "decoded second")

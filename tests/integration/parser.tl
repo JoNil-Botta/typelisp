@@ -69,27 +69,27 @@
 ;; the lexer would agree on kinds. Exercises `match` over every Token variant.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(Token.Int _) 1]
-    [(Token.Plus) 2]
-    [(Token.Minus) 3]
-    [(Token.Star) 4]
-    [(Token.Slash) 5]
-    [(Token.LParen) 6]
-    [(Token.RParen) 7]
-    [(Token.End) 8]))
+    [(Int _) 1]
+    [(Plus) 2]
+    [(Minus) 3]
+    [(Star) 4]
+    [(Slash) 5]
+    [(LParen) 6]
+    [(RParen) 7]
+    [(End) 8]))
 
 ;; Integer payload of `Token.Int` (0 for any other kind): projects the payload
 ;; back out of the enum in a `match` arm, the way the cursor reads operands.
 (define (token-int [t : Token]) : i64
   (match t
-    [(Token.Int v) v]
-    [(Token.Plus) 0]
-    [(Token.Minus) 0]
-    [(Token.Star) 0]
-    [(Token.Slash) 0]
-    [(Token.LParen) 0]
-    [(Token.RParen) 0]
-    [(Token.End) 0]))
+    [(Int v) v]
+    [(Plus) 0]
+    [(Minus) 0]
+    [(Star) 0]
+    [(Slash) 0]
+    [(LParen) 0]
+    [(RParen) 0]
+    [(End) 0]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 (define (tag-int) : i64
@@ -170,7 +170,7 @@
         [v : i64 (current-val vals cur)]
         (begin
           (advance cur)
-          (Expr.Num v)))
+          (Num v)))
       (if (= t (tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
@@ -203,10 +203,10 @@
         (if (= (current-tag tags cur) (tag-star))
           (begin
             (advance cur)
-            (set! acc (Expr.Mul (box acc) (box (parse-factor tags vals cur)))))
+            (set! acc (Mul (box acc) (box (parse-factor tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (Expr.Div (box acc) (box (parse-factor tags vals cur)))))))
+            (set! acc (Div (box acc) (box (parse-factor tags vals cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
@@ -228,10 +228,10 @@
         (if (= (current-tag tags cur) (tag-plus))
           (begin
             (advance cur)
-            (set! acc (Expr.Add (box acc) (box (parse-term tags vals cur)))))
+            (set! acc (Add (box acc) (box (parse-term tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (Expr.Sub (box acc) (box (parse-term tags vals cur)))))))
+            (set! acc (Sub (box acc) (box (parse-term tags vals cur)))))))
       acc)))
 
 ;; ---- Evaluator: a recursive tree walk over the real `Expr` AST. ----
@@ -241,15 +241,11 @@
 ;; straight back into `eval`.
 (define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Expr.Num n) (deref n)]
-    [(Expr.Add a b)
-      (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Sub a b)
-      (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Mul a b)
-      (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Div a b)
-      (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
+    [(Num n) (deref n)]
+    [(Add a b) (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Sub a b) (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Mul a b) (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Div a b) (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel vectors directly
@@ -257,21 +253,21 @@
 ;; Token.Int(3), Token.Star, Token.Int(4), Token.End.
 (define (build-sample-tags [tags : (&mut tags i64vec.Vec)]) : i64
   (begin
-    (i64vec.push-ref! tags (token-tag (Token.Int 2)))
-    (i64vec.push-ref! tags (token-tag Token.Plus))
-    (i64vec.push-ref! tags (token-tag (Token.Int 3)))
-    (i64vec.push-ref! tags (token-tag Token.Star))
-    (i64vec.push-ref! tags (token-tag (Token.Int 4)))
-    (i64vec.push-ref! tags (token-tag Token.End))
+    (i64vec.push-ref! tags (token-tag (Int 2)))
+    (i64vec.push-ref! tags (token-tag Plus))
+    (i64vec.push-ref! tags (token-tag (Int 3)))
+    (i64vec.push-ref! tags (token-tag Star))
+    (i64vec.push-ref! tags (token-tag (Int 4)))
+    (i64vec.push-ref! tags (token-tag End))
     6))
 
 (define (build-sample-vals [vals : (&mut vals i64vec.Vec)]) : i64
   (begin
-    (i64vec.push-ref! vals (token-int (Token.Int 2)))
+    (i64vec.push-ref! vals (token-int (Int 2)))
     (i64vec.push-ref! vals 0)
-    (i64vec.push-ref! vals (token-int (Token.Int 3)))
+    (i64vec.push-ref! vals (token-int (Int 3)))
     (i64vec.push-ref! vals 0)
-    (i64vec.push-ref! vals (token-int (Token.Int 4)))
+    (i64vec.push-ref! vals (token-int (Int 4)))
     (i64vec.push-ref! vals 0)
     6))
 

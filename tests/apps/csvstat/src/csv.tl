@@ -154,10 +154,9 @@
                 (set! i (+ i 1))
                 (set! col (+ col 1)))])))
       (cond
-        [failed (ParseResult.Err error)]
+        [failed (Err error)]
         [in-quotes
-          (ParseResult.Err
-            (CsvError quote-line quote-col "unterminated quoted field"))]
+          (Err (CsvError quote-line quote-col "unterminated quoted field"))]
         [else
           (begin
             (if (and
@@ -171,7 +170,7 @@
                   (text_buf.render (replace! field (text_buf.empty))))
                 (ivec.push! starts pending-start)
                 (ivec.push! lines pending-line)))
-            (ParseResult.Ok (Table fields starts lines)))]))))
+            (Ok (Table fields starts lines)))]))))
 
 ;: The number of rows in `table`.
 (define (row-count [table : (& table Table)]) : i64
@@ -251,7 +250,7 @@
 (test
   parse-quoted-fields
   (match (parse "a,\"b,c\",\"say \"\"hi\"\"\"\n")
-    [(ParseResult.Ok table)
+    [(Ok table)
       (begin
         (test.assert-i64-eq (row-count (& table)) 1 "one row")
         (test.assert-i64-eq (row-width (& table) 0) 3 "three fields")
@@ -259,23 +258,23 @@
           (field (& table) 0 2)
           "say \"hi\""
           "doubled quotes unescape"))]
-    [(ParseResult.Err _) (test.assert-true false "parse should succeed")]))
+    [(Err _) (test.assert-true false "parse should succeed")]))
 
 (test
   parse-crlf-and-blank-lines
   (match (parse "x,y\r\n\r\n1,2\r\n")
-    [(ParseResult.Ok table)
+    [(Ok table)
       (begin
         (test.assert-i64-eq (row-count (& table)) 2 "blank line skipped")
         (test.assert-i64-eq (row-line (& table) 1) 3 "second row line")
         (test.assert-string-eq (field (& table) 1 1) "2" "no carriage return"))]
-    [(ParseResult.Err _) (test.assert-true false "parse should succeed")]))
+    [(Err _) (test.assert-true false "parse should succeed")]))
 
 (test
   parse-unterminated-quote
   (match (parse "x,y\n1,\"open\n")
-    [(ParseResult.Ok _) (test.assert-true false "parse should fail")]
-    [(ParseResult.Err error)
+    [(Ok _) (test.assert-true false "parse should fail")]
+    [(Err error)
       (begin
         (test.assert-i64-eq error.line 2 "error line")
         (test.assert-i64-eq error.col 3 "error column"))]))

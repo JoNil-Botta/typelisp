@@ -51,21 +51,16 @@
 
 (define (incremental-test-minimal-query) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Parse)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Parse)
+    (Available (incremental-test-build 5))
     (incremental-test-empty-inputs)))
 
 (define (incremental-test-source-query [reverse? : bool]) : identity.CompilerIncrementalQuery
   (let
     [a : identity.CompilerIncrementalInput
-      (identity.CompilerIncrementalInput.SourceContent
-        "a.tl"
-        (incremental-test-source-content 10))]
+      (SourceContent "a.tl" (incremental-test-source-content 10))]
     [b : identity.CompilerIncrementalInput
-      (identity.CompilerIncrementalInput.SourceContent
-        "b.tl"
-        (incremental-test-source-content 20))]
+      (SourceContent "b.tl" (incremental-test-source-content 20))]
     [inputs : (__tl_dyn-array identity.CompilerIncrementalInput)
       (__tl_make-array identity.CompilerIncrementalInput 2)]
     (begin
@@ -77,18 +72,16 @@
           (set! (array-ref inputs 0) a)
           (set! (array-ref inputs 1) b)))
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Typecheck)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
+        (Typecheck)
+        (Available (incremental-test-build 5))
         inputs))))
 
 (define (incremental-test-logical-query
   [module : String]
   [declaration : String]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Typecheck)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Typecheck)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.LogicalName module declaration))))
 
@@ -113,9 +106,8 @@
           (set! (array-ref fields 0) alpha)
           (set! (array-ref fields 1) beta)))
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Object)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
+        (Object)
+        (Available (incremental-test-build 5))
         (__tl_make-array
           (identity.CompilerIncrementalInput.Configuration
             (identity.CompilerIncrementalConfiguration
@@ -130,9 +122,8 @@
 
 (define (incremental-test-config-material-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Object)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Object)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.Configuration
         (identity.CompilerIncrementalConfiguration
@@ -167,13 +158,12 @@
 (define (incremental-test-request-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
     (cond
-      [(= variant 1) (identity.CompilerIncrementalQueryKind.Object)]
-      [(= variant 2) (identity.CompilerIncrementalQueryKind.IrSummary)]
-      [(= variant 3)
-        (identity.CompilerIncrementalQueryKind.IrDump "after-sccp")]
-      [(= variant 4) (identity.CompilerIncrementalQueryKind.IrDump "after-dce")]
-      [else (identity.CompilerIncrementalQueryKind.Assembly)])
-    (identity.CompilerIncrementalBuildIdentity.Available
+      [(= variant 1) (Object)]
+      [(= variant 2) (IrSummary)]
+      [(= variant 3) (IrDump "after-sccp")]
+      [(= variant 4) (IrDump "after-dce")]
+      [else (Assembly)])
+    (Available
       (incremental-test-build
         (if (= variant 5)
           6
@@ -187,9 +177,8 @@
 
 (define (incremental-test-single-source-query) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Assembly)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Assembly)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.SourceContent
         "src/main.tl"
@@ -197,9 +186,8 @@
 
 (define (incremental-test-ordered-query [duplicate-ordinal? : bool]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Lower)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Lower)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.OrderedChild
         "declarations"
@@ -231,9 +219,8 @@
 ;; material field in the correspondingly tagged input family.
 (define (incremental-test-all-input-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.IrDump "after-sccp")
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (IrDump "after-sccp")
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.SourceContent
         (if (= variant 1)
@@ -352,16 +339,15 @@
     [limits : identity.CompilerIncrementalIdentityLimits
       (identity.compiler-incremental-identity-default-limits)]
     (match (identity.compiler-incremental-identity-decode bytes (& limits))
-      [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
-        (= error.code code)]
-      [(identity.ResultCompilerIncrementalDecodedQuery.Ok _) false])))
+      [(Err error) (= error.code code)]
+      [(Ok _) false])))
 
 (define (incremental-test-result-error-code?
   [result : identity.ResultCompilerIncrementalIdentity]
   [code : i64]) : bool
   (match result
-    [(identity.ResultCompilerIncrementalIdentity.Err error) (= error.code code)]
-    [(identity.ResultCompilerIncrementalIdentity.Ok _) false]))
+    [(Err error) (= error.code code)]
+    [(Ok _) false]))
 
 (define (incremental-test-identities-eq?
   [left : (& left identity.CompilerIncrementalIdentity)]
@@ -374,8 +360,8 @@
 
 (define (incremental-test-minimal-oracle?) : bool
   (match (incremental-test-encode (incremental-test-minimal-query))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (and
         (= (array-length encoded.transcript) 119)
         (= (array-ref encoded.transcript 0) (cast 35 : u8))
@@ -394,7 +380,7 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
+            [(Ok decoded)
               (let
                 [expected-build : identity.CompilerIncrementalChildIdentity
                   (incremental-test-build 5)]
@@ -403,23 +389,23 @@
                   (identity.compiler-incremental-child-eq?
                     (& decoded.compiler-build)
                     (& expected-build))))]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false])))]))
+            [(Err _) false])))]))
 
 (define (incremental-test-order-and-framing?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok forward)
+    [(Err _) false]
+    [(Ok forward)
       (match (incremental-test-encode (incremental-test-source-query true))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok reverse)
+        [(Err _) false]
+        [(Ok reverse)
           (match (incremental-test-encode
             (incremental-test-logical-query "ab" "c"))
-            [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-            [(identity.ResultCompilerIncrementalIdentity.Ok split-left)
+            [(Err _) false]
+            [(Ok split-left)
               (match (incremental-test-encode
                 (incremental-test-logical-query "a" "bc"))
-                [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-                [(identity.ResultCompilerIncrementalIdentity.Ok split-right)
+                [(Err _) false]
+                [(Ok split-right)
                   (and
                     (incremental-test-identities-eq? (& forward) (& reverse))
                     (not
@@ -429,12 +415,12 @@
 
 (define (incremental-test-config-and-sequence-canonical?) : bool
   (match (incremental-test-encode (incremental-test-config-query false false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok forward)
+    [(Err _) false]
+    [(Ok forward)
       (match (incremental-test-encode
         (incremental-test-config-query true false))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok reverse)
+        [(Err _) false]
+        [(Ok reverse)
           (and
             (incremental-test-identities-eq? (& forward) (& reverse))
             (incremental-test-result-error-code?
@@ -446,13 +432,13 @@
               identity.compiler-incremental-error-order)
             (match (incremental-test-encode
               (incremental-test-ordered-query false))
-              [(identity.ResultCompilerIncrementalIdentity.Ok _) true]
-              [(identity.ResultCompilerIncrementalIdentity.Err _) false]))])]))
+              [(Ok _) true]
+              [(Err _) false]))])]))
 
 (define (incremental-test-config-duplicate-name-decode?) : bool
   (match (incremental-test-encode (incremental-test-config-query false false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [mutated : (__tl_dyn-array u8)
           (incremental-test-copy (& encoded.transcript))]
@@ -478,8 +464,8 @@
 
 (define (incremental-test-config-materiality?) : bool
   (match (incremental-test-encode (incremental-test-config-material-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [variant : i64 1]
         [all-differ? : bool true]
@@ -487,9 +473,8 @@
           (while (and all-differ? (<= variant 9))
             (match (incremental-test-encode
               (incremental-test-config-material-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! all-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
+              [(Err _) (set! all-differ? false)]
+              [(Ok changed)
                 (if (sha256.digest-eq?
                   (& baseline.fingerprint)
                   (& changed.fingerprint))
@@ -499,8 +484,8 @@
 
 (define (incremental-test-request-materiality?) : bool
   (match (incremental-test-encode (incremental-test-request-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [variant : i64 1]
         [all-differ? : bool true]
@@ -508,9 +493,8 @@
           (while (and all-differ? (<= variant 6))
             (match (incremental-test-encode
               (incremental-test-request-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! all-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
+              [(Err _) (set! all-differ? false)]
+              [(Ok changed)
                 (if (sha256.digest-eq?
                   (& baseline.fingerprint)
                   (& changed.fingerprint))
@@ -523,11 +507,11 @@
   [right-query : identity.CompilerIncrementalQuery]
   [expected : i64]) : bool
   (match (incremental-test-encode left-query)
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok left)
+    [(Err _) false]
+    [(Ok left)
       (match (incremental-test-encode right-query)
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok right)
+        [(Err _) false]
+        [(Ok right)
           (let
             [limits : identity.CompilerIncrementalIdentityLimits
               (identity.compiler-incremental-identity-default-limits)]
@@ -535,7 +519,7 @@
               (& left)
               (& right)
               (& limits))
-              [(identity.CompilerIncrementalCompareResult.Miss miss)
+              [(Miss miss)
                 (and
                   (= miss.category expected)
                   (<= (string.string-length (& miss.explanation)) 96))]
@@ -562,8 +546,8 @@
 
 (define (incremental-test-all-input-families?) : bool
   (match (incremental-test-encode (incremental-test-all-input-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [limits : identity.CompilerIncrementalIdentityLimits
           (identity.compiler-incremental-identity-default-limits)]
@@ -573,8 +557,8 @@
           (match (identity.compiler-incremental-identity-decode
             (& baseline.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
+            [(Err _) false]
+            [(Ok decoded)
               (let
                 [index : i64 0]
                 [tags? : bool (= (array-length decoded.inputs) 10)]
@@ -595,9 +579,8 @@
           (while (and mutations-differ? (<= variant 10))
             (match (incremental-test-encode
               (incremental-test-all-input-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! mutations-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
+              [(Err _) (set! mutations-differ? false)]
+              [(Ok changed)
                 (if (sha256.digest-eq?
                   (& baseline.fingerprint)
                   (& changed.fingerprint))
@@ -614,14 +597,14 @@
       "typelisp.source-content"
       (& bytes)
       (& limits))
-      [(identity.ResultCompilerIncrementalContentIdentity.Err _) false]
-      [(identity.ResultCompilerIncrementalContentIdentity.Ok source)
+      [(Err _) false]
+      [(Ok source)
         (match (identity.compiler-incremental-content-identity
           "typelisp.package-content"
           (& bytes)
           (& limits))
-          [(identity.ResultCompilerIncrementalContentIdentity.Err _) false]
-          [(identity.ResultCompilerIncrementalContentIdentity.Ok package)
+          [(Err _) false]
+          [(Ok package)
             (and
               (= source.schema 1)
               (= source.exact-length 3)
@@ -636,8 +619,8 @@
 
 (define (incremental-test-mutations?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [truncated : (__tl_dyn-array u8)
           (incremental-test-prefix
@@ -716,8 +699,8 @@
 
 (define (incremental-test-source-length?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [limits : identity.CompilerIncrementalIdentityLimits
           (identity.compiler-incremental-identity-default-limits)]
@@ -726,14 +709,13 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
-              (= (array-length decoded.inputs) 2)]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false])))]))
+            [(Ok decoded) (= (array-length decoded.inputs) 2)]
+            [(Err _) false])))]))
 
 (define (incremental-test-truncated-only?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [truncated : (__tl_dyn-array u8)
           (incremental-test-prefix
@@ -753,17 +735,16 @@
       (identity.CompilerIncrementalIdentityLimits -1 16 1024 128 8 4096 4096)]
     [bad-path : identity.CompilerIncrementalQuery
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Typecheck)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
+        (Typecheck)
+        (Available (incremental-test-build 5))
         (__tl_make-array
           (identity.CompilerIncrementalInput.SourceContent
             "../escape.tl"
             (incremental-test-source-content 1))))]
     [no-build : identity.CompilerIncrementalQuery
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Parse)
-        (identity.CompilerIncrementalBuildIdentity.Unavailable "not generated")
+        (Parse)
+        (Unavailable "not generated")
         (incremental-test-empty-inputs))]
     (and
       (incremental-test-result-error-code?
@@ -785,8 +766,8 @@
 
 (define (incremental-test-decoder-ceilings?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [count-limit : identity.CompilerIncrementalIdentityLimits
           (identity.CompilerIncrementalIdentityLimits
@@ -837,25 +818,25 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& count-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-record-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& string-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-string-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& owned-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-owned-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& work-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-work-limit)]
             [_ false])
           (incremental-test-result-error-code?
@@ -866,12 +847,12 @@
 
 (define (incremental-test-miss-and-corruption?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok left)
+    [(Err _) false]
+    [(Ok left)
       (match (incremental-test-encode
         (incremental-test-logical-query "main" "entry"))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok right)
+        [(Err _) false]
+        [(Ok right)
           (let
             [limits : identity.CompilerIncrementalIdentityLimits
               (identity.compiler-incremental-identity-default-limits)]
@@ -901,13 +882,13 @@
                 (& left)
                 (& left)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Hit) true]
+                [(Hit) true]
                 [_ false])
               (match (identity.compiler-incremental-identity-compare
                 (& left)
                 (& right)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Miss miss)
+                [(Miss miss)
                   (=
                     miss.category
                     identity.compiler-incremental-miss-record-count)]
@@ -916,7 +897,7 @@
                 (& left)
                 (& collision)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Miss miss)
+                [(Miss miss)
                   (and
                     (=
                       miss.category
@@ -927,14 +908,14 @@
                 (& left)
                 (& bad-metadata)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Corrupt error)
+                [(Corrupt error)
                   (= error.code identity.compiler-incremental-error-fingerprint)]
                 [_ false])
               (match (identity.compiler-incremental-identity-compare
                 (& left)
                 (& bad-fingerprint)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Corrupt error)
+                [(Corrupt error)
                   (= error.code identity.compiler-incremental-error-fingerprint)]
                 [_ false])
               (let

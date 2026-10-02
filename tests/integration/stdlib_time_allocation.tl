@@ -68,13 +68,13 @@
       (while (< index count)
         (begin
           (match (time.monotonic-ms)
-            [(time.OkTimeMs current)
+            [(OkTimeMs current)
               (begin
                 (if (and (>= previous 0) (< current previous))
                   (set! ok false)
                   unit)
                 (set! previous current))]
-            [(time.ErrTimeMs _) (set! ok false)])
+            [(ErrTimeMs _) (set! ok false)])
           (set! index (+ index 1))))
       (if ok
         count
@@ -91,11 +91,11 @@
       (while (< index count)
         (begin
           (match (time.unix-ms)
-            [(time.OkTimeMs current)
+            [(OkTimeMs current)
               (if (< current 0)
                 (set! ok false)
                 unit)]
-            [(time.ErrTimeMs _) (set! ok false)])
+            [(ErrTimeMs _) (set! ok false)])
           (set! index (+ index 1))))
       (if ok
         count

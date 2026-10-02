@@ -10,10 +10,10 @@
 
 (define (score [token : (& token Tokenish)]) : i64
   (match token
-    [(Tokenish.Symbol id) (+ 40 (cast id.value : i64))]
-    [(Tokenish.End) 0]))
+    [(Symbol id) (+ 40 (cast id.value : i64))]
+    [(End) 0]))
 
 (define (main) : i64
   (let
-    [token : Tokenish (Tokenish.Symbol (SmallId (cast 2 : u32)))]
+    [token : Tokenish (Symbol (SmallId (cast 2 : u32)))]
     (score (& token))))

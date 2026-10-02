@@ -5,14 +5,14 @@
   (match (cli_option.cli-option-lookup
     "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>"
     "--target")
-    [(cli_option.CliOptionMatch.Found name 1)
+    [(Found name 1)
       (if (string.eq name "--target")
         (match (cli_option.cli-option-lookup "--stdlib-root <dir>" "--target")
-          [(cli_option.CliOptionMatch.None)
+          [(None)
             (match (cli_option.cli-option-lookup
               "--debug|-g|--backtrace -o <file>"
               "-g")
-              [(cli_option.CliOptionMatch.Found alias-name 0)
+              [(Found alias-name 0)
                 (if (and
                   (string.eq alias-name "--debug")
                   (string.eq

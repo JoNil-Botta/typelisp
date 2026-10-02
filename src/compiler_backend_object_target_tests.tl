@@ -44,8 +44,8 @@
         (cobj.compiler-object-symbol-list-contains?
           linux-image.symbols
           "_tl_start"
-          (cobj.CompilerObjectSymbolBinding.Export)
-          (cobj.CompilerObjectSymbolKind.Function))
+          (Export)
+          (Function))
         "Linux leaf exports the native entry")
       (test.assert-true
         (= (cobj.compiler-object-section-list-count windows-sections) 7)
@@ -63,13 +63,13 @@
       (test.assert-true
         (cobj.compiler-object-section-contains-label?
           windows-sections
-          (cobj.CompilerObjectSectionKind.Pdata)
+          (Pdata)
           ".L_tl_start_pdata_begin")
         "Windows leaf emits entry unwind pdata")
       (test.assert-true
         (cobj.compiler-object-section-contains-label?
           windows-sections
-          (cobj.CompilerObjectSectionKind.Xdata)
+          (Xdata)
           ".L_tl_start_xdata")
         "Windows leaf emits entry unwind xdata")
       (test.assert-true
@@ -78,7 +78,7 @@
             (object_windows.compiler-backend-object-manifest-label-shared-view)]
           (cobj.compiler-object-section-contains-label?
             windows-sections
-            (cobj.CompilerObjectSectionKind.Rsrc)
+            (Rsrc)
             label))
         "Windows leaf emits the UTF-8 manifest resource")
       (test.assert-true
@@ -87,7 +87,7 @@
             (object_windows.compiler-backend-object-manifest-label-shared-view)]
           (cobj.compiler-object-relocation-list-contains?
             windows-image.relocations
-            (cobj.CompilerObjectRelocationKind.Addr32Nb)
+            (Addr32Nb)
             target))
         "Windows leaf relocates the manifest resource"))))
 
@@ -115,16 +115,16 @@
           (cobj.compiler-object-symbol-list-contains?
             linux-image.symbols
             "_tl_start"
-            (cobj.CompilerObjectSymbolBinding.Export)
-            (cobj.CompilerObjectSymbolKind.Function)))
+            (Export)
+            (Function)))
         "Linux CRT mode omits the backend-owned native entry")
       (test.assert-true
         (not
           (cobj.compiler-object-symbol-list-contains?
             windows-image.symbols
             "_tl_start"
-            (cobj.CompilerObjectSymbolBinding.Export)
-            (cobj.CompilerObjectSymbolKind.Function)))
+            (Export)
+            (Function)))
         "Windows CRT mode omits the backend-owned native entry")
       (test.assert-true
         (not
@@ -134,8 +134,8 @@
             (cobj.compiler-object-symbol-list-contains?
               windows-image.symbols
               name
-              (cobj.CompilerObjectSymbolBinding.Local)
-              (cobj.CompilerObjectSymbolKind.Data))))
+              (Local)
+              (Data))))
         "Windows CRT mode omits the executable manifest symbol"))))
 
 (test

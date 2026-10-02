@@ -18,12 +18,11 @@
   (let
     [record : CloneMacroUsed (clone (CloneMacroUsed "a" 20))]
     [record-copy : CloneMacroUsed (clone record)]
-    [choice : CloneMacroChoice (clone (CloneMacroChoice.Some "b" 20))]
+    [choice : CloneMacroChoice (clone (Some "b" 20))]
     (+
       record-copy.count
       (+
         (__tl_string_length record-copy.name)
         (match choice
-          [(CloneMacroChoice.None) 0]
-          [(CloneMacroChoice.Some text value)
-            (+ value (__tl_string_length text))])))))
+          [(None) 0]
+          [(Some text value) (+ value (__tl_string_length text))])))))

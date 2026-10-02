@@ -15,8 +15,8 @@
       0
       0
       0))
-    [(registry.ConcurrencyShared authority) authority]
-    [(registry.ConcurrencyShareErr) (registry.ConcurrencyAuthority (box 0))]))
+    [(ConcurrencyShared authority) authority]
+    [(ConcurrencyShareErr) (registry.ConcurrencyAuthority (box 0))]))
 (define registry-test-ready : i64
   0)
 (define registry-test-go : i64
@@ -60,12 +60,12 @@
   (match (registry.concurrency-share
     (& registry-test-authority)
     registry.concurrency-family-channel-i64)
-    [(registry.ConcurrencyShareErr)
+    [(ConcurrencyShareErr)
       (begin
         (unsafe
           (atomic-fetch-add! (ptr-addr-of registry-test-ready) 1))
         1)]
-    [(registry.ConcurrencyShared alias)
+    [(ConcurrencyShared alias)
       (with
         ([held alias registry.cleanup-concurrency-authority])
         (registry-test-worker-with-authority (& held)))]))
@@ -79,16 +79,16 @@
 (define (registry-test-concurrent-close) : i64
   (match (unsafe
     (thread.spawn registry-test-worker 0))
-    [(thread.ThreadSpawnErr _) 1]
-    [(thread.ThreadSpawnOk first)
+    [(ThreadSpawnErr _) 1]
+    [(ThreadSpawnOk first)
       (match (unsafe
         (thread.spawn registry-test-worker 0))
-        [(thread.ThreadSpawnErr _)
+        [(ThreadSpawnErr _)
           (begin
             (registry-test-open-gate!)
             (registry-test-join-code first)
             2)]
-        [(thread.ThreadSpawnOk second)
+        [(ThreadSpawnOk second)
           (let
             [spins : i64 0]
             (begin

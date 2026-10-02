@@ -32,27 +32,25 @@
               (parts.compiler-backend-object-symbol-local-section
                 body
                 (owned_view.compiler-owned-shared-view label)
-                (cobj.CompilerObjectSectionKind.Text)
-                (cobj.CompilerObjectSymbolKind.Function)))
+                (Text)
+                (Function)))
             (set!
               body
               (parts.compiler-backend-object-add-text-relocation
                 body
                 (owned_view.compiler-owned-shared-view label)
-                (cobj.CompilerObjectRelocationKind.Branch)
+                (Branch)
                 (if (= index 0)
                   (owned_view.compiler-owned-shared-view target)
                   "begin")))
             (set!
               body
-              (parts.compiler-backend-object-add-text
-                body
-                (cobj.CompilerObjectX64Instr.Label label)))
+              (parts.compiler-backend-object-add-text body (Label label)))
             (set!
               body
               (parts.compiler-backend-object-add-text
                 body
-                (cobj.CompilerObjectX64Instr.Jcc
+                (Jcc
                   cc
                   (if (= index 0)
                     (owned_view.compiler-owned-shared-view target)
@@ -62,16 +60,15 @@
                 body
                 (parts.compiler-backend-object-add-text
                   body
-                  (cobj.CompilerObjectX64Instr.Bytes
-                    (parts.compiler-backend-object-bytes-from-hex "90"))))
+                  (Bytes (parts.compiler-backend-object-bytes-from-hex "90"))))
               unit)
             (set! index (+ index 1)))))
       (cobj.CompilerObjectImage
         (cobj.compiler-object-section-builder-finish
           (cobj.compiler-object-section-builder-push
             (cobj.compiler-object-section-builder-with-capacity 1)
-            (cobj.CompilerObjectSection.Section
-              (cobj.CompilerObjectSectionKind.Text)
+            (Section
+              (Text)
               (cobj.compiler-object-data-record-builder-finish body.data)
               (cobj.compiler-object-instr-builder-finish body.text))))
         (cobj.compiler-object-symbol-builder-finish body.symbols)
@@ -113,9 +110,8 @@
         (begin
           (match (asm.compiler-object-asm-render
             (owned_view.compiler-owned-shared-view image))
-            [(asm.ResultCompilerObjectAsm.Err message)
-              (test.assert-true false message)]
-            [(asm.ResultCompilerObjectAsm.Ok text)
+            [(Err message) (test.assert-true false message)]
+            [(Ok text)
               (test.assert-true
                 (string.eq
                   text
@@ -130,9 +126,8 @@
                           " begin\n\n")))))
                 "all condition mnemonics preserve both targets")])
           (match (elf.compiler-object-elf-render image)
-            [(elf.ResultCompilerObjectElf.Err message)
-              (test.assert-true false message)]
-            [(elf.ResultCompilerObjectElf.Ok bytes)
+            [(Err message) (test.assert-true false message)]
+            [(Ok bytes)
               (let
                 [text : i64 (elf.compiler-object-elf-load-offset image 0)]
                 [relocs : i64 (elf.compiler-object-elf-rela-offset image 0)]
@@ -166,18 +161,13 @@
                       "ELF branch addend is -4")
                     (set! index (+ index 1)))))])
           (match (coff.compiler-object-coff-render image)
-            [(coff.ResultCompilerObjectCoff.Err message)
-              (test.assert-true false message)]
-            [(coff.ResultCompilerObjectCoff.Ok bytes)
+            [(Err message) (test.assert-true false message)]
+            [(Ok bytes)
               (let
                 [text : i64
-                  (coff.compiler-object-coff-section-raw-pointer
-                    image
-                    (cobj.CompilerObjectSectionKind.Text))]
+                  (coff.compiler-object-coff-section-raw-pointer image (Text))]
                 [relocs : i64
-                  (coff.compiler-object-coff-relocation-pointer
-                    image
-                    (cobj.CompilerObjectSectionKind.Text))]
+                  (coff.compiler-object-coff-relocation-pointer image (Text))]
                 [index : i64 0]
                 (while (< index 2)
                   (let
@@ -203,9 +193,8 @@
                         4)
                       (set! index (+ index 1))))))])
           (match (native.compiler-tlci-native-layout-image image)
-            [(native.ResultCompilerTlciNativeLayout.Err message)
-              (test.assert-true false message)]
-            [(native.ResultCompilerTlciNativeLayout.Ok image-layout)
+            [(Err message) (test.assert-true false message)]
+            [(Ok image-layout)
               (begin
                 (branch-i64! (cast (array-ref image-layout.bytes 0) : i64) 0x0f)
                 (branch-i64!
@@ -241,23 +230,23 @@
             (test.assert-true
               (match (asm.compiler-object-asm-render
                 (owned_view.compiler-owned-shared-view image))
-                [(asm.ResultCompilerObjectAsm.Err _) true]
+                [(Err _) true]
                 [_ false])
               "assembly rejects invalid condition codes")
             unit)
           (test.assert-true
             (match (elf.compiler-object-elf-render image)
-              [(elf.ResultCompilerObjectElf.Err _) true]
+              [(Err _) true]
               [_ false])
             "ELF rejects invalid codes and missing symbols")
           (test.assert-true
             (match (coff.compiler-object-coff-render image)
-              [(coff.ResultCompilerObjectCoff.Err _) true]
+              [(Err _) true]
               [_ false])
             "COFF rejects invalid codes and missing symbols")
           (test.assert-true
             (match (native.compiler-tlci-native-layout-image image)
-              [(native.ResultCompilerTlciNativeLayout.Err _) true]
+              [(Err _) true]
               [_ false])
             "TLCI rejects invalid codes and missing symbols")
           (set! index (+ index 1)))))))

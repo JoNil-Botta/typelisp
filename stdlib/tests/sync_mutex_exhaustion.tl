@@ -6,8 +6,8 @@
 
 (define (create-fails?) : bool
   (match (mutex_i64.create 1)
-    [(mutex_i64.CreateErr _) true]
-    [(mutex_i64.CreateOk _) false]))
+    [(CreateErr _) true]
+    [(CreateOk _) false]))
 
 (define (poison! [states : (MutPtr i64)] [capacity : i64]) : unit
   (begin

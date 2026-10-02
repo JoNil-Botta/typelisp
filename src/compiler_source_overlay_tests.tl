@@ -87,7 +87,7 @@
             (&mut inputs)
             (svec.get (& paths) index "")
             (svec.get (& texts) index "")
-            (source_overlay.CompilerSourceOverlayBase.Any))
+            (Any))
           (set! index (+ index 1))))
       (source_overlay.compiler-source-overlay-admit
         generation
@@ -121,8 +121,8 @@
 (define (overlay-test-admit-code
   [admitted : source_overlay.ResultCompilerSourceOverlay]) : i64
   (match admitted
-    [(source_overlay.ResultCompilerSourceOverlay.Ok _) 0]
-    [(source_overlay.ResultCompilerSourceOverlay.Err failure) failure.code]))
+    [(Ok _) 0]
+    [(Err failure) failure.code]))
 
 ;; 1 when checking fixture `root` through `overlay` passed, 0 when it reported
 ;; diagnostics, and the negated reason when the overlay check was rejected.
@@ -131,20 +131,18 @@
   [admitted : source_overlay.ResultCompilerSourceOverlay]
   [stdlib-roots : svec.Vec]) : i64
   (match admitted
-    [(source_overlay.ResultCompilerSourceOverlay.Err failure)
-      (- 0 (* 100 failure.code))]
-    [(source_overlay.ResultCompilerSourceOverlay.Ok overlay)
+    [(Err failure) (- 0 (* 100 failure.code))]
+    [(Ok overlay)
       (match (check_core.compiler-check-file-with-overlay
         (overlay-test-path root)
         stdlib-roots
         (check_core.compiler-check-language-cfgs)
         overlay)
-        [(check_core.ResultCompilerCheckOverlay.Checked result)
+        [(Checked result)
           (match result.check
-            [(check_core.ResultCompilerCheck.Ok _ _) 1]
-            [(check_core.ResultCompilerCheck.Err _ _) 0])]
-        [(check_core.ResultCompilerCheckOverlay.Rejected failure)
-          (- 0 failure.code)])]))
+            [(Ok _ _) 1]
+            [(Err _ _) 0])]
+        [(Rejected failure) (- 0 failure.code)])]))
 
 (define (overlay-test-check
   [admitted : source_overlay.ResultCompilerSourceOverlay]) : i64
@@ -155,8 +153,8 @@
     (overlay-test-path root)
     (svec.new)
     (check_core.compiler-check-language-cfgs))
-    [(check_core.ResultCompilerCheck.Ok _ _) true]
-    [(check_core.ResultCompilerCheck.Err _ _) false]))
+    [(Ok _ _) true]
+    [(Err _ _) false]))
 
 ;; A and its import B change together. Only the whole candidate generation
 ;; checks; the disk generation, a candidate A over disk B and a different B all
@@ -192,9 +190,9 @@
 
 (define (overlay-test-class-name [class : source_overlay.CompilerSourceClass]) : String
   (match class
-    [(source_overlay.CompilerSourceClass.Disk) "disk"]
-    [(source_overlay.CompilerSourceClass.Embedded) "embedded"]
-    [(source_overlay.CompilerSourceClass.Overlay) "overlay"]))
+    [(Disk) "disk"]
+    [(Embedded) "embedded"]
+    [(Overlay) "overlay"]))
 
 ;; The class of the ledger entry for fixture `name`, or "".
 (define (overlay-test-ledger-class
@@ -218,7 +216,7 @@
       (while (< index count)
         (begin
           (match (source_overlay.compiler-source-ledger-get ledger index).class
-            [(source_overlay.CompilerSourceClass.Embedded) (set! found true)]
+            [(Embedded) (set! found true)]
             [_ unit])
           (set! index (+ index 1))))
       found)))
@@ -228,17 +226,17 @@
   [root : String]
   [admitted : source_overlay.ResultCompilerSourceOverlay]) : source_overlay.CompilerSourceLedger
   (match admitted
-    [(source_overlay.ResultCompilerSourceOverlay.Err _)
+    [(Err _)
       (source_overlay.compiler-source-ledger-new
         (source_overlay.compiler-source-overlay-default-limits))]
-    [(source_overlay.ResultCompilerSourceOverlay.Ok overlay)
+    [(Ok overlay)
       (match (check_core.compiler-check-file-with-overlay
         (overlay-test-path root)
         (svec.new)
         (check_core.compiler-check-language-cfgs)
         overlay)
-        [(check_core.ResultCompilerCheckOverlay.Checked result) result.ledger]
-        [(check_core.ResultCompilerCheckOverlay.Rejected _)
+        [(Checked result) result.ledger]
+        [(Rejected _)
           (source_overlay.compiler-source-ledger-new
             (source_overlay.compiler-source-overlay-default-limits))])]))
 
@@ -289,8 +287,8 @@
 
 (define (overlay-test-diagnostic-text [result : check_core.ResultCompilerCheck]) : String
   (match result
-    [(check_core.ResultCompilerCheck.Ok _ _) "ok"]
-    [(check_core.ResultCompilerCheck.Err diagnostics-box _)
+    [(Ok _ _) "ok"]
+    [(Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -326,16 +324,15 @@
           (check_core.compiler-check-language-cfgs)))]
     [overlaid : String
       (match (overlay-test-admit (svec.new) (svec.new))
-        [(source_overlay.ResultCompilerSourceOverlay.Err _) "rejected"]
-        [(source_overlay.ResultCompilerSourceOverlay.Ok overlay)
+        [(Err _) "rejected"]
+        [(Ok overlay)
           (match (check_core.compiler-check-file-with-overlay
             (overlay-test-path "e.tl")
             (svec.new)
             (check_core.compiler-check-language-cfgs)
             overlay)
-            [(check_core.ResultCompilerCheckOverlay.Checked result)
-              (overlay-test-diagnostic-text result.check)]
-            [(check_core.ResultCompilerCheckOverlay.Rejected _) "rejected"])])]
+            [(Checked result) (overlay-test-diagnostic-text result.check)]
+            [(Rejected _) "rejected"])])]
     (and (not (string.eq (& plain) "ok")) (string.eq (& plain) (& overlaid)))))
 
 (define (overlay-test-limits [entries : i64] [bytes : i64]) : source_overlay.CompilerSourceOverlayLimits
@@ -349,8 +346,7 @@
     [defaults : source_overlay.CompilerSourceOverlayLimits
       (source_overlay.compiler-source-overlay-default-limits)]
     [expect-other : source_overlay.CompilerSourceOverlayBase
-      (source_overlay.CompilerSourceOverlayBase.Expect
-        (source_overlay.CompilerSourceContent 1 "00"))]
+      (Expect (source_overlay.CompilerSourceContent 1 "00"))]
     [stale-inputs (source_overlay.compiler-source-overlay-inputs)]
     [_stale : unit
       (source_overlay.compiler-source-overlay-inputs-push!
@@ -488,25 +484,25 @@
     (begin
       (source_overlay.compiler-source-ledger-record-text!
         (&mut limited)
-        (source_overlay.CompilerSourceClass.Disk)
+        (Disk)
         "/one.tl"
         "one.tl"
         "1")
       (source_overlay.compiler-source-ledger-record-text!
         (&mut limited)
-        (source_overlay.CompilerSourceClass.Disk)
+        (Disk)
         "/two.tl"
         "two.tl"
         "2")
       (source_overlay.compiler-source-ledger-record-text!
         (&mut changed)
-        (source_overlay.CompilerSourceClass.Disk)
+        (Disk)
         "/one.tl"
         "one.tl"
         "1")
       (source_overlay.compiler-source-ledger-record-text!
         (&mut changed)
-        (source_overlay.CompilerSourceClass.Disk)
+        (Disk)
         "/one.tl"
         "one.tl"
         "1")
@@ -518,7 +514,7 @@
         (begin
           (source_overlay.compiler-source-ledger-record-text!
             (&mut changed)
-            (source_overlay.CompilerSourceClass.Disk)
+            (Disk)
             "/one.tl"
             "one.tl"
             "2")
@@ -671,9 +667,9 @@
       (source_overlay.compiler-source-ledger-new
         (source_overlay.compiler-source-overlay-default-limits))]
     (match admitted
-      [(source_overlay.ResultCompilerSourceOverlay.Err failure)
+      [(Err failure)
         (OverlayTestPackageOutcome (- 0 (* 100 failure.code)) empty)]
-      [(source_overlay.ResultCompilerSourceOverlay.Ok overlay)
+      [(Ok overlay)
         (match (check_core.compiler-check-package-entry-file-with-overlay
           "target/check_overlay/pkg/app/src/main.tl"
           (svec.new)
@@ -682,13 +678,13 @@
           true
           (check_core.compiler-check-language-cfgs)
           overlay)
-          [(check_core.ResultCompilerCheckOverlayPackage.Checked result)
+          [(Checked result)
             (OverlayTestPackageOutcome
               (match result.check
-                [(check_core.ResultCompilerCheckWithPaths.Ok _ _ _) 1]
-                [(check_core.ResultCompilerCheckWithPaths.Err _ _) 0])
+                [(Ok _ _ _) 1]
+                [(Err _ _) 0])
               result.ledger)]
-          [(check_core.ResultCompilerCheckOverlayPackage.Rejected failure)
+          [(Rejected failure)
             (OverlayTestPackageOutcome (- 0 failure.code) empty)])])))
 
 (define (overlay-test-ledger-class-of
@@ -703,9 +699,8 @@
 
 (define (overlay-test-content [text : (& text str)]) : source_overlay.CompilerSourceContent
   (match (source_overlay.compiler-source-content-identity "" text)
-    [(source_overlay.ResultCompilerSourceContent.Ok content) content]
-    [(source_overlay.ResultCompilerSourceContent.Err _)
-      (source_overlay.CompilerSourceContent -1 "")]))
+    [(Ok content) content]
+    [(Err _) (source_overlay.CompilerSourceContent -1 "")]))
 
 ;; The content identity of ledger entry `index`.
 (define (overlay-test-ledger-content
@@ -774,11 +769,11 @@
     (match (overlay-test-admit
       (overlay-test-names-1 "b.tl")
       (overlay-test-names-1 (string.copy (& renamed))))
-      [(source_overlay.ResultCompilerSourceOverlay.Ok first-overlay)
+      [(Ok first-overlay)
         (match (overlay-test-admit
           (overlay-test-names-1 "b.tl")
           (overlay-test-names-1 (string.copy (& other))))
-          [(source_overlay.ResultCompilerSourceOverlay.Ok second-overlay)
+          [(Ok second-overlay)
             (begin
               (compiler_load.compiler-load-session-state-source-provider-install!
                 (owned_view.compiler-owned-shared-view first)
@@ -849,8 +844,8 @@
                   (source_overlay.compiler-source-content-eq?
                     (& second-content)
                     (& other-content)))))]
-          [(source_overlay.ResultCompilerSourceOverlay.Err _) false])]
-      [(source_overlay.ResultCompilerSourceOverlay.Err _) false])))
+          [(Err _) false])]
+      [(Err _) false])))
 
 ;; An overlay check leaves no provider or overlay bytes in the session, whether
 ;; it passed, reported diagnostics or was rejected, and the ledger it returned

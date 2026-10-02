@@ -101,9 +101,7 @@
   [args : ast.AstTypeList]
   [ret : ast.AstType]
   [mode : ast.AstCFunctionMode]) : ast.AstType
-  (ast.AstType.CFunc
-    (ast.ast-node-pool-reader-type-push (ast.ast-ty-func args ret))
-    mode))
+  (CFunc (ast.ast-node-pool-reader-type-push (ast.ast-ty-func args ret)) mode))
 
 (define (ast-expr-clause-list-tail [items : ast.AstExprClauseList]) : ast.AstExprClauseList
   (let
@@ -145,16 +143,16 @@
 ;; The `-id` twins below are for walks that already hold an AstTypeId and
 ;; would otherwise round-trip it through `ty-node-get`/`ty-node-push`.
 (define (ast-expr-ann [expr : i64] [ty : ast.AstType]) : i64
-  (ast.ast-node-push (ast.AstExpr.Ann expr (ast.ty-node-push ty))))
+  (ast.ast-node-push (Ann expr (ast.ty-node-push ty))))
 
 (define (ast-expr-quasiquote [inner : i64]) : i64
-  (ast.ast-node-push (ast.AstExpr.Quasiquote inner)))
+  (ast.ast-node-push (Quasiquote inner)))
 
 (define (ast-expr-break) : i64
-  (ast.ast-node-push (ast.AstExpr.Break)))
+  (ast.ast-node-push (Break)))
 
 (define (ast-expr-continue) : i64
-  (ast.ast-node-push (ast.AstExpr.Continue)))
+  (ast.ast-node-push (Continue)))
 
 (define (ast-decl-list-empty? [v : (& v ast.AstDeclList)]) : bool
   (= (ast.ast-decl-list-len v) 0))
@@ -177,123 +175,123 @@
 
 (define (ast-expr-tag [expr : ast.AstExpr]) : i64
   (match expr
-    [(ast.AstExpr.Spanned _ _) 1]
-    [(ast.AstExpr.Literal _) 2]
-    [(ast.AstExpr.Var _) 3]
-    [(ast.AstExpr.Binary _ _ _) 4]
-    [(ast.AstExpr.Unary _ _) 5]
-    [(ast.AstExpr.Call _ _) 6]
-    [(ast.AstExpr.If _ _ _) 7]
-    [(ast.AstExpr.Let _) 8]
-    [(ast.AstExpr.Lambda _) 9]
-    [(ast.AstExpr.Tuple _) 10]
-    [(ast.AstExpr.TupleRef _ _) 11]
-    [(ast.AstExpr.Array _) 12]
-    [(ast.AstExpr.DynArray _) 74]
-    [(ast.AstExpr.FixedMakeArray _ _) 81]
-    [(ast.AstExpr.MakeArray _ _) 13]
-    [(ast.AstExpr.ArrayRef _ _) 14]
-    [(ast.AstExpr.ArraySet _ _ _) 15]
-    [(ast.AstExpr.ArrayTake _ _ _) 75]
-    [(ast.AstExpr.ArrayPush _ _) 41]
-    [(ast.AstExpr.StringRef _ _) 16]
-    [(ast.AstExpr.While _ _) 17]
-    [(ast.AstExpr.ForOwnedState _) 77]
-    [(ast.AstExpr.ForOwnedStep _) 78]
-    [(ast.AstExpr.MacroExpansion _ _ _) 79]
-    [(ast.AstExpr.Replace _ _) 80]
-    [(ast.AstExpr.Begin _) 18]
-    [(ast.AstExpr.Unsafe _) 32]
-    [(ast.AstExpr.Set _ _) 19]
-    [(ast.AstExpr.Ann _ _) 20]
-    [(ast.AstExpr.Cast _ _) 21]
-    [(ast.AstExpr.Borrow _ _ _) 40]
-    [(ast.AstExpr.Match _) 22]
-    [(ast.AstExpr.Foreach _) 23]
-    [(ast.AstExpr.StructGet _ _) 24]
-    [(ast.AstExpr.StructSet _ _ _) 63]
-    [(ast.AstExpr.WithRegion _ _) 25]
-    [(ast.AstExpr.WithEscape _ _) 48]
-    [(ast.AstExpr.WithScratch _) 67]
-    [(ast.AstExpr.InArena _ _) 65]
-    [(ast.AstExpr.TypeLiteral _) 26]
-    [(ast.AstExpr.Init _) 61]
-    [(ast.AstExpr.Comptime _) 27]
-    [(ast.AstExpr.SpmdReduce _) 28]
-    [(ast.AstExpr.SpmdScan _) 68]
-    [(ast.AstExpr.SpmdCompact _) 82]
-    [(ast.AstExpr.SpmdBroadcast _ _) 64]
-    [(ast.AstExpr.SpmdShuffle _ _) 71]
-    [(ast.AstExpr.SpmdProgramIndex) 69]
-    [(ast.AstExpr.SpmdProgramCount) 70]
-    [(ast.AstExpr.Try _) 29]
-    [(ast.AstExpr.Return _) 48]
-    [(ast.AstExpr.Break) 72]
-    [(ast.AstExpr.Continue) 73]
-    [(ast.AstExpr.PtrNull _) 30]
-    [(ast.AstExpr.PtrNullCheck _) 31]
-    [(ast.AstExpr.WithResource _) 33]
-    [(ast.AstExpr.PtrAddrOf _) 62]
-    [(ast.AstExpr.PtrRead _) 34]
-    [(ast.AstExpr.PtrWrite _ _) 35]
-    [(ast.AstExpr.PtrOffset _ _) 36]
-    [(ast.AstExpr.PtrCast _ _) 37]
-    [(ast.AstExpr.PtrToInt _) 38]
-    [(ast.AstExpr.IntToPtr _ _) 39]
-    [(ast.AstExpr.Box _) 42]
-    [(ast.AstExpr.BoxGet _) 43]
-    [(ast.AstExpr.BoxTake _) 65]
-    [(ast.AstExpr.BoxSet _ _) 66]
-    [(ast.AstExpr.Quote _) 44]
-    [(ast.AstExpr.Quasiquote _) 45]
-    [(ast.AstExpr.Unquote _) 46]
-    [(ast.AstExpr.UnquoteSplicing _) 47]
-    [(ast.AstExpr.BracketClause _) 63]
-    [(ast.AstExpr.StringData _) 49]
-    [(ast.AstExpr.StringFromBytes _ _) 50]
-    [(ast.AstExpr.ArrayData _) 51]
-    [(ast.AstExpr.BinaryData _) 64]
-    [(ast.AstExpr.ProgramArgc) 52]
-    [(ast.AstExpr.ProgramArgv) 53]
-    [(ast.AstExpr.ProgramEnvp) 54]
-    [(ast.AstExpr.CpuIdEax _ _) 55]
-    [(ast.AstExpr.CpuIdEbx _ _) 56]
-    [(ast.AstExpr.CpuIdEcx _ _) 57]
-    [(ast.AstExpr.CpuIdEdx _ _) 58]
-    [(ast.AstExpr.Xgetbv _) 59]
-    [(ast.AstExpr.Syscall _) 60]
-    [(ast.AstExpr.ForeachActive _ _) 83]
-    [(ast.AstExpr.LaneValue _) 84]))
+    [(Spanned _ _) 1]
+    [(Literal _) 2]
+    [(Var _) 3]
+    [(Binary _ _ _) 4]
+    [(Unary _ _) 5]
+    [(Call _ _) 6]
+    [(If _ _ _) 7]
+    [(Let _) 8]
+    [(Lambda _) 9]
+    [(Tuple _) 10]
+    [(TupleRef _ _) 11]
+    [(Array _) 12]
+    [(DynArray _) 74]
+    [(FixedMakeArray _ _) 81]
+    [(MakeArray _ _) 13]
+    [(ArrayRef _ _) 14]
+    [(ArraySet _ _ _) 15]
+    [(ArrayTake _ _ _) 75]
+    [(ArrayPush _ _) 41]
+    [(StringRef _ _) 16]
+    [(While _ _) 17]
+    [(ForOwnedState _) 77]
+    [(ForOwnedStep _) 78]
+    [(MacroExpansion _ _ _) 79]
+    [(Replace _ _) 80]
+    [(Begin _) 18]
+    [(Unsafe _) 32]
+    [(Set _ _) 19]
+    [(Ann _ _) 20]
+    [(Cast _ _) 21]
+    [(Borrow _ _ _) 40]
+    [(Match _) 22]
+    [(Foreach _) 23]
+    [(StructGet _ _) 24]
+    [(StructSet _ _ _) 63]
+    [(WithRegion _ _) 25]
+    [(WithEscape _ _) 48]
+    [(WithScratch _) 67]
+    [(InArena _ _) 65]
+    [(TypeLiteral _) 26]
+    [(Init _) 61]
+    [(Comptime _) 27]
+    [(SpmdReduce _) 28]
+    [(SpmdScan _) 68]
+    [(SpmdCompact _) 82]
+    [(SpmdBroadcast _ _) 64]
+    [(SpmdShuffle _ _) 71]
+    [(SpmdProgramIndex) 69]
+    [(SpmdProgramCount) 70]
+    [(Try _) 29]
+    [(Return _) 48]
+    [(Break) 72]
+    [(Continue) 73]
+    [(PtrNull _) 30]
+    [(PtrNullCheck _) 31]
+    [(WithResource _) 33]
+    [(PtrAddrOf _) 62]
+    [(PtrRead _) 34]
+    [(PtrWrite _ _) 35]
+    [(PtrOffset _ _) 36]
+    [(PtrCast _ _) 37]
+    [(PtrToInt _) 38]
+    [(IntToPtr _ _) 39]
+    [(Box _) 42]
+    [(BoxGet _) 43]
+    [(BoxTake _) 65]
+    [(BoxSet _ _) 66]
+    [(Quote _) 44]
+    [(Quasiquote _) 45]
+    [(Unquote _) 46]
+    [(UnquoteSplicing _) 47]
+    [(BracketClause _) 63]
+    [(StringData _) 49]
+    [(StringFromBytes _ _) 50]
+    [(ArrayData _) 51]
+    [(BinaryData _) 64]
+    [(ProgramArgc) 52]
+    [(ProgramArgv) 53]
+    [(ProgramEnvp) 54]
+    [(CpuIdEax _ _) 55]
+    [(CpuIdEbx _ _) 56]
+    [(CpuIdEcx _ _) 57]
+    [(CpuIdEdx _ _) 58]
+    [(Xgetbv _) 59]
+    [(Syscall _) 60]
+    [(ForeachActive _ _) 83]
+    [(LaneValue _) 84]))
 
 (define (ast-decl-tag [decl : ast.AstDecl]) : i64
   (match decl
-    [(ast.AstDecl.Def decl-meta _ _ _) 1]
-    [(ast.AstDecl.DefFn decl-meta _ _ _ _ _) 2]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ _) 10]
-    [(ast.AstDecl.Extern decl-meta _ _ _ _) 3]
-    [(ast.AstDecl.DefEnum decl-meta _ _ _) 4]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) 5]
-    [(ast.AstDecl.Import decl-meta _) 6]
-    [(ast.AstDecl.Test _ _ _ _) 7]
-    [(ast.AstDecl.Module _) 9]
-    [(ast.AstDecl.ModuleBody _ _) 18]
-    [(ast.AstDecl.IncludeStr _ _) 12]
-    [(ast.AstDecl.IncludeStrComptime _ _) 19]
-    [(ast.AstDecl.IncludeStrLzss _ _) 20]
-    [(ast.AstDecl.Unsafe _) 13]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ _) 14]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) 15]
-    [(ast.AstDecl.DefDispatch decl-meta _ _) 16]
-    [(ast.AstDecl.IncludeBin _ _) 17]))
+    [(Def decl-meta _ _ _) 1]
+    [(DefFn decl-meta _ _ _ _ _) 2]
+    [(DefMacro decl-meta _ _ _ _) 10]
+    [(Extern decl-meta _ _ _ _) 3]
+    [(DefEnum decl-meta _ _ _) 4]
+    [(DefStruct decl-meta _ _ _ _) 5]
+    [(Import decl-meta _) 6]
+    [(Test _ _ _ _) 7]
+    [(Module _) 9]
+    [(ModuleBody _ _) 18]
+    [(IncludeStr _ _) 12]
+    [(IncludeStrComptime _ _) 19]
+    [(IncludeStrLzss _ _) 20]
+    [(Unsafe _) 13]
+    [(DefEnumLifetimes decl-meta _ _ _ _) 14]
+    [(DefStructLifetimes decl-meta _ _ _ _ _) 15]
+    [(DefDispatch decl-meta _ _) 16]
+    [(IncludeBin _ _) 17]))
 
 (define (compiler-ast-begin-expr? [expr : ast.AstExpr]) : bool
   (match expr
-    [(ast.AstExpr.Begin _) true]
+    [(Begin _) true]
     [_ false]))
 
 (define (compiler-ast-nested-pattern-box-ok? [pattern : ast.AstPattern]) : bool
   (match pattern
-    [(ast.AstPattern.Variant name args-box)
+    [(Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
         (and
@@ -303,7 +301,7 @@
             (& args)
             0
             (ast.ast-pattern-fallback))
-            [(ast.AstPattern.Tuple items-box)
+            [(Tuple items-box)
               (let
                 [items : ast.AstPatternList (deref items-box)]
                 (and
@@ -312,14 +310,14 @@
                     (& items)
                     0
                     (ast.ast-pattern-fallback))
-                    [(ast.AstPattern.Binding bind-name)
+                    [(Binding bind-name)
                       (= bind-name cbi.compiler-builtin-id-fix-item)]
                     [_ false])
                   (match (ast.ast-pattern-list-get
                     (& items)
                     1
                     (ast.ast-pattern-fallback))
-                    [(ast.AstPattern.Wildcard) true]
+                    [(Wildcard) true]
                     [_ false])))]
             [_ false])))]
     [_ false]))
@@ -328,7 +326,7 @@
   (and
     (= (ast.ast-match-arm-list-len (& arms)) 1)
     (match (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-id)
+      [(Arm pattern body-id)
         (let
           [body : ast.AstExpr (ast.ast-node-get body-id)]
           (and
@@ -338,9 +336,9 @@
 
 (define (compiler-ast-nested-expr-box-ok? [expr : ast.AstExpr]) : bool
   (match expr
-    [(ast.AstExpr.Let let-box)
+    [(Let let-box)
       (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
+        [(Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
             (and
@@ -349,7 +347,7 @@
                 (& bindings)
                 0
                 (ast.ast-let-binding-fallback))
-                [(ast.AstLetBinding.Binding name _ init-box)
+                [(Binding name _ init-box)
                   (let
                     [init : ast.AstExpr (ast.ast-node-get init-box)]
                     (and
@@ -357,26 +355,25 @@
                       (compiler-ast-begin-expr? init)))]
                 [_ false])
               (match body
-                [(ast.AstExpr.If cond-box then-box else-box)
+                [(If cond-box then-box else-box)
                   (let
                     [cond : ast.AstExpr (ast.ast-node-get cond-box)]
                     [then-expr : ast.AstExpr (ast.ast-node-get then-box)]
                     [else-expr : ast.AstExpr (ast.ast-node-get else-box)]
                     (and
                       (match cond
-                        [(ast.AstExpr.Var name)
-                          (string.eq (ci.intern-str name) "cond")]
+                        [(Var name) (string.eq (ci.intern-str name) "cond")]
                         [_ false])
                       (match then-expr
-                        [(ast.AstExpr.Match match-box)
+                        [(Match match-box)
                           (match (__tl-box-place match-box)
-                            [(ast.AstMatch.Match scrut-box arms)
+                            [(Match scrut-box arms)
                               (let
                                 [scrut : ast.AstExpr
                                   (ast.ast-node-get scrut-box)]
                                 (and
                                   (match scrut
-                                    [(ast.AstExpr.Var name)
+                                    [(Var name)
                                       (string.eq (ci.intern-str name) "input")]
                                     [_ false])
                                   (compiler-ast-single-arm-box-ok? arms)))])]
@@ -387,28 +384,23 @@
 
 (define (compiler-ast-expr-pattern-box-smoke?) : bool
   (let
-    [one : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [two : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [one : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 1)))]
+    [two : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 2)))]
     [begin-expr : i64
       (ast.ast-node-push
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             one
             (ast.ast-expr-cons two (ast.ast-expr-list-new)))))]
     [bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id
-          cbi.compiler-builtin-id-fix-x
-          (ast.AstMaybeType.No)
-          begin-expr)
+        (ast.ast-let-binding-id cbi.compiler-builtin-id-fix-x (No) begin-expr)
         (ast.ast-let-binding-list-new))]
     [tuple-pattern : ast.AstPattern
       (ast.ast-pat-tuple
         (ast.ast-pattern-cons
           (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-item)
-          (ast.ast-pattern-cons
-            (ast.AstPattern.Wildcard)
-            (ast.ast-pattern-list-new))))]
+          (ast.ast-pattern-cons (Wildcard) (ast.ast-pattern-list-new))))]
     [variant-pattern : ast.AstPattern
       (ast.ast-pat-variant-id
         cbi.compiler-builtin-id-fix-Some
@@ -419,13 +411,13 @@
         (ast.ast-match-arm-list-new))]
     [match-expr : i64
       (ast.ast-expr-match
-        (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-input))
+        (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-input))
         arms)]
     [nested : i64
       (ast.ast-expr-let
         bindings
         (ast.ast-expr-if
-          (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-cond))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-cond))
           match-expr
           begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast.ast-node-get nested))))
@@ -435,14 +427,13 @@
   [want-name-id : i64]
   [want-value : i64]) : bool
   (match decl
-    [(ast.AstDecl.Def decl-meta name _ value-box)
+    [(Def decl-meta name _ value-box)
       (let
         [value : ast.AstExpr (ast.ast-node-get value-box)]
         (and
           (= name want-name-id)
           (match value
-            [(ast.AstExpr.Literal (ast.AstLiteral.Int actual _))
-              (= actual want-value)]
+            [(Literal (Int actual _)) (= actual want-value)]
             [_ false])))]
     [_ false]))
 
@@ -450,7 +441,7 @@
   [decl : ast.AstDecl]
   [generated-name-id : i64]) : bool
   (match decl
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
         (and
@@ -465,13 +456,13 @@
     [generated : ast.AstDecl
       (ast.ast-decl-def-id
         generated-name-id
-        (ast.AstMaybeType.Some (ast.AstType.I64))
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 7))))]
+        (Some (I64))
+        (ast.ast-node-push (Literal (ast.ast-lit-int 7))))]
     [runtime : ast.AstDecl
       (ast.ast-decl-def-id
         runtime-name-id
-        (ast.AstMaybeType.Some (ast.AstType.I64))
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 9))))]
+        (Some (I64))
+        (ast.ast-node-push (Literal (ast.ast-lit-int 9))))]
     [nested : ast.AstDecl
       (ast.ast-decl-unsafe (ast.ast-decl-comptime-decl generated))]
     [program : ast.AstProgram
@@ -480,17 +471,17 @@
           nested
           (ast.ast-decl-cons runtime (ast.ast-decl-list-new))))]
     (match program
-      [(ast.AstProgram.Program decls-box)
+      [(Program decls-box)
         (let
           [decls : ast.AstDeclList (deref decls-box)]
           (match (ast.ast-decl-list-step decls)
-            [(ast.AstDeclListStep.Cons first rest-box)
+            [(Cons first rest-box)
               (let
                 [rest : ast.AstDeclList rest-box]
                 (and
                   (compiler-ast-nested-decl-box-ok? first generated-name-id)
                   (match (ast.ast-decl-list-step rest)
-                    [(ast.AstDeclListStep.Cons second done-box)
+                    [(Cons second done-box)
                       (let
                         [done : ast.AstDeclList done-box]
                         (and
@@ -499,7 +490,7 @@
                             runtime-name-id
                             9)
                           (match (ast.ast-decl-list-step done)
-                            [(ast.AstDeclListStep.Nil) true]
+                            [(Nil) true]
                             [_ false])))]
                     [_ false])))]
             [_ false]))])))
@@ -514,7 +505,7 @@
       (ast.ty-node-pool-reset!)
       (ast.ty-node-pool-truncate! capacity)
       (let
-        [id : i64 (ast.ty-node-push (ast.AstType.I64))]
+        [id : i64 (ast.ty-node-push (I64))]
         [len : i64 (ast.ty-node-pool-len)]
         [exhausted : bool (ast.ty-node-pool-exhausted?)]
         [grew : bool (> (ty-node-pool-capacity) capacity)]
@@ -526,37 +517,30 @@
   (begin
     (ast.ty-node-pool-reset!)
     (let
-      [first-i64 : i64 (ast.ty-node-push (ast.AstType.I64))]
+      [first-i64 : i64 (ast.ty-node-push (I64))]
       [first-len : i64 (ast.ty-node-pool-len)]
-      [second-i64 : i64 (ast.ty-node-push (ast.AstType.I64))]
+      [second-i64 : i64 (ast.ty-node-push (I64))]
       [second-len : i64 (ast.ty-node-pool-len)]
-      [first-array : i64
-        (ast.ty-node-push (ast.ast-ty-array (ast.AstType.I64) 4))]
+      [first-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
       [array-len : i64 (ast.ty-node-pool-len)]
-      [second-array : i64
-        (ast.ty-node-push (ast.ast-ty-array (ast.AstType.I64) 4))]
+      [second-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
       [final-len : i64 (ast.ty-node-pool-len)]
-      [first-bytes : i64 (ast.ty-node-push (ast.AstType.Bytes))]
+      [first-bytes : i64 (ast.ty-node-push (Bytes))]
       [bytes-len : i64 (ast.ty-node-pool-len)]
-      [second-bytes : i64 (ast.ty-node-push (ast.AstType.Bytes))]
+      [second-bytes : i64 (ast.ty-node-push (Bytes))]
       [second-bytes-len : i64 (ast.ty-node-pool-len)]
-      [str-ty : i64 (ast.ty-node-push (ast.AstType.Str))]
+      [str-ty : i64 (ast.ty-node-push (Str))]
       [str-len : i64 (ast.ty-node-pool-len)]
-      [first-slice : i64
-        (ast.ty-node-push (ast.ast-ty-slice (ast.AstType.I64)))]
+      [first-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
       [slice-len : i64 (ast.ty-node-pool-len)]
-      [second-slice : i64
-        (ast.ty-node-push (ast.ast-ty-slice (ast.AstType.I64)))]
+      [second-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
       [second-slice-len : i64 (ast.ty-node-pool-len)]
-      [first-dyn-array : i64
-        (ast.ty-node-push (ast.ast-ty-dyn-array (ast.AstType.I64)))]
+      [first-dyn-array : i64 (ast.ty-node-push (ast.ast-ty-dyn-array (I64)))]
       [dyn-array-len : i64 (ast.ty-node-pool-len)]
       [nested-slice : i64
-        (ast.ty-node-push
-          (ast.ast-ty-slice (ast.ast-ty-slice (ast.AstType.I64))))]
+        (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
       [nested-slice-again : i64
-        (ast.ty-node-push
-          (ast.ast-ty-slice (ast.ast-ty-slice (ast.AstType.I64))))]
+        (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
       [ok : bool
         (and
           (= first-i64 second-i64)
@@ -591,31 +575,22 @@
     [specializations : ast.AstSpmdSpecializationList
       (ast.ast-spmd-specialization-list-new)]
     (begin
-      (ast.ast-spmd-param-class-list-push
-        (&mut classes)
-        ast.AstSpmdParamClass.Varying)
-      (ast.ast-spmd-param-class-list-push
-        (&mut classes)
-        ast.AstSpmdParamClass.Uniform)
+      (ast.ast-spmd-param-class-list-push (&mut classes) Varying)
+      (ast.ast-spmd-param-class-list-push (&mut classes) Uniform)
       (ast.ast-spmd-specialization-list-push
         (&mut specializations)
-        (ast.AstSpmdSpecialization
-          8
-          (box classes)
-          ast.AstSpmdResultClass.Varying
-          0))
+        (ast.AstSpmdSpecialization 8 (box classes) Varying 0))
       (let
         [copied : ast.AstFnMetadata
-          (ast.ast-fn-metadata-clone
-            (ast.AstFnMetadata.SpmdCallable (box specializations)))]
+          (ast.ast-fn-metadata-clone (SpmdCallable (box specializations)))]
         (match (ast.ast-fn-metadata-spmd-callable copied)
-          [(ast.AstSpmdCallable.Callable copied-items)
+          [(Callable copied-items)
             (let
               [fallback : ast.AstSpmdSpecialization
                 (ast.AstSpmdSpecialization
                   2
                   (box (ast.ast-spmd-param-class-list-new))
-                  ast.AstSpmdResultClass.Unit
+                  Unit
                   -1)]
               [item : ast.AstSpmdSpecialization
                 (ast.ast-spmd-specialization-list-get
@@ -629,19 +604,19 @@
                 (= item.lanes 8)
                 (= item.index-param 0)
                 (match item.result
-                  [(ast.AstSpmdResultClass.Varying) true]
+                  [(Varying) true]
                   [_ false])
                 (match (ast.ast-spmd-param-class-list-get
                   (& copied-classes)
                   0
-                  ast.AstSpmdParamClass.Uniform)
-                  [(ast.AstSpmdParamClass.Varying) true]
+                  Uniform)
+                  [(Varying) true]
                   [_ false])
                 (match (ast.ast-spmd-param-class-list-get
                   (& copied-classes)
                   1
-                  ast.AstSpmdParamClass.Varying)
-                  [(ast.AstSpmdParamClass.Uniform) true]
+                  Varying)
+                  [(Uniform) true]
                   [_ false])))]
           [_ false])))))
 
@@ -666,16 +641,8 @@
         (&mut callables)
         (ast.AstImportedSpmdCallable signature specializations))
       (match (ast.ast-imported-spmd-metadata-clone
-        (ast.AstImportedSpmdMetadata.Package
-          "fixture"
-          "1.0.0"
-          name-id
-          (box callables)))
-        [(ast.AstImportedSpmdMetadata.Package
-            owner
-            version
-            name
-            copied-callables)
+        (Package "fixture" "1.0.0" name-id (box callables)))
+        [(Package owner version name copied-callables)
           (let
             [copied : ast.AstImportedSpmdCallableList (deref copied-callables)]
             [callable : ast.AstImportedSpmdCallable
@@ -702,7 +669,7 @@
                 1)
               (= item.lanes 8)
               (ci.intern-id-eq? item.symbol symbol)))]
-        [(ast.AstImportedSpmdMetadata.No) false]))))
+        [(No) false]))))
 
 ;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
 ;; inline array stride.
@@ -735,14 +702,14 @@
           (int->ptr
             (+ base (* 0 (ast.ast-expr-node-bytes)))
             : (Ptr ast.AstExpr))))
-        [(ast.AstExpr.Var name) (= name 0)]
+        [(Var name) (= name 0)]
         [_ false])
       (match (unsafe
         (ptr-read
           (int->ptr
             (+ base (* 1 (ast.ast-expr-node-bytes)))
             : (Ptr ast.AstExpr))))
-        [(ast.AstExpr.Comptime inner) (= inner 987654321)]
+        [(Comptime inner) (= inner 987654321)]
         [_ false]))))
 
 (define (ast-type-node-stride-pinned?) : bool
@@ -761,14 +728,14 @@
           (int->ptr
             (+ base (* 0 (ast.ast-type-node-bytes)))
             : (Ptr ast.AstType))))
-        [(ast.AstType.I64) true]
+        [(I64) true]
         [_ false])
       (match (unsafe
         (ptr-read
           (int->ptr
             (+ base (* 1 (ast.ast-type-node-bytes)))
             : (Ptr ast.AstType))))
-        [(ast.AstType.Array elem count) (and (= elem 123456789) (= count 42))]
+        [(Array elem count) (and (= elem 123456789) (= count 42))]
         [_ false]))))
 
 (define (ast-node-stride-pinned?) : bool
@@ -777,43 +744,40 @@
 (define (compiler-ast-smoke) : i64
   (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
-    [string-ty : ast.AstType (ast.AstType.String)]
+    [string-ty : ast.AstType (String)]
     [arg-tys : ast.AstTypeList
       (ast.ast-type-cons
-        (ast.AstType.I64)
+        (I64)
         (ast.ast-type-cons string-ty (ast.ast-type-list-new)))]
     [ret-ty : ast.AstType
       (ast.ast-ty-ref
         (ci.intern-generated-name "r")
-        (ast.ast-ty-ptr (ast.ast-ty-array (ast.AstType.I64) 4)))]
+        (ast.ast-ty-ptr (ast.ast-ty-array (I64) 4)))]
     [fn-ty : ast.AstType (ast.ast-ty-func arg-tys ret-ty)]
     [nested-ty-ok? : bool
       (match (ast.ast-place-shared-view fn-ty)
-        [(ast.AstType.Func _ ret)
+        [(Func _ ret)
           (match (ast.ty-node-get ret)
-            [(ast.AstType.Ref region ptr)
+            [(Ref region ptr)
               (and
                 (string.eq (ci.intern-str region) "r")
                 (match (ast.ty-node-get ptr)
-                  [(ast.AstType.Ptr array)
+                  [(Ptr array)
                     (match (ast.ty-node-get array)
-                      [(ast.AstType.Array elem count)
+                      [(Array elem count)
                         (and
                           (= count 4)
                           (match (ast.ty-node-get elem)
-                            [(ast.AstType.I64) true]
+                            [(I64) true]
                             [_ false]))]
                       [_ false])]
                   [_ false]))]
             [_ false])]
         [_ false])]
     [lit : ast.AstLiteral (ast.ast-lit-int 41)]
-    [one : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [one : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 1)))]
     [expr : i64
-      (ast.ast-expr-binary
-        (ast.AstBinOp.Add)
-        (ast.ast-node-push (ast.AstExpr.Literal lit))
-        one)]
+      (ast.ast-expr-binary (Add) (ast.ast-node-push (Literal lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
@@ -823,14 +787,14 @@
     [imported-spmd-metadata-clone-ok? : bool
       (compiler-ast-imported-spmd-metadata-clone-smoke?)]
     [param : ast.AstParam
-      (ast.ast-param-id cbi.compiler-builtin-id-fix-x (ast.AstType.I64) false)]
+      (ast.ast-param-id cbi.compiler-builtin-id-fix-x (I64) false)]
     [params : ast.AstParamList
       (ast.ast-param-cons param (ast.ast-param-list-new))]
     [decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
         cbi.compiler-builtin-id-fix-main
         params
-        (ast.AstType.I64)
+        (I64)
         expr)]
     [program : ast.AstProgram
       (ast.ast-program
@@ -838,7 +802,7 @@
           (ast.ast-place-shared-view decl)
           (ast.ast-decl-list-new)))]
     (match program
-      [(ast.AstProgram.Program _)
+      [(Program _)
         (if (and
           nested-ty-ok?
           nested-expr-pattern-ok?
@@ -887,8 +851,8 @@
       [unmarked : ast.AstDecl
         (ast.ast-decl-def-struct-id
           (ci.intern-generated-name "Marked")
-          ast.AstStructRepr.Default
-          ast.AstStructCleanup.No
+          Default
+          No
           (ast.ast-field-def-list-new))]
       [marked : ast.AstDecl
         (ast.ast-decl-with-aggregate-markers
@@ -898,7 +862,7 @@
         (ast.ast-decl-comptime-decl (ast.ast-place-shared-view marked))]
       [generated-decl : ast.AstDecl
         (ast.ast-decl-comptime-decl-with-meta
-          ast.AstGeneratedDeclMeta.No
+          No
           (ast.ast-place-shared-view marked))]
       [unsafe-decl : ast.AstDecl
         (ast.ast-decl-unsafe (ast.ast-place-shared-view comptime-decl))]

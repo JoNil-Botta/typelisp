@@ -19,8 +19,8 @@
     [len : i64 items.len]
     [offset : i64 items.offset]
     (if (<= len 0)
-      (LStep.Nil)
-      (LStep.Cons
+      (Nil)
+      (Cons
         (unsafe
           (ptr-read (ptr-offset (__tl_array-data items.slots) offset)))
         (L (place-shared-view items.slots) (+ offset 1) (- len 1) false)))))
@@ -43,8 +43,8 @@
         (begin
           (while (< index 4)
             (match (l-step (place-shared-view cursor))
-              [(LStep.Nil) (set! index 4)]
-              [(LStep.Cons head rest)
+              [(Nil) (set! index 4)]
+              [(Cons head rest)
                 (begin
                   (set! (array-ref sources index) (place-shared-view cursor))
                   (set! (array-ref heads index) head)

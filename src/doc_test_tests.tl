@@ -24,19 +24,19 @@
 
 (define (doc-test-run-failure-path [failure : doc_test.DocTestRunFailure]) : String
   (match failure
-    [(doc_test.DocTestRunFailure.Failure path _ _ _) path]))
+    [(Failure path _ _ _) path]))
 
 (define (doc-test-run-failure-line [failure : doc_test.DocTestRunFailure]) : i64
   (match failure
-    [(doc_test.DocTestRunFailure.Failure _ line _ _) line]))
+    [(Failure _ line _ _) line]))
 
 (define (doc-test-run-failure-index [failure : doc_test.DocTestRunFailure]) : i64
   (match failure
-    [(doc_test.DocTestRunFailure.Failure _ _ index _) index]))
+    [(Failure _ _ index _) index]))
 
 (define (doc-test-run-failure-message [failure : doc_test.DocTestRunFailure]) : String
   (match failure
-    [(doc_test.DocTestRunFailure.Failure _ _ _ message) message]))
+    [(Failure _ _ _ message) message]))
 
 ;; Grow the generated error collection past its initial capacity while preserving
 ;; source order. The extraction path uses this same helper.
@@ -99,7 +99,7 @@
             (doc_test.DocTestExample.Example
               index
               (+ index 10)
-              (doc_test.DocTestExpectation.Pass)
+              (Pass)
               (string.int->string index)))
           (set! index (+ index 1))))
       (and
@@ -289,7 +289,7 @@
       (return false))
     (match (doc_test.doc-test-example-expectation
       (owned_view.compiler-owned-shared-view example))
-      [(doc_test.DocTestExpectation.Run actual-exit actual-stdout actual-stderr)
+      [(Run actual-exit actual-stdout actual-stderr)
         (begin
           (unless (= actual-exit expected-exit) (return false))
           (unless (string.eq actual-stdout expected-stdout) (return false))
@@ -395,7 +395,7 @@
 ;; (define (also-bad) : i64 true)
 ;; ```
 ")
-    [(doc_test.DocTestExtraction.Extraction ordinary-examples ordinary-errors)
+    [(Extraction ordinary-examples ordinary-errors)
       (if (= (doc_test.doc-test-example-list-count ordinary-examples) 0)
         (= (doc_test.doc-test-error-list-count ordinary-errors) 0)
         false)]))
@@ -407,7 +407,7 @@
 ;: (define legacy : i64 1)
 ;: ```
 (define legacy : i64 1)")
-    [(doc_test.DocTestExtraction.Extraction examples errors)
+    [(Extraction examples errors)
       (begin
         (unless
           (= (doc_test.doc-test-error-list-count errors) 0)
@@ -424,7 +424,7 @@
 
 (define (doc-test-malformed-smoke-ok?) : bool
   (match (doc_test.doc-test-extract-source (doc-test-malformed-source))
-    [(doc_test.DocTestExtraction.Extraction malformed-examples malformed-errors)
+    [(Extraction malformed-examples malformed-errors)
       (if (= (doc_test.doc-test-example-list-count malformed-examples) 0)
         (if (= (doc_test.doc-test-error-list-count malformed-errors) 3)
           (doc-test-malformed-errors-ok? malformed-errors)
@@ -433,7 +433,7 @@
 
 (define (doc-test-runnable-smoke-ok?) : bool
   (match (doc_test.doc-test-extract-source (doc-test-runnable-source))
-    [(doc_test.DocTestExtraction.Extraction examples errors)
+    [(Extraction examples errors)
       (begin
         (unless
           (= (doc_test.doc-test-error-list-count errors) 0)
@@ -485,7 +485,7 @@
 ;# ;; doctest-stdout: -
 ;# ```
 ")
-    [(doc_test.DocTestExtraction.Extraction examples errors)
+    [(Extraction examples errors)
       (begin
         (unless
           (= (doc_test.doc-test-example-list-count examples) 0)
@@ -509,7 +509,7 @@
 
 (define (doc-test-smoke) : i64
   (match (doc_test.doc-test-extract-source (doc-test-smoke-source))
-    [(doc_test.DocTestExtraction.Extraction examples errors)
+    [(Extraction examples errors)
       (begin
         (unless
           (= (doc_test.doc-test-error-list-count errors) 0)
@@ -864,7 +864,7 @@
   (let
     [rendered : String
       (doc_test.doc-test-run-failure-render
-        (doc_test.DocTestRunFailure.Failure
+        (Failure
           "docs/bad.tl"
           4
           2

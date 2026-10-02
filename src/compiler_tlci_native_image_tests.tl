@@ -22,88 +22,75 @@
     [text0 : cobj.CompilerObjectX64InstrBuilder
       (cobj.compiler-object-instr-builder-with-capacity 5)]
     [text1 : cobj.CompilerObjectX64InstrBuilder
-      (cobj.compiler-object-instr-builder-push
-        text0
-        (cobj.CompilerObjectX64Instr.Label "_entry"))]
+      (cobj.compiler-object-instr-builder-push text0 (Label "_entry"))]
     [text2 : cobj.CompilerObjectX64InstrBuilder
       (cobj.compiler-object-instr-builder-push
         text1
         (if direct-extern-call
-          (cobj.CompilerObjectX64Instr.Call (string.copy import-name))
-          (cobj.CompilerObjectX64Instr.Call "_helper")))]
+          (Call (string.copy import-name))
+          (Call "_helper")))]
     [text3 : cobj.CompilerObjectX64InstrBuilder
       (cobj.compiler-object-instr-builder-push
         text2
-        (cobj.CompilerObjectX64Instr.LoadRip (string.copy import-name)))]
+        (LoadRip (string.copy import-name)))]
     [text4 : cobj.CompilerObjectX64InstrBuilder
-      (cobj.compiler-object-instr-builder-push
-        text3
-        (cobj.CompilerObjectX64Instr.Label "_helper"))]
+      (cobj.compiler-object-instr-builder-push text3 (Label "_helper"))]
     [text5 : cobj.CompilerObjectX64InstrBuilder
       (cobj.compiler-object-instr-builder-push
         text4
-        (cobj.CompilerObjectX64Instr.Raw
-          (compiler_object_elf.compiler-object-elf-ret-bytes)))]
+        (Raw (compiler_object_elf.compiler-object-elf-ret-bytes)))]
     [rodata0 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-with-capacity 2)]
     [rodata1 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         rodata0
-        (cobj.CompilerObjectDataRecord.Label "_constant"))]
+        (Label "_constant"))]
     [rodata2 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        rodata1
-        (cobj.CompilerObjectDataRecord.String "x"))]
+      (cobj.compiler-object-data-record-builder-push rodata1 (String "x"))]
     [data0 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-with-capacity 2)]
     [data1 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        data0
-        (cobj.CompilerObjectDataRecord.Label "_pointer"))]
+      (cobj.compiler-object-data-record-builder-push data0 (Label "_pointer"))]
     [data2 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         data1
         (if rva32
-          (cobj.CompilerObjectDataRecord.SymbolRva32 "_constant")
-          (cobj.CompilerObjectDataRecord.SymbolAddress "_constant")))]
+          (SymbolRva32 "_constant")
+          (SymbolAddress "_constant")))]
     [bss0 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-with-capacity 2)]
     [bss1 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        bss0
-        (cobj.CompilerObjectDataRecord.Label "_zero"))]
+      (cobj.compiler-object-data-record-builder-push bss0 (Label "_zero"))]
     [bss2 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        bss1
-        (cobj.CompilerObjectDataRecord.Zero 16))]
+      (cobj.compiler-object-data-record-builder-push bss1 (Zero 16))]
     [sections0 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-with-capacity 4)]
     [sections1 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections0
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Text)
+        (Section
+          (Text)
           empty-data
           (cobj.compiler-object-instr-builder-finish text5)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Rodata)
+        (Section
+          (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata2)
           (clone empty-instrs)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Data)
+        (Section
+          (Data)
           (cobj.compiler-object-data-record-builder-finish data2)
           (clone empty-instrs)))]
     [sections4 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections3
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Bss)
+        (Section
+          (Bss)
           (cobj.compiler-object-data-record-builder-finish bss2)
           (clone empty-instrs)))]
     [symbols0 : cobj.CompilerObjectSymbolBuilder
@@ -111,56 +98,27 @@
     [symbols1 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols0
-        (cobj.CompilerObjectSymbol.Symbol
-          "_entry"
-          (cobj.CompilerObjectSymbolBinding.Export)
-          (cobj.CompilerObjectSymbolKind.Function)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Text))))]
+        (Symbol "_entry" (Export) (Function) (Some (Text))))]
     [symbols2 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols1
-        (cobj.CompilerObjectSymbol.Symbol
-          "_helper"
-          (cobj.CompilerObjectSymbolBinding.Local)
-          (cobj.CompilerObjectSymbolKind.Function)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Text))))]
+        (Symbol "_helper" (Local) (Function) (Some (Text))))]
     [symbols3 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols2
-        (cobj.CompilerObjectSymbol.Symbol
-          "_constant"
-          (cobj.CompilerObjectSymbolBinding.Local)
-          (cobj.CompilerObjectSymbolKind.Data)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Rodata))))]
+        (Symbol "_constant" (Local) (Data) (Some (Rodata))))]
     [symbols4 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols3
-        (cobj.CompilerObjectSymbol.Symbol
-          "_pointer"
-          (cobj.CompilerObjectSymbolBinding.Local)
-          (cobj.CompilerObjectSymbolKind.Data)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Data))))]
+        (Symbol "_pointer" (Local) (Data) (Some (Data))))]
     [symbols5 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols4
-        (cobj.CompilerObjectSymbol.Symbol
-          "_zero"
-          (cobj.CompilerObjectSymbolBinding.Local)
-          (cobj.CompilerObjectSymbolKind.Data)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Bss))))]
+        (Symbol "_zero" (Local) (Data) (Some (Bss))))]
     [symbols6 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols5
-        (cobj.CompilerObjectSymbol.Symbol
-          import-name
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol import-name (Extern) (Function) No))]
     [relocations : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-with-capacity 1))]
@@ -189,8 +147,8 @@
         "_tl_comptime_host_fuel-check"
         false
         false))
-      [(native_image.ResultCompilerTlciNativeLayout.Err _) false]
-      [(native_image.ResultCompilerTlciNativeLayout.Ok layout)
+      [(Err _) false]
+      [(Ok layout)
         (let
           [fixups : (__tl_dyn-array u8)
             (native_image.compiler-tlci-native-emit-fixups (& layout))]
@@ -198,8 +156,8 @@
             (= (array-length fixups) tlci_core.tlci-section-fixup-record-size)
             (= (tlci_core.tlci-read-u64 fixups 0) 32)
             (match (native_image.compiler-tlci-native-emit-imports (& layout))
-              [(native_image.ResultCompilerTlciNativeImports.Err _) false]
-              [(native_image.ResultCompilerTlciNativeImports.Ok imports)
+              [(Err _) false]
+              [(Ok imports)
                 (and
                   (=
                     (array-length imports)
@@ -224,20 +182,20 @@
                     "fuel-check"))])
             (match (native_image.compiler-tlci-native-layout-image
               (compiler-tlci-native-test-image "host-a" false false))
-              [(native_image.ResultCompilerTlciNativeLayout.Err _) false]
-              [(native_image.ResultCompilerTlciNativeLayout.Ok other)
+              [(Err _) false]
+              [(Ok other)
                 (match (native_image.compiler-tlci-native-emit-imports
                   (& other))
-                  [(native_image.ResultCompilerTlciNativeImports.Err message)
+                  [(Err message)
                     (string.eq
                       message
                       "tlci native image: unknown host import host-a")]
-                  [(native_image.ResultCompilerTlciNativeImports.Ok _) false])])))])))
+                  [(Ok _) false])])))])))
 
 (define (compiler-tlci-native-test-layout-ok?) : bool
   (match (native_image.compiler-tlci-native-layout-image
     (compiler-tlci-native-test-image "host-a" false false))
-    [(native_image.ResultCompilerTlciNativeLayout.Ok layout)
+    [(Ok layout)
       (let
         [bytes : (__tl_dyn-array u8) layout.bytes]
         (and
@@ -258,20 +216,20 @@
               (compiler-tlci-native-test-image "host-a" false false)
               "_entry")
             0)))]
-    [(native_image.ResultCompilerTlciNativeLayout.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-tlci-native-test-results-independent?) : bool
   (match (native_image.compiler-tlci-native-layout-image
     (compiler-tlci-native-test-image "host-a" false false))
-    [(native_image.ResultCompilerTlciNativeLayout.Ok first)
+    [(Ok first)
       (match (native_image.compiler-tlci-native-layout-image
         (compiler-tlci-native-test-image "host-b" false false))
-        [(native_image.ResultCompilerTlciNativeLayout.Ok second)
+        [(Ok second)
           (and
             (string.eq (array-ref first.import-names 0) "host-a")
             (string.eq (array-ref second.import-names 0) "host-b"))]
-        [(native_image.ResultCompilerTlciNativeLayout.Err _) false])]
-    [(native_image.ResultCompilerTlciNativeLayout.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-tlci-native-test-error?
   [direct-extern-call : bool]
@@ -279,9 +237,8 @@
   [expected : String]) : bool
   (match (native_image.compiler-tlci-native-layout-image
     (compiler-tlci-native-test-image "host-call" direct-extern-call rva32))
-    [(native_image.ResultCompilerTlciNativeLayout.Err message)
-      (string.eq message expected)]
-    [(native_image.ResultCompilerTlciNativeLayout.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (test
   compiler-tlci-native-layout

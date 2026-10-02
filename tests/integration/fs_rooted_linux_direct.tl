@@ -7,12 +7,12 @@
 
 (define (write-failed? [result : rooted.FsLinuxRootedResult]) : bool
   (match result
-    [(rooted.LinuxRootedWriteFailure) true]
+    [(LinuxRootedWriteFailure) true]
     [_ false]))
 
 (define (ok? [result : rooted.FsLinuxRootedResult]) : bool
   (match result
-    [(rooted.LinuxRootedOk) true]
+    [(LinuxRootedOk) true]
     [_ false]))
 
 (define (main) : i64
@@ -43,7 +43,7 @@
                         (&mut file)
                         (byte_buf.str-as-bytes (& contents))
                         (string-length (& contents))
-                        rooted.LinuxRootedRegularFile
+                        LinuxRootedRegularFile
                         false
                         rooted.linux-rooted-never-cancelled)]
                     (set!
@@ -86,7 +86,7 @@
                           (&mut file)
                           (byte_buf.str-as-bytes (& contents))
                           (string-length (& contents))
-                          rooted.LinuxRootedRegularFile
+                          LinuxRootedRegularFile
                           false
                           rooted.linux-rooted-never-cancelled)]
                       (set!

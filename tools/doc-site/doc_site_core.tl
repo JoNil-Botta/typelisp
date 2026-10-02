@@ -55,53 +55,53 @@
   (let
     [name : String "TYPELISP_DOC_COMPILER_IDENTITY"]
     (match (env.get (& name))
-      [(env.EnvSomeString value) value]
-      [(env.EnvNoString) (build_identity.compiler-build-git-hash-shared-view)])))
+      [(EnvSomeString value) value]
+      [(EnvNoString) (build_identity.compiler-build-git-hash-shared-view)])))
 
 (define (doc-site-source-identity) : String
   (let
     [name : String "TYPELISP_DOC_SOURCE_IDENTITY"]
     (match (env.get (& name))
-      [(env.EnvSomeString value) value]
-      [(env.EnvNoString) (doc-site-build-identity)])))
+      [(EnvSomeString value) value]
+      [(EnvNoString) (doc-site-build-identity)])))
 
 (define (doc-site-module-source [module : (& module DocSiteModule)]) : String
   (match module
-    [(DocSiteModule.Module source _) (string.copy source)]))
+    [(Module source _) (string.copy source)]))
 
 (define (doc-site-module-output [module : (& module DocSiteModule)]) : String
   (match module
-    [(DocSiteModule.Module _ output) (string.copy output)]))
+    [(Module _ output) (string.copy output)]))
 
 (define (doc-site-guide-title [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage title _ _ _) (string.copy title)]))
+    [(GuidePage title _ _ _) (string.copy title)]))
 
 (define (doc-site-guide-source [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ source _ _) (string.copy source)]))
+    [(GuidePage _ source _ _) (string.copy source)]))
 
 (define (doc-site-guide-output [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ _ output _) (string.copy output)]))
+    [(GuidePage _ _ output _) (string.copy output)]))
 
 (define (doc-site-guide-label [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ _ _ label) (string.copy label)]))
+    [(GuidePage _ _ _ label) (string.copy label)]))
 
 (define (doc-site-api-tree-root [tree : (& tree DocSiteApiTree)]) : String
   (match tree
-    [(DocSiteApiTree.ApiTree root _ _) (string.copy root)]))
+    [(ApiTree root _ _) (string.copy root)]))
 
 (define (doc-site-api-tree-output [tree : (& tree DocSiteApiTree)]) : String
   (match tree
-    [(DocSiteApiTree.ApiTree _ output _) (string.copy output)]))
+    [(ApiTree _ output _) (string.copy output)]))
 
 (define (doc-site-api-tree-modules [tree : (& tree DocSiteApiTree)]) : (&
     tree
     doc_site_modules.Vec)
   (match tree
-    [(DocSiteApiTree.ApiTree _ _ modules) modules]))
+    [(ApiTree _ _ modules) modules]))
 
 (define (doc-site-module-list-empty) : doc_site_modules.Vec
   (doc_site_modules.new))
@@ -109,7 +109,7 @@
 (define (doc-site-module-list-ref
   [modules : (& modules doc_site_modules.Vec)]
   [index : i64]) : DocSiteModule
-  (doc_site_modules.get modules index (DocSiteModule.Module "" "")))
+  (doc_site_modules.get modules index (Module "" "")))
 
 (define (doc-site-guide-page-list-empty) : doc_site_guides.Vec
   (doc_site_guides.new))
@@ -121,7 +121,7 @@
 (define (doc-site-guide-page-list-ref
   [guides : (& guides doc_site_guides.Vec)]
   [index : i64]) : DocSiteGuidePage
-  (doc_site_guides.get guides index (DocSiteGuidePage.GuidePage "" "" "" "")))
+  (doc_site_guides.get guides index (GuidePage "" "" "" "")))
 
 (define (doc-site-section-list-count
   [sections : (& sections doc_site_sections.Vec)]) : i64
@@ -133,14 +133,14 @@
   (doc_site_sections.get
     sections
     index
-    (DocSiteSection.Guide "" (doc-site-guide-page-list-empty))))
+    (Guide "" (doc-site-guide-page-list-empty))))
 
 (define (doc-site-section-guide-title-eq?
   [section : DocSiteSection]
   [expected : String]) : bool
   (match section
-    [(DocSiteSection.Guide title _) (string.eq title expected)]
-    [(DocSiteSection.ApiTree _) false]))
+    [(Guide title _) (string.eq title expected)]
+    [(ApiTree _) false]))
 
 (define (doc-site-vector-core-growth-order?) : bool
   (let
@@ -150,31 +150,31 @@
     (begin
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "first.tl" "first.html"))
+        (Module "first.tl" "first.html"))
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "second.tl" "second.html"))
+        (Module "second.tl" "second.html"))
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "third.tl" "third.html"))
+        (Module "third.tl" "third.html"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage "First" "first.md" "first.html" "One"))
+        (GuidePage "First" "first.md" "first.html" "One"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage "Second" "second.md" "second.html" "Two"))
+        (GuidePage "Second" "second.md" "second.html" "Two"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage "Third" "third.md" "third.html" "Three"))
+        (GuidePage "Third" "third.md" "third.html" "Three"))
       (doc_site_sections.push-ref!
         (&mut sections)
-        (DocSiteSection.Guide "First" (doc-site-guide-page-list-empty)))
+        (Guide "First" (doc-site-guide-page-list-empty)))
       (doc_site_sections.push-ref!
         (&mut sections)
-        (DocSiteSection.Guide "Second" (doc-site-guide-page-list-empty)))
+        (Guide "Second" (doc-site-guide-page-list-empty)))
       (doc_site_sections.push-ref!
         (&mut sections)
-        (DocSiteSection.Guide "Third" (doc-site-guide-page-list-empty)))
+        (Guide "Third" (doc-site-guide-page-list-empty)))
       (let
         [first-module : DocSiteModule (doc-site-module-list-ref modules 0)]
         [third-module : DocSiteModule (doc-site-module-list-ref modules 2)]
@@ -213,7 +213,7 @@
           (begin
             (doc_site_modules.push-ref!
               (&mut modules)
-              (DocSiteModule.Module
+              (Module
                 (stdlib_manifest.doc-site-stdlib-module-source (& name))
                 (stdlib_manifest.doc-site-stdlib-module-page (& name))))
             (set! i (+ i 1)))))
@@ -225,56 +225,48 @@
     (begin
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
-          "TypeLisp Overview"
-          "README.md"
-          "readme.html"
-          "Overview"))
+        (GuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "TypeLisp Language Reference"
           "SPEC.md"
           "spec.html"
           "Specification"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "Language Guide"
           "docs/language-guide.md"
           "language-guide.html"
           "Language guide"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "Memory and Ownership"
           "docs/memory-model.md"
           "memory-model.html"
           "Memory and ownership"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "Concurrency and SIMD"
           "docs/concurrency-and-simd.md"
           "concurrency-and-simd.html"
           "Concurrency and SIMD"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
-          "Packages"
-          "docs/packages.md"
-          "packages.html"
-          "Packages"))
+        (GuidePage "Packages" "docs/packages.md" "packages.html" "Packages"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "Testing, Documentation, and Bootstrap"
           "docs/testing-and-bootstrap.md"
           "testing-and-bootstrap.html"
           "Testing, documentation, and bootstrap"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "Compiler Architecture and CLI"
           "docs/compiler-architecture.md"
           "compiler-architecture.html"
@@ -282,7 +274,7 @@
       guides)))
 
 (define (doc-site-stdlib-api-tree) : DocSiteApiTree
-  (DocSiteApiTree.ApiTree "stdlib" "stdlib.html" (doc-site-stdlib-modules)))
+  (ApiTree "stdlib" "stdlib.html" (doc-site-stdlib-modules)))
 
 ;; The getting-started guide is a `.tl` module rather than a Markdown page so
 ;; that `typelisp doc --test` compiles every example in it. A Markdown guide
@@ -293,11 +285,11 @@
     (begin
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "docs/getting_started.tl" "getting-started.html"))
+        (Module "docs/getting_started.tl" "getting-started.html"))
       modules)))
 
 (define (doc-site-guide-api-tree) : DocSiteApiTree
-  (DocSiteApiTree.ApiTree "guide" "guide.html" (doc-site-guide-modules)))
+  (ApiTree "guide" "guide.html" (doc-site-guide-modules)))
 
 (define (doc-site-typelisp-sections) : doc_site_sections.Vec
   (let
@@ -305,7 +297,7 @@
     (begin
       (doc_site_sections.push-ref!
         (&mut sections)
-        (DocSiteSection.Guide "Language" (doc-site-language-guides)))
+        (Guide "Language" (doc-site-language-guides)))
       (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-guide-api-tree)))
@@ -469,9 +461,8 @@
   [target : (& target str)]
   [section : DocSiteSection]) : String
   (match section
-    [(DocSiteSection.Guide _ guides)
-      (doc-site-guide-output-for-source target guides)]
-    [(DocSiteSection.ApiTree tree)
+    [(Guide _ guides) (doc-site-guide-output-for-source target guides)]
+    [(ApiTree tree)
       (doc-site-module-output-for-source
         target
         (doc-site-api-tree-modules tree))]))
@@ -930,9 +921,8 @@ pre {
 
 (define (doc-site-render-index-section [section : DocSiteSection]) : String
   (match section
-    [(DocSiteSection.Guide title guides)
-      (doc-site-render-guide-index-section title guides)]
-    [(DocSiteSection.ApiTree tree) (doc-site-render-api-index-section tree)]))
+    [(Guide title guides) (doc-site-render-guide-index-section title guides)]
+    [(ApiTree tree) (doc-site-render-api-index-section tree)]))
 
 (define (doc-site-render-index-sections
   [sections : (& sections doc_site_sections.Vec)]) : String
@@ -1093,9 +1083,8 @@ pre {
   [section : DocSiteSection]
   [current : (& current str)]) : String
   (match section
-    [(DocSiteSection.Guide title guides)
-      (doc-site-sidebar-guide-section title guides current)]
-    [(DocSiteSection.ApiTree tree) (doc-site-sidebar-api-tree tree current)]))
+    [(Guide title guides) (doc-site-sidebar-guide-section title guides current)]
+    [(ApiTree tree) (doc-site-sidebar-api-tree tree current)]))
 
 (define (doc-site-sidebar-sections
   [sections : (& sections doc_site_sections.Vec)]
@@ -1241,8 +1230,8 @@ pre {
   (if (= (string.string-length path) 0)
     (doc-site-panic-unit "doc-site: empty output directory")
     (match (fs.try-mkdir-if-missing path)
-      [(io.OkIoUnit) unit]
-      [(io.ErrIoUnit _)
+      [(OkIoUnit) unit]
+      [(ErrIoUnit _)
         (doc-site-panic-unit
           (string.append
             "doc-site: could not create output directory: "
@@ -1324,10 +1313,8 @@ pre {
   [sections : (& sections doc_site_sections.Vec)]
   [section : DocSiteSection]) : unit
   (match section
-    [(DocSiteSection.Guide _ guides)
-      (doc-site-write-guide-pages output-dir sections guides)]
-    [(DocSiteSection.ApiTree tree)
-      (doc-site-write-api-tree output-dir sections tree)]))
+    [(Guide _ guides) (doc-site-write-guide-pages output-dir sections guides)]
+    [(ApiTree tree) (doc-site-write-api-tree output-dir sections tree)]))
 
 (define (doc-site-write-sections
   [output-dir : (& output-dir str)]
@@ -1376,9 +1363,9 @@ pre {
   (if (>= index count)
     ""
     (match (doc_md.md-block-list-ref (& blocks) index)
-      [(doc_md.MdMaybeBlock.Some block)
+      [(Some block)
         (match block
-          [(doc_md.MdBlock.Heading _ heading)
+          [(Heading _ heading)
             (let
               [anchor : String
                 (doc_bridge.bridge-doc-render-anchor (& heading))]
@@ -1407,7 +1394,7 @@ pre {
               blocks
               (+ index 1)
               count)])]
-      [(doc_md.MdMaybeBlock.No)
+      [(No)
         (doc-site-search-guide-heading-records-from
           guide
           blocks
@@ -1454,8 +1441,8 @@ pre {
 
 (define (doc-site-search-section-records [section : DocSiteSection]) : String
   (match section
-    [(DocSiteSection.Guide _ guides) (doc-site-search-guide-records guides)]
-    [(DocSiteSection.ApiTree tree)
+    [(Guide _ guides) (doc-site-search-guide-records guides)]
+    [(ApiTree tree)
       (doc-site-search-module-records (doc-site-api-tree-modules (& tree)))]))
 
 (define (doc-site-search-records
@@ -1554,10 +1541,10 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     (begin
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "stdlib/smoke<&>.tl" "stdlib-smoke.html"))
+        (Module "stdlib/smoke<&>.tl" "stdlib-smoke.html"))
       (doc_site_modules.push-ref!
         (&mut modules)
-        (DocSiteModule.Module "stdlib/second.tl" "stdlib-second.html"))
+        (Module "stdlib/second.tl" "stdlib-second.html"))
       modules)))
 
 (define (doc-site-smoke-guides) : doc_site_guides.Vec
@@ -1566,14 +1553,10 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     (begin
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
-          "TypeLisp Overview"
-          "README.md"
-          "readme.html"
-          "Overview"))
+        (GuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview"))
       (doc_site_guides.push-ref!
         (&mut guides)
-        (DocSiteGuidePage.GuidePage
+        (GuidePage
           "TypeLisp Language Reference"
           "SPEC.md"
           "spec.html"
@@ -1581,7 +1564,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       guides)))
 
 (define (doc-site-smoke-api-tree) : DocSiteApiTree
-  (DocSiteApiTree.ApiTree "stdlib" "stdlib.html" (doc-site-smoke-modules)))
+  (ApiTree "stdlib" "stdlib.html" (doc-site-smoke-modules)))
 
 (define (doc-site-smoke-sections) : doc_site_sections.Vec
   (let
@@ -1589,7 +1572,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     (begin
       (doc_site_sections.push-ref!
         (&mut sections)
-        (DocSiteSection.Guide "Language" (doc-site-smoke-guides)))
+        (Guide "Language" (doc-site-smoke-guides)))
       (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-smoke-api-tree)))
@@ -1599,12 +1582,8 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
   (let
     [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 2)]
     (begin
-      (doc_site_modules.push-ref!
-        (&mut modules)
-        (DocSiteModule.Module "a.tl" "same.html"))
-      (doc_site_modules.push-ref!
-        (&mut modules)
-        (DocSiteModule.Module "b.tl" "same.html"))
+      (doc_site_modules.push-ref! (&mut modules) (Module "a.tl" "same.html"))
+      (doc_site_modules.push-ref! (&mut modules) (Module "b.tl" "same.html"))
       modules)))
 
 (define (doc-site-require [ok : bool] [message : String]) : bool
@@ -1624,17 +1603,17 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     [page : String
       (doc-site-render-module-page
         sections
-        (DocSiteModule.Module "stdlib/smoke<&>.tl" "stdlib-smoke.html")
+        (Module "stdlib/smoke<&>.tl" "stdlib-smoke.html")
         (doc-site-smoke-source))]
     [second-page : String
       (doc-site-render-module-page
         sections
-        (DocSiteModule.Module "stdlib/second.tl" "stdlib-second.html")
+        (Module "stdlib/second.tl" "stdlib-second.html")
         (doc-site-second-smoke-source))]
     [twins-page : String
       (doc-site-render-module-page
         sections
-        (DocSiteModule.Module "stdlib/twins.tl" "stdlib-twins.html")
+        (Module "stdlib/twins.tl" "stdlib-twins.html")
         (doc-site-anchor-twins-source))]
     [twins-records : String
       (doc_bridge.bridge-doc-html-search-records-for-module
@@ -1644,11 +1623,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
     [language-page : String
       (doc-site-render-guide-page
         sections
-        (DocSiteGuidePage.GuidePage
-          "TypeLisp Overview"
-          "README.md"
-          "readme.html"
-          "Overview")
+        (GuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview")
         (doc-site-language-smoke-source))]
     (begin
       (doc-site-require

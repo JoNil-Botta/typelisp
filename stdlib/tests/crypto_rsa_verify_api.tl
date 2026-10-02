@@ -54,28 +54,28 @@
 
 (define (expect-verified [result : verify.RsaVerifyResult] [message : String]) : unit
   (match result
-    [(verify.RsaVerifyOk) unit]
-    [(verify.RsaVerifyInvalidSignature) (test.assert-true false message)]
-    [(verify.RsaVerifyCoreFailure _) (test.assert-true false message)]
-    [(verify.RsaVerifyHashFailure _) (test.assert-true false message)]))
+    [(RsaVerifyOk) unit]
+    [(RsaVerifyInvalidSignature) (test.assert-true false message)]
+    [(RsaVerifyCoreFailure _) (test.assert-true false message)]
+    [(RsaVerifyHashFailure _) (test.assert-true false message)]))
 
 (define (expect-invalid [result : verify.RsaVerifyResult] [message : String]) : unit
   (match result
-    [(verify.RsaVerifyInvalidSignature) unit]
+    [(RsaVerifyInvalidSignature) unit]
     [_ (test.assert-true false message)]))
 
 (define (expect-core-failure
   [result : verify.RsaVerifyResult]
   [message : String]) : unit
   (match result
-    [(verify.RsaVerifyCoreFailure _) unit]
+    [(RsaVerifyCoreFailure _) unit]
     [_ (test.assert-true false message)]))
 
 (define (expect-not-verified
   [result : verify.RsaVerifyResult]
   [message : String]) : unit
   (match result
-    [(verify.RsaVerifyOk) (test.assert-true false message)]
+    [(RsaVerifyOk) (test.assert-true false message)]
     [_ unit]))
 
 (define (mutated [source : (& source bytes)] [index : i64] [change : u8]) : byte_buf.ByteBuf
@@ -168,9 +168,8 @@
   [message : (& message bytes)]
   [digest : (& digest sha.Sha256Digest)]) : unit
   (match (rsa.public-exponentiate key signature)
-    [(rsa.ErrRsaPublicBytes _)
-      (test.assert-true false "PKCS fixture exponentiate")]
-    [(rsa.OkRsaPublicBytes encoded)
+    [(ErrRsaPublicBytes _) (test.assert-true false "PKCS fixture exponentiate")]
+    [(OkRsaPublicBytes encoded)
       (let
         [view : (& encoded bytes) (byte_buf.as-bytes (& encoded))]
         [width : i64 (byte_buf.bytes-length view)]
@@ -207,9 +206,8 @@
   [signature : (& signature bytes)]
   [digest : (& digest sha.Sha256Digest)]) : unit
   (match (rsa.public-exponentiate key signature)
-    [(rsa.ErrRsaPublicBytes _)
-      (test.assert-true false "PSS fixture exponentiate")]
-    [(rsa.OkRsaPublicBytes encoded)
+    [(ErrRsaPublicBytes _) (test.assert-true false "PSS fixture exponentiate")]
+    [(OkRsaPublicBytes encoded)
       (let
         [view : (& encoded bytes) (byte_buf.as-bytes (& encoded))]
         [width : i64 (byte_buf.bytes-length view)]
@@ -283,11 +281,11 @@
       (not (verify.rsa-mgf1-sha256-domain-valid? 137438953473))
       "MGF1 counter overflow")
     (match (verify.rsa-mgf1-sha256 digest 0)
-      [(verify.RsaMgf1Ok mask)
+      [(RsaMgf1Ok mask)
         (test.assert-i64-eq (byte_buf.length (& mask)) 0 "MGF1 zero length")]
       [_ (test.assert-true false "MGF1 zero rejected")])
     (match (verify.rsa-mgf1-sha256 digest 32)
-      [(verify.RsaMgf1Ok mask)
+      [(RsaMgf1Ok mask)
         (let
           [expected : byte_buf.ByteBuf
             (hex-bytes
@@ -299,7 +297,7 @@
             "MGF1 independently computed first block"))]
       [_ (test.assert-true false "MGF1 digest multiple rejected")])
     (match (verify.rsa-mgf1-sha256 digest 33)
-      [(verify.RsaMgf1Ok mask)
+      [(RsaMgf1Ok mask)
         (let
           [expected : byte_buf.ByteBuf
             (hex-bytes
@@ -311,10 +309,10 @@
             "MGF1 independently computed partial block"))]
       [_ (test.assert-true false "MGF1 partial digest rejected")])
     (match (verify.rsa-mgf1-sha256 digest 1025)
-      [(verify.RsaMgf1InvalidLength _) unit]
+      [(RsaMgf1InvalidLength _) unit]
       [_ (test.assert-true false "MGF1 RSA cap")])
     (match (verify.rsa-mgf1-sha256 digest 137438953473)
-      [(verify.RsaMgf1InvalidLength _) unit]
+      [(RsaMgf1InvalidLength _) unit]
       [_ (test.assert-true false "MGF1 domain cap")])))
 
 (define (assert-vector
@@ -343,8 +341,8 @@
     (match (rsa.parse-public-key
       (byte_buf.as-bytes (& modulus))
       (byte_buf.as-bytes (& exponent)))
-      [(rsa.ErrRsaPublicKey _) (test.assert-true false "Wycheproof key parse")]
-      [(rsa.OkRsaPublicKey key)
+      [(ErrRsaPublicKey _) (test.assert-true false "Wycheproof key parse")]
+      [(OkRsaPublicKey key)
         (begin
           (test.assert-i64-eq
             (rsa.modulus-bit-length (& key))
@@ -407,9 +405,8 @@
           (match (rsa.parse-public-key
             (byte_buf.as-bytes (& altered-modulus))
             (byte_buf.as-bytes (& exponent)))
-            [(rsa.ErrRsaPublicKey _)
-              (test.assert-true false "mutated key parse")]
-            [(rsa.OkRsaPublicKey other-key)
+            [(ErrRsaPublicKey _) (test.assert-true false "mutated key parse")]
+            [(OkRsaPublicKey other-key)
               (begin
                 (expect-not-verified
                   (verify.verify-pkcs1-sha256
@@ -424,9 +421,9 @@
                     (byte_buf.as-bytes (& pss)))
                   "PSS altered key"))])
           (match (sha.digest (byte_buf.str-as-bytes (& empty)))
-            [(sha.Sha256FinalizeErr _)
+            [(Sha256FinalizeErr _)
               (test.assert-true false "SHA-256 empty message")]
-            [(sha.Sha256FinalizeOk digest)
+            [(Sha256FinalizeOk digest)
               (begin
                 (assert-pkcs-encoding-mutations
                   (& key)
@@ -473,8 +470,8 @@
     (match (rsa.parse-public-key
       (byte_buf.as-bytes (& modulus))
       (byte_buf.as-bytes (& exponent)))
-      [(rsa.ErrRsaPublicKey _) (test.assert-true false "2049-bit key parse")]
-      [(rsa.OkRsaPublicKey key)
+      [(ErrRsaPublicKey _) (test.assert-true false "2049-bit key parse")]
+      [(OkRsaPublicKey key)
         (begin
           (test.assert-i64-eq
             (rsa.modulus-bit-length (& key))
@@ -498,9 +495,9 @@
           (match (rsa.public-exponentiate
             (& key)
             (byte_buf.as-bytes (& signature)))
-            [(rsa.ErrRsaPublicBytes _)
+            [(ErrRsaPublicBytes _)
               (test.assert-true false "PSS edge exponentiate")]
-            [(rsa.OkRsaPublicBytes encoded)
+            [(OkRsaPublicBytes encoded)
               (let
                 [view : (& encoded bytes) (byte_buf.as-bytes (& encoded))]
                 [expected : (& expected-em bytes)
@@ -520,9 +517,9 @@
                     equal
                     "PSS independent 2049-bit encoded message")
                   (match (sha.digest (byte_buf.str-as-bytes (& empty)))
-                    [(sha.Sha256FinalizeErr _)
+                    [(Sha256FinalizeErr _)
                       (test.assert-true false "PSS edge digest")]
-                    [(sha.Sha256FinalizeOk digest)
+                    [(Sha256FinalizeOk digest)
                       (expect-pss-field-reject
                         view
                         2049
@@ -546,17 +543,16 @@
     (match (rsa.parse-public-key
       (byte_buf.as-bytes (& modulus))
       (byte_buf.as-bytes (& exponent)))
-      [(rsa.ErrRsaPublicKey _) (test.assert-true false "8192-bit key parse")]
-      [(rsa.OkRsaPublicKey key)
+      [(ErrRsaPublicKey _) (test.assert-true false "8192-bit key parse")]
+      [(OkRsaPublicKey key)
         (begin
           (test.assert-i64-eq
             (rsa.modulus-bit-length (& key))
             8192
             "RSA 8192 modulus bits")
           (match (sha.digest (byte_buf.str-as-bytes (& empty)))
-            [(sha.Sha256FinalizeErr _)
-              (test.assert-true false "8192-bit digest")]
-            [(sha.Sha256FinalizeOk digest)
+            [(Sha256FinalizeErr _) (test.assert-true false "8192-bit digest")]
+            [(Sha256FinalizeOk digest)
               (if pss
                 (begin
                   (expect-verified

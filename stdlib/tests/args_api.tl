@@ -76,15 +76,15 @@
 
 (define (args-api-expect-ok [result : args.ResultArgsParsed] [message : String]) : args.ArgsParsed
   (match result
-    [(args.OkArgsParsed parsed) parsed]
-    [(args.ErrArgsParsed _) (io.panic message)]))
+    [(OkArgsParsed parsed) parsed]
+    [(ErrArgsParsed _) (io.panic message)]))
 
 (define (args-api-expect-error
   [result : args.ResultArgsParsed]
   [message : String]) : args.ArgsError
   (match result
-    [(args.OkArgsParsed _) (io.panic message)]
-    [(args.ErrArgsParsed error) error]))
+    [(OkArgsParsed _) (io.panic message)]
+    [(ErrArgsParsed error) error]))
 
 (define (args-api-assert-vec-empty
   [items : (& items svec.Vec)]

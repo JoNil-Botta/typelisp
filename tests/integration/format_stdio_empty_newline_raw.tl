@@ -34,7 +34,7 @@
   [want-stderr : String]) : bool
   (match (process.output
     (process.command (io.arg 0) (process.args-single mode)))
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (let
         [stdout : String (process.output-stdout output)]
         [stderr : String (process.output-stderr output)]
@@ -50,7 +50,7 @@
             (string.string-length (& want-stderr)))
           (string.eq (& stdout) (& want-stdout))
           (string.eq (& stderr) (& want-stderr))))]
-    [(process.ErrProcessOutput _) false]))
+    [(ErrProcessOutput _) false]))
 
 (define (main) : i64
   (if (> (io.arg-count) 1)

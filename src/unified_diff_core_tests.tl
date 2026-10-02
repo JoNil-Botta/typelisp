@@ -65,7 +65,7 @@
 
 (define (complete? [run : (& r Run)]) : bool
   (match run.report.outcome
-    [(unified_diff.Complete) true]
+    [(Complete) true]
     [_ false]))
 
 (define (count-newlines [text : (& t str)]) : i64
@@ -678,7 +678,7 @@
               (begin
                 (assert
                   (match run.report.outcome
-                    [(unified_diff.SinkFailed status) (= status 32)]
+                    [(SinkFailed status) (= status 32)]
                     [_ false])
                   "sink failure was not reported")
                 (assert
@@ -738,8 +738,8 @@
         "capped emitted counts are wrong")
       (assert
         (match run.report.outcome
-          [(unified_diff.Complete) (= kept total-bytes)]
-          [(unified_diff.Truncated omitted-bytes omitted-lines)
+          [(Complete) (= kept total-bytes)]
+          [(Truncated omitted-bytes omitted-lines)
             (and
               (< kept total-bytes)
               (= omitted-bytes (- total-bytes kept))
@@ -755,8 +755,8 @@
           " kept="
           (string.int->string kept)
           (match run.report.outcome
-            [(unified_diff.Complete) " complete"]
-            [(unified_diff.Truncated omitted-bytes omitted-lines)
+            [(Complete) " complete"]
+            [(Truncated omitted-bytes omitted-lines)
               (str_cat.str-cat
                 " omitted-bytes="
                 (string.int->string omitted-bytes)
@@ -828,7 +828,7 @@
         (begin
           (assert
             (match run.report.outcome
-              [(unified_diff.InvalidOptions) true]
+              [(InvalidOptions) true]
               [_ false])
             "invalid options were accepted")
           (assert
@@ -852,8 +852,7 @@
         3)]
     (assert
       (match run.report.outcome
-        [(unified_diff.SinkFailed status)
-          (and (= status 32) (= run.report.emitted-bytes 2))]
+        [(SinkFailed status) (and (= status 32) (= run.report.emitted-bytes 2))]
         [_ false])
       "a failing capped rendering was not reported as a sink failure")))
 

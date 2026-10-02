@@ -59,13 +59,13 @@
       (read-file-or-borrowed-result fallback)]
     (begin
       (match (io.try-read-file path)
-        [(io.OkIoBytes contents)
+        [(OkIoBytes contents)
           (set!
             result
             (read-file-or-owned-result-like
               fallback
               (byte_buf.to-string contents)))]
-        [(io.ErrIoBytes _) unit])
+        [(ErrIoBytes _) unit])
       result)))
 
 ;: Inline test helper that forces an IO caller-result test failure.

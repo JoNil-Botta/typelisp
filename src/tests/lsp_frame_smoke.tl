@@ -31,13 +31,13 @@
 
 (define (lsp-smoke-mkdir [path : String]) : unit
   (match (fs.try-mkdir-if-missing (& path))
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) unit]))
+    [(OkIoUnit) unit]
+    [(ErrIoUnit _) unit]))
 
 (define (lsp-smoke-remove-file [path : (& path str)]) : unit
   (match (fs.try-remove-file-if-exists path)
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) unit]))
+    [(OkIoUnit) unit]
+    [(ErrIoUnit _) unit]))
 
 (define (lsp-smoke-make-directory-cycle-link [path : (& path str)]) : bool
   (cfg
@@ -57,11 +57,7 @@
       (= status 0))))
 
 (define (lsp-smoke-folder-json [uri : String]) : json.Json
-  (lsp.lsp-json-object2
-    "uri"
-    (json.JsonString uri)
-    "name"
-    (json.JsonString "workspace")))
+  (lsp.lsp-json-object2 "uri" (JsonString uri) "name" (JsonString "workspace")))
 
 (define (lsp-smoke-folder-list-from [roots : lsp_svec.Vec] [index : i64]) : json.JsonSeq
   (if (>= index (lsp_svec.len (& roots)))
@@ -80,8 +76,8 @@
       (lsp.lsp-json-array (lsp-smoke-folder-list-from roots 0))
       "rootUri"
       (if (> (string.string-length root-uri) 0)
-        (json.JsonString root-uri)
-        json.JsonNull))))
+        (JsonString root-uri)
+        JsonNull))))
 
 (define (lsp-smoke-initialize-state [roots : lsp_svec.Vec] [root-uri : String]) : lvf.LspServerState
   (let
@@ -101,8 +97,8 @@
       (while (< index total)
         (begin
           (match (lsp_tests.lsp-server-state-declaration-at state index)
-            [(lvf.LspWorkspaceDeclLookup.Missing) unit]
-            [(lvf.LspWorkspaceDeclLookup.Found row)
+            [(Missing) unit]
+            [(Found row)
               (if (string.eq row.decl.name name)
                 (set! count (+ count 1))
                 unit)])
@@ -113,8 +109,8 @@
   [state : (& state lvf.LspServerState)]
   [index : i64]) : String
   (match (lsp_tests.lsp-server-state-declaration-at state index)
-    [(lvf.LspWorkspaceDeclLookup.Missing) ""]
-    [(lvf.LspWorkspaceDeclLookup.Found row) row.decl.name]))
+    [(Missing) ""]
+    [(Found row) row.decl.name]))
 
 (define (lsp-smoke-state-row-matches?
   [state : (& state lvf.LspServerState)]
@@ -131,8 +127,8 @@
       (while (and (< index total) (not found))
         (begin
           (match (lsp_tests.lsp-server-state-declaration-at state index)
-            [(lvf.LspWorkspaceDeclLookup.Missing) unit]
-            [(lvf.LspWorkspaceDeclLookup.Found row)
+            [(Missing) unit]
+            [(Found row)
               (if (and
                 (string.eq row.decl.name name)
                 (string.eq row.module module)
@@ -165,8 +161,8 @@
       (lsp.LspDocumentHandleResult.Continue docs)
       uri
       false)
-      [(lsp.LspHandleResult.Continue next) next]
-      [(lsp.LspHandleResult.Exit next) next])))
+      [(Continue next) next]
+      [(Exit next) next])))
 
 (define (lsp-smoke-state-close [state : lvf.LspServerState] [path : String]) : lvf.LspServerState
   (let
@@ -180,8 +176,8 @@
       (lsp.LspDocumentHandleResult.Continue docs)
       uri
       false)
-      [(lsp.LspHandleResult.Continue next) next]
-      [(lsp.LspHandleResult.Exit next) next])))
+      [(Continue next) next]
+      [(Exit next) next])))
 
 (define (lsp-smoke-watcher-params [uri : String] [kind : i64]) : json.Json
   (lsp.lsp-json-object1
@@ -190,7 +186,7 @@
       (lsp.lsp-json-list-cons
         (lsp.lsp-json-object2
           "uri"
-          (json.JsonString uri)
+          (JsonString uri)
           "type"
           (lsp.lsp-json-number kind))
         (json.list-empty)))))
@@ -667,8 +663,8 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
-        [(io.OkIoUnit) unit]
-        [(io.ErrIoUnit _) unit])
+        [(OkIoUnit) unit]
+        [(ErrIoUnit _) unit])
       (lsp-smoke-write-text dep-a-path "(define broken-a : i64 true)")
       (lsp-smoke-write-text dep-b-path "(define broken-b : i64 \"bad\")")
       (let
@@ -771,7 +767,7 @@
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\""
         (owned_view.compiler-owned-shared-view uri)
         "\",\"languageId\":\"typelisp\",\"version\":1,\"text\":"
-        (json.stringify (json.JsonString source))
+        (json.stringify (JsonString source))
         "}}}"
         ""
         "")]
@@ -839,12 +835,12 @@
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
       (match (check_core.compiler-check-source "ok.tl" ok-src)
-        [(check_core.ResultCompilerCheck.Ok _ _) true]
-        [(check_core.ResultCompilerCheck.Err _ _) false])]
+        [(Ok _ _) true]
+        [(Err _ _) false])]
     [bad-result : bool
       (match (check_core.compiler-check-source "bad.tl" bad-src)
-        [(check_core.ResultCompilerCheck.Ok _ _) false]
-        [(check_core.ResultCompilerCheck.Err _ _) true])]
+        [(Ok _ _) false]
+        [(Err _ _) true])]
     (and ok-result bad-result)))
 
 (define (lsp-get-type-smoke-ok?) : bool
@@ -865,8 +861,8 @@
           (lsp_svec.new)
           (check_core.compiler-check-language-cfgs)
           job-state)
-          [(check_core.ResultCompilerCheck.Ok _ _) unit]
-          [(check_core.ResultCompilerCheck.Err _ _) unit])
+          [(Ok _ _) unit]
+          [(Err _ _) unit])
         (let
           [size : i64 (tc_core.tc-inlay-hints-size-for-state inlay-state)]
           [i : i64 0]
@@ -982,12 +978,12 @@
         "textDocument"
         (lsp.lsp-json-object1
           "uri"
-          (json.JsonString (owned_view.compiler-owned-shared-view uri))))]
+          (JsonString (owned_view.compiler-owned-shared-view uri))))]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
-        [(io.OkIoUnit) unit]
-        [(io.ErrIoUnit _) unit])
+        [(OkIoUnit) unit]
+        [(ErrIoUnit _) unit])
       (lsp-smoke-write-text path disk-text)
       (set!
         docs
@@ -1003,9 +999,8 @@
           (match (lsp.lsp-get-document
             (owned_view.compiler-owned-shared-view params)
             (owned_view.compiler-owned-shared-view docs))
-            [(lsp.LspDocumentLookup.Found _ text _)
-              (string.contains (& text) (& fresh-name))]
-            [(lsp.LspDocumentLookup.Missing) false])]
+            [(Found _ text _) (string.contains (& text) (& fresh-name))]
+            [(Missing) false])]
         [cached-doc : lvf.LspDocument
           (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
         [cache-ok : bool
@@ -1014,7 +1009,7 @@
             (not cached-doc.decls-valid))]
         [decls-ok : bool
           (match (lsp.lsp-get-document-decls params docs)
-            [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
+            [(Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry
                   (lsp_decl_vec.get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
@@ -1022,7 +1017,7 @@
                   (string.contains (& text) (& fresh-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
                   (string.eq entry.name fresh-name)))]
-            [(lsp.LspDocumentDeclsLookup.Missing) false])]
+            [(Missing) false])]
         [cached-decls-doc : lvf.LspDocument
           (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
         [versioned-docs : lsp_document_vec.Vec
@@ -1037,12 +1032,11 @@
           (match (lsp.lsp-get-document
             (owned_view.compiler-owned-shared-view params)
             (owned_view.compiler-owned-shared-view versioned-docs))
-            [(lsp.LspDocumentLookup.Found _ text _)
-              (string.contains (& text) (& overlay-name))]
-            [(lsp.LspDocumentLookup.Missing) false])]
+            [(Found _ text _) (string.contains (& text) (& overlay-name))]
+            [(Missing) false])]
         [versioned-decls-ok : bool
           (match (lsp.lsp-get-document-decls params versioned-docs)
-            [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
+            [(Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry
                   (lsp_decl_vec.get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
@@ -1050,7 +1044,7 @@
                   (string.contains (& text) (& overlay-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
                   (string.eq entry.name overlay-name)))]
-            [(lsp.LspDocumentDeclsLookup.Missing) false])]
+            [(Missing) false])]
         [versioned-cached-doc : lvf.LspDocument
           (lsp_document_vec.get
             (& versioned-docs)
@@ -1084,15 +1078,15 @@
           (owned_view.compiler-owned-shared-view uri)))]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
-        [(io.OkIoUnit) unit]
-        [(io.ErrIoUnit _) unit])
+        [(OkIoUnit) unit]
+        [(ErrIoUnit _) unit])
       (match (lsp.lsp-tl-save-doc
         docs
         (owned_view.compiler-owned-shared-view uri)
         (owned_view.compiler-owned-shared-view path)
         (lsp_tests.lsp-diagnostic-uris-single uri)
         (owned_view.compiler-owned-shared-view updated))
-        [(lsp.LspSaveResult.Ok next-docs)
+        [(Ok next-docs)
           (let
             [disk-text : String (byte_buf.to-string (io.read-file path))]
             [cached-doc : lvf.LspDocument
@@ -1101,7 +1095,7 @@
               (string.eq disk-text updated)
               (string.eq cached-doc.text updated)
               (not cached-doc.decls-valid)))]
-        [(lsp.LspSaveResult.Err _) false]))))
+        [(Err _) false]))))
 
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
@@ -1184,13 +1178,13 @@
       (owned_view.compiler-owned-shared-view path)
       (owned_view.compiler-owned-shared-view source)
       (lsp_svec.new))
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+      [(Partial _ partial)
         (begin
           (semantic_index.compiler-semantic-source-index-release!
             (&mut partial))
           false)]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+      [(Err _) false]
+      [(Ok _ index)
         (let
           [docs : lsp_document_vec.Vec
             (lsp.lsp-documents-set-semantic-index
@@ -1284,13 +1278,13 @@
     [items : json.JsonSeq
       (owned_view.compiler-owned-reference-shared-view items)]
     (match (json.list-get-index items index)
-      [(json.JsonMissing) -1]
-      [(json.JsonFound value)
+      [(JsonMissing) -1]
+      [(JsonFound value)
         (match value
-          [(json.JsonNumber text)
+          [(JsonNumber text)
             (match (json.number->i64 (& text))
-              [(json.OkJsonNumberI64 number) number]
-              [(json.ErrJsonNumberI64 _) -1])]
+              [(OkJsonNumberI64 number) number]
+              [(ErrJsonNumberI64 _) -1])]
           [_ -1])])))
 
 ;; Decode the relative stream and validate the protocol invariants against the
@@ -1299,10 +1293,10 @@
   (let
     [data-key : String "data"]
     (match (json.object-get result (& data-key))
-      [(json.JsonMissing) (LspSemanticTokenDecode false 0 0 0)]
-      [(json.JsonFound data)
+      [(JsonMissing) (LspSemanticTokenDecode false 0 0 0)]
+      [(JsonFound data)
         (match data
-          [(json.JsonArray boxed-items)
+          [(JsonArray boxed-items)
             (let
               [items : json.JsonSeq
                 (owned_view.compiler-owned-reference-shared-view
@@ -1354,14 +1348,14 @@
                         (owned_view.compiler-owned-shared-view source)
                         line
                         start)
-                        [(lsp.LspOffsetLookup.Missing) (set! ok false)]
-                        [(lsp.LspOffsetLookup.Found _) unit])
+                        [(Missing) (set! ok false)]
+                        [(Found _) unit])
                       (match (lsp.lsp-offset-at-position-checked
                         (owned_view.compiler-owned-shared-view source)
                         line
                         (+ start token-length))
-                        [(lsp.LspOffsetLookup.Missing) (set! ok false)]
-                        [(lsp.LspOffsetLookup.Found _) unit])
+                        [(Missing) (set! ok false)]
+                        [(Found _) unit])
                       (if (and (>= token-type 0) (<= token-type 12))
                         (set! type-mask (bit-or type-mask (shl 1 token-type)))
                         unit)
@@ -1433,13 +1427,13 @@
       (owned_view.compiler-owned-shared-view path)
       (owned_view.compiler-owned-shared-view source)
       (lsp_svec.new))
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+      [(Err _) false]
+      [(Partial _ partial)
         (begin
           (semantic_index.compiler-semantic-source-index-release!
             (&mut partial))
           false)]
-      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+      [(Ok _ index)
         (let
           [docs : lsp_document_vec.Vec
             (lsp.lsp-documents-set-semantic-index
@@ -1600,8 +1594,8 @@
 
 (define (lsp-fold-first-json [ranges : json.JsonSeq]) : String
   (match (json.list-get-index ranges 0)
-    [(json.JsonFound value) (json.stringify value)]
-    [(json.JsonMissing) ""]))
+    [(JsonFound value) (json.stringify value)]
+    [(JsonMissing) ""]))
 
 ;; Deep nesting and wide documents run through the iterative scan and the
 ;; iterative result walk, so neither costs host recursion proportional to the
@@ -2137,8 +2131,8 @@
             "lint"
             0
             0)
-            [(lsp.LspJsonValue.Found _) true]
-            [(lsp.LspJsonValue.Missing) false])
+            [(Found _) true]
+            [(Missing) false])
           (match (lsp.lsp-code-action-find-diagnostic-from
             (owned_view.compiler-owned-shared-view diagnostics)
             cursor-range
@@ -2146,8 +2140,8 @@
             "lint"
             0
             0)
-            [(lsp.LspJsonValue.Found _) true]
-            [(lsp.LspJsonValue.Missing) false])
+            [(Found _) true]
+            [(Missing) false])
           (match (lsp.lsp-code-action-find-diagnostic-from
             (owned_view.compiler-owned-shared-view diagnostics)
             adjacent-range
@@ -2155,8 +2149,8 @@
             "lint"
             0
             0)
-            [(lsp.LspJsonValue.Found _) false]
-            [(lsp.LspJsonValue.Missing) true])
+            [(Found _) false]
+            [(Missing) true])
           (match (lsp.lsp-code-action-find-diagnostic-from
             (owned_view.compiler-owned-shared-view diagnostics)
             request-range
@@ -2164,8 +2158,8 @@
             "lint"
             0
             0)
-            [(lsp.LspJsonValue.Found _) false]
-            [(lsp.LspJsonValue.Missing) true])
+            [(Found _) false]
+            [(Missing) true])
           (match (lsp.lsp-code-action-find-diagnostic-from
             diagnostics
             far-range
@@ -2173,8 +2167,8 @@
             "lint"
             0
             0)
-            [(lsp.LspJsonValue.Found _) false]
-            [(lsp.LspJsonValue.Missing) true])
+            [(Found _) false]
+            [(Missing) true])
           (lsp.lsp-code-action-lint-duplicate-before? findings finding 1)
           (string.eq (lsp.lsp-code-action-newline "a\r\nb") "\r\n")
           (string.contains (& edit-rendered) (& directive))
@@ -2199,14 +2193,14 @@
         (clone base)
         (cdiag.compiler-diagnostic-fix-new
           "Replace lint token"
-          cdiag.CompilerDiagnosticMachineApplicable
+          CompilerDiagnosticMachineApplicable
           (cdiag.compiler-diagnostic-text-edit-single (clone edit))))]
     [uncertain : lint_core.LintFinding
       (lint_core_tests.lint-finding-with-fix
         base
         (cdiag.compiler-diagnostic-fix-new
           "Uncertain lint token"
-          cdiag.CompilerDiagnosticMaybeIncorrect
+          CompilerDiagnosticMaybeIncorrect
           (cdiag.compiler-diagnostic-text-edit-single edit)))]
     [docs : lsp_document_vec.Vec
       (lsp.lsp-documents-set-versioned

@@ -78,11 +78,11 @@
   [path : String]
   [result : tlci_core.ResultTlciBytes]) : i64
   (match result
-    [(tlci_core.ResultTlciBytes.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]
-    [(tlci_core.ResultTlciBytes.Ok bytes)
+    [(Ok bytes)
       (let
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
         (begin

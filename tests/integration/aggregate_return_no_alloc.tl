@@ -61,16 +61,16 @@
 
 (define (make-shape [x : i64]) : Shape
   (if (> x 0)
-    (Shape.Circle x x x)
+    (Circle x x x)
     (if (< x 0)
-      (Shape.Dot (make-small x))
-      (Shape.Empty))))
+      (Dot (make-small x))
+      (Empty))))
 
 (define (match-big [s : Shape]) : Big
   (match s
-    [(Shape.Circle r _ _) (make-big r)]
-    [(Shape.Dot p) (Big p.a p.b 0 0)]
-    [(Shape.Empty) (Big 0 0 0 0)]))
+    [(Circle r _ _) (make-big r)]
+    [(Dot p) (Big p.a p.b 0 0)]
+    [(Empty) (Big 0 0 0 0)]))
 
 (define (make-tuple4 [x : i64]) : (Tuple i64 i64 i64 i64)
   (tuple x (+ x 1) (+ x 2) (+ x 3)))

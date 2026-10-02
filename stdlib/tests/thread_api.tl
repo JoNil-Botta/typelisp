@@ -66,21 +66,21 @@
 
 (define (thread-api-wait-ready? [result : thread.ThreadWaitResult]) : bool
   (match result
-    [(thread.ThreadWaitReady) true]
-    [(thread.ThreadWaitTimedOut) false]
-    [(thread.ThreadWaitErr _) false]))
+    [(ThreadWaitReady) true]
+    [(ThreadWaitTimedOut) false]
+    [(ThreadWaitErr _) false]))
 
 (define (thread-api-wait-timed-out? [result : thread.ThreadWaitResult]) : bool
   (match result
-    [(thread.ThreadWaitReady) false]
-    [(thread.ThreadWaitTimedOut) true]
-    [(thread.ThreadWaitErr _) false]))
+    [(ThreadWaitReady) false]
+    [(ThreadWaitTimedOut) true]
+    [(ThreadWaitErr _) false]))
 
 (define (thread-api-negative-wait-rejected? [result : thread.ThreadWaitResult]) : bool
   (match result
-    [(thread.ThreadWaitReady) false]
-    [(thread.ThreadWaitTimedOut) false]
-    [(thread.ThreadWaitErr message)
+    [(ThreadWaitReady) false]
+    [(ThreadWaitTimedOut) false]
+    [(ThreadWaitErr message)
       (string.eq message "thread: wait timeout must be nonnegative")]))
 
 (define (thread-api-safe-string-run) : i64
@@ -148,8 +148,8 @@
 (define (thread-api-bounded-wait-run [sem : thread.ThreadSemaphore]) : i64
   (match (unsafe
     (thread.spawn thread-api-bounded-wait-worker sem.handle))
-    [(thread.ThreadSpawnErr _) 14]
-    [(thread.ThreadSpawnOk worker)
+    [(ThreadSpawnErr _) 14]
+    [(ThreadSpawnOk worker)
       (let
         [result : i64 42]
         [released : bool false]

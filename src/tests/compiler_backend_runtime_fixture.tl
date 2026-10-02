@@ -14,13 +14,13 @@
     [(string.eq target-name "windows-x86_64")
       (compiler_backend.compiler-backend-emit-program-for-target
         (compiler_backend.compiler-backend-runtime-helper-program)
-        (compiler_backend.CompilerBackendTarget.Windows))]
+        (Windows))]
     [(string.eq target-name "windows-driver-primitives")
       (compiler_backend.compiler-backend-emit-source-for-target
         (compiler_backend.compiler-backend-windows-driver-runtime-source)
-        (compiler_backend.CompilerBackendTarget.Windows))]
+        (Windows))]
     [else
-      (compiler_backend.ResultCompilerBackend.Err
+      (Err
         (box
           (diagnostic.compiler-diagnostic-at-start
             ""
@@ -44,22 +44,22 @@
         (if (string.eq target-name "windows-driver-primitives")
           (match (compiler_backend.compiler-backend-emit-source-for-target
             (compiler_backend.compiler-backend-windows-driver-runtime-source)
-            (compiler_backend.CompilerBackendTarget.Windows))
-            [(compiler_backend.ResultCompilerBackend.Ok asm)
+            (Windows))
+            [(Ok asm)
               (begin
                 (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
                 0)]
-            [(compiler_backend.ResultCompilerBackend.Err diag)
+            [(Err diag)
               (begin
                 (io.print-error
                   (diagnostic.compiler-diagnostic-render (deref diag)))
                 1)])
           (match (compiler-backend-runtime-fixture-emit target-name)
-            [(compiler_backend.ResultCompilerBackend.Ok asm)
+            [(Ok asm)
               (begin
                 (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
                 0)]
-            [(compiler_backend.ResultCompilerBackend.Err diag)
+            [(Err diag)
               (begin
                 (io.print-error
                   (diagnostic.compiler-diagnostic-render (deref diag)))

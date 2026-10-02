@@ -51,7 +51,7 @@
         (cdiag.compiler-diagnostic-with-secondary
           (cdiag.compiler-diagnostic-simple "template.tl" 2 14 "type mismatch")
           (cdiag.CompilerDiagnosticSpan "caller.tl" 7 9 7 15)
-          (cdiag.CompilerDiagnosticSomeString
+          (CompilerDiagnosticSomeString
             "in expansion of macro `demo` invoked here"))]
       (cdiag.compiler-diagnostic-render diag))
     "template.tl:2:14: type mismatch\nrelated: caller.tl:7:9: in expansion of macro `demo` invoked here"))
@@ -131,14 +131,14 @@
                 (cdiag.compiler-diagnostic-simple "" 5 2 "in the tail")
                 (cdiag.CompilerDiagnosticSpan "" 5 2 6 4))
               (cdiag.CompilerDiagnosticSpan "other.tl" 9 1 9 3)
-              cdiag.CompilerDiagnosticNoString)
+              CompilerDiagnosticNoString)
             (cdiag.CompilerDiagnosticSpan "whole.tl" 4 1 4 2)
-            cdiag.CompilerDiagnosticNoString)
+            CompilerDiagnosticNoString)
           (cdiag.CompilerDiagnosticSpan "" 2 1 2 5)
-          cdiag.CompilerDiagnosticNoString)
+          CompilerDiagnosticNoString)
         (cdiag.compiler-diagnostic-fix-new
           "fix"
-          cdiag.CompilerDiagnosticMachineApplicable
+          CompilerDiagnosticMachineApplicable
           (cdiag.compiler-diagnostic-text-edit-single
             (cdiag.compiler-diagnostic-text-edit-new
               (cdiag.CompilerDiagnosticSpan "" 6 1 6 1)
@@ -217,7 +217,7 @@
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-level
         (cdiag.compiler-diagnostic-simple "lib.tl" 1 1 "heads up")
-        cdiag.CompilerDiagnosticWarning)]
+        CompilerDiagnosticWarning)]
     [out : String (cdiag.compiler-diagnostic-render-source diag "x\n")]
     (compiler-diagnostic-string-eq?
       out
@@ -254,9 +254,9 @@
                     (token.SourceSpan 1 2 1 8)
                     "metadata")
                   (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
-                  (cdiag.CompilerDiagnosticSomeString "second related"))
+                  (CompilerDiagnosticSomeString "second related"))
                 (cdiag.CompilerDiagnosticSpan "" 2 11 2 13)
-                (cdiag.CompilerDiagnosticSomeString "first related"))
+                (CompilerDiagnosticSomeString "first related"))
               "E1234")
             "inspect references")
           "first note")]
@@ -276,16 +276,16 @@
     [source : cdiag.CompilerDiagnosticSource
       (cdiag.compiler-diagnostic-source-index text)]
     (match (cdiag.compiler-diagnostic-source-line (& source) line)
-      [(cdiag.CompilerDiagnosticSomeString got) (string.eq got expected)]
-      [cdiag.CompilerDiagnosticNoString false])))
+      [(CompilerDiagnosticSomeString got) (string.eq got expected)]
+      [CompilerDiagnosticNoString false])))
 
 (define (compiler-diagnostic-source-line-none? [text : String] [line : i64]) : bool
   (let
     [source : cdiag.CompilerDiagnosticSource
       (cdiag.compiler-diagnostic-source-index text)]
     (match (cdiag.compiler-diagnostic-source-line (& source) line)
-      [(cdiag.CompilerDiagnosticSomeString _) false]
-      [cdiag.CompilerDiagnosticNoString true])))
+      [(CompilerDiagnosticSomeString _) false]
+      [CompilerDiagnosticNoString true])))
 
 (define (compiler-diagnostic-source-index-ok?) : bool
   (and
@@ -320,9 +320,9 @@
             (token.SourceSpan 3 2 3 3)
             "late use")
           (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
-          (cdiag.CompilerDiagnosticSomeString "same line"))
+          (CompilerDiagnosticSomeString "same line"))
         (cdiag.CompilerDiagnosticSpan "" 1 9 1 10)
-        (cdiag.CompilerDiagnosticSomeString "defined here"))]
+        (CompilerDiagnosticSomeString "defined here"))]
     [source : String "(define x true)\n(define y 42)\n(+ x y)"]
     [out : String (cdiag.compiler-diagnostic-render-source diag source)]
     (compiler-diagnostic-string-eq?
@@ -356,9 +356,9 @@
                   "E1234")
                 "typecheck")
               (cdiag.CompilerDiagnosticSpan "first.tl" 3 4 3 7)
-              (cdiag.CompilerDiagnosticSomeString "first related"))
+              (CompilerDiagnosticSomeString "first related"))
             (cdiag.CompilerDiagnosticSpan "other.tl" 4 5 4 8)
-            (cdiag.CompilerDiagnosticSomeString "related"))
+            (CompilerDiagnosticSomeString "related"))
           "first note")
         "second note")]
     [labels : cdiag.CompilerDiagnosticLabelList
@@ -383,8 +383,8 @@
         (cdiag.compiler-diagnostic-span-path (& second-label.span))
         "first.tl")
       (match (cdiag.compiler-diagnostic-code diag)
-        [(cdiag.CompilerDiagnosticSomeString code) (string.eq code "E1234")]
-        [cdiag.CompilerDiagnosticNoString false]))))
+        [(CompilerDiagnosticSomeString code) (string.eq code "E1234")]
+        [CompilerDiagnosticNoString false]))))
 
 (define (compiler-diagnostic-code-or-empty-ok?) : bool
   (let
@@ -408,12 +408,12 @@
       (cdiag.compiler-diagnostic-with-secondary
         (clone base)
         (cdiag.CompilerDiagnosticSpan "one.tl" 1 1 1 2)
-        cdiag.CompilerDiagnosticNoString)]
+        CompilerDiagnosticNoString)]
     [label-two : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
         (clone label-one)
         (cdiag.CompilerDiagnosticSpan "two.tl" 2 1 2 2)
-        cdiag.CompilerDiagnosticNoString)]
+        CompilerDiagnosticNoString)]
     [base-notes : cdiag.CompilerDiagnosticNoteList
       (cdiag.compiler-diagnostic-notes base)]
     [one-notes : cdiag.CompilerDiagnosticNoteList
@@ -489,69 +489,27 @@
 
 (define (compiler-diagnostic-typecheck-kind-rows-ok?) : bool
   (and
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.Unclassified)
-      1)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.UnboundName)
-      2)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ArityMismatch)
-      3)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
-      4)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.UnknownStructField)
-      5)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.RegionEscape)
-      6)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.TypeMismatch)
-      7)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.BorrowViolation)
-      8)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.MoveViolation)
-      9)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.UnsafeContext)
-      10)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.LifetimeMismatch)
-      11)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ResourceOwnership)
-      12)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ArenaOwnership)
-      13)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.Pattern)
-      14)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.Spmd)
-      15)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.Place)
-      16)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ControlFlow)
-      17)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ThreadSafety)
-      18)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ComptimeConstraint)
-      19)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.UnsafeCallableEffect)
-      20)
-    (compiler-diagnostic-typecheck-kind-row-is?
-      (cdiag.CompilerTypecheckKind.ForeignGlobalWrite)
-      21)))
+    (compiler-diagnostic-typecheck-kind-row-is? (Unclassified) 1)
+    (compiler-diagnostic-typecheck-kind-row-is? (UnboundName) 2)
+    (compiler-diagnostic-typecheck-kind-row-is? (ArityMismatch) 3)
+    (compiler-diagnostic-typecheck-kind-row-is? (NonExhaustiveMatch) 4)
+    (compiler-diagnostic-typecheck-kind-row-is? (UnknownStructField) 5)
+    (compiler-diagnostic-typecheck-kind-row-is? (RegionEscape) 6)
+    (compiler-diagnostic-typecheck-kind-row-is? (TypeMismatch) 7)
+    (compiler-diagnostic-typecheck-kind-row-is? (BorrowViolation) 8)
+    (compiler-diagnostic-typecheck-kind-row-is? (MoveViolation) 9)
+    (compiler-diagnostic-typecheck-kind-row-is? (UnsafeContext) 10)
+    (compiler-diagnostic-typecheck-kind-row-is? (LifetimeMismatch) 11)
+    (compiler-diagnostic-typecheck-kind-row-is? (ResourceOwnership) 12)
+    (compiler-diagnostic-typecheck-kind-row-is? (ArenaOwnership) 13)
+    (compiler-diagnostic-typecheck-kind-row-is? (Pattern) 14)
+    (compiler-diagnostic-typecheck-kind-row-is? (Spmd) 15)
+    (compiler-diagnostic-typecheck-kind-row-is? (Place) 16)
+    (compiler-diagnostic-typecheck-kind-row-is? (ControlFlow) 17)
+    (compiler-diagnostic-typecheck-kind-row-is? (ThreadSafety) 18)
+    (compiler-diagnostic-typecheck-kind-row-is? (ComptimeConstraint) 19)
+    (compiler-diagnostic-typecheck-kind-row-is? (UnsafeCallableEffect) 20)
+    (compiler-diagnostic-typecheck-kind-row-is? (ForeignGlobalWrite) 21)))
 
 ;; The code a diagnostic built from `message` carries, or "" for none.
 (define (compiler-diagnostic-built-code [message : String]) : String
@@ -573,7 +531,7 @@
       "typecheck: cleanup foreach SPMD arity mismatch unbound name cannot escape borrow requires"]
     [tagged : String
       (cdiag.compiler-diagnostic-typecheck-tagged
-        (cdiag.CompilerTypecheckKind.TypeMismatch)
+        (TypeMismatch)
         (string.copy (& decoy)))]
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-at-start "" (string.copy (& tagged)))]
@@ -595,13 +553,13 @@
       (string.eq
         (compiler-diagnostic-built-code
           (cdiag.compiler-diagnostic-typecheck-tagged
-            (cdiag.CompilerTypecheckKind.UnboundName)
+            (UnboundName)
             "typecheck: no binding called `x` is visible here"))
         "E0201")
       (string.eq
         (compiler-diagnostic-built-code
           (cdiag.compiler-diagnostic-typecheck-tagged
-            (cdiag.CompilerTypecheckKind.UnboundName)
+            (UnboundName)
             "typecheck: unbound name x"))
         "E0201")
       (string.eq
@@ -677,15 +635,11 @@
 
 (define (compiler-advisory-phase-copy [phase : cdiag.CompilerAdvisoryPhase]) : cdiag.CompilerAdvisoryPhase
   (match phase
-    [(cdiag.CompilerAdvisoryPhase.Semantic)
-      cdiag.CompilerAdvisoryPhase.Semantic]
-    [(cdiag.CompilerAdvisoryPhase.Lowering)
-      cdiag.CompilerAdvisoryPhase.Lowering]
-    [(cdiag.CompilerAdvisoryPhase.Optimization)
-      cdiag.CompilerAdvisoryPhase.Optimization]
-    [(cdiag.CompilerAdvisoryPhase.RegisterAllocation)
-      cdiag.CompilerAdvisoryPhase.RegisterAllocation]
-    [(cdiag.CompilerAdvisoryPhase.Backend) cdiag.CompilerAdvisoryPhase.Backend]))
+    [(Semantic) Semantic]
+    [(Lowering) Lowering]
+    [(Optimization) Optimization]
+    [(RegisterAllocation) RegisterAllocation]
+    [(Backend) Backend]))
 
 (define (compiler-advisory-list-grow!
   [advisories : (&mut advisories cdiag.CompilerAdvisoryList)]) : unit
@@ -733,7 +687,7 @@
   [phase : cdiag.CompilerAdvisoryPhase]
   [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
   (if (match (cdiag.compiler-diagnostic-level diagnostic)
-    [(cdiag.CompilerDiagnosticError) true]
+    [(CompilerDiagnosticError) true]
     [_ false])
     false
     (unsafe
@@ -771,7 +725,7 @@
   [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
     (cdiag.compiler-diagnostic-simple path line 1 message)
-    cdiag.CompilerDiagnosticWarning))
+    CompilerDiagnosticWarning))
 
 (define (compiler-diagnostic-advisory-sink-ok?) : bool
   (let
@@ -795,34 +749,16 @@
           [fatal : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-simple "first.tl" 6 1 "fatal")]
           (begin
+            (compiler-advisory-sink-push! sink-a Semantic (& semantic))
+            (compiler-advisory-sink-push! sink-a Lowering (& lowering))
+            (compiler-advisory-sink-push! sink-a Optimization (& optimization))
             (compiler-advisory-sink-push!
               sink-a
-              cdiag.CompilerAdvisoryPhase.Semantic
-              (& semantic))
-            (compiler-advisory-sink-push!
-              sink-a
-              cdiag.CompilerAdvisoryPhase.Lowering
-              (& lowering))
-            (compiler-advisory-sink-push!
-              sink-a
-              cdiag.CompilerAdvisoryPhase.Optimization
-              (& optimization))
-            (compiler-advisory-sink-push!
-              sink-a
-              cdiag.CompilerAdvisoryPhase.RegisterAllocation
+              RegisterAllocation
               (& regalloc))
-            (compiler-advisory-sink-push!
-              sink-a
-              cdiag.CompilerAdvisoryPhase.Backend
-              (& backend))
-            (compiler-advisory-sink-push!
-              sink-b
-              cdiag.CompilerAdvisoryPhase.Semantic
-              (& other))
-            (compiler-advisory-sink-push!
-              sink-a
-              cdiag.CompilerAdvisoryPhase.Backend
-              (& fatal))
+            (compiler-advisory-sink-push! sink-a Backend (& backend))
+            (compiler-advisory-sink-push! sink-b Semantic (& other))
+            (compiler-advisory-sink-push! sink-a Backend (& fatal))
             unit)))]
     [a : cdiag.CompilerAdvisoryList
       (cdiag.compiler-advisory-sink-snapshot sink-a)]
@@ -842,10 +778,10 @@
         (= (cdiag.compiler-advisory-list-count (& a)) 5)
         (= (cdiag.compiler-advisory-list-count (& b)) 1)
         (match (cdiag.compiler-advisory-phase (& a0))
-          [(cdiag.CompilerAdvisoryPhase.Semantic) true]
+          [(Semantic) true]
           [_ false])
         (match (cdiag.compiler-advisory-phase (& a4))
-          [(cdiag.CompilerAdvisoryPhase.Backend) true]
+          [(Backend) true]
           [_ false])
         (string.eq (cdiag.compiler-diagnostic-message a0-diagnostic) "semantic")
         (string.eq (cdiag.compiler-diagnostic-message a4-diagnostic) "backend")

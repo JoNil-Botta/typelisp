@@ -103,17 +103,16 @@
 
 (define (enum-snapshot-head [env : EnumSnapshot]) : i64
   (match env
-    [(EnumSnapshot.Snapshot head) head]))
+    [(Snapshot head) head]))
 
 (define (enum-snapshot-push [env : EnumSnapshot] [key : i64] [value : i64]) : EnumSnapshot
   (let
     [next : EnumSnapshot
-      (EnumSnapshot.Snapshot
-        (snapshot-push-head (enum-snapshot-head env) key value))]
+      (Snapshot (snapshot-push-head (enum-snapshot-head env) key value))]
     [head : i64 (enum-snapshot-head next)]
     (begin
       (set! (array-ref stored-enum-heads head) head)
-      (EnumSnapshot.Snapshot (array-ref stored-enum-heads head)))))
+      (Snapshot (array-ref stored-enum-heads head)))))
 
 (define (raw-shadow-many [env : i64] [index : i64] [base : i64]) : i64
   (if (>= index 80)
@@ -170,7 +169,7 @@
   (begin
     (snapshot-reset!)
     (let
-      [env : EnumSnapshot (EnumSnapshot.Snapshot -1)]
+      [env : EnumSnapshot (Snapshot -1)]
       [env : EnumSnapshot (enum-snapshot-push env 3 (+ base 1))]
       [sibling : EnumSnapshot (enum-snapshot-push env 5 (+ base 20))]
       [env : EnumSnapshot (enum-shadow-many env 0 (+ base 2))]

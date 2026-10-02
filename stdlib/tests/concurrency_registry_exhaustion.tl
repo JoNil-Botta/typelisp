@@ -13,8 +13,8 @@
       0
       0
       0))
-    [(registry.ConcurrencyShareErr) true]
-    [(registry.ConcurrencyShared _) false]))
+    [(ConcurrencyShareErr) true]
+    [(ConcurrencyShared _) false]))
 
 (define (main) : i64
   (begin

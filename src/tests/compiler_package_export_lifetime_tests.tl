@@ -43,8 +43,8 @@
 
 (define (export-test-paths [decls : ast.AstDeclList]) : ast.AstDeclPathList
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (ast.ast-decl-path-list-new)]
-    [(ast.AstDeclListStep.Cons _ rest)
+    [(Nil) (ast.ast-decl-path-list-new)]
+    [(Cons _ rest)
       (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         (string.copy "pkg/src/macros.tl")
         -1
@@ -52,7 +52,7 @@
         (export-test-paths rest))]))
 
 (define (export-test-capture [source : String]) : build.ResultBuildPackageTlciExports
-  (export-test-capture-with-mode source (backend.CompilerBackendMode.Scalar)))
+  (export-test-capture-with-mode source (Scalar)))
 
 (define (export-test-capture-with-mode
   [source : String]
@@ -80,14 +80,10 @@
             (driver.compiler-driver-reset-analysis-state!))]
         [result : build.ResultBuildPackageTlciExports
           (match (parse.parse-ast-source source)
-            [(parse.ResultAstProgram.Err _)
-              (in-arena
-                home
-                (build.ResultBuildPackageTlciExports.Err
-                  (string.copy "fixture parse failed")))]
-            [(parse.ResultAstProgram.Ok program)
+            [(Err _) (in-arena home (Err (string.copy "fixture parse failed")))]
+            [(Ok program)
               (match program
-                [(ast.AstProgram.Program decls-box)
+                [(Program decls-box)
                   (let
                     [decls : ast.AstDeclList
                       (owned_view.compiler-owned-box-shared-view decls-box)]
@@ -151,8 +147,8 @@
     (tlci.tlci-empty-bytes)
     names
     source)
-    [(producer.ResultProducerBytes.Err _) false]
-    [(producer.ResultProducerBytes.Ok bytes) (> (array-length bytes) 0)]))
+    [(Err _) false]
+    [(Ok bytes) (> (array-length bytes) 0)]))
 
 (test
   package-export-metadata-survives-frontend-retirement
@@ -162,8 +158,8 @@
     (begin
       (export-test-reuse!)
       (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
+        [(Err message) (io.panic message)]
+        [(Ok metadata names source)
           (unless
             (and
               (= (array-length names) 0)
@@ -183,8 +179,8 @@
     (begin
       (export-test-reuse!)
       (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
+        [(Err message) (io.panic message)]
+        [(Ok metadata names source)
           (unless
             (and
               (= (array-length names) 2)
@@ -207,15 +203,15 @@
     (begin
       (export-test-reuse!)
       (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
+        [(Err message) (io.panic message)]
+        [(Ok metadata names source)
           (unless
             (and
               (= (array-length names) 0)
               (string.eq source "")
               (match (tlci.tlci-metadata-parse metadata)
-                [(tlci.ResultTlciMetadata.Err _) false]
-                [(tlci.ResultTlciMetadata.Ok parsed)
+                [(Err _) false]
+                [(Ok parsed)
                   (and
                     (string.eq parsed.version "v2")
                     (= (tlci.tlci-spmd-callables-len parsed.spmd-callables) 1)
@@ -247,11 +243,11 @@
     [exports : build.ResultBuildPackageTlciExports
       (export-test-capture-with-mode
         "(module capture.macros)\n(define (helper [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0))) : i64 x)"
-        (backend.CompilerBackendMode.Avx2))]
+        (Avx2))]
     (begin
       (export-test-reuse!)
       (match exports
-        [(build.ResultBuildPackageTlciExports.Err message)
+        [(Err message)
           (unless
             (string.eq
               message

@@ -35,7 +35,7 @@
   (let
     [r : lex.ResultTokens (lex.result "(define x 42)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -71,7 +71,7 @@
               ok
               true
               "basic token sequence should match Rust test_basic_tokens")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 2. src/lexer.rs test_types ----------------------------------------
 (test
@@ -79,7 +79,7 @@
   (let
     [r : lex.ResultTokens (lex.result "(-> i64 i64)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -115,14 +115,14 @@
               ok
               true
               "arrow-type tokens should lex as single tokens")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-duplicate-symbols-share-intern-id
   (let
     [r : lex.ResultTokens (lex.result "(x x y)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (lexer-assert-true
           (and
             (compiler_intern.intern-id-eq?
@@ -135,14 +135,14 @@
             (string.eq (token.sym (lex.array-shared-view toks 1)) "x")
             (string.eq (token.sym (lex.array-shared-view toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-token-intern-ids-are-typed-and-compact
   (let
     [r : lex.ResultTokens (lex.result "(x \"x\")")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (begin
           (lexer-assert-true
             (=
@@ -155,7 +155,7 @@
               (comptime (size-of (type i64))))
             "mixed syntax ids should retain one-word storage")
           (match (lex.array-shared-view toks 1)
-            [(token.Token.Sym id)
+            [(Sym id)
               (let
                 [syntax : InternSyntaxId
                   (compiler_intern.intern-syntax-id-from-renderable id)]
@@ -177,27 +177,27 @@
                     "renderable syntax ids should retain source text")))]
             [_ (lexer-assert-true false "symbol token should carry an id")])
           (match (lex.array-shared-view toks 2)
-            [(token.Token.Str id)
+            [(Str id)
               (lexer-assert-true
                 (compiler_intern.intern-id-eq?
                   id
                   (token.str-id (& (array-ref toks 2))))
                 "typed string ids should preserve the lexer identity")]
             [_ (lexer-assert-true false "string token should carry an id")]))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-lone-colon-without-compiler-builtin-initialization
   (let
     [r : lex.ResultTokens (lex.result ":")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (lexer-assert-true
           (and
             (= (token.tag (lex.array-shared-view toks 0)) (token.tag-sym))
             (string.eq (token.sym (lex.array-shared-view toks 0)) ":"))
           "standalone lexer should intern a lone colon from its source")]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
@@ -260,9 +260,8 @@
   (let
     [r : lex.ResultTokens (lex.result "#\\a'")]
     (match r
-      [(lex.ResultTokens.Ok _)
-        (lexer-assert-true false "legacy escaped char should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "legacy escaped char should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]
@@ -312,8 +311,8 @@
   (let
     [r : lex.ResultTokens (lex.result "'\\x'")]
     (match r
-      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unknown character escape"]
@@ -325,7 +324,7 @@
 (test
   lexer-apostrophe-quote-vs-char
   (match (lex.result "'form")
-    [(lex.ResultTokens.Ok toks)
+    [(Ok toks)
       (lexer-assert-true
         (and
           (= (token.tag (lex.array-shared-view toks 0)) (token.tag-quote))
@@ -333,7 +332,7 @@
           (string.eq (token.sym (lex.array-shared-view toks 1)) "form")
           (= (token.tag (lex.array-shared-view toks 2)) (token.tag-end)))
         "apostrophe quote should still quote forms")]
-    [(lex.ResultTokens.Err msg) (lexer-assert-true false msg)]))
+    [(Err msg) (lexer-assert-true false msg)]))
 
 ;; ---- 5. src/lexer.rs test_char_literal_in_context ----------------------
 (test
@@ -341,7 +340,7 @@
   (let
     [r : lex.ResultTokens (lex.result "(= c ' ')")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -377,7 +376,7 @@
               ok
               true
               "char literal should lex in a surrounding token stream")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 6. src/lexer.rs test_spans_single_line ----------------------------
 (test
@@ -385,7 +384,7 @@
   (let
     [r : lex.ResultSpannedTokens (lex.spanned-result "(define x 42)")]
     (match r
-      [(lex.ResultSpannedTokens.Ok s)
+      [(Ok s)
         (let
           [ok : bool true]
           (begin
@@ -435,13 +434,12 @@
               ok
               true
               "single-line spans should match Rust test_spans_single_line")))]
-      [(lex.ResultSpannedTokens.Err e)
-        (lexer-assert-true false (token.source-error-message e))])))
+      [(Err e) (lexer-assert-true false (token.source-error-message e))])))
 
 (test
   lexer-borrowed-token-payloads
   (match (lex.spanned-result "42 0x2a 3.5 name \"text\" 'x'")
-    [(lex.ResultSpannedTokens.Ok toks)
+    [(Ok toks)
       (let
         [int-token : (& toks token.Token)
           (token.spanned-token-token-ref (& (array-ref toks 0)))]
@@ -488,8 +486,7 @@
           (lexer-assert-true
             (= (token.tag-ref char-token) (token.tag-char))
             "borrowed char tag after payload")))]
-    [(lex.ResultSpannedTokens.Err e)
-      (lexer-assert-true false (token.source-error-message e))]))
+    [(Err e) (lexer-assert-true false (token.source-error-message e))]))
 
 ;; ---- 7. src/lexer.rs test_spans_multi_line_and_blank_lines -------------
 (test
@@ -497,7 +494,7 @@
   (let
     [r : lex.ResultSpannedTokens (lex.spanned-result "(a\n\n  bb)")]
     (match r
-      [(lex.ResultSpannedTokens.Ok s)
+      [(Ok s)
         (let
           [ok : bool true]
           (begin
@@ -517,8 +514,7 @@
               ok
               true
               "multi-line blank spans should match Rust test")))]
-      [(lex.ResultSpannedTokens.Err e)
-        (lexer-assert-true false (token.source-error-message e))])))
+      [(Err e) (lexer-assert-true false (token.source-error-message e))])))
 
 ;; ---- 8. src/lexer.rs EOF handling --------------------------------------
 (test
@@ -536,8 +532,8 @@
   (let
     [r : lex.ResultTokens (lex.result "#\\spcae'")]
     (match r
-      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]

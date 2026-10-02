@@ -101,14 +101,13 @@
     (driver.compiler-driver-reset-file-state!)
     (match (driver.compiler-driver-load-package-file-with-runtime
       "target/exp/package-discovery-lifetime/src/main.tl"
-      (backend.CompilerBackendTarget.Linux)
+      (Linux)
       (discovery-test-roots)
       "target/exp/package-discovery-lifetime"
       (load.compiler-pkg-deps-empty)
       true)
-      [(load.ResultCompilerLoadWithPaths.Err _)
-        (io.panic "discovery fixture must load before path retirement")]
-      [(load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+      [(Err _) (io.panic "discovery fixture must load before path retirement")]
+      [(Ok _ paths _ _)
         (let
           [expected : ast.AstDeclPathList
             (driver.compiler-driver-copy-package-discovery-paths paths)]
@@ -122,10 +121,10 @@
               (ci.intern-compat-state-capture-active))]
           (match (discovery-test-load
             "target/exp/package-discovery-lifetime/src/main.tl"
-            (backend.CompilerBackendTarget.Linux))
-            [(driver.ResultCompilerDriverPackagePaths.Err _)
+            (Linux))
+            [(Err _)
               (io.panic "discovery must preserve successful import closure")]
-            [(driver.ResultCompilerDriverPackagePaths.Ok copied)
+            [(Ok copied)
               (begin
                 (unless
                   (and
@@ -160,8 +159,8 @@
     (match (check.compiler-check-file-with-roots
       "target/exp/package-discovery-lifetime/src/main.tl"
       (discovery-test-roots))
-      [(check.ResultCompilerCheck.Ok _ _) unit]
-      [(check.ResultCompilerCheck.Err _ _)
+      [(Ok _ _) unit]
+      [(Err _ _)
         (io.panic "typecheck after discovery must use live compiler state")])))
 
 (test
@@ -171,16 +170,15 @@
     (driver.compiler-driver-reset-file-state!)
     (match (discovery-test-load
       "target/exp/package-discovery-lifetime/src/bad.tl"
-      (backend.CompilerBackendTarget.Linux))
-      [(driver.ResultCompilerDriverPackagePaths.Ok _)
-        (io.panic "malformed discovery source must fail")]
-      [(driver.ResultCompilerDriverPackagePaths.Err failure)
+      (Linux))
+      [(Ok _) (io.panic "malformed discovery source must fail")]
+      [(Err failure)
         (begin
           (match (discovery-test-load
             "target/exp/package-discovery-lifetime/src/main.tl"
-            (backend.CompilerBackendTarget.Windows))
-            [(driver.ResultCompilerDriverPackagePaths.Ok _) unit]
-            [(driver.ResultCompilerDriverPackagePaths.Err _)
+            (Windows))
+            [(Ok _) unit]
+            [(Err _)
               (io.panic "failed discovery must not poison next target load")])
           (discovery-test-reuse-storage!)
           (let
@@ -218,7 +216,7 @@
       (begin
         (discovery-test-reuse-storage!)
         (match runnable
-          [(doc_test.DocTestExtraction.Extraction examples errors)
+          [(Extraction examples errors)
             (unless
               (and
                 (= (doc_test.doc-test-example-list-count examples) 2)
@@ -242,7 +240,7 @@
               (io.panic
                 "extracted code or runnable expectations escaped scratch"))])
         (match malformed
-          [(doc_test.DocTestExtraction.Extraction examples errors)
+          [(Extraction examples errors)
             (unless
               (and
                 (= (doc_test.doc-test-example-list-count examples) 0)
@@ -251,7 +249,7 @@
               (io.panic "malformed fence ordering or messages escaped scratch"))])
         (match (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/not-present.tl")
-          [(doc_test.DocTestExtraction.Extraction examples errors)
+          [(Extraction examples errors)
             (unless
               (and
                 (= (doc_test.doc-test-example-list-count examples) 0)
@@ -304,14 +302,14 @@
   (in-arena
     (arena.Arena owner)
     (match (tlci_loader_tests.tlci-loader-test-emit-with-real-fixup)
-      [(tlci.ResultTlciBytes.Err _) false]
-      [(tlci.ResultTlciBytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         (match (tlci_loader.tlci-loader-load-from-bytes-with-host
           owner
           bytes
           (tlci_core_tests.tlci-test-host-callback-table))
-          [(tlci_loader.ResultTlciLoadedImage.Err _) false]
-          [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+          [(Err _) false]
+          [(Ok loaded)
             (=
               (load.compiler-load-dependency-catalog-record-owned!
                 state
@@ -326,10 +324,9 @@
                     (tlci.tlci-build-host-platform)
                     tlci.tlci-callback-abi-version
                     "abcdef0")
-                  (load.CompilerLoadDependencyCatalogImage.Some
-                    (tlci_loader_tests.tlci-loader-test-image 0))
+                  (Some (tlci_loader_tests.tlci-loader-test-image 0))
                   (tlci.tlci-spmd-callables-empty)
-                  (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)))
+                  (TrustedCode loaded)))
               0)])])))
 
 (test
@@ -351,23 +348,20 @@
           (io.panic "native discovery fixture must admit its host mapping"))
         (match (discovery-test-load
           "target/exp/package-discovery-lifetime/src/main.tl"
-          (backend.CompilerBackendTarget.Linux))
-          [(driver.ResultCompilerDriverPackagePaths.Ok _) unit]
-          [(driver.ResultCompilerDriverPackagePaths.Err _)
+          (Linux))
+          [(Ok _) unit]
+          [(Err _)
             (io.panic "discovery with admitted native catalog must load")])
         (match (discovery-test-load
           "target/exp/package-discovery-lifetime/src/bad.tl"
-          (backend.CompilerBackendTarget.Windows))
-          [(driver.ResultCompilerDriverPackagePaths.Err _) unit]
-          [(driver.ResultCompilerDriverPackagePaths.Ok _)
-            (io.panic "native catalog must not hide malformed discovery")])
+          (Windows))
+          [(Err _) unit]
+          [(Ok _) (io.panic "native catalog must not hide malformed discovery")])
         (load.compiler-load-session-state-dependency-surfaces-release!
           (owned_view.compiler-owned-shared-view state))
         (discovery-test-reuse-storage!)
         (match (load.compiler-load-dependency-catalog-admitted-image state 0)
-          [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedCode
-              _
-              loaded)
+          [(TrustedCode _ loaded)
             (unless
               (and
                 (=
@@ -381,8 +375,8 @@
           [_ (io.panic "discovery changed admitted catalog status")])
         (match (load.compiler-load-session-state-dependency-catalog-release!
           state)
-          [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
-          [(load.ResultCompilerLoadDependencyCatalogUnit.Err _)
+          [(Ok) unit]
+          [(Err _)
             (io.panic "enclosing catalog must retain sole mapping release")])))))
 
 ;; `(import wide.*)` notes two structural pairs per imported item, so each
@@ -413,9 +407,9 @@
 (define (discovery-test-wide-load-ok?) : bool
   (match (discovery-test-load
     "target/exp/package-discovery-lifetime/src/wide_main.tl"
-    (backend.CompilerBackendTarget.Linux))
-    [(driver.ResultCompilerDriverPackagePaths.Ok _) true]
-    [(driver.ResultCompilerDriverPackagePaths.Err _) false]))
+    (Linux))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (test
   package-discovery-releases-structural-generations

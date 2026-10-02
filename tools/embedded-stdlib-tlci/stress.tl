@@ -156,23 +156,18 @@
         pools
         (compiler_ast_types.ast-node-pool-context-expr-push
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-          (compiler_ast_types.AstExpr.Var (ci.intern "buf")))
+          (Var (ci.intern "buf")))
         (compiler_ast_types.ast-source-span 900 7 900 10))]
     [chunk-node : i64
       (compiler_ast_types.ast-expr-spanned-with-pools
         pools
         (compiler_ast_types.ast-node-pool-context-expr-push
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-          (compiler_ast_types.AstExpr.Literal
-            (compiler_ast_types.AstLiteral.String (ci.intern "x"))))
+          (Literal (String (ci.intern "x"))))
         (compiler_ast_types.ast-source-span 900 12 900 15))]
     (__tl_make-array
-      (compiler_ctfe.CompilerCtfeValue.Expr
-        place-node
-        (compiler_ast_types.AstType.Expr))
-      (compiler_ctfe.CompilerCtfeValue.Expr
-        chunk-node
-        (compiler_ast_types.AstType.String)))))
+      (compiler_ctfe.CompilerCtfeValue.Expr place-node (Expr))
+      (compiler_ctfe.CompilerCtfeValue.Expr chunk-node (String)))))
 
 ;: Tier 1: sustained dispatch of the newly native dynamic set!-place entry.
 ;: Returns `stress-status-ok` or the first distinguishing failure status;
@@ -220,9 +215,8 @@
             stress-cookie
             (__tl_make-array i64 0)
             0)
-            [(tlci_loader.ResultTlciMacroDispatch.Err _)
-              (set! outcome stress-status-dispatch-error)]
-            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+            [(Err _) (set! outcome stress-status-dispatch-error)]
+            [(Ok dispatch)
               (let
                 [status : i64 dispatch.status]
                 (cond
@@ -280,7 +274,7 @@
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
     (match (clone expr)
-      [(compiler_ast_types.AstExpr.Spanned inner _)
+      [(Spanned inner _)
         (stress-expr-get
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
           inner)]
@@ -294,7 +288,7 @@
     pools
     (compiler_ast_types.ast-node-pool-context-expr-push
       (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-      (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
+      (Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
 ;: The committed core box-place expansion must produce the legacy bridge node,
@@ -303,11 +297,11 @@
   [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
-    [(compiler_ctfe.CompilerCtfeValue.Expr node _)
+    [(Expr node _)
       (match (stress-expr-get
         (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
         node)
-        [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
+        [(BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
 
@@ -337,8 +331,7 @@
           (stress-global-shared-view
             compiler_embedded_stdlib_tlci.compiler-comptime-host-operands)
           0)
-          [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-            (= node expected-operand-node)]
+          [(Expr node _) (= node expected-operand-node)]
           [_ false]))
       (begin
         (set! (array-ref outcome 0) stress-status-tier2-operand-clobbered)
@@ -394,9 +387,7 @@
       (set! (array-ref canaries 1) stress-canary-b)
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.Expr
-          operand-node
-          (compiler_ast_types.AstType.Expr)))
+        (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
       (while (and (= outcome stress-status-ok) (< i iterations))
         (begin
           (when
@@ -423,9 +414,8 @@
             stress-cookie
             (__tl_make-array i64 0)
             0)
-            [(tlci_loader.ResultTlciMacroDispatch.Err _)
-              (set! outcome stress-status-dispatch-error)]
-            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+            [(Err _) (set! outcome stress-status-dispatch-error)]
+            [(Ok dispatch)
               (cond
                 [(not
                     (= dispatch.status tlci_core.tlci-host-callback-status-ok))
@@ -507,9 +497,7 @@
                 (array-ref canaries 1)))
             (set!
               (array-ref operands 0)
-              (compiler_ctfe.CompilerCtfeValue.Expr
-                operand-node
-                (compiler_ast_types.AstType.Expr)))
+              (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
               (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
               (stress-global-shared-view operands)
@@ -523,9 +511,8 @@
               stress-cookie
               (__tl_make-array i64 0)
               0)
-              [(tlci_loader.ResultTlciMacroDispatch.Err _)
-                (set! outcome stress-status-dispatch-error)]
-              [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              [(Err _) (set! outcome stress-status-dispatch-error)]
+              [(Ok dispatch)
                 (cond
                   [(not
                       (= dispatch.status tlci_core.tlci-host-callback-status-ok))
@@ -579,11 +566,11 @@
         (arena.tl_arena_current)
         (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
         (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
-        [(tlci_loader.ResultTlciLoadedImage.Err _)
+        [(Err _)
           (begin
             (io.print-error "stress: embedded image failed to load\n")
             stress-status-load-failed)]
-        [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+        [(Ok loaded)
           (let
             [outcome : i64
               (cond
@@ -623,6 +610,5 @@
                   (string.int->string (array-ref failed-at 0))
                   "\n"))
               (match (tlci_loader.tlci-loader-release loaded)
-                [(tlci_loader.ResultTlciLoaderUnit.Ok) outcome]
-                [(tlci_loader.ResultTlciLoaderUnit.Err _)
-                  stress-status-release-failed])))]))))
+                [(Ok) outcome]
+                [(Err _) stress-status-release-failed])))]))))

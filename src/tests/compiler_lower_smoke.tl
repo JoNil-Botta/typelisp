@@ -7,7 +7,6 @@
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
 (import compiler_driver_core as driver)
-(import compiler_backend as backend)
 (import compiler_lower_tests as lower_tests)
 (import compiler_lower as lower)
 (import compiler_diagnostic as diagnostic)
@@ -58,81 +57,50 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-foreach-multi-output-source)
     mode)
-    [(lower.ResultCompilerLower.Ok program _)
+    [(Ok program _)
       (match program
-        [(ir.CompilerIrProgram.Program _ functions _)
+        [(Program _ functions _)
           (and
+            (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 2)
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.VectorLoad))
-              2)
-            (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.VectorBinop))
+              (lower_tests.lower-test-count functions "fill" (VectorBinop))
               (if predicated?
                 6
                 3))
+            (= (lower_tests.lower-test-count functions "fill" (VectorStore)) 2)
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.VectorStore))
-              2)
-            (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.PredicatedLoad))
+              (lower_tests.lower-test-count functions "fill" (PredicatedLoad))
               (if predicated?
                 2
                 0))
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.PredicatedStore))
+              (lower_tests.lower-test-count functions "fill" (PredicatedStore))
               (if predicated?
                 2
                 0))
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.TailMask))
+              (lower_tests.lower-test-count functions "fill" (TailMask))
               (if predicated?
                 1
                 0))
-            (>
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.StorePtr))
-              0))])]
-    [(lower.ResultCompilerLower.Err _) false]))
+            (> (lower_tests.lower-test-count functions "fill" (StorePtr)) 0))])]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-foreach-multi-output-shape-ok?) : bool
   (and
-    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
-      (lower.CompilerLowerMode.Avx2)
-      true)
-    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
-      (lower.CompilerLowerMode.Avx512)
-      true)
+    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok? (Avx2) true)
+    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok? (Avx512) true)
     (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-same-destination-source)
-      (lower.CompilerLowerMode.Avx2)
+      (Avx2)
       (lower.lower-simd-foreach-fallback-diagnostic))
     (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-alias-source)
-      (lower.CompilerLowerMode.Avx2)
+      (Avx2)
       (lower.lower-simd-foreach-fallback-diagnostic))
     (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-mixed-source)
-      (lower.CompilerLowerMode.Avx2)
+      (Avx2)
       (lower.lower-simd-foreach-fallback-diagnostic))))
 
 (define (compiler-lower-smoke-masked-full-gang-source) : String
@@ -152,50 +120,27 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-masked-full-gang-source)
     mode)
-    [(lower.ResultCompilerLower.Ok program _)
+    [(Ok program _)
       (match program
-        [(ir.CompilerIrProgram.Program _ functions _)
+        [(Program _ functions _)
           (and
+            (= (lower_tests.lower-test-count functions "fill" (TailMask)) 1)
+            (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 1)
+            (= (lower_tests.lower-test-count functions "fill" (VectorStore)) 1)
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.TailMask))
-              1)
-            (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.VectorLoad))
-              1)
-            (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.VectorStore))
-              1)
-            (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.PredicatedLoad))
+              (lower_tests.lower-test-count functions "fill" (PredicatedLoad))
               1)
             ;; One parent tail store plus two divergent stores in each of the
             ;; full and tail bodies. Child masks must remain predicated.
             (=
-              (lower_tests.lower-test-count
-                functions
-                "fill"
-                (lower_tests.LowerTestInstr.PredicatedStore))
+              (lower_tests.lower-test-count functions "fill" (PredicatedStore))
               5))])]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-masked-full-gang-ok?) : bool
   (and
-    (compiler-lower-smoke-masked-full-gang-mode-ok?
-      (lower.CompilerLowerMode.Avx2))
-    (compiler-lower-smoke-masked-full-gang-mode-ok?
-      (lower.CompilerLowerMode.Avx512))))
+    (compiler-lower-smoke-masked-full-gang-mode-ok? (Avx2))
+    (compiler-lower-smoke-masked-full-gang-mode-ok? (Avx512))))
 
 ;; Scalar `spmd-reduce` addend split: a `sum` over `(+ X U)` with
 ;; reduction-invariant `U` lowers to a loop that accumulates only `X` plus one
@@ -216,42 +161,42 @@
 (define (compiler-lower-smoke-spmd-reduce-split-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-spmd-reduce-split-source)
-    (lower.CompilerLowerMode.Scalar))
-    [(lower.ResultCompilerLower.Ok program _)
+    (Scalar))
+    [(Ok program _)
       (match program
-        [(ir.CompilerIrProgram.Program _ functions _)
+        [(Program _ functions _)
           (and
             (=
               (lower_tests.lower-test-function-binop-op-count
                 functions
                 "reduce_split_pos"
-                ir.CompilerIrBinOp.Mul)
+                Mul)
               1)
             (=
               (lower_tests.lower-test-function-binop-op-count
                 functions
                 "reduce_split_pos_swapped"
-                ir.CompilerIrBinOp.Mul)
+                Mul)
               1)
             (=
               (lower_tests.lower-test-function-binop-op-count
                 functions
                 "reduce_split_neg_i32"
-                ir.CompilerIrBinOp.Mul)
+                Mul)
               0)
             (=
               (lower_tests.lower-test-function-binop-op-count
                 functions
                 "reduce_split_neg_index"
-                ir.CompilerIrBinOp.Mul)
+                Mul)
               0)
             (=
               (lower_tests.lower-test-function-binop-op-count
                 functions
                 "reduce_split_neg_rebind"
-                ir.CompilerIrBinOp.Mul)
+                Mul)
               0))])]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
@@ -264,8 +209,8 @@
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-imported-local-vector-source))
-    [(lower.ResultCompilerLower.Ok _ _) true]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Ok _ _) true]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
@@ -298,16 +243,16 @@
         (string.copy entry)
         (sym_i64_env.sym-i64-empty)
         roots)
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (lower_tests.lower-compiler-program-with-decl-paths
             entry
             (ast.ast-program decls)
             paths)
-            [(lower.ResultCompilerLower.Ok _ _) true]
-            [(lower.ResultCompilerLower.Err diag)
+            [(Ok _ _) true]
+            [(Err diag)
               (io.panic
                 (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
-        [(load.ResultCompilerLoadWithPaths.Err diag)
+        [(Err diag)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -323,14 +268,12 @@
       (driver.compiler-driver-reset-file-state!)
       (match (driver.compiler-driver-load-and-lower-escaping
         "stdlib/args.tl"
-        (backend.CompilerBackendTarget.Linux)
+        (Linux)
         roots
-        (backend.CompilerBackendMode.Scalar)
-        (driver.compiler-driver-target-cfgs
-          (backend.CompilerBackendTarget.Linux)
-          (parser.compiler-cfg-empty)))
-        [(driver.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) true]
-        [(driver.ResultCompilerDriverLowered.Err _ _) false]))))
+        (Scalar)
+        (driver.compiler-driver-target-cfgs (Linux) (parser.compiler-cfg-empty)))
+        [(Ok _ _ _ _ _ _) true]
+        [(Err _ _) false]))))
 
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
   (let
@@ -364,14 +307,14 @@
         [ok : bool
           (match (driver.compiler-driver-load-and-lower-escaping
             (string.copy entry)
-            (backend.CompilerBackendTarget.Linux)
+            (Linux)
             roots
-            (backend.CompilerBackendMode.Scalar)
+            (Scalar)
             (driver.compiler-driver-target-cfgs
-              (backend.CompilerBackendTarget.Linux)
+              (Linux)
               (parser.compiler-cfg-empty)))
-            [(driver.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) false]
-            [(driver.ResultCompilerDriverLowered.Err diag-box _)
+            [(Ok _ _ _ _ _ _) false]
+            [(Err diag-box _)
               (let
                 [diag : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-box-shared-view diag-box)]
@@ -424,8 +367,8 @@
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-    [(lower.ResultCompilerLower.Ok _ _) true]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Ok _ _) true]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
@@ -442,13 +385,13 @@
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (driver.compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
-        (backend.CompilerBackendTarget.Linux)
+        (Linux)
         roots
         0
-        (backend.CompilerBackendMode.Scalar)
+        (Scalar)
         (parser.compiler-cfg-empty))
-        [(driver.ResultCompilerDriver.Ok _ _) true]
-        [(driver.ResultCompilerDriver.Err diag _)
+        [(Ok _ _) true]
+        [(Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -470,20 +413,20 @@
       (driver.compiler-driver-reset-file-state!)
       (match (driver.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
         path
-        (backend.CompilerBackendTarget.Linux)
+        (Linux)
         true
         roots
         0
-        (backend.CompilerBackendMode.Scalar)
+        (Scalar)
         (parser.compiler-cfg-empty)
         false)
-        [(driver.ResultCompilerDriverBuffer.Ok buf _)
+        [(Ok buf _)
           (let
             [asm : String (text_buf.render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
             (string.contains (& asm) (& needle)))]
-        [(driver.ResultCompilerDriverBuffer.Err diag _)
+        [(Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -541,20 +484,20 @@
 (define (compiler-lower-smoke-c43-vector-push-only-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-only-source))
-    [(lower.ResultCompilerLower.Ok _ _) true]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Ok _ _) true]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-c43-vector-push-map-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-map-source))
-    [(lower.ResultCompilerLower.Ok _ _) true]
-    [(lower.ResultCompilerLower.Err _) false]))
+    [(Ok _ _) true]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-c43-unreachable-error-rejected?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-unreachable-error-source))
-    [(lower.ResultCompilerLower.Ok _ _) false]
-    [(lower.ResultCompilerLower.Err _) true]))
+    [(Ok _ _) false]
+    [(Err _) true]))
 
 (define (compiler-lower-smoke-c43-typecheck-completeness-ok?) : bool
   (begin
@@ -597,14 +540,14 @@
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parser.parse-ast-source
     (lower_tests.compiler-lower-module-entry-main-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
         (ast.ast-decl-path-list-new))
-        [(lower.ResultCompilerLower.Ok lowered _)
+        [(Ok lowered _)
           (match lowered
-            [(ir.CompilerIrProgram.Program _ functions _)
+            [(Program _ functions _)
               (begin
                 (unless
                   (lower_tests.lower-test-function-defined? functions "main")
@@ -638,11 +581,10 @@
                         (io.panic "lower: module entry main uses bare helper")
                         (io.panic
                           "lower: module entry main helper call missing"))))))])]
-        [(lower.ResultCompilerLower.Err diag)
+        [(Err diag)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
-    [(parser.ResultAstProgram.Err _)
-      (io.panic "lower: module entry main parse failed")]))
+    [(Err _) (io.panic "lower: module entry main parse failed")]))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-source) : String
   "(module stdlib.runtime)
@@ -697,22 +639,22 @@
 (define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
   (match (parser.parse-ast-source
     (compiler-lower-smoke-stdlib-string-public-substring-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/string.tl"
         program
         (compiler-lower-smoke-stdlib-string-public-substring-paths))
-        [(lower.ResultCompilerLower.Ok lowered _)
+        [(Ok lowered _)
           (match lowered
-            [(ir.CompilerIrProgram.Program _ functions _)
+            [(Program _ functions _)
               (and
                 (not
                   (compiler-lower-smoke-stdlib-runtime-substring-defined?
                     (ir.compiler-ir-global-shared-view functions)))
                 (compiler-lower-smoke-stdlib-string-public-substring-defined?
                   functions))])]
-        [(lower.ResultCompilerLower.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-lower-smoke-self-test) : unit
   (begin
@@ -1073,13 +1015,12 @@
       (lower_tests.compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?)
       (io.panic "lower: windows byref aggregate temporaries smoke mismatch"))
     (unless
-      (lower_tests.compiler-lower-c-abi-result-frame-storage-ok?
-        (lower.CompilerLowerMode.LinuxScalar))
+      (lower_tests.compiler-lower-c-abi-result-frame-storage-ok? (LinuxScalar))
       (io.panic
         "lower: Linux C ABI aggregate result frame storage smoke mismatch"))
     (unless
       (lower_tests.compiler-lower-c-abi-result-frame-storage-ok?
-        (lower.CompilerLowerMode.WindowsScalar))
+        (WindowsScalar))
       (io.panic
         "lower: Windows C ABI aggregate result frame storage smoke mismatch"))
     (unless

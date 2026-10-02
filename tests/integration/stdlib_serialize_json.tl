@@ -52,18 +52,18 @@
   (json.list-cons value rest))
 
 (define (serialize-json-empty-array) : json.Json
-  (json.JsonArray (box (json.list-empty))))
+  (JsonArray (box (json.list-empty))))
 
 (define (serialize-json-enum-json [tag : String] [payload : json.Json]) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
       (serialize-json-member
         "tag"
-        (json.JsonString tag)
+        (JsonString tag)
         (serialize-json-member "payload" payload (json.member-list-empty))))))
 
 (define (serialize-json-enum-missing-tag) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
       (serialize-json-member
         "payload"
@@ -71,45 +71,42 @@
         (json.member-list-empty)))))
 
 (define (serialize-json-enum-missing-payload) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
-      (serialize-json-member
-        "tag"
-        (json.JsonString "Idle")
-        (json.member-list-empty)))))
+      (serialize-json-member "tag" (JsonString "Idle") (json.member-list-empty)))))
 
 (define (serialize-json-address-json [zip : String] [city : String]) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
       (serialize-json-member
         "zip"
-        (json.JsonNumber zip)
+        (JsonNumber zip)
         (serialize-json-member
           "city"
-          (json.JsonString city)
+          (JsonString city)
           (json.member-list-empty))))))
 
 (define (serialize-json-home-json) : json.Json
   (serialize-json-address-json "12345" "London"))
 
 (define (serialize-json-scores-json) : json.Json
-  (json.JsonArray
+  (JsonArray
     (box
       (serialize-json-item
-        (json.JsonNumber "4")
+        (JsonNumber "4")
         (serialize-json-item
-          (json.JsonNumber "5")
-          (serialize-json-item (json.JsonNumber "6") (json.list-empty)))))))
+          (JsonNumber "5")
+          (serialize-json-item (JsonNumber "6") (json.list-empty)))))))
 
 (define (serialize-json-samples-json) : json.Json
-  (json.JsonArray
+  (JsonArray
     (box
       (serialize-json-item
-        (json.JsonNumber "7")
-        (serialize-json-item (json.JsonNumber "8") (json.list-empty))))))
+        (JsonNumber "7")
+        (serialize-json-item (JsonNumber "8") (json.list-empty))))))
 
 (define (serialize-json-previous-json) : json.Json
-  (json.JsonArray
+  (JsonArray
     (box
       (serialize-json-item
         (serialize-json-address-json "111" "Oxford")
@@ -118,48 +115,46 @@
           (json.list-empty))))))
 
 (define (serialize-json-combo-json) : json.Json
-  (json.JsonArray
+  (JsonArray
     (box
       (serialize-json-item
-        (json.JsonNumber "99")
+        (JsonNumber "99")
         (serialize-json-item
           (serialize-json-address-json "333" "Rome")
           (serialize-json-item
-            (json.JsonArray
+            (JsonArray
               (box
                 (serialize-json-item
-                  (json.JsonNumber "9")
-                  (serialize-json-item (json.JsonNumber "10") (json.list-empty)))))
+                  (JsonNumber "9")
+                  (serialize-json-item (JsonNumber "10") (json.list-empty)))))
             (serialize-json-item
               (serialize-json-samples-json)
               (serialize-json-item
-                (json.JsonArray
+                (JsonArray
                   (box
                     (serialize-json-item
-                      (json.JsonString "inner")
-                      (serialize-json-item
-                        (json.JsonBool true)
-                        (json.list-empty)))))
+                      (JsonString "inner")
+                      (serialize-json-item (JsonBool true) (json.list-empty)))))
                 (json.list-empty)))))))))
 
 (define (serialize-json-person-json [age : json.Json]) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
       (serialize-json-member
         "name"
-        (json.JsonString "Ada\nLovelace")
+        (JsonString "Ada\nLovelace")
         (serialize-json-member
           "age"
           age
           (serialize-json-member
             "active"
-            (json.JsonBool true)
+            (JsonBool true)
             (serialize-json-member
               "score"
-              (json.JsonNumber "9.5")
+              (JsonNumber "9.5")
               (serialize-json-member
                 "ratio"
-                (json.JsonNumber "1.25")
+                (JsonNumber "1.25")
                 (serialize-json-member
                   "home"
                   (serialize-json-home-json)
@@ -178,20 +173,20 @@
                           (json.member-list-empty))))))))))))))
 
 (define (serialize-json-person-missing-age) : json.Json
-  (json.JsonObject
+  (JsonObject
     (box
       (serialize-json-member
         "name"
-        (json.JsonString "Ada")
+        (JsonString "Ada")
         (serialize-json-member
           "active"
-          (json.JsonBool true)
+          (JsonBool true)
           (serialize-json-member
             "score"
-            (json.JsonNumber "9.5")
+            (JsonNumber "9.5")
             (serialize-json-member
               "ratio"
-              (json.JsonNumber "1.25")
+              (JsonNumber "1.25")
               (serialize-json-member
                 "home"
                 (serialize-json-home-json)
@@ -297,16 +292,16 @@
         encoded
         "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"},\"scores\":[4,5,6],\"previous\":[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}],\"samples\":[7,8],\"combo\":[99,{\"zip\":333,\"city\":\"Rome\"},[9,10],[7,8],[\"inner\",true]]}")
       (match (person_json.from-json json)
-        [(person_json.Ok parsed) (serialize-json-person-ok? parsed)]
-        [(person_json.Err _) false]))))
+        [(Ok parsed) (serialize-json-person-ok? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-address-roundtrip-ok?) : bool
   (let
     [home : Address (Address 12345 "London")]
     [json : json.Json (address_json.to-json home)]
     (match (address_json.from-json json)
-      [(address_json.Ok parsed) (serialize-json-address-ok? parsed)]
-      [(address_json.Err _) false])))
+      [(Ok parsed) (serialize-json-address-ok? parsed)]
+      [(Err _) false])))
 
 (define (serialize-json-i64-root-roundtrip-ok?) : bool
   (let
@@ -321,8 +316,8 @@
     (and
       (string.eq encoded "42")
       (match (i64_json.from-json json)
-        [(i64_json.Ok parsed) (= parsed 42)]
-        [(i64_json.Err _) false]))))
+        [(Ok parsed) (= parsed 42)]
+        [(Err _) false]))))
 
 (define (serialize-json-fixed-array-root-roundtrip-ok?) : bool
   (let
@@ -332,8 +327,8 @@
     (and
       (string.eq encoded "[4,5,6]")
       (match (fixed_i64_json.from-json json)
-        [(fixed_i64_json.Ok parsed) (serialize-json-scores-ok? parsed)]
-        [(fixed_i64_json.Err _) false]))))
+        [(Ok parsed) (serialize-json-scores-ok? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-dyn-array-root-roundtrip-ok?) : bool
   (let
@@ -343,8 +338,8 @@
     (and
       (string.eq encoded "[7,8]")
       (match (dyn_i64_json.from-json json)
-        [(dyn_i64_json.Ok parsed) (serialize-json-samples-ok? parsed)]
-        [(dyn_i64_json.Err _) false]))))
+        [(Ok parsed) (serialize-json-samples-ok? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-address-array-root-roundtrip-ok?) : bool
   (let
@@ -356,8 +351,8 @@
         encoded
         "[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}]")
       (match (address_array_json.from-json json)
-        [(address_array_json.Ok parsed) (serialize-json-previous-ok? parsed)]
-        [(address_array_json.Err _) false]))))
+        [(Ok parsed) (serialize-json-previous-ok? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-tuple-root-roundtrip-ok?) : bool
   (let
@@ -366,9 +361,9 @@
     (and
       (string.eq encoded "[11,12]")
       (match (tuple_i64_i64_json_again.from-json json)
-        [(tuple_i64_i64_json_again.Ok parsed)
+        [(Ok parsed)
           (and (= (tuple-ref parsed 0) 11) (= (tuple-ref parsed 1) 12))]
-        [(tuple_i64_i64_json_again.Err _) false]))))
+        [(Err _) false]))))
 
 (define (serialize-json-distinct-tuple-root-ok?) : bool
   (let
@@ -377,19 +372,18 @@
     (and
       (string.eq encoded "[23,true]")
       (match (tuple_i64_bool_json.from-json json)
-        [(tuple_i64_bool_json.Ok parsed)
-          (and (= (tuple-ref parsed 0) 23) (tuple-ref parsed 1))]
-        [(tuple_i64_bool_json.Err _) false]))))
+        [(Ok parsed) (and (= (tuple-ref parsed 0) 23) (tuple-ref parsed 1))]
+        [(Err _) false]))))
 
 (define (serialize-json-status-nullary-unary-roundtrip-ok?) : bool
   (and
     (match (status_json.from-json (status_json.to-json (enum_fixture.idle)))
-      [(status_json.Ok parsed) (enum_fixture.idle? parsed)]
-      [(status_json.Err _) false])
+      [(Ok parsed) (enum_fixture.idle? parsed)]
+      [(Err _) false])
     (match (status_json.from-json
       (status_json.to-json (enum_fixture.scored 12)))
-      [(status_json.Ok parsed) (enum_fixture.scored? parsed 12)]
-      [(status_json.Err _) false])))
+      [(Ok parsed) (enum_fixture.scored? parsed 12)]
+      [(Err _) false])))
 
 (define (serialize-json-status-root-roundtrip-ok?) : bool
   (let
@@ -399,8 +393,8 @@
     (and
       (string.eq encoded "{\"tag\":\"Moved\",\"payload\":[123,[9,10]]}")
       (match (status_json.from-json json)
-        [(status_json.Ok parsed) (enum_fixture.moved? parsed)]
-        [(status_json.Err _) false]))))
+        [(Ok parsed) (enum_fixture.moved? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-status-wide-roundtrip-ok?) : bool
   (let
@@ -410,8 +404,8 @@
     (and
       (string.eq encoded "{\"tag\":\"Wide\",\"payload\":[1,2,3,4,5,6,7,8,9]}")
       (match (status_json.from-json json)
-        [(status_json.Ok parsed) (enum_fixture.wide? parsed)]
-        [(status_json.Err _) false]))))
+        [(Ok parsed) (enum_fixture.wide? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-status-struct-payload-roundtrip-ok?) : bool
   (let
@@ -422,53 +416,52 @@
         encoded
         "{\"tag\":\"Detailed\",\"payload\":[{\"code\":77,\"place\":{\"zip\":90210,\"city\":\"Malmo\"}}]}")
       (match (status_json.from-json json)
-        [(status_json.Ok parsed) (enum_fixture.detailed? parsed)]
-        [(status_json.Err _) false]))))
+        [(Ok parsed) (enum_fixture.detailed? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-status-invalid-tag-ok?) : bool
   (match (status_json.from-json
     (serialize-json-enum-json "Unknown" (serialize-json-empty-array)))
-    [(status_json.Ok _) false]
-    [(status_json.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-status-missing-tag-ok?) : bool
   (match (status_json.from-json (serialize-json-enum-missing-tag))
-    [(status_json.Ok _) false]
-    [(status_json.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-status-missing-payload-ok?) : bool
   (match (status_json.from-json (serialize-json-enum-missing-payload))
-    [(status_json.Ok _) false]
-    [(status_json.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-status-payload-length-ok?) : bool
   (match (status_json.from-json
     (serialize-json-enum-json "Scored" (serialize-json-empty-array)))
-    [(status_json.Ok _) false]
-    [(status_json.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-missing-field-ok?) : bool
   (match (person_json.from-json (serialize-json-person-missing-age))
-    [(person_json.Ok _) false]
-    [(person_json.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-wrong-kind-ok?) : bool
-  (match (person_json.from-json
-    (serialize-json-person-json (json.JsonString "36")))
-    [(person_json.Ok _) false]
-    [(person_json.Err _) true]))
+  (match (person_json.from-json (serialize-json-person-json (JsonString "36")))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-invalid-integer-ok?) : bool
   (match (person_json.from-json
-    (serialize-json-person-json (json.JsonNumber "36.5")))
-    [(person_json.Ok _) false]
-    [(person_json.Err _) true]))
+    (serialize-json-person-json (JsonNumber "36.5")))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (serialize-json-direct-parse-ok?) : bool
   (match (person_json_again.from-json
-    (serialize-json-person-json (json.JsonNumber "36")))
-    [(person_json_again.Ok parsed) (serialize-json-person-ok? parsed)]
-    [(person_json_again.Err _) false]))
+    (serialize-json-person-json (JsonNumber "36")))
+    [(Ok parsed) (serialize-json-person-ok? parsed)]
+    [(Err _) false]))
 
 (define (serialize-json-u64-root-roundtrip-ok?) : bool
   (let
@@ -478,8 +471,8 @@
     (and
       (string.eq encoded "18446744073709551615")
       (match (u64_json.from-json json)
-        [(u64_json.Ok parsed) (= parsed max)]
-        [(u64_json.Err _) false]))))
+        [(Ok parsed) (= parsed max)]
+        [(Err _) false]))))
 
 (define (serialize-json-u64-fields-roundtrip-ok?) : bool
   (let
@@ -494,14 +487,14 @@
         encoded
         "{\"id\":18446744073709551615,\"history\":[9223372036854775808,0],\"pair\":[7,true]}")
       (match (ledger_json.from-json json)
-        [(ledger_json.Ok parsed)
+        [(Ok parsed)
           (and
             (= parsed.id top)
             (= (array-ref parsed.history 0) high)
             (= (array-ref parsed.history 1) (cast 0 : u64))
             (= (tuple-ref parsed.pair 0) (cast 7 : u64))
             (tuple-ref parsed.pair 1))]
-        [(ledger_json.Err _) false]))))
+        [(Err _) false]))))
 
 (define (serialize-json-u64-enum-roundtrip-ok?) : bool
   (let
@@ -511,33 +504,33 @@
     (and
       (string.eq encoded "{\"tag\":\"At\",\"payload\":[18446744073709551615]}")
       (match (stamp_json.from-json json)
-        [(stamp_json.Ok parsed) (enum_fixture.stamp-max? parsed)]
-        [(stamp_json.Err _) false]))))
+        [(Ok parsed) (enum_fixture.stamp-max? parsed)]
+        [(Err _) false]))))
 
 (define (serialize-json-u64-rejects? [value : json.Json] [message : String]) : bool
   (match (u64_json.from-json value)
-    [(u64_json.Ok _) false]
-    [(u64_json.Err actual) (string.eq actual message)]))
+    [(Ok _) false]
+    [(Err actual) (string.eq actual message)]))
 
 (define (serialize-json-u64-invalid-ok?) : bool
   (and
     (serialize-json-u64-rejects?
-      (json.JsonNumber "18446744073709551616")
+      (JsonNumber "18446744073709551616")
       "json: integer outside u64 range")
     (serialize-json-u64-rejects?
-      (json.JsonNumber "-1")
+      (JsonNumber "-1")
       "json: negative number outside u64 range")
     (serialize-json-u64-rejects?
-      (json.JsonNumber "-0")
+      (JsonNumber "-0")
       "json: negative number outside u64 range")
     (serialize-json-u64-rejects?
-      (json.JsonNumber "2.5")
+      (JsonNumber "2.5")
       "json: expected integer number")
     (serialize-json-u64-rejects?
-      (json.JsonNumber "1e3")
+      (JsonNumber "1e3")
       "json: expected integer number")
     (serialize-json-u64-rejects?
-      (json.JsonString "5")
+      (JsonString "5")
       "json: expected integer number")))
 
 (define (main) : i64

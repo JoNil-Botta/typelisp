@@ -52,29 +52,23 @@
 
 (define (render-directive [directive : (& d drectve.CoffDirective)]) : String
   (match directive
-    [(drectve.CoffDirective.DefaultLib name)
-      (cat.str-cat "DefaultLib " (string.copy name))]
-    [(drectve.CoffDirective.NoDefaultLibAll) "NoDefaultLibAll"]
-    [(drectve.CoffDirective.NoDefaultLib name)
-      (cat.str-cat "NoDefaultLib " (string.copy name))]
-    [(drectve.CoffDirective.Include name)
-      (cat.str-cat "Include " (string.copy name))]
-    [(drectve.CoffDirective.Export payload)
-      (cat.str-cat "Export " (string.copy payload))]
-    [(drectve.CoffDirective.AlternateName from to)
+    [(DefaultLib name) (cat.str-cat "DefaultLib " (string.copy name))]
+    [(NoDefaultLibAll) "NoDefaultLibAll"]
+    [(NoDefaultLib name) (cat.str-cat "NoDefaultLib " (string.copy name))]
+    [(Include name) (cat.str-cat "Include " (string.copy name))]
+    [(Export payload) (cat.str-cat "Export " (string.copy payload))]
+    [(AlternateName from to)
       (cat.str-cat "AlternateName " (string.copy from) "|" (string.copy to))]
-    [(drectve.CoffDirective.FailIfMismatch key value)
+    [(FailIfMismatch key value)
       (cat.str-cat "FailIfMismatch " (string.copy key) "|" (string.copy value))]
-    [(drectve.CoffDirective.DelayLoad dll)
-      (cat.str-cat "DelayLoad " (string.copy dll))]
-    [(drectve.CoffDirective.DelayUnload) "DelayUnload"]
-    [(drectve.CoffDirective.DelayNoBind) "DelayNoBind"]))
+    [(DelayLoad dll) (cat.str-cat "DelayLoad " (string.copy dll))]
+    [(DelayUnload) "DelayUnload"]
+    [(DelayNoBind) "DelayNoBind"]))
 
 (define (render [result : (& r drectve.ResultCoffDirectives)]) : String
   (match result
-    [(drectve.ResultCoffDirectives.Err error)
-      (cat.str-cat "error: " (string.copy error.message))]
-    [(drectve.ResultCoffDirectives.Ok records)
+    [(Err error) (cat.str-cat "error: " (string.copy error.message))]
+    [(Ok records)
       (let
         [out : String ""]
         [index : i64 0]
@@ -127,30 +121,29 @@
 
 (define (kind-name [kind : (& k drectve.CoffDirectiveErrorKind)]) : String
   (match kind
-    [(drectve.CoffDirectiveErrorKind.NotDirectiveSection) "NotDirectiveSection"]
-    [(drectve.CoffDirectiveErrorKind.HasRelocations) "HasRelocations"]
-    [(drectve.CoffDirectiveErrorKind.HasLineNumbers) "HasLineNumbers"]
-    [(drectve.CoffDirectiveErrorKind.InvalidRange) "InvalidRange"]
-    [(drectve.CoffDirectiveErrorKind.InvalidLimits) "InvalidLimits"]
-    [(drectve.CoffDirectiveErrorKind.TooLarge) "TooLarge"]
-    [(drectve.CoffDirectiveErrorKind.TooManyOptions) "TooManyOptions"]
-    [(drectve.CoffDirectiveErrorKind.TokenTooLong) "TokenTooLong"]
-    [(drectve.CoffDirectiveErrorKind.NulByte) "NulByte"]
-    [(drectve.CoffDirectiveErrorKind.NonAsciiWithoutBom) "NonAsciiWithoutBom"]
-    [(drectve.CoffDirectiveErrorKind.MalformedUtf8) "MalformedUtf8"]
-    [(drectve.CoffDirectiveErrorKind.UnterminatedQuote) "UnterminatedQuote"]
-    [(drectve.CoffDirectiveErrorKind.AmbiguousQuote) "AmbiguousQuote"]
-    [(drectve.CoffDirectiveErrorKind.QuotedOptionName) "QuotedOptionName"]
-    [(drectve.CoffDirectiveErrorKind.NotAnOption) "NotAnOption"]
-    [(drectve.CoffDirectiveErrorKind.ResponseFile) "ResponseFile"]
-    [(drectve.CoffDirectiveErrorKind.EmptyOptionName) "EmptyOptionName"]
-    [(drectve.CoffDirectiveErrorKind.UnsupportedOption) "UnsupportedOption"]
-    [(drectve.CoffDirectiveErrorKind.MissingPayload) "MissingPayload"]
-    [(drectve.CoffDirectiveErrorKind.MissingSeparator) "MissingSeparator"]
-    [(drectve.CoffDirectiveErrorKind.EmptyField) "EmptyField"]
-    [(drectve.CoffDirectiveErrorKind.PathBearingDll) "PathBearingDll"]
-    [(drectve.CoffDirectiveErrorKind.UnknownDelayQualifier)
-      "UnknownDelayQualifier"]))
+    [(NotDirectiveSection) "NotDirectiveSection"]
+    [(HasRelocations) "HasRelocations"]
+    [(HasLineNumbers) "HasLineNumbers"]
+    [(InvalidRange) "InvalidRange"]
+    [(InvalidLimits) "InvalidLimits"]
+    [(TooLarge) "TooLarge"]
+    [(TooManyOptions) "TooManyOptions"]
+    [(TokenTooLong) "TokenTooLong"]
+    [(NulByte) "NulByte"]
+    [(NonAsciiWithoutBom) "NonAsciiWithoutBom"]
+    [(MalformedUtf8) "MalformedUtf8"]
+    [(UnterminatedQuote) "UnterminatedQuote"]
+    [(AmbiguousQuote) "AmbiguousQuote"]
+    [(QuotedOptionName) "QuotedOptionName"]
+    [(NotAnOption) "NotAnOption"]
+    [(ResponseFile) "ResponseFile"]
+    [(EmptyOptionName) "EmptyOptionName"]
+    [(UnsupportedOption) "UnsupportedOption"]
+    [(MissingPayload) "MissingPayload"]
+    [(MissingSeparator) "MissingSeparator"]
+    [(EmptyField) "EmptyField"]
+    [(PathBearingDll) "PathBearingDll"]
+    [(UnknownDelayQualifier) "UnknownDelayQualifier"]))
 
 ;; Require one failure class at exactly `[start, end)`, reported with the
 ;; object, section and byte range, plus `detail` somewhere in the message.
@@ -161,9 +154,9 @@
   [end : i64]
   [detail : String]) : unit
   (match result
-    [(drectve.ResultCoffDirectives.Ok _)
+    [(Ok _)
       (io.panic (cat.str-cat "expected " kind " but the directives parsed\n"))]
-    [(drectve.ResultCoffDirectives.Err error)
+    [(Err error)
       (let
         [location : String
           (cat.str-cat
@@ -256,7 +249,7 @@
 (test
   drectve-records-keep-the-written-spelling
   (match (read-data (bytes-of "  /DefaultLib:\"a b\" "))
-    [(drectve.ResultCoffDirectives.Ok records)
+    [(Ok records)
       (assert
         (and
           (= records.len 1)
@@ -496,7 +489,7 @@
   [records : (& r drectve.ResultCoffDirectives)]
   [cut : i64]) : i64
   (match records
-    [(drectve.ResultCoffDirectives.Ok expected)
+    [(Ok expected)
       (let
         [kept : i64 0]
         (begin
@@ -511,7 +504,7 @@
   [records : (& r drectve.ResultCoffDirectives)]
   [index : i64]) : i64
   (match records
-    [(drectve.ResultCoffDirectives.Ok expected)
+    [(Ok expected)
       (if (< index expected.len)
         (array-ref expected.slots index).start
         -1)]
@@ -522,9 +515,9 @@
   [cut : (& c drectve.ResultCoffDirectives)]
   [kept : i64]) : bool
   (match full
-    [(drectve.ResultCoffDirectives.Ok expected)
+    [(Ok expected)
       (match cut
-        [(drectve.ResultCoffDirectives.Ok records)
+        [(Ok records)
           (let
             [index : i64 0]
             [same : bool
@@ -564,13 +557,13 @@
         [next-start : i64 (record-start (& full) kept)]
         (begin
           (match (& result)
-            [(drectve.ResultCoffDirectives.Ok _)
+            [(Ok _)
               (assert
                 (same-prefix? (& full) (& result) kept)
                 (cat.str-cat
                   "complete options changed at cut "
                   (string.int->string cut)))]
-            [(drectve.ResultCoffDirectives.Err error)
+            [(Err error)
               (assert
                 (and
                   (>= next-start 0)
@@ -669,7 +662,7 @@
           [result : drectve.ResultCoffDirectives (read-data (clone data))]
           (begin
             (match (& result)
-              [(drectve.ResultCoffDirectives.Err error)
+              [(Err error)
                 (assert
                   (and
                     (>= error.start 0)
@@ -678,7 +671,7 @@
                   (cat.str-cat
                     "fuzz error span escaped: "
                     (string.copy error.message)))]
-              [(drectve.ResultCoffDirectives.Ok records)
+              [(Ok records)
                 (let
                   [index : i64 0]
                   [previous-end : i64 0]

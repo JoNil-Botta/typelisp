@@ -34,47 +34,46 @@
 
 (define (env-api-assert-none [value : env.EnvMaybeString] [message : String]) : unit
   (match value
-    [(env.EnvNoString) unit]
-    [(env.EnvSomeString _) (io.panic message)]))
+    [(EnvNoString) unit]
+    [(EnvSomeString _) (io.panic message)]))
 
 (define (env-api-assert-some
   [value : env.EnvMaybeString]
   [expected : String]
   [message : String]) : unit
   (match value
-    [(env.EnvSomeString actual)
-      (env-api-assert-string-eq actual expected message)]
-    [(env.EnvNoString) (io.panic message)]))
+    [(EnvSomeString actual) (env-api-assert-string-eq actual expected message)]
+    [(EnvNoString) (io.panic message)]))
 
 (define (env-api-assert-path-none
   [value : env.EnvMaybeStringList]
   [message : String]) : unit
   (match value
-    [(env.EnvNoStringList) unit]
-    [(env.EnvSomeStringList _) (io.panic message)]))
+    [(EnvNoStringList) unit]
+    [(EnvSomeStringList _) (io.panic message)]))
 
 (define (env-api-assert-path-vec-none
   [value : env.EnvMaybeStringVec]
   [message : String]) : unit
   (match value
-    [(env.EnvNoStringVec) unit]
-    [(env.EnvSomeStringVec _) (io.panic message)]))
+    [(EnvNoStringVec) unit]
+    [(EnvSomeStringVec _) (io.panic message)]))
 
 (define (env-api-assert-path-empty
   [value : env.EnvMaybeStringList]
   [message : String]) : unit
   (match value
-    [(env.EnvSomeStringList items)
+    [(EnvSomeStringList items)
       (env-api-assert-i64-eq (env.string-list-count items) 0 message)]
-    [(env.EnvNoStringList) (io.panic message)]))
+    [(EnvNoStringList) (io.panic message)]))
 
 (define (env-api-assert-path-vec-empty
   [value : env.EnvMaybeStringVec]
   [message : String]) : unit
   (match value
-    [(env.EnvSomeStringVec items)
+    [(EnvSomeStringVec items)
       (env-api-assert-i64-eq (svec.len (& items)) 0 message)]
-    [(env.EnvNoStringVec) (io.panic message)]))
+    [(EnvNoStringVec) (io.panic message)]))
 
 (define (env-api-assert-list3
   [items : env.EnvStringList]
@@ -139,9 +138,9 @@
   [third : String]
   [message : String]) : unit
   (match value
-    [(env.EnvSomeStringList items)
+    [(EnvSomeStringList items)
       (env-api-assert-list3 items first second third message)]
-    [(env.EnvNoStringList) (io.panic message)]))
+    [(EnvNoStringList) (io.panic message)]))
 
 (define (env-api-assert-path-vec3
   [value : env.EnvMaybeStringVec]
@@ -150,9 +149,9 @@
   [third : String]
   [message : String]) : unit
   (match value
-    [(env.EnvSomeStringVec items)
+    [(EnvSomeStringVec items)
       (env-api-assert-vec3 items first second third message)]
-    [(env.EnvNoStringVec) (io.panic message)]))
+    [(EnvNoStringVec) (io.panic message)]))
 
 (test
   env-api
@@ -205,7 +204,7 @@
     (let
       [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
       (match (env.get (& name))
-        [(env.EnvSomeString actual)
+        [(EnvSomeString actual)
           (begin
             (env-api-assert-string-eq actual "" "env empty")
             (env-api-assert-path-empty
@@ -214,7 +213,7 @@
             (env-api-assert-path-vec-empty
               (env.path-list-vec (& name))
               "env path vec empty"))]
-        [(env.EnvNoString) unit]))
+        [(EnvNoString) unit]))
     (let
       [name : String "TYPELISP_STDLIB_TEST_VALUE"]
       (env-api-assert-some (env.get (& name)) "env-value-854" "env value"))

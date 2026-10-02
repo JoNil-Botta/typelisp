@@ -1513,7 +1513,13 @@
   ;; Allocated only when this function enters masked SPMD lowering.
   (masked-load-cache LowerMaybeMaskedLoadCache)
   ;; Attached only while lowering one masked vector loop and its vector tail.
-  (masked-preheader-cache LowerMaybeMaskedPreheaderCache))
+  (masked-preheader-cache LowerMaybeMaskedPreheaderCache)
+  ;; Deferred Copy bindings (`lower-bind-payload-name`): var -> the var holding
+  ;; the address its value is read from at each use.
+  (deferred-copies lower_i64_i64_map.Map)
+  ;; The body of the borrowed enum match arm whose payloads are being bound,
+  ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
+  (deferred-arm-body i64))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1570,7 +1576,9 @@
         tail-param-start
         tail-param-end
         (No)
-        (No)))))
+        (No)
+        (lower_i64_i64_map.with-capacity 1)
+        -1))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -15609,6 +15617,39 @@
       1)
     state))
 
+(define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (and
+      (not
+        (lower_i64_i64_map.is-empty?
+          (& (__tl-project-field (__tl-box-place data) deferred-copies))))
+      (lower_i64_i64_map.contains?
+        (& (__tl-project-field (__tl-box-place data) deferred-copies))
+        var-id))))
+
+(define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (begin
+      (lower_i64_i64_map.insert-ref!
+        (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
+        var-id
+        1)
+      state)))
+
+(define (lower-state-deferred-arm-body [state : LowerState]) : i64
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) deferred-arm-body)))
+
+(define (lower-state-set-deferred-arm-body!
+  [state : LowerState]
+  [body-id : i64]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field (__tl-box-place data) deferred-arm-body body-id)))
+
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -18920,13 +18961,30 @@
                   origin
                   "lower: mutable borrow of by-value place requires writeback support")))]
           [_
-            (Ok
-              (lower-borrow-copy-to-storage
+            (if (not (lower-state-deferred-copy? state id))
+              (ResultLowerExpr.Ok
+                (lower-borrow-copy-to-storage
+                  ctx
+                  state
+                  (Var id)
+                  referent-ty
+                  result-ty))
+              ;; An auto-borrowed deferred Copy binding copies its value as
+              ;; read here, not its address.
+              (match (lower-load-inline-value-at-offset
                 ctx
                 state
-                (Var id)
-                referent-ty
-                result-ty))]))
+                (ir.CompilerIrValue.Var id)
+                0
+                (lower-global-shared-view referent-ty))
+                [(LowerExpr.Expr read-state value _)
+                  (ResultLowerExpr.Ok
+                    (lower-borrow-copy-to-storage
+                      ctx
+                      read-state
+                      value
+                      referent-ty
+                      result-ty))]))]))
       (Ok
         (Expr
           state
@@ -20318,6 +20376,318 @@
             (lower-global-shared-view resolved))]
         (lower-borrowed-binding-expr ctx state base offset resolved bound-ty))]))
 
+;; A payload name binding. Through a shared reference, a scalar part whose
+;; every read in the arm comes before anything that could write memory is a
+;; deferred Copy binding: the name holds the part's address (a fresh `Gep`) and
+;; each read loads the part there, so an arm path that never reads the name
+;; never loads it. A read before any write sees the value the match would have
+;; copied.
+(define (lower-bind-payload-name
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bind-mode : LowerBindMode]
+  [base : ir.CompilerIrValue]
+  [enum-id : i64]
+  [offset : i64]
+  [resolved : ast.AstType]
+  [scrut-reg-group? : bool]
+  [name : i64]) : LowerExpr
+  (let
+    [arm-body : i64 (lower-state-deferred-arm-body state)]
+    (if (and
+      (>= arm-body 0)
+      (lower-deferred-copy-type?
+        (tc_core.tc-type-strip-region
+          (tc_core.tc-resolve-type ctx (lower-global-shared-view resolved))))
+      (not
+        (lower-deferred-copy-unsafe?
+          (lower-deferred-copy-scan ctx arm-body name false))))
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc.Alloc ptr-state ptr-id)
+          (LowerExpr.Expr
+            (lower-state-deferred-copy-mark
+              (lower-state-emit
+                ptr-state
+                (ir.CompilerIrInstr.Gep
+                  ptr-id
+                  base
+                  (ir.CompilerIrValue.I64 offset)
+                  (ast.AstType.U8)))
+              ptr-id)
+            (ir.CompilerIrValue.Var ptr-id)
+            resolved)])
+      (lower-bind-payload-name-value
+        ctx
+        state
+        bind-mode
+        base
+        enum-id
+        offset
+        resolved
+        scrut-reg-group?))))
+
+;; A scalar that a deferred Copy binding may read from its address at each use.
+(define (lower-deferred-copy-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [_ false]))
+
+;; What `lower-deferred-copy-scan` finds in a subtree, as bits: it reads the
+;; name (1), it may write memory (2: a call, a store, or a scope exit that can
+;; run cleanup), or it reads the name where a write may already have happened
+;; or it uses the name other than by reading its value (4).
+(define (lower-deferred-copy-unsafe? [code : i64]) : bool
+  (not (= (bit-and code 4) 0)))
+
+(define (lower-deferred-copy-writes? [code : i64]) : bool
+  (not (= (bit-and code 2) 0)))
+
+;; Scan an arm body for reads of the bound `name`, in evaluation order, with
+;; `written` telling whether something before may have written memory. A form
+;; not modeled here counts as a write, and any use of the name inside it as
+;; unsafe: taking its address, assigning it, capturing it, a loop.
+(define (lower-deferred-copy-scan
+  [ctx : tc_core.TcContext]
+  [id : i64]
+  [name : i64]
+  [written : bool]) : i64
+  (let
+    [expr : ast.AstExpr (lower-context-expr-get ctx id)]
+    (match (lower-global-shared-view expr)
+      [(ast.AstExpr.Var var) (cond [(not (= var name)) 0] [written 4] [else 1])]
+      [(ast.AstExpr.Literal _) 0]
+      [(ast.AstExpr.Break) 0]
+      [(ast.AstExpr.Continue) 0]
+      [(ast.AstExpr.Spanned inner _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.MacroExpansion inner _ _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Ann inner _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Cast inner _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Unary _ inner)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.TupleRef inner _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.StructGet inner _)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Return inner)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Try inner)
+        (lower-deferred-copy-scan ctx inner name written)]
+      [(ast.AstExpr.Binary _ left right)
+        (lower-deferred-copy-operand-pair
+          (lower-deferred-copy-scan ctx left name written)
+          (lower-deferred-copy-scan ctx right name written))]
+      [(ast.AstExpr.ArrayRef array index)
+        (lower-deferred-copy-operand-pair
+          (lower-deferred-copy-scan ctx array name written)
+          (lower-deferred-copy-scan ctx index name written))]
+      ;; Arguments are read before the call, which may then write.
+      [(ast.AstExpr.Call func args)
+        (bit-or
+          (lower-deferred-copy-operand-pair
+            (lower-deferred-copy-scan ctx func name written)
+            (lower-deferred-copy-scan-operands ctx (& args) 0 name written 0))
+          2)]
+      [(ast.AstExpr.If cond then-branch else-branch)
+        (let
+          [cond-code : i64 (lower-deferred-copy-scan ctx cond name written)]
+          [after : bool (or written (lower-deferred-copy-writes? cond-code))]
+          (bit-or
+            cond-code
+            (bit-or
+              (lower-deferred-copy-scan ctx then-branch name after)
+              (lower-deferred-copy-scan ctx else-branch name after))))]
+      [(ast.AstExpr.Begin items)
+        (lower-deferred-copy-scan-sequence ctx (& items) 0 name written 0)]
+      [(ast.AstExpr.Unsafe items)
+        (lower-deferred-copy-scan-sequence ctx (& items) 0 name written 0)]
+      ;; Leaving a `let` or `match` scope can run a binding's cleanup.
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body)
+            (let
+              [inits : i64
+                (lower-deferred-copy-scan-let-inits
+                  ctx
+                  (& bindings)
+                  0
+                  name
+                  written
+                  0)]
+              (bit-or
+                (bit-or
+                  inits
+                  (lower-deferred-copy-scan
+                    ctx
+                    body
+                    name
+                    (or written (lower-deferred-copy-writes? inits))))
+                2))])]
+      [(ast.AstExpr.Match match-box)
+        (match (__tl-box-place match-box)
+          [(ast.AstMatch.Match scrutinee arms)
+            (let
+              [scrutinee-code : i64
+                (lower-deferred-copy-scan ctx scrutinee name written)]
+              (bit-or
+                (bit-or
+                  scrutinee-code
+                  (lower-deferred-copy-scan-arms
+                    ctx
+                    (& arms)
+                    0
+                    name
+                    (or written (lower-deferred-copy-writes? scrutinee-code))
+                    0))
+                2))])]
+      [_
+        (if (lower-deferred-copy-mentions?
+          ctx
+          (lower-global-shared-view expr)
+          name)
+          4
+          2)])))
+
+;; Two operands scanned from the same point, in an order not modeled: a read
+;; in one is unsafe when the other may write.
+(define (lower-deferred-copy-operand-pair [first : i64] [second : i64]) : i64
+  (if (or
+    (and (= (bit-and first 1) 1) (lower-deferred-copy-writes? second))
+    (and (= (bit-and second 1) 1) (lower-deferred-copy-writes? first)))
+    4
+    (bit-or first second)))
+
+;; Call arguments, as pairwise operands: `seen` joins the codes of the earlier
+;; arguments.
+(define (lower-deferred-copy-scan-operands
+  [ctx : tc_core.TcContext]
+  [items : (& items ast.AstExprList)]
+  [index : i64]
+  [name : i64]
+  [written : bool]
+  [seen : i64]) : i64
+  (if (or (>= index items.len) (lower-deferred-copy-unsafe? seen))
+    seen
+    (lower-deferred-copy-scan-operands
+      ctx
+      items
+      (+ index 1)
+      name
+      written
+      (lower-deferred-copy-operand-pair
+        seen
+        (lower-deferred-copy-scan
+          ctx
+          (ast.ast-expr-list-get items index 0)
+          name
+          written)))))
+
+(define (lower-deferred-copy-scan-sequence
+  [ctx : tc_core.TcContext]
+  [items : (& items ast.AstExprList)]
+  [index : i64]
+  [name : i64]
+  [written : bool]
+  [code : i64]) : i64
+  (if (or (>= index items.len) (lower-deferred-copy-unsafe? code))
+    code
+    (let
+      [item : i64
+        (lower-deferred-copy-scan
+          ctx
+          (ast.ast-expr-list-get items index 0)
+          name
+          written)]
+      (lower-deferred-copy-scan-sequence
+        ctx
+        items
+        (+ index 1)
+        name
+        (or written (lower-deferred-copy-writes? item))
+        (bit-or code item)))))
+
+(define (lower-deferred-copy-scan-let-inits
+  [ctx : tc_core.TcContext]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [index : i64]
+  [name : i64]
+  [written : bool]
+  [code : i64]) : i64
+  (if (or
+    (>= index (ast.ast-let-binding-list-len bindings))
+    (lower-deferred-copy-unsafe? code))
+    code
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding _ _ init)
+        (let
+          [item : i64 (lower-deferred-copy-scan ctx init name written)]
+          (lower-deferred-copy-scan-let-inits
+            ctx
+            bindings
+            (+ index 1)
+            name
+            (or written (lower-deferred-copy-writes? item))
+            (bit-or code item)))])))
+
+(define (lower-deferred-copy-scan-arms
+  [ctx : tc_core.TcContext]
+  [arms : (& arms ast.AstMatchArmList)]
+  [index : i64]
+  [name : i64]
+  [written : bool]
+  [code : i64]) : i64
+  (if (or (>= index arms.len) (lower-deferred-copy-unsafe? code))
+    code
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm _ body)
+        (lower-deferred-copy-scan-arms
+          ctx
+          arms
+          (+ index 1)
+          name
+          written
+          (bit-or code (lower-deferred-copy-scan ctx body name written)))])))
+
+(define (lower-deferred-copy-mentions?
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [name : i64]) : bool
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Var var) (= var name)]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index children.len))
+            (begin
+              (when
+                (lower-deferred-copy-mentions?
+                  ctx
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-list-get (& children) index -1))
+                  name)
+                (set! found true))
+              (set! index (+ index 1))))
+          found))]))
+
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
 ;; when owned, the payload's address when borrowed.
 (define (lower-bind-payload-aggregate
@@ -20429,7 +20799,7 @@
                   fail-label
                   scrut-reg-group?)]
               [(Binding name)
-                (match (lower-bind-payload-name-value
+                (match (lower-bind-payload-name
                   ctx
                   state
                   bind-mode
@@ -20437,7 +20807,8 @@
                   enum-id
                   offset
                   resolved
-                  scrut-reg-group?)
+                  scrut-reg-group?
+                  name)
                   [(Expr bound-state bound-value bound-ty)
                     (match bound-value
                       [(Var field-var)
@@ -20465,7 +20836,7 @@
                             (lower-diagnostic
                               (lower-bind-payload-name-failure bind-mode))))])])]
               [(Var name _)
-                (match (lower-bind-payload-name-value
+                (match (lower-bind-payload-name
                   ctx
                   state
                   bind-mode
@@ -20473,7 +20844,8 @@
                   enum-id
                   offset
                   resolved
-                  scrut-reg-group?)
+                  scrut-reg-group?
+                  name)
                   [(Expr bound-state bound-value bound-ty)
                     (match bound-value
                       [(Var field-var)
@@ -21324,7 +21696,9 @@
   [index : i64]
   [cursor : i64]
   [fail-label : i64]
-  [scrut-reg-group? : bool]) : ResultLowerEnv
+  [scrut-reg-group? : bool]
+  ;; The arm body, the scope of the bindings (`lower-bind-payload-name`).
+  [body-id : i64]) : ResultLowerEnv
   (match borrow-lifetime
     [(No)
       (lower-bind-variant-payloads
@@ -21349,24 +21723,33 @@
       ;; A borrowed scrutinee is always memory-backed (matched behind a pointer),
       ;; never a 2-word register-group value, so the register-group path does not
       ;; apply here.
-      (lower-bind-variant-payloads
-        ctx
-        state
-        env
-        type-env
-        (Borrowed lifetime)
-        base
-        patterns
-        types
-        mode
-        enum-id
-        enum-name
-        variant-name
-        variant-name-id
-        index
-        cursor
-        fail-label
-        false)]))
+      (let
+        [outer-arm-body : i64 (lower-state-deferred-arm-body state)]
+        (begin
+          (lower-state-set-deferred-arm-body! state body-id)
+          (let
+            [bound : ResultLowerEnv
+              (lower-bind-variant-payloads
+                ctx
+                state
+                env
+                type-env
+                (Borrowed lifetime)
+                base
+                patterns
+                types
+                mode
+                enum-id
+                enum-name
+                variant-name
+                variant-name-id
+                index
+                cursor
+                fail-label
+                false)]
+            (begin
+              (lower-state-set-deferred-arm-body! state outer-arm-body)
+              bound))))]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
 ;; Literals, nested enum variants and slice patterns with a length test are
@@ -21550,6 +21933,21 @@
       (Ok (Expr state (Var id) ty))
       (Ok (Expr state (Global (lower-resolve-name-symbol-id state name-id)) ty)))))
 
+;; A deferred Copy binding's value, loaded at the read from the address the
+;; binding holds (`lower-bind-payload-name`).
+(define (lower-deferred-copy-read
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [local-id : i64]
+  [ty : ast.AstType]) : LowerExpr
+  (match (lower-load-inline-value-at-offset
+    ctx
+    state
+    (ir.CompilerIrValue.Var local-id)
+    0
+    (lower-global-shared-view ty))
+    [(LowerExpr.Expr load-state value _) (LowerExpr.Expr load-state value ty)]))
+
 (define (lower-register-address-taken-local-read
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -21580,9 +21978,13 @@
         env
         name-id
         (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? id)
-      (lower-register-address-taken-local-read ctx state id ty)
-      (Ok (Expr state (Global (lower-resolve-name-symbol-id state name-id)) ty)))))
+    (cond
+      [(not (csym.compiler-symbols-handle-found? id))
+        (Ok
+          (Expr state (Global (lower-resolve-name-symbol-id state name-id)) ty))]
+      [(lower-state-deferred-copy? state id)
+        (ResultLowerExpr.Ok (lower-deferred-copy-read ctx state id ty))]
+      [else (lower-register-address-taken-local-read ctx state id ty)])))
 
 (define (lower-disarm-move-aware-resource-name
   [state : LowerState]
@@ -25484,9 +25886,9 @@
     (begin
       (while (and (not found) (< index args.len))
         (begin
-          (if (tc_core.tc-call-temporary-borrow-arg?
+          (if (tc_core.tc-call-temporary-borrow-arg-id?
             expr-bases
-            (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+            (ast.ast-expr-list-get args index 0))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -25523,7 +25925,7 @@
         ctx
         (tc_core.tc-call-temporary-borrow-operand-id
           (tc_core.tc-context-expr-bases ctx)
-          (lower-global-shared-view arg)))]
+          (& arg)))]
     [hint : ast.AstMaybeType
       (tc_core.tc-call-temporary-referent-hint
         ctx
@@ -25642,9 +26044,15 @@
   [arg : ast.AstExpr]
   [expected : ast.AstType]
   [arg-ty : ast.AstType]) : ResultLowerCallArg
-  (if (tc_core.tc-call-temporary-borrow-arg?
-    (tc_core.tc-context-expr-bases ctx)
-    (lower-global-shared-view arg))
+  ;; Only a reference formal takes a borrowed temporary.
+  (if (and
+    (match (lower-global-shared-view arg-ty)
+      [(ast.AstType.Ref _ _) true]
+      [(ast.AstType.MutRef _ _) true]
+      [_ false])
+    (tc_core.tc-call-temporary-borrow-arg?
+      (tc_core.tc-context-expr-bases ctx)
+      (& arg)))
     (lower-call-arg-temporary-borrow ctx state env type-env arg arg-ty)
     (match (tc_core.tc-call-effective-arg-expr
       ctx
@@ -25906,6 +26314,49 @@
 
 ;; Mutable-reference formals need call-aware lowering for writebacks, while
 ;; borrowed Slice formals need it for the closed call-local unsize path.
+;; Whether a call's arguments need the call-aware lowering that can attach
+;; writebacks: a `&mut` or Slice-reference formal, or a borrowed temporary
+;; (section 3.10), which only a reference formal can take.
+(define (lower-call-args-need-call-aware-lowering?
+  [ctx : tc_core.TcContext]
+  [args : (& args ast.AstExprList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (let
+      [head : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      [stripped : ast.AstType
+        (tc_core.tc-type-strip-region (lower-global-shared-view head))]
+      (match (lower-global-shared-view stripped)
+        [(ast.AstType.MutRef _ _) true]
+        [_
+          (cond
+            [(tc_core.tc-call-slice-ref-formal? ctx head) true]
+            [(and
+                (match (lower-global-shared-view stripped)
+                  [(ast.AstType.Ref _ _) true]
+                  [(ast.AstType.Var _) true]
+                  [(ast.AstType.VarArgs _ _) true]
+                  [(ast.AstType.Invalidate _ _) true]
+                  [_ false])
+                (< index args.len)
+                (tc_core.tc-call-temporary-borrow-arg-id?
+                  (tc_core.tc-context-expr-bases ctx)
+                  (ast.ast-expr-list-get args index 0)))
+              true]
+            [else
+              (lower-call-args-need-call-aware-lowering?
+                ctx
+                args
+                types
+                (+ index 1))])]))))
+
+;; Mutable-reference formals need call-aware lowering for writebacks, while
+;; borrowed Slice formals need it for the closed call-local unsize path.
 (define (lower-call-type-list-needs-call-aware-args?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]) : bool
@@ -25939,9 +26390,7 @@
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]) : ResultLowerCallArgs
-  (if (or
-    (lower-call-type-list-needs-call-aware-args? ctx types)
-    (lower-call-args-borrow-temporary? ctx args))
+  (if (lower-call-args-need-call-aware-lowering? ctx args (& types) 0)
     (lower-call-args-as ctx state env type-env args types)
     (match (lower-args-as ctx state env type-env args types)
       [(ResultLowerArgs.Ok args-state values)
@@ -63846,6 +64295,7 @@
   [arm : ast.AstMatchArm]
   [pat : ast.AstPattern]
   [body : ast.AstExpr]
+  [body-id : i64]
   [cont : LowerMatchCont]
   [borrow-lifetime : tc_core.TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerExpr
@@ -63863,6 +64313,7 @@
         variant-name
         (ast.ast-pattern-list-new)
         body
+        body-id
         cont
         borrow-lifetime
         scrut-reg-group?)]
@@ -63879,6 +64330,7 @@
           variant-name
           args
           body
+          body-id
           cont
           borrow-lifetime
           scrut-reg-group?))]
@@ -63895,6 +64347,7 @@
   [arm : ast.AstMatchArm]
   [pat : ast.AstPattern]
   [body : ast.AstExpr]
+  [body-id : i64]
   [rest : ast.AstMatchArmList]
   [cont : LowerMatchCont]
   [borrow-lifetime : tc_core.TcMaybeNameId]
@@ -63915,6 +64368,7 @@
         variant-name
         (ast.ast-pattern-list-new)
         body
+        body-id
         rest
         cont
         borrow-lifetime
@@ -63934,6 +64388,7 @@
           variant-name
           args
           body
+          body-id
           rest
           cont
           borrow-lifetime
@@ -63975,6 +64430,7 @@
                 arm
                 pat
                 body
+                body-box
                 cont
                 borrow-lifetime
                 scrut-reg-group?)
@@ -63989,6 +64445,7 @@
                 arm
                 pat
                 body
+                body-box
                 rest
                 cont
                 borrow-lifetime
@@ -64005,6 +64462,7 @@
   [variant-name-id : i64]
   [args : ast.AstPatternList]
   [body : ast.AstExpr]
+  [body-id : i64]
   [cont : LowerMatchCont]
   [borrow-lifetime : tc_core.TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerExpr
@@ -64055,7 +64513,8 @@
             (match (lower-global-shared-view cont)
               [(Value merge-label _ _) merge-label]
               [(Tail _ _) (lower-state-current-label state)])
-            scrut-reg-group?)
+            scrut-reg-group?
+            body-id)
             [(Ok body-start body-env body-type-env)
               (lower-match-arm-final
                 ctx
@@ -64080,6 +64539,7 @@
   [fields : ast.AstTypeList]
   [args : ast.AstPatternList]
   [body : ast.AstExpr]
+  [body-id : i64]
   [rest : ast.AstMatchArmList]
   [cont : LowerMatchCont]
   [borrow-lifetime : tc_core.TcMaybeNameId]
@@ -64102,7 +64562,8 @@
     0
     8
     next-label
-    scrut-reg-group?)
+    scrut-reg-group?
+    body-id)
     [(Ok bound-state body-env body-type-env)
       (match (lower-match-arm-body
         ctx
@@ -64139,6 +64600,7 @@
   [variant-name-id : i64]
   [args : ast.AstPatternList]
   [body : ast.AstExpr]
+  [body-id : i64]
   [rest : ast.AstMatchArmList]
   [cont : LowerMatchCont]
   [borrow-lifetime : tc_core.TcMaybeNameId]
@@ -64212,6 +64674,7 @@
                           resolved-fields
                           args
                           body
+                          body-id
                           rest
                           cont
                           borrow-lifetime
@@ -65097,10 +65560,6 @@
       (let
         [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
         (cond
-          ;; A borrowed temporary lives in this frame until the call returns
-          ;; and may need cleanup afterwards, so the call cannot replace it.
-          [(lower-call-args-borrow-temporary? ctx (& args))
-            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(and
               unshadowed
               (lower-comptime-error-call-id? (lower-state-owner state) name))
@@ -65143,7 +65602,11 @@
                 env
                 type-env
                 name
-                (lower-global-shared-view ret-ty)))
+                (lower-global-shared-view ret-ty))
+              ;; A borrowed temporary lives in this frame until the call
+              ;; returns and may need cleanup afterwards, so the call cannot
+              ;; replace the frame.
+              (not (lower-call-args-borrow-temporary? ctx (& args))))
             (match (lower-tail-call-args-for-target
               ctx
               state
@@ -65175,7 +65638,9 @@
               [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
           [unshadowed
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
-          [(lower-tail-call-local-indirect-safe? env type-env name)
+          [(and
+              (lower-tail-call-local-indirect-safe? env type-env name)
+              (not (lower-call-args-borrow-temporary? ctx (& args))))
             (lower-tail-call-indirect-expr
               ctx
               state

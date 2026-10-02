@@ -624,6 +624,7 @@ tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pat
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
 # leaves the box usable.
 borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
+borrowed_pattern_copy_deferred_ok|run-exit|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-
 borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
 box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
 box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path

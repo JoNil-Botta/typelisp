@@ -67009,14 +67009,14 @@
   `(lower-rvo-node-has-early-return? (lower-global-shared-view ,ctx) ,id))
 
 (define (lower-rvo-node-has-early-return? [ctx : tc_core.TcContext] [id : i64]) : bool
-  ;; `return` and `try` exit early. The arms below also answer for quoted
-  ;; syntax (no), for the forms this scan does not descend into (yes, to stay
-  ;; conservative) and for TupleRef, whose index it reads as a node; every
-  ;; other variant asks its expression children through the AstExpr child
-  ;; list.
+  ;; `return` exits early. A `try` does not count: its error exit builds the
+  ;; Err in the forwarded sret slot (`lower-return-result-err`). The arms
+  ;; below also answer for quoted syntax (no), for the forms this scan does not
+  ;; descend into (yes, to stay conservative) and for TupleRef, whose index it
+  ;; reads as a node; every other variant asks its expression children through
+  ;; the AstExpr child list.
   (match (lower-context-expr-get ctx id)
     [(ast.AstExpr.Return _) true]
-    [(ast.AstExpr.Try _) true]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (or
         (lower-rvo-node-has-early-return? ctx tuple-box)

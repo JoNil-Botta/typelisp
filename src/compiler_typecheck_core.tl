@@ -72431,34 +72431,33 @@
     ;; `try` either continues with its operand's value or leaves the function,
     ;; so its operand keeps its own break, continue and return edges; the
     ;; error exit checks the obligations of the operand's fallthrough state.
+    ;; Like the Try arm of `tc-move-check-expr`, it records no early-exit fact.
     [(ast.AstExpr.Try inner-box)
-      (begin
-        (tc-body-early-exit-note! (tc-context-body-state ctx))
-        (match (tc-move-check-loop-expr
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view locals)
-          loop-carried
-          outer-loop-carried
-          moved
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)
-          continuation-repeats
-          continuation-breaks)
-          [(TcMoveLoopResult.Ok normal? normal-box breaks? break-box)
-            (if normal?
-              (match (tc-move-check-obligations-exit
-                expr-bases
-                locals
-                -1
-                (tc-moved-set-box-shared-view normal-box)
-                (tc-global-shared-view expr)
-                "before this try can propagate an error")
-                [(TcMoveResult.Ok moved1)
-                  (TcMoveLoopResult.Ok true (box moved1) breaks? break-box)]
-                [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)])
-              (TcMoveLoopResult.Ok false normal-box breaks? break-box))]
-          [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)]))]
+      (match (tc-move-check-loop-expr
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        loop-carried
+        outer-loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        continuation-repeats
+        continuation-breaks)
+        [(TcMoveLoopResult.Ok normal? normal-box breaks? break-box)
+          (if normal?
+            (match (tc-move-check-obligations-exit
+              expr-bases
+              locals
+              -1
+              (tc-moved-set-box-shared-view normal-box)
+              (tc-global-shared-view expr)
+              "before this try can propagate an error")
+              [(TcMoveResult.Ok moved1)
+                (TcMoveLoopResult.Ok true (box moved1) breaks? break-box)]
+              [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)])
+            (TcMoveLoopResult.Ok false normal-box breaks? break-box))]
+        [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)])]
     [(ast.AstExpr.Return _)
       (match (tc-move-check-expr
         ctx
@@ -74480,29 +74479,30 @@
     [(ast.AstExpr.Quasiquote _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Unquote _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.UnquoteSplicing _) (TcMoveResult.Ok moved)]
+    ;; No early-exit fact: those only stop lowering from forwarding a caller's
+    ;; sret slot into this body, and a try error exit builds its Err in that
+    ;; slot (`lower-return-result-err`).
     [(ast.AstExpr.Try inner-box)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (begin
-          (tc-body-early-exit-note! (tc-context-body-state ctx))
-          (match (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            (tc-global-shared-view locals)
-            loop-carried
-            moved
-            inner)
-            [(TcMoveResult.Ok moved1)
-              (tc-move-check-obligations-exit
-                expr-bases
-                locals
-                -1
-                moved1
-                (tc-global-shared-view expr)
-                "before this try can propagate an error")]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          (tc-global-shared-view locals)
+          loop-carried
+          moved
+          inner)
+          [(TcMoveResult.Ok moved1)
+            (tc-move-check-obligations-exit
+              expr-bases
+              locals
+              -1
+              moved1
+              (tc-global-shared-view expr)
+              "before this try can propagate an error")]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(ast.AstExpr.Return inner-box)
       (let
         [inner : ast.AstExpr

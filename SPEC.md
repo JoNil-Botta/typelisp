@@ -1948,14 +1948,14 @@ reflected constant; Slice and `__tl_dyn-array` length is read from the borrowed
 view. The same scalar behavior is valid inside the scalar reference lowering of
 SPMD `foreach`; this does not turn scalar `for` into an SPMD gang loop.
 
-**Counted ranges.** A single unannotated clause whose source is a direct
-two-argument call spelled `range` or `alias.range` that produces
-`stdlib.iterator`'s `I64Range` counts in place: the first and then the second
-argument are evaluated once each as `i64`, and the item takes each value from
-the first up to, but excluding, the second. No range value or iterator state is
-constructed and no protocol function is called per item. Any other
-`I64Range` source, including `range-inclusive` and an annotated clause, uses
-the `stdlib.iterator` protocol.
+**Counted ranges.** A single unannotated clause whose source is an owned
+`stdlib.iterator.I64Range`, such as a `range` or `range-inclusive` call or a
+range-valued local, counts in place: the source is evaluated once, and the
+item takes each value from its `start` to its `end`, excluding `end` unless the
+range is inclusive. This is exactly the `stdlib.iterator` protocol's sequence,
+including an inclusive range that ends at the largest `i64`, but no iterator
+state is constructed and no protocol function is called per item. An annotated
+clause uses the protocol.
 
 A single unannotated clause over a counted range or a borrowed array, `Slice`,
 `__tl_dyn-array`, or slots/len struct expands to one index-driven `while`

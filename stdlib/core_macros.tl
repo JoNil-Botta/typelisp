@@ -231,7 +231,8 @@
             `(let
               [__any_found false]
               (begin
-                (for [,item ,source]
+                (for
+                  [,item ,source]
                   (if ,test
                     (begin
                       (set! __any_found true)
@@ -266,7 +267,8 @@
             `(let
               [__all_hold true]
               (begin
-                (for [,item ,source]
+                (for
+                  [,item ,source]
                   (if ,test
                     unit
                     (begin
@@ -294,10 +296,9 @@
 ;: Any other source uses its defining module's protocol: a shared source
 ;: selects `iterator` / `next`, a mutable source selects `iterator-mut` /
 ;: `next-mut`, and an owned source selects `into-iterator` / `into-next`.
-;: A single unannotated clause whose source is a direct call of
-;: `stdlib.iterator`'s `range` (spelled `range` or `alias.range`) counts from
-;: its first bound to its second, evaluating each bound once, without
-;: constructing the range.
+;: A single unannotated clause whose source is an owned
+;: `stdlib.iterator.I64Range`, such as a `range` or `range-inclusive` call,
+;: counts through the range's fields in place, without iterator state.
 ;: Cleanup-owning items unwind in reverse acquisition order when a later zipped
 ;: iterator is done or control leaves the body. Moving an item transfers cleanup
 ;: responsibility and disarms its generated resource scope.
@@ -316,7 +317,7 @@
         ;; flag, or protocol call per item. `lean-shape` is 0 for everything
         ;; else, which takes the general path below; 1 is a borrowed fixed
         ;; array, 2 a borrowed Slice or `__tl_dyn-array`, 3 a borrowed
-        ;; slots/len struct and 4 a direct `range` call.
+        ;; slots/len struct and 4 an owned `stdlib.iterator.I64Range`.
         (let
           [lean-binding : comptime.ExprBindingClause
             (comptime.expr-binding-clause-list-nth bindings 0)]
@@ -391,30 +392,8 @@
                   "i64")
                 false)
               false)]
-          ;; The two bounds of a direct `range` / `alias.range` call, or empty.
-          [range-args : comptime.ExprList
-            (if lean-range-type?
-              (match lean-source
-                [(comptime.Expr.Call callee args)
-                  (match callee
-                    [(comptime.Expr.Var name)
-                      (let
-                        [name-length : i64 (__tl_string_length name)]
-                        (if (string-eq name "range")
-                          args
-                          (if (> name-length 6)
-                            (if (string-eq
-                              (comptime.string-slice name (- name-length 6) 6)
-                              ".range")
-                              args
-                              (comptime.expr-list-empty))
-                            (comptime.expr-list-empty))))]
-                    [_ (comptime.expr-list-empty)])]
-                [_ (comptime.expr-list-empty)])
-              (comptime.expr-list-empty))]
-          [range-call? : bool (= (comptime.expr-list-length range-args) 2)]
           [lean-shape : i64
-            (if range-call?
+            (if lean-range-type?
               4
               (if lean-candidate?
                 (if lean-borrowed?
@@ -1201,10 +1180,22 @@
                   (if lean-mut?
                     `(&mut (array-ref ,view __for_index))
                     `(& (array-ref ,view __for_index))))]
-              ;; Advance before the body so `continue` moves to the next item.
+              ;; Advance before the body so `continue` moves to the next item. A
+              ;; range follows its protocol's exhaustion rule, so an inclusive
+              ;; range ending at the largest i64 stops without stepping past it.
+              [advance : comptime.Expr
+                (if (= lean-shape 4)
+                  `(if __for_inclusive
+                    (if (= __for_index __for_end)
+                      (set! __for_live false)
+                      (set! __for_index (+ __for_index 1)))
+                    (begin
+                      (set! __for_index (+ __for_index 1))
+                      (set! __for_live (< __for_index __for_end))))
+                  `(set! __for_index (+ __for_index 1)))]
               [step-body : comptime.Expr
                 `(begin
-                  (set! __for_index (+ __for_index 1))
+                  ,advance
                   ,@body
                   unit)]
               [step : comptime.Expr
@@ -1222,13 +1213,21 @@
               (if (= lean-shape 4)
                 (let
                   [range-start : comptime.Expr
-                    (comptime.expr-list-nth range-args 0)]
+                    (comptime.expr-struct-get `__for_range "start")]
                   [range-end : comptime.Expr
-                    (comptime.expr-list-nth range-args 1)]
+                    (comptime.expr-struct-get `__for_range "end")]
+                  [range-inclusive : comptime.Expr
+                    (comptime.expr-struct-get `__for_range "inclusive")]
                   `(let
-                    [__for_index (ann ,range-start : i64)]
-                    [__for_end (ann ,range-end : i64)]
-                    (while (< __for_index __for_end)
+                    [__for_range ,lean-source]
+                    [__for_index ,range-start]
+                    [__for_end ,range-end]
+                    [__for_inclusive ,range-inclusive]
+                    [__for_live
+                      (if __for_inclusive
+                        (<= __for_index __for_end)
+                        (< __for_index __for_end))]
+                    (while __for_live
                       ,step)))
                 `(let
                   [__for_source ,lean-source]

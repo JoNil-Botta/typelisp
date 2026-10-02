@@ -13408,12 +13408,76 @@
     [(not (compiler-optimize-scc-reverse-topo-ok?)) 3]
     [else 42]))
 
+;; `main` meets its callees as c, a, c, b (slots 3, 1, 3, 2), so building its row
+;; shifts earlier entries right and drops the repeat. The row must read back
+;; ascending, and next-child must step through it one callee at a time.
+(define (opt-callgraph-unsorted-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
+    (opt-test-function-symbol
+      symbols.main
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Call
+          0
+          symbols.c
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          1
+          symbols.a
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          2
+          symbols.c
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          3
+          symbols.b
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (irt.instr "return 0")))
+    (ir.compiler-ir-function-seq-prepend
+      (opt-test-function-symbol symbols.a (opt-callgraph-return-instrs))
+      (ir.compiler-ir-function-seq-prepend
+        (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
+        (ir.compiler-ir-function-seq-prepend
+          (opt-test-function-symbol symbols.c (opt-callgraph-return-instrs))
+          (ir.compiler-ir-function-seq-empty))))))
+
+(define (compiler-optimize-callgraph-sorted-rows-ok?) : bool
+  (let
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : ir.CompilerIrFunctionSeq
+      (opt-callgraph-unsorted-functions symbols)]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
+    [graph : opt.OptCallGraph (opt.opt-callgraph-build index)]
+    [main : i64 (opt-callgraph-test-slot (& index) symbols.main)]
+    [a : i64 (opt-callgraph-test-slot (& index) symbols.a)]
+    [b : i64 (opt-callgraph-test-slot (& index) symbols.b)]
+    [c : i64 (opt-callgraph-test-slot (& index) symbols.c)]
+    [start : i64 (opt.opt-callgraph-row-start (& graph) main)]
+    (cond
+      [(not (and (< main a) (< a b) (< b c))) false]
+      [(not (= (- (opt.opt-callgraph-row-end (& graph) main) start) 3)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) start) a)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) (+ start 1)) b)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) (+ start 2)) c)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main -1) a)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main a) b)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main b) c)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main c) -1)) false]
+      [(not (opt.opt-callgraph-has-edge? (& graph) main b)) false]
+      [(opt.opt-callgraph-has-edge? (& graph) main main) false]
+      [(opt.opt-callgraph-has-edge? (& graph) a main) false]
+      [else true])))
+
 (define (compiler-optimize-callgraph-self-test) : i64
-  (if (compiler-optimize-callgraph-acyclic-ok?)
-    (if (compiler-optimize-callgraph-recursive-ok?)
-      42
-      2)
-    1))
+  (cond
+    [(not (compiler-optimize-callgraph-acyclic-ok?)) 1]
+    [(not (compiler-optimize-callgraph-recursive-ok?)) 2]
+    [(not (compiler-optimize-callgraph-sorted-rows-ok?)) 3]
+    [else 42]))
 
 (define (opt-inline-frame-params) : ir.CompilerIrParamSeq
   (irt.params "left=%0:i64, right=%1:i64"))
@@ -16092,33 +16156,46 @@
     (opt-inline-dup-leaf-call-zero-instrs helper-name)))
 
 (define (opt-inline-dup-caller-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-dup-caller-chain-from (& names) 0 callee-name tail))
+
+(define (opt-inline-dup-caller-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (opt-inline-loop-site-function
           name
           callee-name
           (opt-inline-loop-site-entry-instrs))
-        (opt-inline-dup-caller-chain (deref rest) callee-name tail))]))
+        (opt-inline-dup-caller-chain-from names (+ at 1) callee-name tail)))))
 
-(define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : opt.OptSlotList
-  (opt.OptSlotList.Cons
-    symbols.main
-    (box
-      (opt.OptSlotList.Cons symbols.inline-nonleaf (box (opt.OptSlotList.Nil))))))
+(define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : (__tl_dyn-array
+    i64)
+  (let
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref names 0) symbols.main)
+      (set! (array-ref names 1) symbols.inline-nonleaf)
+      names)))
 
 (define (opt-inline-dup-three-caller-names
-  [symbols : OptInlineMultiTestSymbols]) : opt.OptSlotList
-  (opt.OptSlotList.Cons
-    symbols.inline-loop
-    (box (opt-inline-dup-two-caller-names symbols))))
+  [symbols : OptInlineMultiTestSymbols]) : (__tl_dyn-array i64)
+  (let
+    [first : i64 symbols.inline-loop]
+    [second : i64 symbols.main]
+    [third : i64 symbols.inline-nonleaf]
+    (__tl_make-array first second third)))
 
 (define (opt-inline-dup-optimized
-  [callers : opt.OptSlotList]
+  [callers : (__tl_dyn-array i64)]
   [callee-name : i64]
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (opt-test-inline-program-functions
@@ -21819,12 +21896,20 @@
 
 ;; Straight-line callers, for the site clause.
 (define (opt-inline-shared-flat-caller-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-shared-flat-caller-chain-from (& names) 0 callee-name tail))
+
+(define (opt-inline-shared-flat-caller-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
           name
@@ -21839,14 +21924,18 @@
                 (irt.instr "return %3")))
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)
-        (opt-inline-shared-flat-caller-chain (deref rest) callee-name tail))]))
+        (opt-inline-shared-flat-caller-chain-from
+          names
+          (+ at 1)
+          callee-name
+          tail)))))
 
 (define (opt-inline-shared-caller-names
   [symbols : OptInlineMultiTestSymbols]
-  [count : i64]) : opt.OptSlotList
+  [count : i64]) : (__tl_dyn-array i64)
   (let
     [all : (__tl_dyn-array i64) (__tl_make-array i64 5)]
-    [acc : opt.OptSlotList (opt.OptSlotList.Nil)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [i : i64 0]
     (begin
       (set! (array-ref all 0) symbols.main)
@@ -21856,9 +21945,10 @@
       (set! (array-ref all 4) symbols.inline-branch)
       (while (< i count)
         (begin
-          (set! acc (opt.OptSlotList.Cons (array-ref all i) (box acc)))
+          ;; Newest first, as the callers were listed before.
+          (set! (array-ref names (- (- count 1) i)) (array-ref all i))
           (set! i (+ i 1))))
-      acc)))
+      names)))
 
 ;; Total direct calls to `call-name` left across the first `count` caller names.
 (define (opt-inline-shared-remaining-calls
@@ -21894,7 +21984,8 @@
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (let
     [callee-name : i64 symbols.inline-switch]
-    [names : opt.OptSlotList (opt-inline-shared-caller-names symbols count)]
+    [names : (__tl_dyn-array i64)
+      (opt-inline-shared-caller-names symbols count)]
     [tail : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         leaf
@@ -21989,12 +22080,24 @@
 (define (opt-inline-dominant-caller-text [index : i64]) : String
   (str_cat.str-cat "dominant_caller_" (string.int->string index)))
 
-(define (opt-inline-dominant-caller-names-from [index : i64] [count : i64]) : opt.OptSlotList
-  (if (>= index count)
-    (opt.OptSlotList.Nil)
-    (opt.OptSlotList.Cons
-      (opt-test-symbol (opt-inline-dominant-caller-text index))
-      (box (opt-inline-dominant-caller-names-from (+ index 1) count)))))
+(define (opt-inline-dominant-caller-names-from [index : i64] [count : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (> count index)
+          (- count index)
+          0))]
+    [at : i64 index]
+    (begin
+      (while (< at count)
+        (begin
+          (set!
+            (array-ref names (- at index))
+            (opt-test-symbol (opt-inline-dominant-caller-text at)))
+          (set! at (+ at 1))))
+      names)))
 
 (define (opt-inline-dominant-remaining-calls
   [functions : ir.CompilerIrFunctionSeq]
@@ -22239,13 +22342,22 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-depth-caller-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [nested? : bool]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-depth-caller-chain-from (& names) 0 callee-name nested? tail))
+
+(define (opt-inline-depth-caller-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [nested? : bool]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (if nested?
           (opt-inline-depth-nested-caller name callee-name)
@@ -22253,7 +22365,12 @@
             name
             callee-name
             (opt-inline-loop-site-entry-instrs)))
-        (opt-inline-depth-caller-chain (deref rest) callee-name nested? tail))]))
+        (opt-inline-depth-caller-chain-from
+          names
+          (+ at 1)
+          callee-name
+          nested?
+          tail)))))
 
 (define (opt-inline-depth-optimized
   [callee-name : i64]
@@ -22731,15 +22848,27 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-hot-loop-big-caller-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-hot-loop-big-caller-chain-from (& names) 0 callee-name tail))
+
+(define (opt-inline-hot-loop-big-caller-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (opt-inline-hot-loop-big-caller-function name callee-name)
-        (opt-inline-hot-loop-big-caller-chain (deref rest) callee-name tail))]))
+        (opt-inline-hot-loop-big-caller-chain-from
+          names
+          (+ at 1)
+          callee-name
+          tail)))))
 
 ;; The same big-tier leaf at the same in-loop sites inside 17-block callers:
 ;; above the caller-size cap the import would tax the caller loop's
@@ -22851,15 +22980,23 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-recursive-caller-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-recursive-caller-chain-from (& names) 0 callee-name tail))
+
+(define (opt-inline-recursive-caller-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (opt-inline-recursive-caller-function name callee-name)
-        (opt-inline-recursive-caller-chain (deref rest) callee-name tail))]))
+        (opt-inline-recursive-caller-chain-from names (+ at 1) callee-name tail)))))
 
 ;; The same big-tier cyclic leaf as the loop-free positive directly above, at
 ;; the same three sites, in callers that call themselves. The caller's self
@@ -22980,15 +23117,27 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (opt-inline-hot-loop-cold-site-chain
-  [names : opt.OptSlotList]
+  [names : (__tl_dyn-array i64)]
   [callee-name : i64]
   [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (match names
-    [(opt.OptSlotList.Nil) tail]
-    [(opt.OptSlotList.Cons name rest)
+  (opt-inline-hot-loop-cold-site-chain-from (& names) 0 callee-name tail))
+
+(define (opt-inline-hot-loop-cold-site-chain-from
+  [names : (& names (__tl_dyn-array i64))]
+  [at : i64]
+  [callee-name : i64]
+  [tail : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (>= at (array-length names))
+    tail
+    (let
+      [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
         (opt-inline-hot-loop-cold-site-caller name callee-name)
-        (opt-inline-hot-loop-cold-site-chain (deref rest) callee-name tail))]))
+        (opt-inline-hot-loop-cold-site-chain-from
+          names
+          (+ at 1)
+          callee-name
+          tail)))))
 
 (define (compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?) : bool
   (let
@@ -23093,8 +23242,10 @@
 ;; is past its 32, and the cost model's absorb bonus cannot help because the
 ;; bounds-loop gate is what stands in the way. This band is what takes it.
 (define (opt-inline-hot-loop-one-caller-names
-  [symbols : OptInlineMultiTestSymbols]) : opt.OptSlotList
-  (opt.OptSlotList.Cons symbols.main (box (opt.OptSlotList.Nil))))
+  [symbols : OptInlineMultiTestSymbols]) : (__tl_dyn-array i64)
+  (let
+    [only : i64 symbols.main]
+    (__tl_make-array only)))
 
 (define (compiler-optimize-inline-hot-loop-leaf-single-reference-ok?) : bool
   (let
@@ -76140,8 +76291,9 @@
   [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot graph.count))
     -1
-    (opt.opt-slot-list-count
-      (opt.compiler-opt-global-array-element-shared-view graph.edges from-slot))))
+    (-
+      (opt.opt-callgraph-row-end (& graph) from-slot)
+      (opt.opt-callgraph-row-start (& graph) from-slot))))
 
 (define (opt-devirt-known-function-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (begin

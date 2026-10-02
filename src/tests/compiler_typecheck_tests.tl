@@ -1499,30 +1499,22 @@
     (compiler-typecheck-repr-c-mixed-layout-ok?)))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : tc_core.ResultTcUnit
-  (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program)
-      (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
-          (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
-              (let
-                [ctx : tc_core.TcContext
-                  (tc_core.tc-context-new
-                    (ast.ast-global-shared-view program)
-                    symbols
-                    registries
-                    ""
-                    cbi.compiler-builtin-id-fix-empty
-                    (ast.ast-node-pool-context-capture-active))]
-                (tc_core.tc-inline-aggregate-layout-finite-ok
-                  ctx
-                  (tc_core.tc-global-shared-view name)
-                  (compiler-typecheck-fixture-nominal-id program name)))]
-            [(csym.ResultCompilerRegistries.Err message)
-              (tc_core.ResultTcUnit.Err message)])]
-        [(csym.ResultCompilerSymbols.Err message)
-          (tc_core.ResultTcUnit.Err message)])]
-    [(parser.ResultAstProgram.Err message) (tc_core.ResultTcUnit.Err message)]))
+  (let
+    [program (try (parser.parse-ast-source src))]
+    [symbols (try (csym.build-compiler-symbols program))]
+    [registries (try (csym.build-compiler-registries program))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-global-shared-view program)
+        symbols
+        registries
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    (tc_core.tc-inline-aggregate-layout-finite-ok
+      ctx
+      (tc_core.tc-global-shared-view name)
+      (compiler-typecheck-fixture-nominal-id program name))))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)

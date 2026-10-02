@@ -309,6 +309,12 @@ and fence-scanner temporaries are released before typechecking. Both source
 and file callers share the same extracted-example checker, preserving order,
 counts, diagnostics, and the existing adjacent-path deduplication rule.
 
+Every example is its own program.
+- **Runnable examples** compile after a full driver file-state reset.
+- **Check-only examples** reset the interner to the session floor first (`compiler-check-reset-interns!`, as lint does per file). So nothing an earlier example or file interned or generated reaches them. The session's program cache survives, so examples still share loaded dependencies.
+
+A batched run therefore gives each file the result it gets alone (#8580). `scripts/verify-doc-tests.sh` fails a batched run that fails while every file passes alone; its per-file probe only locates failures.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,

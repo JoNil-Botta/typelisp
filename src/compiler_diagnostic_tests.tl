@@ -736,33 +736,34 @@
     [(cdiag.CompilerDiagnosticError) true]
     [_ false])
     false
-    (let
-      [data : cdiag.CompilerAdvisorySinkData
-        (cdiag.compiler-advisory-sink-data sink)]
-      [payload-arena : i64
-        (if (= data.payload-arena 0)
-          (arena.tl_arena_make_small)
-          data.payload-arena)]
-      [advisories : cdiag.CompilerAdvisoryList
-        (if (= data.payload-arena 0)
+    (unsafe
+      (let
+        [data : (Ptr cdiag.CompilerAdvisorySinkData)
+          (cdiag.compiler-advisory-sink-view sink)]
+        [payload-arena : i64
+          (if (= (deref data).payload-arena 0)
+            (arena.tl_arena_make_small)
+            (deref data).payload-arena)]
+        [advisories : cdiag.CompilerAdvisoryList
+          (if (= (deref data).payload-arena 0)
+            (in-arena
+              (arena.Arena payload-arena)
+              (cdiag.compiler-advisory-list-with-capacity 4))
+            (deref data).advisories)]
+        (begin
           (in-arena
             (arena.Arena payload-arena)
-            (cdiag.compiler-advisory-list-with-capacity 4))
-          data.advisories)]
-      (begin
-        (in-arena
-          (arena.Arena payload-arena)
-          (compiler-advisory-list-push!
-            (&mut advisories)
-            (compiler-advisory-phase-copy phase)
-            (cdiag.compiler-diagnostic-copy-ref diagnostic)))
-        (cdiag.compiler-advisory-sink-data-set!
-          sink
-          (cdiag.CompilerAdvisorySinkData
-            payload-arena
-            advisories
-            data.generation))
-        true))))
+            (compiler-advisory-list-push!
+              (&mut advisories)
+              (compiler-advisory-phase-copy phase)
+              (cdiag.compiler-diagnostic-copy-ref diagnostic)))
+          (cdiag.compiler-advisory-sink-data-set!
+            sink
+            (cdiag.CompilerAdvisorySinkData
+              payload-arena
+              advisories
+              (deref data).generation))
+          true)))))
 
 (define (compiler-diagnostic-advisory-warning
   [path : String]
@@ -895,7 +896,8 @@
     42))
 
 (define (compiler-advisory-sink-generation [sink : cdiag.CompilerAdvisorySink]) : i64
-  (cdiag.compiler-advisory-sink-data sink).generation)
+  (unsafe
+    (deref (cdiag.compiler-advisory-sink-view sink)).generation))
 
 (define (compiler-diagnostic-code-registry-category [index : i64]) : String
   (cond

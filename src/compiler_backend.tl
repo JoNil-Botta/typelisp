@@ -7736,26 +7736,6 @@
   [remaining : i64]
   [seen : (&mut seen backend_i64_i64_map.Map)]) : CompilerBackendSimdCopyShape
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (CompilerBackendSimdCopyShape.No)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match (compiler-backend-simd-copy-shape-block
-        (compiler-backend-global-shared-view all-blocks)
-        block
-        var
-        remaining
-        seen)
-        [(CompilerBackendSimdCopyShape.No)
-          (compiler-backend-simd-copy-shape-blocks
-            all-blocks
-            (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
-            var
-            remaining
-            seen)]
-        [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
-          (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
-        [(CompilerBackendSimdCopyShape.Mask lanes)
-          (CompilerBackendSimdCopyShape.Mask lanes)])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-simd-copy-shape-block-seq
         all-blocks
@@ -16623,17 +16603,6 @@
   [avx2-function : bool]
   [widest : i64]) : i64
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) widest]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler-backend-simd-scratch-census-list
-            (deref rest)
-            avx2-function
-            (compiler-backend-simd-scratch-census-instrs
-              instrs
-              avx2-function
-              widest))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-simd-scratch-census-seq seq avx2-function widest)]))
 
@@ -24611,16 +24580,14 @@
   (let
     [empty : CompilerBackendConstHoistSynth
       (compiler-backend-const-hoist-disable! function-state)]
-    [dense-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact blocks)]
+    [dense-blocks : compiler_ir_types.CompilerIrBlockList blocks]
     [count : i64 (compiler_ir_types.compiler-ir-block-list-count dense-blocks)]
     (if (<= count 1)
       empty
       (let
         [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (match (compiler-backend-global-shared-view dense-blocks)
-            [(compiler_ir_types.CompilerIrBlockList.Array seq) seq.slots]
-            [_ (__tl_make-array compiler_ir_types.CompilerIrBlock 0)])]
+            [(compiler_ir_types.CompilerIrBlockList.Array seq) seq.slots])]
         (if (not
           (compiler-backend-const-hoist-any-constant?
             type-segment-bases
@@ -38032,11 +37999,6 @@
   [state : CompilerBackendCollectState]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendCollectState
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) state]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (compiler-backend-collect-blocks-shared
-        (compiler-backend-collect-block-shared state block)
-        (deref rest))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-collect-block-seq-shared state seq 0)]))
 
@@ -38412,14 +38374,6 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [out : compiler_liveness.CompilerLiveI64Set]) : compiler_liveness.CompilerLiveI64Set
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) out]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler-backend-addressable-group-vars-blocks
-            (compiler-backend-global-shared-view groups)
-            (deref rest)
-            (compiler-backend-addressable-group-vars-seq groups out instrs))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-addressable-group-vars-block-seq groups seq out 0)]))
 
@@ -38512,19 +38466,6 @@
   [groups : compiler_liveness.CompilerLiveI64Set]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_liveness.CompilerLiveI64Set
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) groups]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler-backend-late-group-vars-blocks
-            type-segment-bases
-            index
-            (compiler-backend-late-group-vars-seq
-              type-segment-bases
-              index
-              groups
-              instrs)
-            (deref rest))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -40282,18 +40223,6 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match (deref rest)
-        [(compiler_ir_types.CompilerIrBlockList.Nil)
-          (compiler-backend-identity-tail-forwarder-block?
-            type-segment-bases
-            target
-            source-function
-            params
-            block
-            program-index)]
-        [_ false])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (if (= (compiler_ir_types.compiler-ir-block-seq-count seq) 1)
         (compiler-backend-identity-tail-forwarder-block?
@@ -40754,23 +40683,6 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) scan]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler-backend-outgoing-frame-scan-blocks
-            type-segment-bases
-            target
-            (deref rest)
-            (compiler-backend-outgoing-frame-scan-instrs
-              type-segment-bases
-              target
-              instrs
-              scan
-              types
-              program-index)
-            types
-            program-index)])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-outgoing-frame-scan-block-seq
         type-segment-bases
@@ -44715,38 +44627,6 @@
   [vars : i64]
   [point : i64]) : ResultCompilerBackend
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            (str_cat.str-cat
-              "backend: unknown block "
-              (compiler_ir_types.compiler-ir-label-text target-label)))))]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-          (if (= block-label target-label)
-            (begin
-              (compiler-backend-function-state-set-current-phi-target-point!
-                program-index.backend-state
-                point)
-              (compiler-backend-emit-leading-phi-copies
-                type-segment-bases
-                assignments
-                instrs
-                from-label
-                program-index
-                vars))
-            (compiler-backend-emit-phi-edge-copies-scan
-              type-segment-bases
-              assignments
-              (deref rest)
-              target-label
-              from-label
-              program-index
-              vars
-              (+ point (* 2 instrs.len))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies-scan-seq
         type-segment-bases
@@ -44836,70 +44716,6 @@
   [vars : i64]
   [point : i64]) : ResultCompilerBackend
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (ResultCompilerBackend.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start
-            ""
-            (str_cat.str-cat
-              "backend: unknown block "
-              (compiler_ir_types.compiler-ir-label-text target-label)))))]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-          (if (= block-label target-label)
-            (match (compiler-backend-leading-phi-copies-seq
-              program-index.backend-state
-              assignments
-              (compiler-backend-global-shared-view instrs)
-              from-label)
-              [(ResultBackendPhiCopies.Ok copies)
-                (if (compiler-backend-phi-copy-list-has-source-var?
-                  (compiler-backend-global-shared-view copies)
-                  moved-dst)
-                  ;; #orphan-push: the substituted source can share its dst's
-                  ;; home -- re-apply the build-time same-home filter or the
-                  ;; cycle break emits an orphaned push (see drop-same-home).
-                  (begin
-                    (compiler-backend-function-state-set-current-phi-target-point!
-                      program-index.backend-state
-                      point)
-                    (compiler-backend-emit-phi-copy-list
-                      type-segment-bases
-                      assignments
-                      (compiler-backend-phi-copy-list-drop-same-home
-                        program-index.backend-state
-                        assignments
-                        (compiler-backend-phi-copy-list-replace-source-var
-                          copies
-                          moved-dst
-                          moved-src))
-                      (compiler-backend-phi-leading-dst-home-mask-seq
-                        program-index.backend-state
-                        assignments
-                        instrs)
-                      program-index
-                      vars
-                      false
-                      program-index.backend-state))
-                  (ResultCompilerBackend.Ok ""))]
-              [(ResultBackendPhiCopies.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-at-start
-                      ""
-                      message)))])
-            (compiler-backend-emit-mov-phi-copy-edge-scan
-              type-segment-bases
-              assignments
-              (deref rest)
-              target-label
-              from-label
-              moved-dst
-              moved-src
-              program-index
-              vars
-              (+ point (* 2 instrs.len))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge-scan-seq
         type-segment-bases
@@ -45002,15 +44818,6 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [out : BackendSymbolSeq]) : BackendSymbolSeq
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) out]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-          (compiler-backend-phi-target-labels
-            (deref rest)
-            (if (compiler-backend-instr-seq-starts-with-phi? instrs)
-              (compiler-backend-phi-target-labels-add out label)
-              out))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-phi-target-labels-seq seq 0 out)]))
 
@@ -45856,18 +45663,6 @@
   [backend-state : CompilerBackendState]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-          (+
-            (compiler-backend-shared-return-block-count
-              backend-state
-              label
-              instrs)
-            (compiler-backend-block-list-return-count
-              backend-state
-              (deref rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-block-seq-return-count backend-state seq 0)]))
 
@@ -46652,34 +46447,6 @@
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-global-shared-view blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-          (if (= block-label target-label)
-            (compiler-backend-emit-trivial-phi-return-edge-instrs
-              type-segment-bases
-              source-function
-              (compiler-backend-shared-return-count
-                program-index.backend-state
-                assignments
-                blocks)
-              instrs
-              from-label
-              assignments
-              vars
-              ret-ty
-              program-index)
-            (compiler-backend-emit-trivial-phi-return-edge
-              type-segment-bases
-              source-function
-              (deref rest)
-              target-label
-              from-label
-              assignments
-              vars
-              ret-ty
-              program-index))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-trivial-phi-return-edge-seq
         type-segment-bases
@@ -46803,38 +46570,6 @@
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-global-shared-view blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-          (if (= block-label target-label)
-            (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
-              type-segment-bases
-              source-function
-              (compiler-backend-shared-return-count
-                program-index.backend-state
-                assignments
-                blocks)
-              instrs
-              from-label
-              assignments
-              vars
-              ret-ty
-              moved-dst
-              moved-src
-              program-index)
-            (compiler-backend-emit-mov-trivial-phi-return-edge
-              type-segment-bases
-              source-function
-              (deref rest)
-              target-label
-              from-label
-              assignments
-              vars
-              ret-ty
-              moved-dst
-              moved-src
-              program-index))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-trivial-phi-return-edge-seq
         type-segment-bases
@@ -49384,16 +49119,16 @@
 
 (define (compiler-backend-total-switch-trap-block-from?
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
-  [cursor : compiler_ir_types.CompilerIrBlockList]
+  [cursor : (& cursor (Slice compiler_ir_types.CompilerIrBlock))]
   [label : i64]
   [trap-label : i64]
   [fuel : i64]) : bool
   (if (<= fuel 0)
     false
     (match cursor
-      [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-        (match block
+      [(slice) false]
+      [(slice block & rest)
+        (match (owned_view.compiler-owned-reference-shared-view block)
           [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
             (if (= block-label label)
               (if (= label trap-label)
@@ -49409,24 +49144,18 @@
                         (not (= target label))
                         (compiler-backend-total-switch-trap-block-from?
                           (compiler-backend-global-shared-view all-blocks)
-                          all-blocks
+                          (compiler_ir_types.compiler-ir-block-list-view
+                            all-blocks)
                           target
                           trap-label
                           (- fuel 1)))]
                     [_ false])))
               (compiler-backend-total-switch-trap-block-from?
                 all-blocks
-                (deref rest)
+                rest
                 label
                 trap-label
-                fuel))])]
-      [(compiler_ir_types.CompilerIrBlockList.Array seq)
-        (compiler-backend-total-switch-trap-block-from?
-          all-blocks
-          (compiler_ir_types.compiler-ir-block-seq-to-list seq)
-          label
-          trap-label
-          fuel)])))
+                fuel))])])))
 
 (define (compiler-backend-total-switch-trap-block?
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -49436,7 +49165,7 @@
     (!= trap-label (compiler_ir_types.compiler-ir-label-none))
     (compiler-backend-total-switch-trap-block-from?
       (compiler-backend-global-shared-view blocks)
-      blocks
+      (compiler_ir_types.compiler-ir-block-list-view blocks)
       label
       trap-label
       8)))
@@ -49759,30 +49488,6 @@
             0
             buf))])))
 
-(define (compiler-backend-emit-switch-tables-blocks-into
-  [function : String]
-  [targets : BackendSymbolSeq]
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) buf]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-          (compiler-backend-emit-switch-tables-blocks-into
-            (compiler-backend-global-shared-view function)
-            (compiler-backend-global-shared-view targets)
-            (deref rest)
-            (compiler-backend-emit-switch-tables-instr-seq-into
-              function
-              label
-              targets
-              instrs
-              0
-              buf))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-switch-tables-seq-into function targets seq 0 buf)]))
-
 (define (compiler-backend-emit-switch-tables-functions-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
@@ -49822,14 +49527,6 @@
                       program-index.backend-state))
                   seq
                   0
-                  buf)]
-              [_
-                (compiler-backend-emit-switch-tables-blocks-into
-                  (compiler-backend-function-label-scope program-index name)
-                  (compiler-backend-function-state-phi-targets
-                    (compiler-backend-state-function-state
-                      program-index.backend-state))
-                  blocks
                   buf)])))])))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
@@ -50476,19 +50173,6 @@
   [targets : BackendSymbolSeq]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendSwitchValidation
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (CompilerBackendSwitchValidation.Ok)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (match (compiler-backend-switch-validate-instr-seq
-            (compiler-backend-global-shared-view targets)
-            instrs
-            0)
-            [(CompilerBackendSwitchValidation.Ok)
-              (compiler-backend-switch-validate-blocks targets (deref rest))]
-            [(CompilerBackendSwitchValidation.Err message)
-              (CompilerBackendSwitchValidation.Err message)])])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-switch-validate-block-seq targets seq 0)]))
 
@@ -51589,15 +51273,6 @@
   [counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-backend-count-instr-seq-uses
-              (compiler-backend-global-shared-view counts)
-              instrs)
-            (compiler-backend-count-block-uses counts (deref rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-count-block-seq-uses counts seq)]))
 
@@ -51749,19 +51424,6 @@
   [adjacent : (__tl_dyn-array bool)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-backend-gep-fusion-pin-seq!
-              (compiler-backend-global-shared-view counts)
-              (&mut adjacent)
-              instrs)
-            (compiler-backend-gep-fusion-pin-blocks!
-              counts
-              adjacent
-              (deref rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-gep-fusion-pin-block-seq! counts adjacent seq)]))
 
@@ -51992,16 +51654,6 @@
   [free : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-            (compiler-backend-count-instr-seq-use-facts
-              (compiler-backend-global-shared-view counts)
-              (&mut free)
-              instrs)])
-        (compiler-backend-count-block-use-facts counts free (deref rest)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-count-block-seq-use-facts counts free seq)]))
 
@@ -52114,19 +51766,6 @@
   [use-counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-backend-addr-of-forwarding-record-seq!
-              (&mut items)
-              use-counts
-              instrs)
-            (compiler-backend-addr-of-forwarding-record-blocks!
-              items
-              use-counts
-              (deref rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-addr-of-forwarding-record-block-seq!
         items
@@ -62421,25 +62060,8 @@
 (define (compiler-backend-blocks-instr-count
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (+
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block _ instrs) instrs.len])
-        (compiler-backend-blocks-instr-count (deref rest)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-instr-count-seq seq 0 0)]))
-
-(define (compiler-backend-next-block-label
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendMaybeLabel
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) (CompilerBackendMaybeLabel.No)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label _)
-          (CompilerBackendMaybeLabel.Some label)])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-next-block-label-seq seq 0)]))
 
 (define (compiler-backend-next-block-label-seq
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
@@ -62562,73 +62184,6 @@
   [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (let
-        [mark : i64 (compiler-backend-asm-buf-len (& out))]
-        (begin
-          (match (compiler-backend-global-shared-view block)
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (let
-                [function-state : CompilerBackendFunctionState
-                  (compiler-backend-state-function-state
-                    program-index.backend-state)]
-                (compiler-backend-function-state-set-emit-instr-post-base!
-                  function-state
-                  (+
-                    (compiler-backend-function-state-emit-instr-post-base
-                      function-state)
-                    instrs.len)))])
-          (match (compiler-backend-emit-block
-            type-segment-bases
-            (compiler-backend-global-shared-view function)
-            source-function
-            (compiler-backend-global-shared-view all-blocks)
-            block
-            (compiler-backend-next-block-label
-              (compiler_ir_types.compiler-ir-box-shared-view rest))
-            assignments
-            vars
-            types
-            (compiler-backend-global-shared-view global-types)
-            (compiler-backend-global-shared-view ret-ty)
-            plan
-            (compiler-backend-global-shared-view functions)
-            (compiler-backend-global-shared-view externs)
-            program-index
-            (compiler-backend-global-shared-view spans)
-            (compiler-backend-global-shared-view span-index)
-            (compiler-backend-global-shared-view func-diag)
-            (compiler-backend-global-shared-view use-counts)
-            out)
-            [(ResultCompilerBackend.Ok _)
-              (begin
-                (compiler-backend-emergency-wrap-appended
-                  out
-                  mark
-                  program-index.backend-state)
-                (compiler-backend-emit-blocks-into
-                  type-segment-bases
-                  function
-                  source-function
-                  all-blocks
-                  (deref rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  span-index
-                  func-diag
-                  use-counts
-                  out))]
-            [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err message)])))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-block-seq-into
         type-segment-bases
@@ -65666,28 +65221,6 @@
             out
             (compiler_optimize.opt-label-tail labels))))]))
 
-;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
-;; (explicit Jump / Branch / Switch targets PLUS the
-;; implicit fall-through to the layout-next block), reusing the optimizer's own
-;; successor enumeration so jump-table (switch) case + default targets are all
-;; included. Under-counting an edge is the only way carry could go wrong, and
-;; this enumeration is complete (those are the only label-bearing terminators).
-(define (compiler-backend-peephole-predcount-build
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) counts]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-predcount-build-seq seq 0 counts)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (compiler-backend-peephole-predcount-build
-        (compiler_ir_types.compiler-ir-box-shared-view rest)
-        (compiler-backend-peephole-predcount-bump
-          counts
-          (compiler_optimize.opt-cfg-block-successors-with-next
-            block
-            (compiler_optimize.opt-cfg-entry-label (deref rest)))))]))
-
 (define (compiler-backend-block-seq-label-or-empty
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]) : i64
@@ -65696,6 +65229,12 @@
     (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
       [(compiler_ir_types.CompilerIrBlock.Block label _) label])))
 
+;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
+;; (explicit Jump / Branch / Switch targets PLUS the
+;; implicit fall-through to the layout-next block), reusing the optimizer's own
+;; successor enumeration so jump-table (switch) case + default targets are all
+;; included. Under-counting an edge is the only way carry could go wrong, and
+;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build-seq
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
@@ -65780,63 +65319,6 @@
 ;;       splits-edge?), which would insert a synthetic edge-copy block between
 ;;       prev and B and reach B via an explicit jcc rather than fall-through --
 ;;       so B's running map would be the OTHER edge's, not prev's exit.
-(define (compiler-backend-peephole-carry-safe-scan
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
-  [function-state : CompilerBackendFunctionState]
-  [label-scope : String]
-  [entry-label : i64]
-  [predcount : backend_label_i64_map.Map]
-  [prev : compiler_ir_types.CompilerIrBlock]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-carry-safe-scan-seq
-        backend-state
-        stream
-        function-state
-        label-scope
-        entry-label
-        predcount
-        prev
-        seq
-        0)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match (compiler-backend-global-shared-view block)
-        [(compiler_ir_types.CompilerIrBlock.Block cur-label _)
-          (begin
-            (if (and
-              (not (= cur-label entry-label))
-              (not
-                (compiler-backend-peephole-prev-splits-edge?
-                  function-state
-                  (compiler-backend-global-shared-view prev)))
-              (=
-                1
-                (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
-              (compiler_optimize.opt-label-contains
-                (compiler_optimize.opt-cfg-block-successors-with-next
-                  prev
-                  cur-label)
-                cur-label))
-              (compiler-backend-peephole-carry-safe-insert!
-                backend-state
-                stream
-                (compiler-backend-asm-label
-                  (compiler-backend-global-shared-view label-scope)
-                  cur-label))
-              unit)
-            (compiler-backend-peephole-carry-safe-scan
-              backend-state
-              stream
-              function-state
-              label-scope
-              entry-label
-              predcount
-              block
-              (deref rest)))])]))
-
 (define (compiler-backend-peephole-carry-safe-scan-seq
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
@@ -65899,7 +65381,6 @@
   [label-scope : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (if (= (compiler_ir_types.compiler-ir-block-seq-count seq) 0)
         unit
@@ -65920,23 +65401,7 @@
                   (backend_label_i64_map.with-capacity 64))
                 entry
                 seq
-                1)])))]
-    [(compiler_ir_types.CompilerIrBlockList.Cons entry rest)
-      (match (compiler-backend-global-shared-view entry)
-        [(compiler_ir_types.CompilerIrBlock.Block entry-label _)
-          (compiler-backend-peephole-carry-safe-scan
-            backend-state
-            stream
-            function-state
-            label-scope
-            entry-label
-            (compiler-backend-peephole-predcount-build
-              (compiler_ir_types.compiler-ir-block-cons
-                (compiler-backend-global-shared-view entry)
-                (compiler_ir_types.compiler-ir-box-shared-view rest))
-              (backend_label_i64_map.with-capacity 64))
-            entry
-            (deref rest))])]))
+                1)])))]))
 
 ;; ============================================================================
 ;; M-G3 stage 1: rsp-relative frame addressing (behavior-neutral rebase).
@@ -67150,19 +66615,16 @@
 ;; the `jmp`), and whatever stack argument space the tail call itself wants is
 ;; sized separately by compiler-backend-outgoing-frame-space.
 (define (compiler-backend-blocks-have-returning-call?
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]) : bool
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) false]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
             instrs)
             true
-            (compiler-backend-blocks-have-returning-call? (deref rest)))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-blocks-have-returning-call?
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+            (compiler-backend-blocks-have-returning-call? rest))])]))
 
 (define (compiler-backend-rsp-rebase-full-result
   [text : String]
@@ -69625,26 +69087,6 @@
                 (array-ref out j)
                 (compiler_ir_types.compiler-ir-block-seq-ref seq j))
               (set! j (+ j 1))))
-          out))]
-    [_
-      (let
-        [flat : compiler_ir_types.CompilerIrBlockList blocks]
-        [count : i64
-          (compiler_ir_types.compiler-ir-block-list-count-cons
-            (compiler-backend-global-shared-view flat))]
-        [out : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
-          (__tl_make-array compiler_ir_types.CompilerIrBlock count)]
-        [cursor : compiler_ir_types.CompilerIrBlockList flat]
-        [j : i64 0]
-        (begin
-          (while (< j count)
-            (match cursor
-              [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-                (begin
-                  (set! (array-ref out j) block)
-                  (set! cursor (deref rest))
-                  (set! j (+ j 1)))]
-              [_ (set! j count)]))
           out))]))
 
 (define (compiler-backend-gep-fold-count-geps
@@ -70045,11 +69487,8 @@
     [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
       (__tl_make-array compiler_ir_types.CompilerIrBlock (array-length barr))]
     [b : i64 0]
-    [out : compiler_ir_types.CompilerIrBlockList
-      compiler_ir_types.CompilerIrBlockList.Nil]
-    [r : i64 (- (array-length barr) 1)]
     (begin
-      ;; forward pass keeps the ordinal cursor in walk order ...
+      ;; forward pass keeps the ordinal cursor in walk order
       (while (< b (array-length barr))
         (begin
           (match (compiler-backend-global-array-element-shared-view barr b)
@@ -70070,46 +69509,14 @@
                     kind-table
                     scale-table)))])
           (set! b (+ b 1))))
-      ;; ... and the list is assembled back-to-front.
-      (while (>= r 0)
-        (begin
-          (set!
-            out
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler-backend-global-array-element-shared-view rebuilt r)
-              out))
-          (set! r (- r 1))))
-      out)))
+      (compiler_ir_types.CompilerIrBlockList.Array
+        (compiler_ir_types.CompilerIrBlockSeq rebuilt (array-length barr))))))
 
 ;; Cheap prescan: a variable-index gep at all? Most functions have none; the
 ;; full pass only runs when one exists.
 (define (compiler-backend-gep-fold-blocks-have-candidate?
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (let
-        [instrs : compiler_ir_types.CompilerIrInstrSeq
-          (compiler-backend-gep-fold-block-instrs block)]
-        [n : i64 instrs.len]
-        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-          instrs.slots]
-        [j : i64 0]
-        [found : bool false]
-        (begin
-          (while (< j n)
-            (begin
-              (match (array-ref slots j)
-                [(compiler_ir_types.CompilerIrInstr.Gep _ _ offset _)
-                  (match offset
-                    [(compiler_ir_types.CompilerIrValue.Var _)
-                      (set! found true)]
-                    [_ unit])]
-                [_ unit])
-              (set! j (+ j 1))))
-          (if found
-            true
-            (compiler-backend-gep-fold-blocks-have-candidate? (deref rest)))))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-gep-fold-block-seq-has-candidate? seq)]))
 
@@ -71673,8 +71080,7 @@
     blocks
     (let
       [dense : compiler_ir_types.CompilerIrBlockList
-        (compiler_ir_types.compiler-ir-block-list-compact
-          (compiler-backend-global-shared-view blocks))]
+        (compiler-backend-global-shared-view blocks)]
       (match dense
         [(compiler_ir_types.CompilerIrBlockList.Array seq)
           (match (compiler-backend-placement-plan-for-seq
@@ -71708,8 +71114,7 @@
                             n
                             total)
                           unit)
-                        (compiler-backend-placement-apply seq st.order n))))))])]
-        [_ blocks]))))
+                        (compiler-backend-placement-apply seq st.order n))))))])]))))
 
 ;; ---------------------------------------------------------------------------
 ;; SW-1: general shrink-wrapping -- the prologue at the dominator of the frame's
@@ -74720,7 +74125,7 @@
                                           compiler-backend-function-bool-frame-slot-referenced)
                                         (> outgoing-frame-space 0)
                                         (compiler-backend-blocks-have-returning-call?
-                                          (compiler-backend-global-shared-view
+                                          (compiler_ir_types.compiler-ir-block-list-view
                                             emit-blocks-list))
                                         (and
                                           target-policy.windows
@@ -74927,7 +74332,7 @@
                                     compiler-backend-function-bool-frame-slot-referenced))
                                 (not
                                   (compiler-backend-blocks-have-returning-call?
-                                    (compiler-backend-global-shared-view
+                                    (compiler_ir_types.compiler-ir-block-list-view
                                       emit-blocks-list)))))]
                           ;; GAP1 corollary: in PUSH mode the callee-save slot
                           ;; region is never written -- the rebase deletes the
@@ -77570,21 +76975,6 @@
   [kind : i64]
   [arg : i64]) : i64
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (if (= kind 0)
-        -1
-        0)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (let
-        [found : i64
-          (match block
-            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-              (compiler-backend-iag-scan-instrs instrs kind arg 0)])]
-        (if (if (= kind 0)
-          (>= found 0)
-          (> found 0))
-          found
-          (compiler-backend-iag-scan-blocks (deref rest) kind arg)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-iag-scan-block-seq seq kind arg 0)]))
 
@@ -78826,13 +78216,6 @@
   [index : CompilerBackendRuntimeIndex]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendRuntimeIndex
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) index]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler-backend-runtime-index-blocks
-            (compiler-backend-runtime-index-instr-seq index instrs)
-            (deref rest))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-runtime-index-block-seq index seq 0)]))
 
@@ -82114,24 +81497,6 @@
   [target-label : i64]
   [from-label : i64]) : CompilerBackendPhiCopySeq
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil)
-      (compiler-backend-phi-copy-seq-with-capacity 0)]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-          (if (= label target-label)
-            (compiler-backend-object-edge-phi-copies-scan
-              type-segment-bases
-              instrs
-              program-index
-              from-label
-              0)
-            (compiler-backend-object-edge-phi-copies
-              type-segment-bases
-              (deref rest)
-              program-index
-              target-label
-              from-label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-object-edge-phi-copies-seq
         type-segment-bases
@@ -82300,19 +81665,6 @@
   (compiler-backend-function-scratch-i64
     (compiler-backend-state-function-state program-index.backend-state)
     compiler-backend-scratch-i64-object-next-label))
-
-(define (compiler-backend-object-block-list-first-label
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label _) label])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (if (> (compiler_ir_types.compiler-ir-block-seq-count seq) 0)
-        (match (compiler_ir_types.compiler-ir-block-seq-ref seq 0)
-          [(compiler_ir_types.CompilerIrBlock.Block label _) label])
-        -1)]))
 
 (define (compiler-backend-object-set-next-label!
   [program-index : CompilerBackendProgramIndex]
@@ -83153,46 +82505,6 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-backend-global-shared-view blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Nil) parts]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-          (let
-            [block-label : String
-              (compiler-backend-asm-label
-                (compiler-backend-global-shared-view label-scope)
-                label)]
-            [_next-label : unit
-              (compiler-backend-object-set-next-label!
-                program-index
-                (compiler-backend-object-block-list-first-label
-                  (compiler_ir_types.compiler-ir-box-shared-view rest)))]
-            (compiler-backend-object-blocks
-              type-segment-bases
-              (compiler-backend-object-instr-seq
-                type-segment-bases
-                (object_target.compiler-backend-object-add-text
-                  (object_target.compiler-backend-object-symbol-local-section
-                    parts
-                    (compiler-backend-global-shared-view block-label)
-                    (cobj.CompilerObjectSectionKind.Text)
-                    (cobj.CompilerObjectSymbolKind.Function))
-                  (cobj.CompilerObjectX64Instr.Label block-label))
-                target
-                (compiler-backend-global-shared-view function-symbol)
-                (compiler-backend-global-shared-view label-scope)
-                label
-                blocks
-                instrs
-                plan
-                program-index
-                0)
-              target
-              function-symbol
-              label-scope
-              (deref rest)
-              plan
-              program-index))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-object-block-seq
         type-segment-bases
@@ -84237,15 +83549,6 @@
     (begin
       (while true
         (match cursor
-          [(compiler_ir_types.CompilerIrBlockList.Nil) (return true)]
-          [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-            (match block
-              [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-                (if (compiler-backend-object-instrs-semantically-supported?
-                  backend-state
-                  instrs)
-                  (set! cursor (deref rest))
-                  (return false))])]
           [(compiler_ir_types.CompilerIrBlockList.Array seq)
             (let
               [index : i64 0]
@@ -84709,24 +84012,6 @@
     (begin
       (while true
         (match cursor
-          [(compiler_ir_types.CompilerIrBlockList.Nil)
-            (return CompilerBackendObjectEligibility.Eligible)]
-          [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-            (match block
-              [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-                (match (compiler-backend-object-instrs-abi-eligibility
-                  type-segment-bases
-                  target
-                  program-index
-                  types
-                  (compiler-backend-global-shared-view global-types)
-                  (compiler-backend-global-shared-view function-ret)
-                  instrs)
-                  [(CompilerBackendObjectEligibility.Eligible)
-                    (set! cursor (deref rest))]
-                  [(CompilerBackendObjectEligibility.Unsupported category)
-                    (return
-                      (CompilerBackendObjectEligibility.Unsupported category))])])]
           [(compiler_ir_types.CompilerIrBlockList.Array seq)
             (let
               [index : i64 0]
@@ -96160,7 +95445,7 @@
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         4
-        (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-blocks
           (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
             (compiler_ir_types.compiler-ir-instr-seq4
@@ -96191,8 +95476,7 @@
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.I64 42)))))
-          compiler_ir_types.CompilerIrBlockList.Nil)
+                  (compiler_ir_types.CompilerIrValue.I64 42))))))
         compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler-backend-runtime-helper-externs)))

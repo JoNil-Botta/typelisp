@@ -244,8 +244,7 @@
                             (ast.AstType.I64))
                           true]
                         [_ false])
-                      "the entry add keeps its operands"))])))]
-        [_ (test.assert-true false "dense blocks retained")]))))
+                      "the entry add keeps its operands"))])))]))))
 
 (test
   multiply_recurrence_selection

@@ -151,20 +151,19 @@
       (let
         [instrs (ir.CompilerIrInstrSeq slots 4)]
         [blocks
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              0
-              (view.compiler-owned-shared-view instrs))
+          (ir.compiler-ir-blocks-with-tail
             (if (= mode 1)
-              (ir.compiler-ir-block-cons
+              (ir.compiler-ir-blocks
                 (ir.CompilerIrBlock.Block
                   1
                   (fixtures.compiler-backend-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Return
                       (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-                    (ir.compiler-ir-instr-seq-empty)))
-                (ir.CompilerIrBlockList.Nil))
-              (ir.CompilerIrBlockList.Nil)))]
+                    (ir.compiler-ir-instr-seq-empty))))
+              (ir.compiler-ir-block-list-empty))
+            (ir.CompilerIrBlock.Block
+              0
+              (view.compiler-owned-shared-view instrs)))]
         [uses
           (backend.compiler-backend-function-use-counts
             6

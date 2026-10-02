@@ -103,6 +103,13 @@ over every instruction) sizes the staging region to the largest request.
 - Each staged route claims its bytes. A claim beyond the plan fails at its
   instruction, and the region the body used must equal the plan (#7497).
 
+A function body's blocks are one dense `CompilerIrBlockSeq`:
+`CompilerIrBlockList` has only its `Array` arm. Walkers borrow the live blocks
+as a slice (`compiler-ir-block-list-view`) and match it with slice patterns.
+Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
+their input. Appending a list copies it, so a walk must not append each block's
+rewrite onto an already-built rest.
+
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
@@ -588,9 +595,8 @@ These internal shallow reads require valid storage and an index below logical le
 The instruction helpers remain authoritative for effects and provenance. Root
 updates retain forward order and both existing passes; unresolved candidates and
 successful predicates stop before reading later blocks. No scanner mutates block
-storage or consumes spare capacity. The linked/dense/mixed differential fixture
-covers retained inputs, delayed definitions, unstable bindings and early exits;
-this traversal optimization leaves the wider block-storage migration in #5729 open.
+storage or consumes spare capacity. The `call-memory-dense-scan` test covers
+delayed definitions, unstable bindings and early exits.
 
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
@@ -638,12 +644,11 @@ no body the loop reads, and no second whole-program copy overlaps it. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.
-It visits blocks and instructions in forward order without building linked
+It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer
 literal, even after a duplicate makes specialization ineligible. Keep traversal
 separate from that admission decision; stopping the scan early changes its
-recorded result. This read-only path does not change block ownership or the
-remaining mixed block-list representation.
+recorded result. This read-only path does not change block ownership.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
@@ -818,8 +823,8 @@ Structured object branches reuse flags only from the immediately preceding
 integer comparison in the same IR block, when that comparison defines the
 branch operand. Its `setcc`, zero extension and frame store preserve flags;
 floating comparisons and intervening instructions invalidate this fact.
-Fallthrough uses the next block in emission order, including dense block
-sequences. The absent-next-block sentinel cannot match a branch target; an
+Fallthrough uses the next block in emission order. The absent-next-block
+sentinel cannot match a branch target; an
 invalid target must remain an unresolved edge for the serializer to reject.
 Phi copies remain edge-specific: a conditional jump selects the
 false copies, and the true copies must jump past them before entering their

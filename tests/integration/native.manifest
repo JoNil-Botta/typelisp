@@ -351,6 +351,7 @@ comptime_type_macro_operand|all|-,0,2|tests/integration/comptime_type_macro_oper
 generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-
 generated_string_vector_private_intrinsics|all|-|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
 cond|all|-|tests/integration/cond.tl|42|-|-|-|-
+multiform_arms|all|-,0,1,2|tests/integration/multiform_arms.tl|42|-|-|stdlib/comptime.tl|-
 control_flow|all|-|tests/integration/control_flow.tl|15|-|-|-|-
 scalar_while_break_continue|all|-|tests/integration/scalar_while_break_continue.tl|42|-|-|stdlib/string.tl|-
 tail_call_stack_args|all|-|tests/integration/tail_call_stack_args.tl|42|-|-|-|-

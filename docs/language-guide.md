@@ -265,7 +265,18 @@ struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
 too: `(neg x)` negates a numeric operand (negation is not spelled with a unary
 `-`), `(not x)` negates a `bool`, and `(bit-not x)` complements an integer.
 Dotted syntax `place.field` reads a
-struct field, and `(set! place.field value)` writes in place. Tuple slots and
+struct field, and `(set! place.field value)` writes in place.
+Body positions take several expressions evaluated in order as an implicit
+`begin`: `let`, `define`, `lambda`, `while`, `when`, `unless`, `unsafe`, the
+arena and resource forms, and the arms of `match` and `cond`:
+
+```lisp
+(match op
+  [(Add n)
+    (set! total (+ total n))
+    total]
+  [(Reset) 0])
+``` Tuple slots and
 array elements use `tuple-ref` and `array-ref`; every direct write still uses
 `set!`.
 
@@ -306,7 +317,10 @@ use the end-state forms:
 - Prefer qualified short stdlib names such as `string.append`; flat
   module-prefixed names such as `string-append` are transitional.
 - Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`, and
-  bracket-arm `cond`: `(cond [test expr] ... [else fallback])`.
+  bracket-arm `cond`: `(cond [test expr ...] ... [else fallback ...])`.
+- Write a body sequence directly in a body position, including `match` and
+  `cond` arms, rather than wrapping it in `begin`; `typelisp lint
+  --redundant-begin` reports and fixes the wrappers.
 - Build strings with `str-cat` or `text_buf`; do not add
   `string-append`/`string-concat` chains.
 - Use `ByteBuf` and borrowed `bytes` views for mutable binary storage, not

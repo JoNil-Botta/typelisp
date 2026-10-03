@@ -1,0 +1,12 @@
+(define (step [op : Op] [acc : i64]) : i64
+  (match op
+    [(Add n) (set! acc (+ acc n)) acc]
+    [(Neg) acc]
+    [_ ; reset
+      (set! acc 0) acc]))
+
+(define (grade [x : i64]) : i64
+  (cond [(< x 0) (set! x 0) x] [else x]))
+
+(define (short [x : i64]) : i64
+  (cond [(< x 0) 0] [else x]))

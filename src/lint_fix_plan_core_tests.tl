@@ -1,8 +1,12 @@
-;; Executable snapshot/edit planner conformance, discovered by inline-test CI.
+;; Executable snapshot/edit planner conformance and the redundant-begin fix
+;; round trip, discovered by inline-test CI.
 (import compiler_diagnostic as diag)
 (import lint_fix_plan_core as planner)
+(import lint_core)
+(import format_rules)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 
 (define (assert [condition : bool] [message : String]) : unit
   (unless condition (io.panic message)))
@@ -548,3 +552,243 @@
   (assert
     (missing-identity-and-atomicity-ok?)
     "lint fix plan missing identity/atomicity"))
+
+;; redundant-begin is the first rule with a machine-applicable fix: its
+;; findings plan as one publishable batch, and the applied source has no
+;; finding left and formats like hand-written multi-form bodies.
+(define (redundant-begin-findings [source : String]) : lint_core.LintFindings
+  (lint_core.lint-redundant-begin-scan source (lint_core.lint-findings-empty)))
+
+(define (redundant-begin-plan [source : String]) : planner.LintFixPlan
+  (let
+    [findings : lint_core.LintFindings
+      (redundant-begin-findings (clone source))]
+    [count : i64 (lint_core.lint-findings-count (clone findings))]
+    [snap : planner.LintFixSnapshot (planner.snapshot "fix.tl" source 1 true)]
+    [slots : (__tl_dyn-array planner.LintFixCandidate)
+      (__tl_make-array planner.LintFixCandidate count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [finding : lint_core.LintFinding
+            (lint_core.lint-findings-ref (& findings) index)]
+          (begin
+            (match finding.fix
+              [(lint_core.LintFixAvailable fix)
+                (set!
+                  (array-ref slots index)
+                  (planner.LintFixCandidate
+                    (str_cat.str-cat
+                      "redundant-begin-"
+                      (string.int->string index))
+                    (diag.compiler-diagnostic-with-fix
+                      (diag.compiler-diagnostic-from-ast-span
+                        "fix.tl"
+                        finding.span
+                        finding.message)
+                      fix)
+                    (one-identity (planner.source-identity (clone snap)))))]
+              [(lint_core.LintFixUnavailable _ _)
+                (io.panic "redundant-begin finding without a fix")])
+            (set! index (+ index 1)))))
+      (planner.plan
+        (one-snapshot snap)
+        (planner.LintFixCandidateSeq slots count)
+        (planner.machine-only)))))
+
+(define (redundant-begin-applied [source : String]) : String
+  (let
+    [batch : planner.LintFixPlan (redundant-begin-plan source)]
+    (begin
+      (assert batch.publishable "redundant-begin fixes should plan cleanly")
+      (clone (array-ref (planner.apply batch).slots 0).source))))
+
+(define (formatted [source : String]) : String
+  (match (format_rules.format-rules-render-source-width-result source 80)
+    [(format_rules.ResultFormatString.Ok text) text]
+    [(format_rules.ResultFormatString.Err _)
+      (io.panic "redundant-begin fixed source should format")]))
+
+(define (redundant-begin-round-trip-ok?
+  [source : String]
+  [findings : i64]
+  [applied : String]
+  [canonical : String]) : bool
+  (let
+    [fixed : String (redundant-begin-applied (clone source))]
+    (and
+      (=
+        (lint_core.lint-findings-count (redundant-begin-findings source))
+        findings)
+      (string.eq fixed applied)
+      (=
+        (lint_core.lint-findings-count (redundant-begin-findings (clone fixed)))
+        0)
+      (string.eq (formatted fixed) canonical)
+      (string.eq (formatted (clone canonical)) canonical))))
+
+(test
+  lint-redundant-begin-fix-round-trip
+  (assert
+    (redundant-begin-round-trip-ok?
+      "(define (s) : unit
+  unit)
+
+(define (f [x : i64]) : i64
+  (begin
+    (set! x 1)
+    x))
+
+(define (g [x : i64]) : i64
+  (match x
+    [0
+      (begin
+        (s)
+        1)]
+    [_ (begin (s) x)]))
+
+(define (h [x : i64]) : i64
+  (cond
+    [(= x 0) (begin (set! x 2) x)]
+    [else x]))
+
+(define (w [x : i64]) : unit
+  (when
+    (> x 0)
+    (begin
+      (set! x 1)
+      (s))))
+
+(test t
+  (begin
+    (s)
+    (s)))
+"
+      6
+      "(define (s) : unit
+  unit)
+
+(define (f [x : i64]) : i64
+    (set! x 1)
+    x)
+
+(define (g [x : i64]) : i64
+  (match x
+    [0
+        (s)
+        1]
+    [_ (s) x]))
+
+(define (h [x : i64]) : i64
+  (cond
+    [(= x 0) (set! x 2) x]
+    [else x]))
+
+(define (w [x : i64]) : unit
+  (when
+    (> x 0)
+      (set! x 1)
+      (s)))
+
+(test t
+    (s)
+    (s))
+"
+      "(define (s) : unit
+  unit)
+
+(define (f [x : i64]) : i64
+  (set! x 1)
+  x)
+
+(define (g [x : i64]) : i64
+  (match x
+    [0
+      (s)
+      1]
+    [_
+      (s)
+      x]))
+
+(define (h [x : i64]) : i64
+  (cond
+    [(= x 0)
+      (set! x 2)
+      x]
+    [else x]))
+
+(define (w [x : i64]) : unit
+  (when (> x 0) (set! x 1) (s)))
+
+(test t (s) (s))")
+    "lint redundant-begin fix round trip"))
+
+(test
+  lint-redundant-begin-nested-fixes-compose
+  (assert
+    (redundant-begin-round-trip-ok?
+      "(define (n) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (begin
+        (set! x 1)
+        (set! x 2))
+      x)))
+"
+      2
+      "(define (n) : i64
+  (let
+    [x : i64 0]
+        (set! x 1)
+        (set! x 2)
+      x))
+"
+      "(define (n) : i64
+  (let
+    [x : i64 0]
+    (set! x 1)
+    (set! x 2)
+    x))")
+    "lint redundant-begin nested fixes"))
+
+(test
+  lint-redundant-begin-keeps-required-begins
+  (assert
+    (=
+      (lint_core.lint-findings-count
+        (redundant-begin-findings
+          "(define (v) : i64
+  1)
+
+(define g : i64
+  (begin (v) 2))
+
+(define (test [a : i64] [b : i64]) : i64
+  (+ a b))
+
+(defstruct P (x i64))
+
+(define (projected) : i64
+  (let
+    [p : i64 0]
+    (begin (v) (P p)).x))
+
+(define (k [x : i64]) : unit
+  (let
+    [y : i64 (begin (v) x)]
+    (set! x (+ (begin (v) y) 1))
+    (let [z : i64 0] (begin z))
+    (when (> x 0) (begin (v) (set! x 1)))
+    (unless (> x 0) (begin (when true (set! x 2)) (v) (set! x 3)))
+    (set! x (test 1 (begin (v) 2)))
+    (if (> x 0) (begin (v) unit) unit)))
+
+(defmacro (quoted) : Expr
+  `(begin
+    (let [x : i64 1] '(begin x x))
+    1))
+"))
+      0)
+    "lint redundant-begin must keep required begins"))

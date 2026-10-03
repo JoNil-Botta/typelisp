@@ -880,10 +880,13 @@ not render or reparse `type-key`.
 
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions
-preserved as syntax. The bracket form is valid only in macro call operands;
-it is not a general expression, and ordinary calls or non-bracket macro slots
-reject it with a source-located diagnostic. Empty clauses, one-element
-clauses, and clauses with more than two elements are rejected.
+preserved as syntax. Like a `let` body, the clause body may be several
+expressions, `[first expr ...]`; they are captured as one implicit
+`(begin expr ...)` second element. The bracket form is valid only in macro
+call operands; it is not a general expression, and ordinary calls or
+non-bracket macro slots reject it with a source-located diagnostic. Empty
+clauses, one-element clauses, and binding-clause syntax with `:` after the
+first element are rejected.
 
 A fixed slot declared `ExprBindingClause` accepts exactly one binding-clause
 operand, either `[name init]` or `[name : Type init]`. The `name` must be a
@@ -891,7 +894,7 @@ source identifier and is preserved as the user-facing binding name. The
 optional type annotation and initializer are preserved as syntax; the type
 annotation is not resolved before macro expansion. These operands are
 distinct from `ExprClause`: `[x : i64 1]` is accepted only for
-`ExprBindingClause`, while `ExprClause` remains exactly `[expr expr]`.
+`ExprBindingClause`, while `ExprClause` remains `[expr expr ...]`.
 
 A fixed slot declared `type` accepts a concrete compile-time type operand. It
 may carry the validation-only kind constraint described in section 3.7.1.3,
@@ -909,7 +912,7 @@ be variadic.
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro
 body receives the remaining operands as an `ExprList`; for `Expr ...`, they
 are captured without per-operand produced-type checks. For `ExprClause ...`,
-every remaining operand must be a two-expression bracket clause and the macro
+every remaining operand must be an `ExprClause` bracket clause and the macro
 body receives an `ExprClauseList`. For `ExprBindingClause ...`, every
 remaining operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
@@ -1095,7 +1098,7 @@ Typed expansion has three checks:
 1. The macro call site is checked from the macro signature before expansion.
    Ordinary operand type errors are reported at the operand source span;
    `Expr` operands are wildcard syntax captures and skip the produced-type
-   check; `ExprClause` operands must use `[expr expr]` syntax;
+   check; `ExprClause` operands must use `[expr expr ...]` syntax;
    `ExprBindingClause` operands must use `[name expr]` or
    `[name : Type expr]` syntax.
 2. The macro body is checked as compile-time TypeLisp over the macro-only
@@ -3303,7 +3306,7 @@ The compile driver loads `stdlib.core_macros` as an implicit macro prelude.
 Bare `when`, `unless`, `and`, `or`, scalar `for`, and bracket-arm `cond`
 resolve to the prelude macros of `stdlib.core_macros` unless a local or
 imported macro with the same name takes precedence. The core `cond` surface is
-`(cond [test expr] ... [else fallback])`; flat
+`(cond [test expr ...] ... [else fallback ...])`; flat
 `(cond test expr ... fallback)` calls are rejected. The module can also be
 imported explicitly, for example `(import stdlib.core_macros as core)`, and its
 macros called through the alias: `core.when`, `core.unless`, `core.and`,
@@ -4743,7 +4746,9 @@ provided by the implicit core macro prelude. It expands to nested `if`
 expressions, so each test must type-check as `bool` and all branch result
 types must merge using the normal `if` rules. At least one `[test expr]` arm
 and a final `[else fallback]` arm are required, and `else` may appear only in
-the final arm. Qualified calls such as `core.cond` use the same bracket-arm
+the final arm. An arm may hold several result expressions,
+`[test expr ...]`; like a `match` arm body they are evaluated as an implicit
+`begin`, and the last one provides the arm result. Qualified calls such as `core.cond` use the same bracket-arm
 shape. The flat `(cond test expr ... fallback)` shape is rejected.
 
 ```lisp test=ignore name=cond-expression reason=fragment
@@ -4784,7 +4789,11 @@ guards.
 - Evaluates expressions in order.
 - Returns the value of `last_expr`.
 - `begin` is the explicit grouping form for positions that do not already
-  accept expression sequences.
+  accept expression sequences. Body positions (`let`, `define`, `lambda`,
+  `while`, `when`, `unless`, `unsafe`, the arena and resource forms, `test`,
+  `defmacro`, scalar `for`, and `match` and `cond` arms) take several
+  expressions directly; the opt-in `redundant-begin` lint reports a `begin`
+  written as one of their body forms.
 
 ### 5.9 `(while cond body...)` — loop
 
@@ -4940,8 +4949,12 @@ explicit constructors.
     (+ zero (+ p.x (array-ref xs 0)))))
 ```
 
-### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
+### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
+- Each arm is a bracket form holding a pattern and one or more body
+  expressions. Multiple body expressions are evaluated in order as an
+  implicit `begin`; the last expression provides the arm result, exactly as
+  in a `let` body.
 - Enum scrutinees support variant patterns such as `Red`, `Color.Red`,
   `(Some value)`, and `(Option.Some value)`. Payload positions accept nested
   patterns recursively: bindings, literals, `_`, and further variant patterns.
@@ -5031,9 +5044,9 @@ explicit constructors.
 - A bare identifier at the top level of an enum `match` arm resolves as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
-- All arms must return the same type. An arm whose type does not merge with
-  the others is checked again with their type as its expected type, as `if`
-  branches are (§5.6).
+- All arms must return the same type: the type of each arm's last body
+  expression. An arm whose type does not merge with the others is checked again
+  with their type as its expected type, as `if` branches are (§5.6).
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
 
@@ -9114,7 +9127,7 @@ Selected Command Forms:
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
   typelisp inspect <file.tlci>
 ```
@@ -9235,7 +9248,12 @@ checked-in audited module allowlist. Identifier text in comments and string
 literals is not a call and does not trigger the rule. Prefer `in-arena`,
 `with-scratch`, `with-arena`, `rewind-safe!`, or `destroy-safe!` in new code.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
-`--redundant-function-name` (redundant module-prefix names), and
+`--redundant-function-name` (redundant module-prefix names),
+`--redundant-begin` (a `begin` of two or more forms written as a body form of
+a position that already takes a body sequence, with a machine-applicable fix
+that splices its forms into that body; under `when` and `unless`, whose body
+forms must each be `unit`, it reports only when the forms the splice exposes
+are syntactically `unit`), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
 now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:
@@ -9729,12 +9747,12 @@ expr          ::= literal
 macro-call    ::= "(" qualified-name call-operand* ")"
 
 call-operand  ::= expr
-                | "[" expr expr "]"            ; macro-only ExprClause operand
+                | "[" expr expr+ "]"           ; macro-only ExprClause operand
                 | "[" ident expr "]"           ; macro-only ExprBindingClause operand
                 | "[" ident ":" type expr "]"  ; macro-only ExprBindingClause operand
 
-cond-clause   ::= "[" expr expr "]"
-cond-else-clause ::= "[" "else" expr "]"
+cond-clause   ::= "[" expr expr+ "]"              ; implicit begin
+cond-else-clause ::= "[" "else" expr+ "]"
 
 borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&" ident borrow-place ")"
@@ -9769,7 +9787,7 @@ compact-clause ::= "(" "[" ident ":" type expr expr "]"
                          "[" ident ":" type expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 spmd-lane-form ::= "program-index" | "program-count"
-match-arm     ::= "[" pattern expr "]"
+match-arm     ::= "[" pattern expr+ "]"           ; implicit begin
 pattern       ::= "_"
                 | literal
                 | ident

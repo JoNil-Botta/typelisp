@@ -102343,7 +102343,7 @@
     (tc-type-render actual)))
 
 (define (macro-clause-shape-message) : String
-  "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
+  "typecheck: ExprClause macro operand expects bracket clause [expr expr ...]")
 
 (define (macro-binding-clause-shape-message) : String
   "typecheck: ExprBindingClause macro operand expects bracket clause [name expr] or [name : Type expr]")
@@ -102715,23 +102715,45 @@
             (ResultMacroModuleArg.Ok module module-id)]
           [(ResultMacroModuleArg.Err _) (ResultMacroModuleArg.Err primary-diag)]))]))
 
+(define (macro-expr-clause-shape-error [arg : ast.AstExpr]) : ResultMacroClause
+  (ResultMacroClause.Err
+    (box
+      (ctfe_support.ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))))
+
+;; `[first second]` captures both expressions. Like a `let` body, a clause body
+;; may be several forms, `[first form ...]`, captured as one implicit `begin`
+;; pushed into the checked program's pool; a `:` after the first element is
+;; binding-clause syntax and stays rejected.
 (define (macro-expr-clause-from-items
+  [ctx : TcContext]
   [arg : ast.AstExpr]
   [items : ast.AstExprList]) : ResultMacroClause
-  (if (= items.len 2)
-    (ResultMacroClause.Ok
-      (ast.ast-expr-clause
-        (ast.ast-expr-list-get (& items) 0 0)
-        (ast.ast-expr-list-get (& items) 1 0)))
-    (ResultMacroClause.Err
-      (box
-        (ctfe_support.ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))))
+  (cond
+    [(< items.len 2) (macro-expr-clause-shape-error arg)]
+    [(= items.len 2)
+      (ResultMacroClause.Ok
+        (ast.ast-expr-clause
+          (ast.ast-expr-list-get (& items) 0 0)
+          (ast.ast-expr-list-get (& items) 1 0)))]
+    [(macro-expr-colon?
+        (tc-context-expr-bases ctx)
+        (ast.ast-expr-list-get (& items) 1 0))
+      (macro-expr-clause-shape-error arg)]
+    [else
+      (ResultMacroClause.Ok
+        (ast.ast-expr-clause
+          (ast.ast-expr-list-get (& items) 0 0)
+          (tc-context-expr-push-cell-addresses
+            (tc-context-expr-cell-address-live ctx)
+            (tc-context-type-cell-address-live ctx)
+            (ast.AstExpr.Begin (ast.ast-expr-list-tail-from-ref (& items) 1)))))]))
 
-(define (macro-expr-clause-from-arg [expr-bases : i64] [arg : ast.AstExpr]) : ResultMacroClause
+(define (macro-expr-clause-from-arg [ctx : TcContext] [arg : ast.AstExpr]) : ResultMacroClause
   (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
+    (tc-context-expr-bases ctx)
     (tc-global-shared-view arg))
-    [(ast.AstExpr.BracketClause items) (macro-expr-clause-from-items arg items)]
+    [(ast.AstExpr.BracketClause items)
+      (macro-expr-clause-from-items ctx arg items)]
     [_
       (ResultMacroClause.Err
         (box
@@ -102740,21 +102762,17 @@
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-clause-list-from-args
-  [expr-bases : i64]
+  [ctx : TcContext]
   [args : ast.AstExprList]) : ResultMacroClauseList
   (let
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity args.len)]
-    (match (macro-expr-clause-list-from-args-into
-      expr-bases
-      (& args)
-      0
-      (&mut out))
+    (match (macro-expr-clause-list-from-args-into ctx (& args) 0 (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroClauseList.Err diag)])))
 
 (define (macro-expr-clause-list-from-args-into
-  [expr-bases : i64]
+  [ctx : TcContext]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprClauseList)]) : ResultMacroCheck
@@ -102763,17 +102781,13 @@
     (let
       [head-expr : ast.AstExpr
         (ast.ast-expr-segment-bases-get
-          expr-bases
+          (tc-context-expr-bases ctx)
           (ast.ast-expr-list-get args index 0))]
-      (match (macro-expr-clause-from-arg expr-bases head-expr)
+      (match (macro-expr-clause-from-arg ctx head-expr)
         [(ResultMacroClause.Ok clause)
           (begin
             (ast.ast-expr-clause-list-push out clause)
-            (macro-expr-clause-list-from-args-into
-              expr-bases
-              args
-              (+ index 1)
-              out))]
+            (macro-expr-clause-list-from-args-into ctx args (+ index 1) out))]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-expr-span-or-zero [expr-bases : i64] [arg : ast.AstExpr]) : ast.AstSourceSpan
@@ -103068,7 +103082,7 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (cond
     [(tc-macro-expr-clause-type? (tc-global-shared-view resolved-expected))
-      (match (macro-expr-clause-from-arg (tc-context-expr-bases ctx) arg)
+      (match (macro-expr-clause-from-arg ctx arg)
         [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
     [(tc-macro-expr-binding-clause-type?
@@ -103549,8 +103563,7 @@
         (tc-global-shared-view ty))
       (let
         [clauses : ast.AstExprClauseList
-          (try
-            (macro-expr-clause-list-from-args (tc-context-expr-bases ctx) args))]
+          (try (macro-expr-clause-list-from-args ctx args))]
         (ResultMacroCapturedValue.Ok
           (macro-captured-expr-clause-list-value
             ctx
@@ -103759,10 +103772,7 @@
               (tc-global-shared-view resolved-expected))
             (let
               [clause : ast.AstExprClause
-                (try
-                  (macro-expr-clause-from-arg
-                    (tc-context-expr-bases ctx)
-                    arg-expr))]
+                (try (macro-expr-clause-from-arg ctx arg-expr))]
               (ResultMacroCapturedValue.Ok
                 (ctfe_support.CompilerCtfeValue.ExprClause
                   (macro-caller-origin-expr-clause ctx clause))))]

@@ -5402,6 +5402,95 @@
     "(defenum E (A) (B))
 (define (main [e : E]) : i64 (match e [(A) 1] [(B) (io.panic \"no\")]))"))
 
+;; A two-arm `cond` over the ExprClause capture the prelude macro uses.
+(define (compiler-typecheck-multiform-cond-source [body : String]) : String
+  (str_cat.str-cat
+    "(defmacro (cond [arm : ExprClause] [fallback : ExprClause]) : Expr
+  `(if ,(expr-clause-first arm)
+    ,(expr-clause-second arm)
+    ,(expr-clause-second fallback)))
+"
+    body))
+
+;; Match and cond arms take a body sequence, `[pattern form ...]` and
+;; `[test form ...]`, evaluated like `begin`: earlier values are discarded and
+;; the last form gives the arm type.
+(define (compiler-typecheck-multiform-arm-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(defenum Op (Add i64) (Neg))
+(define (apply [op : Op] [acc : i64]) : i64
+  (let [total : i64 acc]
+    (match op
+      [(Add n) (set! total (+ total n)) (set! total (* total 2))]
+      [(Neg) (set! total (- 0 total)) unit])
+    total))
+(define (main) : i64 (apply (Add 1) 2))")
+    (compiler-typecheck-ok?
+      "(define (bump [x : i64]) : i64 (+ x 1))
+(define (main [x : i64]) : i64
+  (match x
+    [0 (bump x) (set! x 5) (bump x)]
+    [_ x]))")
+    (compiler-typecheck-ok?
+      "(define (find [limit : i64]) : i64
+  (let [i : i64 0]
+    (while (< i limit)
+      (match i
+        [3 (set! i (+ i 10)) (break)]
+        [_ (set! i (+ i 1)) unit]))
+    (match i
+      [13 (set! i 0) (return 7)]
+      [_ i])))
+(define (main) : i64 (find 5))")
+    (compiler-typecheck-ok?
+      "(defenum Opt (Some i64) (None))
+(define (main [o : Opt]) : i64
+  (let [seen : i64 0]
+    (match o
+      [(Some v)
+        (set! seen 1)
+        (match v
+          [0 (set! seen 2) seen]
+          [_ (set! seen (+ seen v)) (+ seen 1)])]
+      [(None) (set! seen 3) seen])))")
+    (compiler-typecheck-error-ok?
+      "(define (main [x : i64]) : i64
+  (match x
+    [0 x]
+    [_ (set! x 1) true]))"
+      "typecheck: match arm result type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (take [s : String]) : i64 0)
+(define (main [s : String] [x : i64]) : i64
+  (match x
+    [0 (take s) (take s)]
+    [_ 1]))"
+      "typecheck: use of moved value `s`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-multiform-cond-source
+        "(define (main [x : i64]) : i64
+  (let [y : i64 0]
+    (cond
+      [(= x 0) (set! y 2) (set! y (+ y 1)) y]
+      [else (set! y 3) y])))"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-multiform-cond-source
+        "(define (main [x : i64]) : i64
+  (cond [(= x 0) (set! x 1) true] [else 2]))")
+      "typecheck: if branches must match")
+    (compiler-typecheck-error-ok?
+      "(defmacro (take-clause [arm : ExprClause]) : i64 (expr-clause-second arm))
+(define (main) : i64 (take-clause [true]))"
+      "typecheck: ExprClause macro operand expects bracket clause [expr expr ...]")
+    (compiler-typecheck-ok?
+      "(defmacro (take-clause [arm : ExprClause]) : i64 (expr-clause-second arm))
+(define (main) : i64 (let [x : i64 1] (take-clause [true (set! x 2) (+ x 1)])))")
+    (compiler-typecheck-ok?
+      "(defmacro (choose [scrutinee : Expr] [first : Expr] [rest : Expr ...]) : i64
+  `(match ,scrutinee [0 ,first ,@rest] [_ 0]))
+(define (main [x : i64]) : i64 (choose x (set! x 4) (+ x 1)))")))
+
 ;; Both enums declare `Ok` and `Err`, in different orders, so a bare name that
 ;; resolved to the other enum would also have the other tag.
 (define (compiler-typecheck-bare-variant-enums) : String
@@ -8122,7 +8211,7 @@
     (compiler-typecheck-error-ok?
       "(defmacro (take-clause [arm : ExprClause]) : i64 (expr-clause-second arm))
 (define (main) : i64 (take-clause [x : i64 1]))"
-      "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
+      "typecheck: ExprClause macro operand expects bracket clause [expr expr ...]")
     (compiler-typecheck-ok?
       "(defstruct Point (x i64))
 (defmacro (kind-code [value : Expr]) : i64
@@ -8406,6 +8495,9 @@
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (io.panic "typecheck: match/pattern tests failed"))
+    (if (compiler-typecheck-multiform-arm-tests-ok?)
+      unit
+      (io.panic "typecheck: multi-form match/cond arm tests failed"))
     (if (compiler-typecheck-bare-variant-tests-ok?)
       unit
       (io.panic "typecheck: bare variant resolution tests failed"))

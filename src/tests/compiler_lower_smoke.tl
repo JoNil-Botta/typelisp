@@ -763,7 +763,7 @@
     (unless
       (lower_tests.compiler-lower-error-ok?
         (lower_tests.compiler-lower-macro-expr-clause-shape-error-source)
-        "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
+        "typecheck: ExprClause macro operand expects bracket clause [expr expr ...]")
       (io.panic "lower: macro clause shape diagnostic smoke mismatch"))
     (unless
       (lower_tests.compiler-lower-error-ok?

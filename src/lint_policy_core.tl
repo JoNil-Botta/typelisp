@@ -13,7 +13,7 @@
 ;# One hashed group index, one three-color dependency walk, and memoized
 ;# group/rule membership keep resolution O(G + M + A) for G group declarations,
 ;# M group members, and A assignments with the fixed registry. Finding lookup
-;# is O(F) with the fixed 27-rule decision table.
+;# is O(F) with the fixed 28-rule decision table.
 (import compiler_owned_view as owned_view)
 (import lint_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1344,11 +1344,12 @@
 (define (lint-policy-legacy-resolution
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [_prefer-dotted-field : bool]
   [name-case : bool]) : LintPolicyResolution
   (let
     [slots : (__tl_dyn-array LintPolicyAssignment)
-      (__tl_make-array LintPolicyAssignment 6)]
+      (__tl_make-array LintPolicyAssignment 7)]
     [len : i64 0]
     (begin
       (if deprecated-string-concat
@@ -1368,6 +1369,15 @@
             len
             (lint_core.lint-rule-redundant-function-name-id)
             "--redundant-function-name at-least-warn"))
+        unit)
+      (if redundant-begin
+        (set!
+          len
+          (lint-policy-legacy-assignment-add
+            (&mut slots)
+            len
+            (lint_core.lint-rule-redundant-begin-id)
+            "--redundant-begin at-least-warn"))
         unit)
       (if name-case
         (begin

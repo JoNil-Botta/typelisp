@@ -9181,6 +9181,47 @@
         [_ (ResultAstExpr.Err "parse: malformed with binding list")])]
     [_ (ResultAstExpr.Err "parse: malformed with")]))
 
+(define (parse-sexpr-list-last [s : reader.SpannedSexpr]) : reader.SpannedSexpr
+  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view s))
+    [(reader.SpannedSexprView.Cons head tail _)
+      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view tail))
+        [(reader.SpannedSexprView.Cons _ _ _) (parse-sexpr-list-last tail)]
+        [_ head])]
+    [_ s]))
+
+;; A match arm body is one or more forms. One form keeps the ordinary
+;; expression path, so a lone `(cfg ...)` still defaults to `unit`; several
+;; forms are an implicit `begin` through the shared body-tail parser. The
+;; sequence gets a span from its first to its last form so the arm body keeps
+;; a source span of its own beside the pattern span wrapped around it.
+(define (parse-ast-match-arm-body
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [body-tail : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view
+    (compiler-parse-place-shared-view body-tail))
+    [(reader.SpannedSexprView.Cons body end _)
+      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view end))
+        [(reader.SpannedSexprView.Nil _)
+          (parse-ast-expr-with-pools dispatch pools body)]
+        [_
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            body-tail
+            "parse: malformed match arm")
+            [(ResultAstExpr.Ok parsed-body)
+              (ResultAstExpr.Ok
+                (ast.ast-expr-spanned-with-pools
+                  pools
+                  parsed-body
+                  (ast-source-span-from-source-span
+                    (token.merge-spans
+                      (reader.spanned-sexpr-span body)
+                      (reader.spanned-sexpr-span (parse-sexpr-list-last end))))))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
+    [_ (ResultAstExpr.Err "parse: malformed match arm")]))
+
 (define (parse-ast-match-arm
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -9189,33 +9230,30 @@
     [(reader.SpannedSexprView.BracketList items _)
       (parse-ast-match-arm dispatch pools items)]
     [(reader.SpannedSexprView.Cons pattern body-tail _)
-      (match (reader.spanned-sexpr-view body-tail)
-        [(reader.SpannedSexprView.Cons body end _)
-          (match (reader.spanned-sexpr-view end)
-            [(reader.SpannedSexprView.Nil _)
-              (match (parse-ast-pattern
-                dispatch
-                pools
-                (compiler-parse-place-shared-view pattern))
-                [(ResultAstPattern.Ok parsed-pattern)
-                  (begin
-                    (compiler-parse-semantic-pattern-origins!
-                      dispatch
-                      (compiler-parse-place-shared-view pattern))
-                    (match (parse-ast-expr-with-pools dispatch pools body)
-                      [(ResultAstExpr.Ok parsed-body)
-                        (ResultAstMatchArm.Ok
-                          (ast.ast-match-arm
-                            parsed-pattern
-                            (ast.ast-expr-spanned-with-pools
-                              pools
-                              parsed-body
-                              (ast-source-span-from-source-span
-                                (reader.spanned-sexpr-span pattern)))))]
-                      [(ResultAstExpr.Err message)
-                        (ResultAstMatchArm.Err message)]))]
-                [(ResultAstPattern.Err message) (ResultAstMatchArm.Err message)])]
-            [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
+      (match (reader.spanned-sexpr-view
+        (compiler-parse-place-shared-view body-tail))
+        [(reader.SpannedSexprView.Cons _ _ _)
+          (match (parse-ast-pattern
+            dispatch
+            pools
+            (compiler-parse-place-shared-view pattern))
+            [(ResultAstPattern.Ok parsed-pattern)
+              (begin
+                (compiler-parse-semantic-pattern-origins!
+                  dispatch
+                  (compiler-parse-place-shared-view pattern))
+                (match (parse-ast-match-arm-body dispatch pools body-tail)
+                  [(ResultAstExpr.Ok parsed-body)
+                    (ResultAstMatchArm.Ok
+                      (ast.ast-match-arm
+                        parsed-pattern
+                        (ast.ast-expr-spanned-with-pools
+                          pools
+                          parsed-body
+                          (ast-source-span-from-source-span
+                            (reader.spanned-sexpr-span pattern)))))]
+                  [(ResultAstExpr.Err message) (ResultAstMatchArm.Err message)]))]
+            [(ResultAstPattern.Err message) (ResultAstMatchArm.Err message)])]
         [_ (ResultAstMatchArm.Err "parse: malformed match arm")])]
     [_ (ResultAstMatchArm.Err "parse: malformed match arm")]))
 

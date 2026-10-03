@@ -30,7 +30,9 @@
   (items (__tl_dyn-array Expr))
   (len i64))
 
-;: Pair of expressions used by clause-oriented macro forms.
+;: Pair of expressions used by clause-oriented macro forms. A clause written
+;: with several body forms, `[first form ...]`, holds them as one implicit
+;: `begin` in `second`.
 (defstruct ExprClause
   (first Expr)
   (second Expr))

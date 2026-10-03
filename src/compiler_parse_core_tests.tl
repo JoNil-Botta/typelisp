@@ -3010,8 +3010,86 @@
       "(define (main) : i64 (program-count 0))"
       "parse: program-count expects no arguments")))
 
+;; A match arm with several body forms is an implicit `begin` spanned from its
+;; first to its last form inside the pattern-span wrapper; a one-form arm keeps
+;; its own expression.
+(define (compiler-parse-match-arm-begin-ok?
+  [arm : ast.AstMatchArm]
+  [forms : i64]
+  [line : i64]
+  [start-col : i64]
+  [end-col : i64]) : bool
+  (match arm
+    [(ast.AstMatchArm.Arm _ body)
+      (match (ast.ast-node-get body)
+        [(ast.AstExpr.Spanned inner _)
+          (match (ast.ast-node-get inner)
+            [(ast.AstExpr.Spanned sequence span)
+              (match (ast.ast-node-get sequence)
+                [(ast.AstExpr.Begin exprs)
+                  (and
+                    (= exprs.len forms)
+                    (= (ast.ast-source-span-start-line span) line)
+                    (= (ast.ast-source-span-start-col span) start-col)
+                    (= (ast.ast-source-span-end-line span) line)
+                    (= (ast.ast-source-span-end-col span) end-col))]
+                [_ false])]
+            [_ false])]
+        [_ false])]))
+
+(define (compiler-parse-match-arm-single-ok? [arm : ast.AstMatchArm]) : bool
+  (match arm
+    [(ast.AstMatchArm.Arm _ body)
+      (match (ast.ast-expr-unspan (ast.ast-node-get body))
+        [(ast.AstExpr.Var _) true]
+        [_ false])]))
+
+(define (compiler-parse-multiform-match-arm-ok?) : bool
+  (match (parser.parse-ast-source
+    "(define (main [x : i64]) : i64
+  (match x
+    [0 (set! x 1) (set! x 2) x]
+    [_ x]))")
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
+        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefFn _ _ _ _ body-box _) _)
+          (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
+            [(ast.AstExpr.Match payload)
+              (match (__tl-box-place payload)
+                [(ast.AstMatch.Match _ arms)
+                  (and
+                    (= (ast.ast-match-arm-list-len (& arms)) 2)
+                    (compiler-parse-match-arm-begin-ok?
+                      (ast.ast-match-arm-list-get
+                        (& arms)
+                        0
+                        (ast.ast-match-arm-fallback))
+                      3
+                      3
+                      8
+                      30)
+                    (compiler-parse-match-arm-single-ok?
+                      (ast.ast-match-arm-list-get
+                        (& arms)
+                        1
+                        (ast.ast-match-arm-fallback))))])]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and
+    (compiler-parse-multiform-match-arm-ok?)
+    (compiler-parse-ok?
+      "(define (main [b : bool]) : i64
+  (match b
+    [true
+      (when b (return 1))
+      (match 2 [2 (set! b false) 3] [_ 4])]
+    [false 0 1]))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [0 (set! x 1) (if true 1)] [_ 0]))"
+      "parse: if is missing its else branch")
     (compiler-parse-ok? "(define (main) : i64 (match 1 [0 1] [_ 0]))")
     (compiler-parse-ok?
       "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")

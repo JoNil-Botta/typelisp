@@ -3,9 +3,10 @@
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
 ;# findings. The rules flag body-only nested `let` forms, single-expression
 ;# `begin` wrappers, nested success-path `if` return chains, unit-branch return
-;# guards, no-effect expression statements, nested `str-cat` calls, and
-;# deprecated user-facing string concatenation primitives. It also identifies
-;# raw arena-operation calls for the driver's audited-module boundary.
+;# guards, no-effect expression statements, nested `str-cat` calls,
+;# deprecated user-facing string concatenation primitives, and `begin` forms
+;# that an enclosing body sequence makes redundant. It also identifies raw
+;# arena-operation calls for the driver's audited-module boundary.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -209,6 +210,11 @@
   "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
 
 (deflint-rule
+  redundant-begin
+  "redundant begin: the enclosing form already evaluates a body sequence"
+  "splice the begin forms into the enclosing body")
+
+(deflint-rule
   nested-str-cat
   "nested str-cat: prefer one flat str-cat call"
   "flatten nested str-cat operands into the outer call")
@@ -360,6 +366,12 @@
           lint-group-compatibility-mask
           lint-group-future-incompatibility-mask))
       (LintRule
+        (lint-rule-redundant-begin-id)
+        (lint-rule-redundant-begin-message)
+        (lint-rule-redundant-begin-suggestion)
+        LintLevel.Allow
+        lint-group-style-mask)
+      (LintRule
         (lint-rule-nested-str-cat-id)
         (lint-rule-nested-str-cat-message)
         (lint-rule-nested-str-cat-suggestion)
@@ -469,7 +481,7 @@
         (lint-rule-type-name-case-suggestion)
         LintLevel.Allow
         lint-group-style-mask))
-    27))
+    28))
 
 (define (lint-rule-find-at
   [rules : LintRuleList]
@@ -2035,6 +2047,501 @@
                   [else unit]))
               (set! i (+ i 1))))
           findings))]))
+
+;; ---- redundant-begin ----
+;;
+;; A `(begin ...)` of two or more forms written directly in a position that
+;; already evaluates a body sequence (a let/define/lambda/while/... body, or a
+;; match or cond arm body) can be spliced into that sequence. The rule reads
+;; the token stream, so it sees exactly the source forms: a body sequence the
+;; parser builds is never mistaken for a written `begin`. A begin under a quote
+;; or directly behind a reader prefix, one with a bracket form, and one
+;; projected with `.field` stay as written.
+;;
+;; `when` and `unless` check every body form as `unit`, while `begin` discards
+;; its non-final values, and this rule has no types. Under them it only reports
+;; a begin whose forms the splice exposes to that check (every form but the
+;; last, through nested begins that may be spliced too) are syntactically
+;; unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
+;; `begin`/`let`/`unsafe`/`if` ending in those.
+;: Child position from which a form headed by `head` evaluates a body
+;: sequence, or -1. `nested` is false for a top-level form, where `unsafe` and
+;: `begin` wrap declarations and where alone `(test name body...)` is a test
+;: rather than a call; `function` says whether a `define` declares a function.
+(define (lint-redundant-begin-body-start
+  [head : (& head str)]
+  [nested : bool]
+  [function : bool]) : i64
+  (cond
+    [(or
+        (string.eq head "let")
+        (string.eq head "for")
+        (string.eq head "with-scratch"))
+      1]
+    [(or (string.eq head "unsafe") (string.eq head "begin"))
+      (if nested
+        1
+        -1)]
+    [(or
+        (string.eq head "while")
+        (string.eq head "when")
+        (string.eq head "unless")
+        (string.eq head "lambda")
+        (string.eq head "defmacro")
+        (string.eq head "in-arena")
+        (string.eq head "with-arena")
+        (string.eq head "with-escape")
+        (string.eq head "with"))
+      2]
+    [(string.eq head "test")
+      (if nested
+        -1
+        2)]
+    [(string.eq head "define")
+      (if function
+        2
+        -1)]
+    [else -1]))
+
+(define (lint-redundant-begin-unit-guard? [head : (& head str)]) : bool
+  (or (string.eq head "when") (string.eq head "unless")))
+
+(define (lint-token-tag-at
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [index : i64]) : i64
+  (token.tag-ref (token.spanned-token-token-ref (& (array-ref toks index)))))
+
+(define (lint-token-name-at
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [index : i64]) : String
+  (if (= (lint-token-tag-at toks index) (token.tag-sym))
+    (ci.intern-id-str
+      (token.sym-id (token.spanned-token-token-ref (& (array-ref toks index)))))
+    ""))
+
+(define (lint-token-line-at
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [index : i64]) : i64
+  (token.spanned-token-line (& (array-ref toks index))))
+
+(define (lint-token-col-at
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [index : i64]) : i64
+  (token.spanned-token-col (& (array-ref toks index))))
+
+(define (lint-token-prefix-tag? [tag : i64]) : bool
+  (or
+    (= tag (token.tag-quote))
+    (= tag (token.tag-backtick))
+    (= tag (token.tag-comma))
+    (= tag (token.tag-comma-at))))
+
+(define (lint-token-open-tag? [tag : i64]) : bool
+  (or (= tag (token.tag-lparen)) (= tag (token.tag-lbracket))))
+
+(define (lint-token-close-tag? [tag : i64]) : bool
+  (or (= tag (token.tag-rparen)) (= tag (token.tag-rbracket))))
+
+;: Matching close token of every open token, or -1 when it has none.
+(define (lint-token-close-indexes
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [count : i64]) : (__tl_dyn-array i64)
+  (let
+    [close-of : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [depth : i64 0]
+    [index : i64 0]
+    (begin
+      (while (<= index count)
+        (let
+          [tag : i64 (lint-token-tag-at toks index)]
+          (begin
+            (set! (array-ref close-of index) -1)
+            (cond
+              [(lint-token-open-tag? tag)
+                (begin
+                  (set! (array-ref stack depth) index)
+                  (set! depth (+ depth 1)))]
+              [(and (lint-token-close-tag? tag) (> depth 0))
+                (begin
+                  (set! depth (- depth 1))
+                  (set! (array-ref close-of (array-ref stack depth)) index))]
+              [else unit])
+            (set! index (+ index 1)))))
+      close-of)))
+
+;: Index just past the form at `index`, reader prefixes included.
+(define (lint-token-form-end
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [index : i64]) : i64
+  (let
+    [at : i64 index]
+    (begin
+      (while (lint-token-prefix-tag? (lint-token-tag-at toks at))
+        (set! at (+ at 1)))
+      (cond
+        [(and
+            (lint-token-open-tag? (lint-token-tag-at toks at))
+            (>= (array-ref close-of at) 0))
+          (+ (array-ref close-of at) 1)]
+        [(= (lint-token-tag-at toks at) (token.tag-end)) at]
+        [else (+ at 1)]))))
+
+;: Start of the last child form of the list opened at `open`, or -1 when the
+;: list has no form after its head.
+(define (lint-token-last-child
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [open : i64]) : i64
+  (let
+    [close : i64 (array-ref close-of open)]
+    [at : i64 (lint-token-form-end toks close-of (+ open 1))]
+    [last : i64 -1]
+    (begin
+      (while (< at close)
+        (begin
+          (set! last at)
+          (set! at (lint-token-form-end toks close-of at))))
+      last)))
+
+(define (lint-token-paren-head
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [index : i64]) : String
+  (if (= (lint-token-tag-at toks index) (token.tag-lparen))
+    (lint-token-name-at toks (+ index 1))
+    ""))
+
+;: Whether the form at `index` is syntactically unit-valued.
+(define (lint-redundant-begin-unit-form?
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [index : i64]) : bool
+  (let
+    [head : String (lint-token-paren-head toks index)]
+    (cond
+      [(= (lint-token-tag-at toks index) (token.tag-sym))
+        (string.eq (lint-token-name-at toks index) "unit")]
+      [(or
+          (string.eq head "set!")
+          (string.eq head "while")
+          (string.eq head "when")
+          (string.eq head "unless")
+          (string.eq head "for"))
+        true]
+      [(or
+          (string.eq head "begin")
+          (string.eq head "let")
+          (string.eq head "unsafe"))
+        (let
+          [last : i64 (lint-token-last-child toks close-of index)]
+          (and (>= last 0) (lint-redundant-begin-unit-form? toks close-of last)))]
+      [(string.eq head "if")
+        (let
+          [then-at : i64 (lint-token-form-end toks close-of (+ index 2))]
+          [else-at : i64 (lint-token-form-end toks close-of then-at)]
+          (and
+            (=
+              (lint-token-form-end toks close-of else-at)
+              (array-ref close-of index))
+            (lint-redundant-begin-unit-form? toks close-of then-at)
+            (lint-redundant-begin-unit-form? toks close-of else-at)))]
+      [else false])))
+
+;: Under `when`/`unless`, splicing the begin at `open` (and any begin nested
+;: directly in it) exposes its forms to the unit check: every form except the
+;: very last must be syntactically unit, and none may carry a reader prefix.
+(define (lint-redundant-begin-unit-safe?
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [open : i64]
+  [final : bool]) : bool
+  (let
+    [close : i64 (array-ref close-of open)]
+    [at : i64 (lint-token-form-end toks close-of (+ open 1))]
+    [ok : bool true]
+    (begin
+      (while (and ok (< at close))
+        (let
+          [next : i64 (lint-token-form-end toks close-of at)]
+          [last : bool (and final (= next close))]
+          (begin
+            (set!
+              ok
+              (cond
+                [(lint-token-prefix-tag? (lint-token-tag-at toks at)) false]
+                [(string.eq (lint-token-paren-head toks at) "begin")
+                  (lint-redundant-begin-unit-safe? toks close-of at last)]
+                [last true]
+                [else (lint-redundant-begin-unit-form? toks close-of at)]))
+            (set! at next))))
+      ok)))
+
+;: Whether the begin opened at `open` has at least two forms and no bracket
+;: form among them.
+(define (lint-redundant-begin-spliceable?
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [open : i64]) : bool
+  (let
+    [close : i64 (array-ref close-of open)]
+    [at : i64 (lint-token-form-end toks close-of (+ open 1))]
+    [count : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< at close))
+        (begin
+          (when
+            (= (lint-token-tag-at toks at) (token.tag-lbracket))
+            (set! ok false))
+          (set! count (+ count 1))
+          (set! at (lint-token-form-end toks close-of at))))
+      (and ok (>= count 2)))))
+
+;: A `.field` projection written directly after the close token at `close`.
+(define (lint-token-projected?
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close : i64]) : bool
+  (let
+    [name : String (lint-token-name-at toks (+ close 1))]
+    (and
+      (> (string.string-length name) 0)
+      (= (string.string-ref name 0) '.')
+      (= (lint-token-line-at toks (+ close 1)) (lint-token-line-at toks close))
+      (=
+        (lint-token-col-at toks (+ close 1))
+        (+ (lint-token-col-at toks close) 1)))))
+
+(define (lint-redundant-begin-delete
+  [start-line : i64]
+  [start-col : i64]
+  [end-line : i64]
+  [end-col : i64]) : cdiag.CompilerDiagnosticTextEdit
+  (cdiag.compiler-diagnostic-text-edit-new
+    (cdiag.CompilerDiagnosticSpan "" start-line start-col end-line end-col)
+    ""))
+
+;: The machine-applicable fix deletes the matching `)` and `(begin` with the
+;: blanks after it, or the whole line when `(begin` stands alone on it.
+;: Re-indenting the result is left to `fmt`.
+(define (lint-redundant-begin-finding
+  [source : (& source str)]
+  [line-starts : (& line-starts (__tl_dyn-array i64))]
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [open : i64]
+  [close : i64]) : LintFinding
+  (let
+    [line : i64 (lint-token-line-at toks open)]
+    [col : i64 (lint-token-col-at toks open)]
+    [head-line : i64 (lint-token-line-at toks (+ open 1))]
+    [head-end : i64 (+ (lint-token-col-at toks (+ open 1)) 5)]
+    [source-len : i64 (string.string-length source)]
+    [line-start : i64 (source_text.source-text-line-start line-starts line)]
+    [after : i64
+      (+
+        (source_text.source-text-line-start line-starts head-line)
+        (- head-end 1))]
+    [blank-end : i64 after]
+    [close-line : i64 (lint-token-line-at toks close)]
+    [close-col : i64 (lint-token-col-at toks close)]
+    [edits : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
+      (__tl_make-array cdiag.CompilerDiagnosticTextEdit 2)]
+    (begin
+      (while (and
+        (< blank-end source-len)
+        (or
+          (= (string.string-ref source blank-end) ' ')
+          (= (string.string-ref source blank-end) '\t')))
+        (set! blank-end (+ blank-end 1)))
+      (set!
+        (array-ref edits 0)
+        (if (and
+          (= line head-line)
+          (lint-source-blank-range? source line-start (+ line-start (- col 1)))
+          (< blank-end source-len)
+          (or
+            (= (string.string-ref source blank-end) '\n')
+            (and
+              (= (string.string-ref source blank-end) '\r')
+              (< (+ blank-end 1) source-len)
+              (= (string.string-ref source (+ blank-end 1)) '\n'))))
+          (lint-redundant-begin-delete line 1 (+ line 1) 1)
+          (lint-redundant-begin-delete
+            line
+            col
+            head-line
+            (+ head-end (- blank-end after)))))
+      (set!
+        (array-ref edits 1)
+        (lint-redundant-begin-delete
+          close-line
+          close-col
+          close-line
+          (+ close-col 1)))
+      (LintFinding
+        (lint-rule-redundant-begin-message)
+        (lint-rule-redundant-begin-id)
+        0
+        (ast.ast-source-span line col head-line head-end)
+        (LintFixAvailable
+          (cdiag.compiler-diagnostic-fix-new
+            "splice the begin forms into the enclosing body"
+            cdiag.CompilerDiagnosticMachineApplicable
+            (cdiag.CompilerDiagnosticTextEditSeq edits 2)))))))
+
+(define (lint-source-blank-range?
+  [source : (& source str)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [at : i64 start]
+    (begin
+      (while (and
+        (< at end)
+        (or
+          (= (string.string-ref source at) ' ')
+          (= (string.string-ref source at) '\t')))
+        (set! at (+ at 1)))
+      (>= at end))))
+
+;: Whether the begin opened at `open`, child `position` of the frame at
+;: `depth`, sits in a body sequence that it can be spliced into.
+(define (lint-redundant-begin-context?
+  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
+  [close-of : (& close-of (__tl_dyn-array i64))]
+  [open : i64]
+  [position : i64]
+  [depth : i64]
+  [frame-open : (& frame-open (__tl_dyn-array i64))]
+  [frame-head : (& frame-head (__tl_dyn-array String))]
+  [frame-position : (& frame-position (__tl_dyn-array i64))]) : bool
+  (let
+    [parent : i64 (array-ref frame-open depth)]
+    (and
+      (lint-redundant-begin-spliceable? toks close-of open)
+      (not (lint-token-projected? toks (array-ref close-of open)))
+      (if (= (lint-token-tag-at toks parent) (token.tag-lbracket))
+        (let
+          [arm-of : String
+            (if (> depth 1)
+              (string.copy (& (array-ref frame-head (- depth 1))))
+              "")]
+          [arm-position : i64 (array-ref frame-position depth)]
+          (and
+            (>= position 1)
+            (or
+              (and (string.eq arm-of "match") (>= arm-position 2))
+              (and (string.eq arm-of "cond") (>= arm-position 1)))))
+        (let
+          [head : String (string.copy (& (array-ref frame-head depth)))]
+          [start : i64
+            (lint-redundant-begin-body-start
+              (& head)
+              (> depth 1)
+              (= (lint-token-tag-at toks (+ parent 2)) (token.tag-lparen)))]
+          (and
+            (>= start 0)
+            (>= position start)
+            (or
+              (not (lint-redundant-begin-unit-guard? (& head)))
+              (lint-redundant-begin-unit-safe? toks close-of open true))))))))
+
+;: Report every redundant `(begin ...)` in `source`, as described above.
+(define (lint-redundant-begin-scan [source : String] [acc : LintFindings]) : LintFindings
+  (match (lexer.spanned-result (owned_view.compiler-owned-shared-view source))
+    [(lexer.ResultSpannedTokens.Err _) acc]
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (let
+        [count : i64 0]
+        (begin
+          (while (not (= (lint-token-tag-at (& toks) count) (token.tag-end)))
+            (set! count (+ count 1)))
+          (let
+            [close-of : (__tl_dyn-array i64)
+              (lint-token-close-indexes (& toks) count)]
+            [line-starts : (__tl_dyn-array i64)
+              (source_text.source-text-line-starts (& source))]
+            [frames : i64 (+ count 2)]
+            ;; Open frames: the open token, its head name, the children seen
+            ;; so far, its child position in the enclosing frame, and whether
+            ;; it is quoted data. Frame 0 is the top level.
+            [frame-open : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+            [frame-head : (__tl_dyn-array String)
+              (__tl_make-array String frames)]
+            [frame-count : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+            [frame-position : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+            [frame-quoted : (__tl_dyn-array bool) (__tl_make-array bool frames)]
+            [depth : i64 0]
+            [prefix : i64 0]
+            [index : i64 0]
+            [findings : LintFindings acc]
+            (begin
+              (set! (array-ref frame-open 0) -1)
+              (set! (array-ref frame-head 0) "")
+              (set! (array-ref frame-count 0) 0)
+              (set! (array-ref frame-position 0) 0)
+              (set! (array-ref frame-quoted 0) false)
+              (while (< index count)
+                (let
+                  [tag : i64 (lint-token-tag-at (& toks) index)]
+                  (begin
+                    (cond
+                      [(lint-token-prefix-tag? tag) (set! prefix tag)]
+                      [(and
+                          (lint-token-open-tag? tag)
+                          (>= (array-ref close-of index) 0))
+                        (let
+                          [position : i64 (array-ref frame-count depth)]
+                          [head : String (lint-token-paren-head (& toks) index)]
+                          [quoted : bool
+                            (or
+                              (array-ref frame-quoted depth)
+                              (= prefix (token.tag-quote))
+                              (string.eq head "quote"))]
+                          (begin
+                            (set! (array-ref frame-count depth) (+ position 1))
+                            (when
+                              (and
+                                (string.eq head "begin")
+                                (not quoted)
+                                (= prefix 0)
+                                (> depth 0)
+                                (lint-redundant-begin-context?
+                                  (& toks)
+                                  (& close-of)
+                                  index
+                                  position
+                                  depth
+                                  (& frame-open)
+                                  (& frame-head)
+                                  (& frame-position)))
+                              (set!
+                                findings
+                                (lint-findings-add
+                                  (lint-redundant-begin-finding
+                                    (& source)
+                                    (& line-starts)
+                                    (& toks)
+                                    index
+                                    (array-ref close-of index))
+                                  findings)))
+                            (set! depth (+ depth 1))
+                            (set! (array-ref frame-open depth) index)
+                            (set! (array-ref frame-head depth) head)
+                            (set! (array-ref frame-count depth) 0)
+                            (set! (array-ref frame-position depth) position)
+                            (set! (array-ref frame-quoted depth) quoted)
+                            (set! prefix 0)))]
+                      [(lint-token-close-tag? tag)
+                        (when (> depth 0) (set! depth (- depth 1)))]
+                      [else
+                        (begin
+                          (set!
+                            (array-ref frame-count depth)
+                            (+ (array-ref frame-count depth) 1))
+                          (set! prefix 0))])
+                    (set! index (+ index 1)))))
+              findings))))]))
 
 (define (lint-name-qualified-by-separator?
   [name : (& name str)]

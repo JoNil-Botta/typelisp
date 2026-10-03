@@ -1,7 +1,6 @@
 ;; The optimizer's dense copy environment retains immutable snapshots until
 ;; an explicit truncate declares every longer snapshot of that lineage dead.
 (import compiler_optimize as opt)
-(import compiler_ir_types as ir)
 (import compiler_owned_view as owned_view)
 (import stdlib.test)
 

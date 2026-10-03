@@ -29,14 +29,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (ir.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (ir.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (cfg
   test
@@ -98,43 +97,34 @@
     (let
       [ok : bool true]
       [case-index : i64 0]
-      (begin
-        (while (< case-index 9)
-          (let
-            [bits : i64 (compiler-reg-call-word-range-case case-index)]
-            [base-index : i64 0]
-            (begin
-              (while (< base-index 4)
+      (while (< case-index 9)
+        (let
+          [bits : i64 (compiler-reg-call-word-range-case case-index)]
+          [base-index : i64 0]
+          (while (< base-index 4)
+            (let
+              [base : i64 (compiler-reg-call-word-range-base base-index)]
+              [start : i64 -2]
+              (while (< start 34)
                 (let
-                  [base : i64 (compiler-reg-call-word-range-base base-index)]
-                  [start : i64 -2]
-                  (begin
-                    (while (< start 34)
-                      (let
-                        [end : i64 start]
-                        (begin
-                          (while (< end 42)
-                            (begin
-                              (if (=
-                                (reg.compiler-reg-call-word-in-range?
-                                  bits
-                                  base
-                                  start
-                                  end)
-                                (>
-                                  (compiler-reg-call-word-count-in-range
-                                    bits
-                                    base
-                                    start
-                                    end)
-                                  0))
-                                unit
-                                (set! ok false))
-                              (set! end (+ end 1))))
-                          (set! start (+ start 1)))))
-                    (set! base-index (+ base-index 1)))))
-              (set! case-index (+ case-index 1)))))
-        ok))))
+                  [end : i64 start]
+                  (while (< end 42)
+                    (if (=
+                      (reg.compiler-reg-call-word-in-range? bits base start end)
+                      (>
+                        (compiler-reg-call-word-count-in-range
+                          bits
+                          base
+                          start
+                          end)
+                        0))
+                      unit
+                      (set! ok false))
+                    (set! end (+ end 1)))
+                  (set! start (+ start 1))))
+              (set! base-index (+ base-index 1))))
+          (set! case-index (+ case-index 1))))
+      ok)))
 
 (define (compiler-reg-remat-defn-with-invariant-loads?
   [instr : ir.CompilerIrInstr]
@@ -155,12 +145,11 @@
     [(Function _ _ _ vars blocks _)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        (begin
-          (reg.compiler-reg-fill-i64-array (&mut counts) 0)
-          (compiler-reg-ref-counts-blocks!
-            (reg.compiler-reg-global-shared-view counts)
-            blocks)
-          counts))]))
+        (reg.compiler-reg-fill-i64-array (&mut counts) 0)
+        (compiler-reg-ref-counts-blocks!
+          (reg.compiler-reg-global-shared-view counts)
+          blocks)
+        counts)]))
 
 (define (compiler-reg-function-spill-weights-remat
   [func : ir.CompilerIrFunction]
@@ -176,23 +165,22 @@
             (reg.compiler-reg-global-shared-view blocks))]
         [allow-invariant-loads : bool
           (reg.compiler-reg-remat-invariant-loads-ok? func)]
-        (begin
-          (reg.compiler-reg-fill-i64-array (&mut counts) 0)
-          (reg.compiler-reg-fill-i64-array (&mut def-status) 0)
-          (reg.compiler-reg-fill-i64-array (&mut rebates) 0)
-          (reg.compiler-reg-ref-counts-blocks-weighted-remat!
-            (&mut counts)
-            (&mut def-status)
-            (&mut rebates)
-            blocks
-            weights
-            0
-            allow-invariant-loads)
-          (reg.compiler-reg-remat-discount-single-def-spill-weights!
-            (&mut counts)
-            def-status
-            coalesce)
-          counts))]))
+        (reg.compiler-reg-fill-i64-array (&mut counts) 0)
+        (reg.compiler-reg-fill-i64-array (&mut def-status) 0)
+        (reg.compiler-reg-fill-i64-array (&mut rebates) 0)
+        (reg.compiler-reg-ref-counts-blocks-weighted-remat!
+          (&mut counts)
+          (&mut def-status)
+          (&mut rebates)
+          blocks
+          weights
+          0
+          allow-invariant-loads)
+        (reg.compiler-reg-remat-discount-single-def-spill-weights!
+          (&mut counts)
+          def-status
+          coalesce)
+        counts)]))
 
 (define (compiler-reg-plan-function-avx2 [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
   (compiler-reg-plan-function-avx2-for-abi Linux func))
@@ -746,38 +734,37 @@
               (reg.compiler-reg-global-shared-view max-clobber)
               (reg.compiler-reg-global-shared-view max-clobber-hot)
               8)]
-          (begin
-            ;; 0: memory class, refs on the body (32), one crossing on a halved
-            ;;    arm (16). 1: the same crossing in the csr class.
-            (set! (array-ref flags 0) true)
-            (set! (array-ref flags 1) true)
-            (set! (array-ref csr 1) true)
-            (set! (array-ref benefit 0) 64)
-            (set! (array-ref cost 0) 32)
-            (set! (array-ref max-ref 0) 32)
-            (set! (array-ref max-clobber 0) 16)
-            (set! (array-ref benefit 1) 64)
-            (set! (array-ref cost 1) 32)
-            (set! (array-ref max-ref 1) 32)
-            (set! (array-ref max-clobber 1) 16)
-            (set! (array-ref max-clobber-hot 1) 16)
-            (and
-              (= (array-length arms.weights) 8)
-              ;; entry / exit: depth 0
-              (= (array-ref arms.weights 0) 4)
-              (= (array-ref arms.weights 7) 4)
-              ;; header / body / join / latch: depth 1, no call
-              (= (array-ref arms.weights 1) 32)
-              (= (array-ref arms.weights 2) 32)
-              (= (array-ref arms.weights 5) 32)
-              (= (array-ref arms.weights 6) 32)
-              ;; `slow` is the inner loop, so `fast` -- the arm that skips it --
-              ;; keeps its full depth-1 weight
-              (= (array-ref arms.weights 4) 256)
-              (= (array-ref arms.weights 3) 32)
-              (not (array-ref arms.cold 3))
-              (reg.compiler-reg-call-hole-qualifies? scores 0)
-              (not (reg.compiler-reg-call-hole-qualifies? scores 1)))))])))
+          ;; 0: memory class, refs on the body (32), one crossing on a halved
+          ;;    arm (16). 1: the same crossing in the csr class.
+          (set! (array-ref flags 0) true)
+          (set! (array-ref flags 1) true)
+          (set! (array-ref csr 1) true)
+          (set! (array-ref benefit 0) 64)
+          (set! (array-ref cost 0) 32)
+          (set! (array-ref max-ref 0) 32)
+          (set! (array-ref max-clobber 0) 16)
+          (set! (array-ref benefit 1) 64)
+          (set! (array-ref cost 1) 32)
+          (set! (array-ref max-ref 1) 32)
+          (set! (array-ref max-clobber 1) 16)
+          (set! (array-ref max-clobber-hot 1) 16)
+          (and
+            (= (array-length arms.weights) 8)
+            ;; entry / exit: depth 0
+            (= (array-ref arms.weights 0) 4)
+            (= (array-ref arms.weights 7) 4)
+            ;; header / body / join / latch: depth 1, no call
+            (= (array-ref arms.weights 1) 32)
+            (= (array-ref arms.weights 2) 32)
+            (= (array-ref arms.weights 5) 32)
+            (= (array-ref arms.weights 6) 32)
+            ;; `slow` is the inner loop, so `fast` -- the arm that skips it --
+            ;; keeps its full depth-1 weight
+            (= (array-ref arms.weights 4) 256)
+            (= (array-ref arms.weights 3) 32)
+            (not (array-ref arms.cold 3))
+            (reg.compiler-reg-call-hole-qualifies? scores 0)
+            (not (reg.compiler-reg-call-hole-qualifies? scores 1))))])))
 
 ;; Candidate selection. The three refusals are independent: an ineligible value
 ;; (no flag), a value the previous round dropped, and a value whose cost is not
@@ -811,58 +798,57 @@
           8)]
       [first : i64 0]
       [after-drop : i64 0]
-      (begin
-        ;; 0: hot refs, cold crossing -> selected.
-        ;; 1: benefit equals cost -> refused (the test is strict).
-        ;; 2: benefit below cost -> refused.
-        ;; 3: profitable, but its crossing is as hot as its hottest ref.
-        ;; 4: profitable and cold-crossing, but never eligible.
-        ;; 5: profitable and cold-crossing, but crosses nothing at all.
-        (set! (array-ref flags 0) true)
-        (set! (array-ref flags 1) true)
-        (set! (array-ref flags 2) true)
-        (set! (array-ref flags 3) true)
-        (set! (array-ref flags 5) true)
-        (set! (array-ref benefit 0) 80)
-        (set! (array-ref cost 0) 2)
-        (set! (array-ref max-ref 0) 8)
-        (set! (array-ref max-clobber 0) 1)
-        (set! (array-ref benefit 1) 16)
-        (set! (array-ref cost 1) 16)
-        (set! (array-ref max-ref 1) 8)
-        (set! (array-ref max-clobber 1) 1)
-        (set! (array-ref benefit 2) 4)
-        (set! (array-ref cost 2) 16)
-        (set! (array-ref max-ref 2) 8)
-        (set! (array-ref max-clobber 2) 1)
-        (set! (array-ref benefit 3) 80)
-        (set! (array-ref cost 3) 16)
-        (set! (array-ref max-ref 3) 8)
-        (set! (array-ref max-clobber 3) 8)
-        (set! (array-ref benefit 4) 80)
-        (set! (array-ref cost 4) 2)
-        (set! (array-ref max-ref 4) 8)
-        (set! (array-ref max-clobber 4) 1)
-        (set! (array-ref benefit 5) 80)
-        (set! (array-ref cost 5) 0)
-        (set! (array-ref max-ref 5) 8)
-        (set! (array-ref max-clobber 5) 0)
-        (set!
-          first
-          (reg.compiler-reg-call-hole-select!
-            vars
-            scores
-            (&mut picked)
-            (&mut selected)))
-        (set! (array-ref dropped 0) true)
-        (set!
-          after-drop
-          (reg.compiler-reg-call-hole-select!
-            vars
-            scores
-            (&mut picked)
-            (&mut selected)))
-        (and (= first 1) (= (array-ref selected 0) 0) (= after-drop 0))))))
+      ;; 0: hot refs, cold crossing -> selected.
+      ;; 1: benefit equals cost -> refused (the test is strict).
+      ;; 2: benefit below cost -> refused.
+      ;; 3: profitable, but its crossing is as hot as its hottest ref.
+      ;; 4: profitable and cold-crossing, but never eligible.
+      ;; 5: profitable and cold-crossing, but crosses nothing at all.
+      (set! (array-ref flags 0) true)
+      (set! (array-ref flags 1) true)
+      (set! (array-ref flags 2) true)
+      (set! (array-ref flags 3) true)
+      (set! (array-ref flags 5) true)
+      (set! (array-ref benefit 0) 80)
+      (set! (array-ref cost 0) 2)
+      (set! (array-ref max-ref 0) 8)
+      (set! (array-ref max-clobber 0) 1)
+      (set! (array-ref benefit 1) 16)
+      (set! (array-ref cost 1) 16)
+      (set! (array-ref max-ref 1) 8)
+      (set! (array-ref max-clobber 1) 1)
+      (set! (array-ref benefit 2) 4)
+      (set! (array-ref cost 2) 16)
+      (set! (array-ref max-ref 2) 8)
+      (set! (array-ref max-clobber 2) 1)
+      (set! (array-ref benefit 3) 80)
+      (set! (array-ref cost 3) 16)
+      (set! (array-ref max-ref 3) 8)
+      (set! (array-ref max-clobber 3) 8)
+      (set! (array-ref benefit 4) 80)
+      (set! (array-ref cost 4) 2)
+      (set! (array-ref max-ref 4) 8)
+      (set! (array-ref max-clobber 4) 1)
+      (set! (array-ref benefit 5) 80)
+      (set! (array-ref cost 5) 0)
+      (set! (array-ref max-ref 5) 8)
+      (set! (array-ref max-clobber 5) 0)
+      (set!
+        first
+        (reg.compiler-reg-call-hole-select!
+          vars
+          scores
+          (&mut picked)
+          (&mut selected)))
+      (set! (array-ref dropped 0) true)
+      (set!
+        after-drop
+        (reg.compiler-reg-call-hole-select!
+          vars
+          scores
+          (&mut picked)
+          (&mut selected)))
+      (and (= first 1) (= (array-ref selected 0) 0) (= after-drop 0)))))
 
 ;; The csr class reads the same arrays through a DIFFERENT rule: the crossings
 ;; that have to be colder than the hottest reference are only the ones in blocks
@@ -898,42 +884,41 @@
           (reg.compiler-reg-global-shared-view max-clobber)
           (reg.compiler-reg-global-shared-view max-clobber-hot)
           8)]
-      (begin
-        ;; 0: csr, all crossings cold, carriers below the pair -> admitted.
-        ;; 1: the same value crossing more cold calls -> refused, strictly.
-        ;; 2: csr, but one crossing is in an UNDISCOUNTED block as hot as its
-        ;;    hottest reference -> refused.
-        ;; 3: the same numbers as 0 but in the MEMORY class, where benefit must
-        ;;    exceed cost and the undiscounted maximum is what is compared.
-        (set! (array-ref flags 0) true)
-        (set! (array-ref flags 1) true)
-        (set! (array-ref flags 2) true)
-        (set! (array-ref flags 3) true)
-        (set! (array-ref csr 0) true)
-        (set! (array-ref csr 1) true)
-        (set! (array-ref csr 2) true)
-        (set! (array-ref benefit 0) 4)
-        (set! (array-ref cost 0) 7)
-        (set! (array-ref max-ref 0) 4)
-        (set! (array-ref max-clobber 0) 1)
-        (set! (array-ref benefit 1) 4)
-        (set! (array-ref cost 1) 8)
-        (set! (array-ref max-ref 1) 4)
-        (set! (array-ref max-clobber 1) 1)
-        (set! (array-ref benefit 2) 4)
-        (set! (array-ref cost 2) 2)
-        (set! (array-ref max-ref 2) 4)
-        (set! (array-ref max-clobber 2) 4)
-        (set! (array-ref max-clobber-hot 2) 4)
-        (set! (array-ref benefit 3) 4)
-        (set! (array-ref cost 3) 7)
-        (set! (array-ref max-ref 3) 4)
-        (set! (array-ref max-clobber 3) 1)
-        (and
-          (reg.compiler-reg-call-hole-qualifies? scores 0)
-          (not (reg.compiler-reg-call-hole-qualifies? scores 1))
-          (not (reg.compiler-reg-call-hole-qualifies? scores 2))
-          (not (reg.compiler-reg-call-hole-qualifies? scores 3)))))))
+      ;; 0: csr, all crossings cold, carriers below the pair -> admitted.
+      ;; 1: the same value crossing more cold calls -> refused, strictly.
+      ;; 2: csr, but one crossing is in an UNDISCOUNTED block as hot as its
+      ;;    hottest reference -> refused.
+      ;; 3: the same numbers as 0 but in the MEMORY class, where benefit must
+      ;;    exceed cost and the undiscounted maximum is what is compared.
+      (set! (array-ref flags 0) true)
+      (set! (array-ref flags 1) true)
+      (set! (array-ref flags 2) true)
+      (set! (array-ref flags 3) true)
+      (set! (array-ref csr 0) true)
+      (set! (array-ref csr 1) true)
+      (set! (array-ref csr 2) true)
+      (set! (array-ref benefit 0) 4)
+      (set! (array-ref cost 0) 7)
+      (set! (array-ref max-ref 0) 4)
+      (set! (array-ref max-clobber 0) 1)
+      (set! (array-ref benefit 1) 4)
+      (set! (array-ref cost 1) 8)
+      (set! (array-ref max-ref 1) 4)
+      (set! (array-ref max-clobber 1) 1)
+      (set! (array-ref benefit 2) 4)
+      (set! (array-ref cost 2) 2)
+      (set! (array-ref max-ref 2) 4)
+      (set! (array-ref max-clobber 2) 4)
+      (set! (array-ref max-clobber-hot 2) 4)
+      (set! (array-ref benefit 3) 4)
+      (set! (array-ref cost 3) 7)
+      (set! (array-ref max-ref 3) 4)
+      (set! (array-ref max-clobber 3) 1)
+      (and
+        (reg.compiler-reg-call-hole-qualifies? scores 0)
+        (not (reg.compiler-reg-call-hole-qualifies? scores 1))
+        (not (reg.compiler-reg-call-hole-qualifies? scores 2))
+        (not (reg.compiler-reg-call-hole-qualifies? scores 3))))))
 
 ;; --- E-1 carrier store and reload placement ---------------------------------
 ;; The single-block fixture: three calls and one spilled value `%0`. The first
@@ -980,31 +965,27 @@
             (live.compiler-live-analyze-function-edge-precise
               (reg.compiler-reg-global-shared-view func))]
           [index : i64 0]
-          (begin
-            (reg.compiler-reg-fill-i64-array (&mut carrier) (- 0 1))
-            (while (< index selected-count)
-              (begin
-                (set!
-                  (array-ref carrier (array-ref selected index))
-                  (+ vars index))
-                (set! index (+ index 1))))
-            (live.compiler-live-ir-block-list-to-seq
-              (reg.compiler-reg-call-hole-rewrite-blocks
+          (reg.compiler-reg-fill-i64-array (&mut carrier) (- 0 1))
+          (while (< index selected-count)
+            (set! (array-ref carrier (array-ref selected index)) (+ vars index))
+            (set! index (+ index 1)))
+          (live.compiler-live-ir-block-list-to-seq
+            (reg.compiler-reg-call-hole-rewrite-blocks
+              (ast.ast-node-pool-reader-type-segment-bases)
+              seq
+              (reg.compiler-reg-global-shared-view liveness)
+              (reg.compiler-reg-function-var-types func)
+              carrier
+              selected
+              selected-count
+              (reg.compiler-reg-call-hole-flow-build
                 (ast.ast-node-pool-reader-type-segment-bases)
                 seq
-                (reg.compiler-reg-global-shared-view liveness)
-                (reg.compiler-reg-function-var-types func)
-                carrier
+                liveness
                 selected
-                selected-count
-                (reg.compiler-reg-call-hole-flow-build
-                  (ast.ast-node-pool-reader-type-segment-bases)
-                  seq
-                  liveness
-                  selected
-                  selected-count)
-                (reg.compiler-reg-call-hole-flow-full selected-count)
-                (&mut valid)))))])))
+                selected-count)
+              (reg.compiler-reg-call-hole-flow-full selected-count)
+              (&mut valid))))])))
 
 (cfg
   test
@@ -1020,9 +1001,8 @@
       i64)
     (let
       [selected : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      (begin
-        (set! (array-ref selected 0) var)
-        selected))))
+      (set! (array-ref selected 0) var)
+      selected)))
 
 (cfg
   test
@@ -1472,27 +1452,26 @@
       [selected : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       [dropped : (__tl_dyn-array bool) (__tl_make-array bool 4)]
       [csr : (__tl_dyn-array bool) (__tl_make-array bool 4)]
-      (begin
-        (set! (array-ref selected 0) 0)
-        (set! (array-ref selected 1) 1)
-        (set! (array-ref selected 2) 2)
-        (set! (array-ref selected 3) 3)
-        (set! (array-ref csr 2) true)
-        (set! (array-ref csr 3) true)
-        (and
-          (=
-            (reg.compiler-reg-call-hole-drop-unimproved!
-              Linux
-              plan
-              csr
-              selected
-              4
-              (&mut dropped))
-            2)
-          (not (array-ref dropped 0))
-          (array-ref dropped 1)
-          (array-ref dropped 2)
-          (not (array-ref dropped 3)))))))
+      (set! (array-ref selected 0) 0)
+      (set! (array-ref selected 1) 1)
+      (set! (array-ref selected 2) 2)
+      (set! (array-ref selected 3) 3)
+      (set! (array-ref csr 2) true)
+      (set! (array-ref csr 3) true)
+      (and
+        (=
+          (reg.compiler-reg-call-hole-drop-unimproved!
+            Linux
+            plan
+            csr
+            selected
+            4
+            (&mut dropped))
+          2)
+        (not (array-ref dropped 0))
+        (array-ref dropped 1)
+        (array-ref dropped 2)
+        (not (array-ref dropped 3))))))
 
 ;; End to end. Ten values are computed in the entry block, held live across ONE
 ;; call there, and used inside the loop as a multiply's LHS -- a position the
@@ -1539,35 +1518,33 @@
       [builder : ir.CompilerIrInstrBuilder
         (ir.compiler-ir-instr-builder-with-capacity (+ (* 2 count) 2))]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            ;; The value is the multiply's LHS: a spilled operand there is a
-            ;; real reload, unlike an `add`'s RHS.
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.BinOp
-                (+ (+ count 4) index)
-                (Mul)
-                (Var (+ index 1))
-                (Var counter)
-                (compiler-reg-i64-ty)))
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.BinOp
-                acc
-                (Add)
-                (Var acc)
-                (Var (+ (+ count 4) index))
-                (compiler-reg-i64-ty)))
-            (set! index (+ index 1))))
+      (while (< index count)
+        ;; The value is the multiply's LHS: a spilled operand there is a
+        ;; real reload, unlike an `add`'s RHS.
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (irt.instr "%12 = add %12, 1 : i64"))
+          (ir.CompilerIrInstr.BinOp
+            (+ (+ count 4) index)
+            (Mul)
+            (Var (+ index 1))
+            (Var counter)
+            (compiler-reg-i64-ty)))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))
-        (ir.compiler-ir-instr-builder-to-seq builder)))))
+          (ir.CompilerIrInstr.BinOp
+            acc
+            (Add)
+            (Var acc)
+            (Var (+ (+ count 4) index))
+            (compiler-reg-i64-ty)))
+        (set! index (+ index 1)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (irt.instr "%12 = add %12, 1 : i64"))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (cfg
   test
@@ -1607,16 +1584,12 @@
         (reg.compiler-reg-plan-assignments plan)]
       [index : i64 0]
       [total : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (if (reg.compiler-reg-call-hole-register-homed?
-              assignments
-              (+ index 1))
-              unit
-              (set! total (+ total 1)))
-            (set! index (+ index 1))))
-        total))))
+      (while (< index count)
+        (if (reg.compiler-reg-call-hole-register-homed? assignments (+ index 1))
+          unit
+          (set! total (+ total 1)))
+        (set! index (+ index 1)))
+      total)))
 
 (cfg
   test
@@ -2113,14 +2086,12 @@
       [want : i64 (ir.compiler-ir-label name)]
       [count : i64 (ir.compiler-ir-block-seq-count seq)]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (when
-              (= (reg.compiler-reg-loop-park-block-label seq index) want)
-              (return index))
-            (set! index (+ index 1))))
-        (- 0 1)))))
+      (while (< index count)
+        (when
+          (= (reg.compiler-reg-loop-park-block-label seq index) want)
+          (return index))
+        (set! index (+ index 1)))
+      (- 0 1))))
 
 ;; Loop structure and residency. The through value is the one the loop never
 ;; mentions; a value used in the loop, a value that is only a header-phi INPUT
@@ -2157,49 +2128,47 @@
           [residents : (__tl_dyn-array i64) (__tl_make-array i64 32)]
           [cursor : (__tl_dyn-array i64) (__tl_make-array i64 2)]
           [index : i64 0]
-          (begin
-            (while (< index count)
-              (begin
-                (set! (array-ref weights index) 1)
-                (set! index (+ index 1))))
-            (reg.compiler-reg-loop-park-mark-residents!
+          (while (< index count)
+            (set! (array-ref weights index) 1)
+            (set! index (+ index 1)))
+          (reg.compiler-reg-loop-park-mark-residents!
+            seq
+            nest
+            header
+            total
+            1
+            weights
+            vars
+            (&mut stamp)
+            (&mut refs)
+            (&mut residents)
+            (&mut cursor))
+          (and
+            ;; the loop is {header, body, latch}, entered only at the header
+            (= total 2)
+            (= (reg.compiler-reg-loop-nest-outside-pred nest header 1) pre)
+            (reg.compiler-reg-loop-park-dedicated-preheader?
               seq
-              nest
-              header
-              total
-              1
-              weights
-              vars
-              (&mut stamp)
-              (&mut refs)
-              (&mut residents)
-              (&mut cursor))
-            (and
-              ;; the loop is {header, body, latch}, entered only at the header
-              (= total 2)
-              (= (reg.compiler-reg-loop-nest-outside-pred nest header 1) pre)
+              pre
+              (reg.compiler-reg-loop-park-block-label seq header))
+            ;; the entry block jumps to the preheader, not to the header
+            (not
               (reg.compiler-reg-loop-park-dedicated-preheader?
                 seq
-                pre
-                (reg.compiler-reg-loop-park-block-label seq header))
-              ;; the entry block jumps to the preheader, not to the header
-              (not
-                (reg.compiler-reg-loop-park-dedicated-preheader?
-                  seq
-                  entry
-                  (reg.compiler-reg-loop-park-block-label seq header)))
-              (reg.compiler-reg-loop-park-single-entry? nest header total 1)
-              ;; residents: used in the loop (%2), phi result (%3), phi INPUT
-              ;; whose def is outside the loop (%8), and the bound (%0)
-              (= (array-ref stamp 2) 1)
-              (= (array-ref stamp 3) 1)
-              (= (array-ref stamp 8) 1)
-              (= (array-ref stamp 0) 1)
-              ;; through: live across the loop, never mentioned in it
-              (not (= (array-ref stamp 1) 1))
-              ;; and defined after it, so not live into it either
-              (not (= (array-ref stamp 7) 1))
-              (> (array-ref cursor 1) 0))))])))
+                entry
+                (reg.compiler-reg-loop-park-block-label seq header)))
+            (reg.compiler-reg-loop-park-single-entry? nest header total 1)
+            ;; residents: used in the loop (%2), phi result (%3), phi INPUT
+            ;; whose def is outside the loop (%8), and the bound (%0)
+            (= (array-ref stamp 2) 1)
+            (= (array-ref stamp 3) 1)
+            (= (array-ref stamp 8) 1)
+            (= (array-ref stamp 0) 1)
+            ;; through: live across the loop, never mentioned in it
+            (not (= (array-ref stamp 1) 1))
+            ;; and defined after it, so not live into it either
+            (not (= (array-ref stamp 7) 1))
+            (> (array-ref cursor 1) 0)))])))
 
 ;; Through-value eligibility: a REGISTER home admits, a spill home declines (it
 ;; has no register to give up), a missing home declines, and the planner's
@@ -2515,61 +2484,60 @@
               "exit")]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (begin
-            (reg.compiler-reg-loop-park-plan-reset! pk)
-            (set! (array-ref pk.park-var 0) 1)
-            (set! (array-ref pk.park-carrier 0) vars)
-            (set! (array-ref pk.park-loop 0) 0)
-            (set! (array-ref pk.park-pre 0) pre)
-            (set!
-              (array-ref pk.park-store-at 0)
-              (reg.compiler-reg-loop-park-store-position seq pre 1))
-            (set! (array-ref pk.pre-mask pre) 1)
-            (set! (array-ref pk.direct-mask exit) 1)
-            (set! (array-ref pk.site-from 0) (- 0 1))
-            (set! (array-ref pk.site-to 0) exit)
-            (set!
-              (array-ref pk.site-kind 0)
-              (reg.compiler-reg-loop-park-site-direct))
-            (set! (array-ref pk.site-mask 0) 1)
-            (set! (array-ref pk.site-label 0) (ir.compiler-ir-label-none))
-            (set! (array-ref pk.site-weight 0) 1)
-            (set! (array-ref pk.loop-header 0) 0)
-            (set! (array-ref pk.counts 0) 1)
-            (set! (array-ref pk.counts 1) 1)
-            (set! (array-ref pk.counts 2) 1)
-            (let
-              [out : ir.CompilerIrBlockSeq
-                (live.compiler-live-ir-block-list-to-seq
-                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
-              (and
-                ;; a direct reload adds no block
-                (= (ir.compiler-ir-block-seq-count out) count)
-                ;; the store is the preheader FIRST instruction: as early as the
-                ;; block allows, so the register it gives up is free for the
-                ;; values defined below it
-                (= (array-ref pk.park-store-at 0) 0)
-                (compiler-reg-loop-park-mov?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out pre)
-                    0)
-                  vars
-                  1)
-                (=
-                  (ir.compiler-ir-instr-seq-count
-                    (reg.compiler-reg-loop-park-block-instrs out pre))
-                  3)
-                ;; the reload is the exit target first instruction
-                (compiler-reg-loop-park-mov?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out exit)
-                    0)
-                  1
-                  vars)
-                (=
-                  (ir.compiler-ir-instr-seq-count
-                    (reg.compiler-reg-loop-park-block-instrs out exit))
-                  3)))))])))
+          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (set! (array-ref pk.park-var 0) 1)
+          (set! (array-ref pk.park-carrier 0) vars)
+          (set! (array-ref pk.park-loop 0) 0)
+          (set! (array-ref pk.park-pre 0) pre)
+          (set!
+            (array-ref pk.park-store-at 0)
+            (reg.compiler-reg-loop-park-store-position seq pre 1))
+          (set! (array-ref pk.pre-mask pre) 1)
+          (set! (array-ref pk.direct-mask exit) 1)
+          (set! (array-ref pk.site-from 0) (- 0 1))
+          (set! (array-ref pk.site-to 0) exit)
+          (set!
+            (array-ref pk.site-kind 0)
+            (reg.compiler-reg-loop-park-site-direct))
+          (set! (array-ref pk.site-mask 0) 1)
+          (set! (array-ref pk.site-label 0) (ir.compiler-ir-label-none))
+          (set! (array-ref pk.site-weight 0) 1)
+          (set! (array-ref pk.loop-header 0) 0)
+          (set! (array-ref pk.counts 0) 1)
+          (set! (array-ref pk.counts 1) 1)
+          (set! (array-ref pk.counts 2) 1)
+          (let
+            [out : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq
+                (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+            (and
+              ;; a direct reload adds no block
+              (= (ir.compiler-ir-block-seq-count out) count)
+              ;; the store is the preheader FIRST instruction: as early as the
+              ;; block allows, so the register it gives up is free for the
+              ;; values defined below it
+              (= (array-ref pk.park-store-at 0) 0)
+              (compiler-reg-loop-park-mov?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out pre)
+                  0)
+                vars
+                1)
+              (=
+                (ir.compiler-ir-instr-seq-count
+                  (reg.compiler-reg-loop-park-block-instrs out pre))
+                3)
+              ;; the reload is the exit target first instruction
+              (compiler-reg-loop-park-mov?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out exit)
+                  0)
+                1
+                vars)
+              (=
+                (ir.compiler-ir-instr-seq-count
+                  (reg.compiler-reg-loop-park-block-instrs out exit))
+                3))))])))
 
 (cfg
   test
@@ -2600,88 +2568,87 @@
             (reg.compiler-reg-loop-park-splice-label seq header 0)]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (begin
-            (reg.compiler-reg-loop-park-plan-reset! pk)
-            (set! (array-ref pk.park-var 0) 1)
-            (set! (array-ref pk.park-carrier 0) vars)
-            (set! (array-ref pk.park-loop 0) 0)
-            (set! (array-ref pk.park-pre 0) pre)
-            (set!
-              (array-ref pk.park-store-at 0)
-              (reg.compiler-reg-loop-park-store-position seq pre 1))
-            (set! (array-ref pk.pre-mask pre) 1)
-            (set! (array-ref pk.site-from 0) header)
-            (set! (array-ref pk.site-to 0) exit)
-            (set!
-              (array-ref pk.site-kind 0)
-              (reg.compiler-reg-loop-park-site-splice))
-            (set! (array-ref pk.site-mask 0) 1)
-            (set! (array-ref pk.site-label 0) splice-label)
-            (set! (array-ref pk.site-weight 0) 1)
-            (set! (array-ref pk.loop-header 0) 0)
-            (set! (array-ref pk.counts 0) 1)
-            (set! (array-ref pk.counts 1) 1)
-            (set! (array-ref pk.counts 2) 1)
-            (let
-              [out : ir.CompilerIrBlockSeq
-                (live.compiler-live-ir-block-list-to-seq
-                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
-              [spliced : i64
-                (compiler-reg-loop-park-block-index
-                  (ir.compiler-ir-global-shared-view out)
-                  (ir.compiler-ir-label-text splice-label))]
-              (and
-                ;; exactly one block is added, and it is APPENDED, so every
-                ;; existing block keeps its layout position
-                (= (ir.compiler-ir-block-seq-count out) (+ count 1))
-                (= spliced count)
-                ;; store in the preheader
-                (compiler-reg-loop-park-mov?
+          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (set! (array-ref pk.park-var 0) 1)
+          (set! (array-ref pk.park-carrier 0) vars)
+          (set! (array-ref pk.park-loop 0) 0)
+          (set! (array-ref pk.park-pre 0) pre)
+          (set!
+            (array-ref pk.park-store-at 0)
+            (reg.compiler-reg-loop-park-store-position seq pre 1))
+          (set! (array-ref pk.pre-mask pre) 1)
+          (set! (array-ref pk.site-from 0) header)
+          (set! (array-ref pk.site-to 0) exit)
+          (set!
+            (array-ref pk.site-kind 0)
+            (reg.compiler-reg-loop-park-site-splice))
+          (set! (array-ref pk.site-mask 0) 1)
+          (set! (array-ref pk.site-label 0) splice-label)
+          (set! (array-ref pk.site-weight 0) 1)
+          (set! (array-ref pk.loop-header 0) 0)
+          (set! (array-ref pk.counts 0) 1)
+          (set! (array-ref pk.counts 1) 1)
+          (set! (array-ref pk.counts 2) 1)
+          (let
+            [out : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq
+                (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+            [spliced : i64
+              (compiler-reg-loop-park-block-index
+                (ir.compiler-ir-global-shared-view out)
+                (ir.compiler-ir-label-text splice-label))]
+            (and
+              ;; exactly one block is added, and it is APPENDED, so every
+              ;; existing block keeps its layout position
+              (= (ir.compiler-ir-block-seq-count out) (+ count 1))
+              (= spliced count)
+              ;; store in the preheader
+              (compiler-reg-loop-park-mov?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out pre)
+                  0)
+                vars
+                1)
+              ;; the spliced block reloads, then jumps to the original target
+              (compiler-reg-loop-park-mov?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out spliced)
+                  0)
+                1
+                vars)
+              (=
+                (ir.compiler-ir-instr-seq-count
+                  (reg.compiler-reg-loop-park-block-instrs out spliced))
+                2)
+              ;; the loop exit edge now goes through it ...
+              (=
+                (compiler-reg-loop-park-branch-false
                   (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out pre)
-                    0)
-                  vars
-                  1)
-                ;; the spliced block reloads, then jumps to the original target
-                (compiler-reg-loop-park-mov?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out spliced)
-                    0)
-                  1
-                  vars)
-                (=
-                  (ir.compiler-ir-instr-seq-count
-                    (reg.compiler-reg-loop-park-block-instrs out spliced))
-                  2)
-                ;; the loop exit edge now goes through it ...
-                (=
-                  (compiler-reg-loop-park-branch-false
-                    (ir.compiler-ir-instr-seq-ref
-                      (reg.compiler-reg-loop-park-block-instrs out header)
-                      2))
-                  splice-label)
-                ;; ... and the merge phi loop-side input is re-keyed to it, so
-                ;; it reads the value the reload has just restored
+                    (reg.compiler-reg-loop-park-block-instrs out header)
+                    2))
+                splice-label)
+              ;; ... and the merge phi loop-side input is re-keyed to it, so
+              ;; it reads the value the reload has just restored
+              (compiler-reg-loop-park-phi-keyed-on?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out exit)
+                  0)
+                3
+                splice-label)
+              (not
                 (compiler-reg-loop-park-phi-keyed-on?
                   (ir.compiler-ir-instr-seq-ref
                     (reg.compiler-reg-loop-park-block-instrs out exit)
                     0)
                   3
-                  splice-label)
-                (not
-                  (compiler-reg-loop-park-phi-keyed-on?
-                    (ir.compiler-ir-instr-seq-ref
-                      (reg.compiler-reg-loop-park-block-instrs out exit)
-                      0)
-                    3
-                    (reg.compiler-reg-loop-park-block-label seq header)))
-                ;; the other predecessor input is untouched
-                (compiler-reg-loop-park-phi-keyed-on?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out exit)
-                    0)
-                  8
-                  (ir.compiler-ir-label "other"))))))])))
+                  (reg.compiler-reg-loop-park-block-label seq header)))
+              ;; the other predecessor input is untouched
+              (compiler-reg-loop-park-phi-keyed-on?
+                (ir.compiler-ir-instr-seq-ref
+                  (reg.compiler-reg-loop-park-block-instrs out exit)
+                  0)
+                8
+                (ir.compiler-ir-label "other")))))])))
 
 ;; The verify side: a parked loop whose previously spilled residents the replan
 ;; left in memory is dropped and its header recorded, while one that rescued a
@@ -2706,21 +2673,18 @@
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty))]
       [dropped : (__tl_dyn-array bool) (__tl_make-array bool 8)]
-      (begin
-        (reg.compiler-reg-loop-park-plan-reset! pk)
-        ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
-        ;; var 4, which it did not
-        (set! (array-ref pk.resident-mask 2) 1)
-        (set! (array-ref pk.resident-mask 4) 2)
-        (set! (array-ref pk.loop-header 0) 3)
-        (set! (array-ref pk.loop-header 1) 5)
-        (set! (array-ref pk.counts 2) 2)
-        (and
-          (=
-            (reg.compiler-reg-loop-park-drop-failed! pk plan 6 (&mut dropped))
-            1)
-          (not (array-ref dropped 3))
-          (array-ref dropped 5))))))
+      (reg.compiler-reg-loop-park-plan-reset! pk)
+      ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
+      ;; var 4, which it did not
+      (set! (array-ref pk.resident-mask 2) 1)
+      (set! (array-ref pk.resident-mask 4) 2)
+      (set! (array-ref pk.loop-header 0) 3)
+      (set! (array-ref pk.loop-header 1) 5)
+      (set! (array-ref pk.counts 2) 2)
+      (and
+        (= (reg.compiler-reg-loop-park-drop-failed! pk plan 6 (&mut dropped)) 1)
+        (not (array-ref dropped 3))
+        (array-ref dropped 5)))))
 
 ;; End to end. The round is handed a plan that homes the through value in a
 ;; register and leaves the loop's resident in memory, which is exactly the shape
@@ -3047,54 +3011,45 @@
         (__tl_make-array ir.CompilerIrBlock (+ 6 (* 5 levels)))]
       [write : i64 0]
       [level : i64 0]
-      (begin
-        (set! (array-ref blocks write) (compiler-reg-park-nest-entry-block))
-        (set! write (+ write 1))
-        (while (< level levels)
-          (begin
-            (set!
-              (array-ref blocks write)
-              (compiler-reg-park-nest-pre-block level))
-            (set!
-              (array-ref blocks (+ write 1))
-              (compiler-reg-park-nest-hdr-block level))
-            (set!
-              (array-ref blocks (+ write 2))
-              (compiler-reg-park-nest-body-block level levels))
-            (set! write (+ write 3))
-            (set! level (+ level 1))))
-        (set! (array-ref blocks write) (compiler-reg-park-nest-land-block))
+      (set! (array-ref blocks write) (compiler-reg-park-nest-entry-block))
+      (set! write (+ write 1))
+      (while (< level levels)
+        (set! (array-ref blocks write) (compiler-reg-park-nest-pre-block level))
         (set!
           (array-ref blocks (+ write 1))
-          (compiler-reg-park-nest-ihdr-block))
+          (compiler-reg-park-nest-hdr-block level))
         (set!
           (array-ref blocks (+ write 2))
-          (compiler-reg-park-nest-ibody-block))
+          (compiler-reg-park-nest-body-block level levels))
+        (set! write (+ write 3))
+        (set! level (+ level 1)))
+      (set! (array-ref blocks write) (compiler-reg-park-nest-land-block))
+      (set! (array-ref blocks (+ write 1)) (compiler-reg-park-nest-ihdr-block))
+      (set! (array-ref blocks (+ write 2)) (compiler-reg-park-nest-ibody-block))
+      (set!
+        (array-ref blocks (+ write 3))
+        (compiler-reg-park-nest-imerge-block))
+      (set!
+        (array-ref blocks (+ write 4))
+        (compiler-reg-park-nest-iexit-block levels))
+      (set! write (+ write 5))
+      (set! level (- levels 1))
+      (while (>= level 0)
         (set!
-          (array-ref blocks (+ write 3))
-          (compiler-reg-park-nest-imerge-block))
+          (array-ref blocks write)
+          (compiler-reg-park-nest-lat-block level levels))
         (set!
-          (array-ref blocks (+ write 4))
-          (compiler-reg-park-nest-iexit-block levels))
-        (set! write (+ write 5))
-        (set! level (- levels 1))
-        (while (>= level 0)
-          (begin
-            (set!
-              (array-ref blocks write)
-              (compiler-reg-park-nest-lat-block level levels))
-            (set!
-              (array-ref blocks (+ write 1))
-              (compiler-reg-park-nest-exit-block level))
-            (set! write (+ write 2))
-            (set! level (- level 1))))
-        (Function
-          (ir.compiler-ir-test-symbol "loop_park_deep_nest")
-          (irt.params "bound=%0:i64")
-          (I64)
-          80
-          (Array (ir.CompilerIrBlockSeq blocks write))
-          Ordinary)))))
+          (array-ref blocks (+ write 1))
+          (compiler-reg-park-nest-exit-block level))
+        (set! write (+ write 2))
+        (set! level (- level 1)))
+      (Function
+        (ir.compiler-ir-test-symbol "loop_park_deep_nest")
+        (irt.params "bound=%0:i64")
+        (I64)
+        80
+        (Array (ir.CompilerIrBlockSeq blocks write))
+        Ordinary))))
 
 ;; Two small builders for a hand-written plan, so the fixture can say exactly
 ;; which values the greedy is imagined to have homed.
@@ -4331,9 +4286,8 @@
     (let
       [parents : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [sizes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
-      (begin
-        (reg.compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
-        (reg.CompilerRegCoalesceMap parents)))))
+      (reg.compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
+      (reg.CompilerRegCoalesceMap parents))))
 
 (cfg
   test
@@ -4683,20 +4637,19 @@
         (reg.compiler-reg-assignment-table-make vars)]
       [empty-coalesce : reg.CompilerRegCoalesceMap
         (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))]
-      (begin
-        (reg.compiler-reg-assignment-table-insert assignments var (Spill 0))
-        (let
-          [rewritten : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-rewrite-remat-assignments
-              assignments
-              func
-              empty-coalesce
-              (live.compiler-live-set-empty)
-              false
-              vars)]
-          (match (reg.compiler-reg-assignment-table-lookup rewritten var)
-            [(Some location) location]
-            [(No) (Spill -1)]))))))
+      (reg.compiler-reg-assignment-table-insert assignments var (Spill 0))
+      (let
+        [rewritten : reg.CompilerRegAssignmentTable
+          (reg.compiler-reg-rewrite-remat-assignments
+            assignments
+            func
+            empty-coalesce
+            (live.compiler-live-set-empty)
+            false
+            vars)]
+        (match (reg.compiler-reg-assignment-table-lookup rewritten var)
+          [(Some location) location]
+          [(No) (Spill -1)])))))
 
 (cfg
   test
@@ -4781,61 +4734,58 @@
             (reg.compiler-reg-global-shared-view cell)
             (compiler-reg-i64-ty)
             false))]
-      (begin
-        (reg.compiler-reg-frozen-globals-begin!)
-        (reg.compiler-reg-frozen-globals-finish!)
-        (let
-          [seeded? : bool
+      (reg.compiler-reg-frozen-globals-begin!)
+      (reg.compiler-reg-frozen-globals-finish!)
+      (let
+        [seeded? : bool
+          (reg.compiler-reg-remat-recompute-value?
+            (reg.compiler-reg-global-shared-view cell)
+            (compiler-reg-i64-ty)
+            false)]
+        [narrow-refused? : bool
+          (not
             (reg.compiler-reg-remat-recompute-value?
               (reg.compiler-reg-global-shared-view cell)
-              (compiler-reg-i64-ty)
-              false)]
-          [narrow-refused? : bool
+              (I32)
+              false))]
+        [mov-remat? : bool
+          (compiler-reg-location-remat?
+            (compiler-reg-remat-assignment-spill-location
+              (compiler-reg-remat-frozen-global-function false)
+              1
+              0))]
+        [load-remat? : bool
+          (compiler-reg-location-remat?
+            (compiler-reg-remat-assignment-spill-location
+              (compiler-reg-remat-frozen-global-function true)
+              1
+              0))]
+        (reg.compiler-reg-add-nonfrozen-global! frozen)
+        (let
+          [written-refused? : bool
             (not
               (reg.compiler-reg-remat-recompute-value?
-                (reg.compiler-reg-global-shared-view cell)
-                (I32)
+                cell
+                (compiler-reg-i64-ty)
                 false))]
-          [mov-remat? : bool
-            (compiler-reg-location-remat?
-              (compiler-reg-remat-assignment-spill-location
-                (compiler-reg-remat-frozen-global-function false)
-                1
-                0))]
-          [load-remat? : bool
-            (compiler-reg-location-remat?
-              (compiler-reg-remat-assignment-spill-location
-                (compiler-reg-remat-frozen-global-function true)
-                1
-                0))]
-          (begin
-            (reg.compiler-reg-add-nonfrozen-global! frozen)
-            (let
-              [written-refused? : bool
-                (not
-                  (reg.compiler-reg-remat-recompute-value?
-                    cell
-                    (compiler-reg-i64-ty)
-                    false))]
-              [written-load-refused? : bool
-                (not
-                  (compiler-reg-location-remat?
-                    (compiler-reg-remat-assignment-spill-location
-                      (compiler-reg-remat-frozen-global-function true)
-                      1
-                      0)))]
-              (begin
-                ;; Leave the process-wide fact as the allocator's default so no
-                ;; later fixture inherits a seeded answer.
-                (reg.compiler-reg-frozen-globals-begin!)
-                (and
-                  unseeded?
-                  seeded?
-                  narrow-refused?
-                  mov-remat?
-                  load-remat?
-                  written-refused?
-                  written-load-refused?)))))))))
+          [written-load-refused? : bool
+            (not
+              (compiler-reg-location-remat?
+                (compiler-reg-remat-assignment-spill-location
+                  (compiler-reg-remat-frozen-global-function true)
+                  1
+                  0)))]
+          ;; Leave the process-wide fact as the allocator's default so no
+          ;; later fixture inherits a seeded answer.
+          (reg.compiler-reg-frozen-globals-begin!)
+          (and
+            unseeded?
+            seeded?
+            narrow-refused?
+            mov-remat?
+            load-remat?
+            written-refused?
+            written-load-refused?))))))
 
 (cfg
   test
@@ -4859,115 +4809,113 @@
           (compiler-reg-remat-multi-def-function)
           empty-coalesce)]
       [parents : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-      (begin
-        (set! (array-ref parents 0) 0)
-        (set! (array-ref parents 1) 0)
-        (let
-          [coalesced : (__tl_dyn-array i64)
-            (let
-              [coalesce (reg.CompilerRegCoalesceMap parents)]
-              (compiler-reg-function-spill-weights-remat func coalesce))]
-          (and
-            (= (array-ref raw 0) 3)
-            (= (array-ref raw 1) 2)
-            (= (array-ref discounted 0) 1)
-            (= (array-ref discounted 1) 2)
-            (= (array-ref coalesced 0) 3)
-            (= (array-ref coalesced 1) 2)
-            (= (array-ref multi-raw 0) 2)
-            (= (array-ref multi-discounted 0) 2)))))))
+      (set! (array-ref parents 0) 0)
+      (set! (array-ref parents 1) 0)
+      (let
+        [coalesced : (__tl_dyn-array i64)
+          (let
+            [coalesce (reg.CompilerRegCoalesceMap parents)]
+            (compiler-reg-function-spill-weights-remat func coalesce))]
+        (and
+          (= (array-ref raw 0) 3)
+          (= (array-ref raw 1) 2)
+          (= (array-ref discounted 0) 1)
+          (= (array-ref discounted 1) 2)
+          (= (array-ref coalesced 0) 3)
+          (= (array-ref coalesced 1) 2)
+          (= (array-ref multi-raw 0) 2)
+          (= (array-ref multi-discounted 0) 2))))))
 
 (cfg
   test
   (define (compiler-reg-remat-spill-weight-eviction-function) : ir.CompilerIrFunction
     (let
       [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-      (begin
-        (set! instrs (compiler-reg-test-instr-seq-prepend (Return No) instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @hot0b, %0 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @hot0a, %0 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @cold1, %1 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use5, %5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use4, %4 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use3, %3 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "store @use2, %2 : i64")
-            instrs))
-        ;; #perf: syscall after the uses so every value crosses it (call-spanning)
-        ;; -- the partition gates off and the 6 candidates oversubscribe the 5
-        ;; callee-saved registers. var1 is the only non-remat value, so the remat
-        ;; discount keeps it in a register and a rematerialisable value is the
-        ;; victim; among the remat values the cheapest (1-use var5, one recompute)
-        ;; is spilled rather than the 2-use var0 (two recomputes).
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%6 = syscall(39)")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%5 = mov 5 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%4 = mov 4 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%3 = mov 3 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%2 = mov 2 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%1 = add 1, 2 : i64")
-            instrs))
-        (set!
-          instrs
-          (compiler-reg-test-instr-seq-prepend
-            (irt.instr "%0 = mov 0 : i64")
-            instrs))
-        (Function
-          (ir.compiler-ir-test-symbol "remat_spill_weight_eviction")
-          (ir.compiler-ir-param-seq-empty)
-          (Unit)
-          7
-          (ir.compiler-ir-blocks
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
-          Ordinary)))))
+      (set! instrs (compiler-reg-test-instr-seq-prepend (Return No) instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @hot0b, %0 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @hot0a, %0 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @cold1, %1 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @use5, %5 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @use4, %4 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @use3, %3 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "store @use2, %2 : i64")
+          instrs))
+      ;; #perf: syscall after the uses so every value crosses it (call-spanning)
+      ;; -- the partition gates off and the 6 candidates oversubscribe the 5
+      ;; callee-saved registers. var1 is the only non-remat value, so the remat
+      ;; discount keeps it in a register and a rematerialisable value is the
+      ;; victim; among the remat values the cheapest (1-use var5, one recompute)
+      ;; is spilled rather than the 2-use var0 (two recomputes).
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%6 = syscall(39)")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%5 = mov 5 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%4 = mov 4 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%3 = mov 3 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%2 = mov 2 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%1 = add 1, 2 : i64")
+          instrs))
+      (set!
+        instrs
+        (compiler-reg-test-instr-seq-prepend
+          (irt.instr "%0 = mov 0 : i64")
+          instrs))
+      (Function
+        (ir.compiler-ir-test-symbol "remat_spill_weight_eviction")
+        (ir.compiler-ir-param-seq-empty)
+        (Unit)
+        7
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
+        Ordinary))))
 
 (cfg
   test
@@ -5604,31 +5552,29 @@
           [buckets : (__tl_dyn-array reg.CompilerRegCallRegionStatSeq)
             (__tl_make-array reg.CompilerRegCallRegionStatSeq vars)]
           [bi : i64 0]
-          (begin
-            (while (< bi vars)
-              (begin
-                (set!
-                  (array-ref buckets bi)
-                  (reg.compiler-reg-call-region-stat-seq-empty))
-                (set! bi (+ bi 1))))
-            (set! (array-ref cand 0) (reg.compiler-reg-call-region-cand-full))
-            (set! (array-ref order 0) 0)
-            (let
-              [ast-node-pool-reader-type-segment-bases
-                (ast.ast-node-pool-reader-type-segment-bases)]
-              [blocks-copy (ir.compiler-ir-global-shared-view blocks)]
-              [function-loop-depths
-                (reg.compiler-reg-function-loop-depths blocks)]
-              (reg.compiler-reg-call-region-loop-rows!
-                ast-node-pool-reader-type-segment-bases
-                blocks-copy
-                function-loop-depths
-                cand
-                order
-                1
-                vars
-                (reg.compiler-reg-global-shared-view buckets)))
-            (array-ref buckets 0)))])))
+          (while (< bi vars)
+            (set!
+              (array-ref buckets bi)
+              (reg.compiler-reg-call-region-stat-seq-empty))
+            (set! bi (+ bi 1)))
+          (set! (array-ref cand 0) (reg.compiler-reg-call-region-cand-full))
+          (set! (array-ref order 0) 0)
+          (let
+            [ast-node-pool-reader-type-segment-bases
+              (ast.ast-node-pool-reader-type-segment-bases)]
+            [blocks-copy (ir.compiler-ir-global-shared-view blocks)]
+            [function-loop-depths
+              (reg.compiler-reg-function-loop-depths blocks)]
+            (reg.compiler-reg-call-region-loop-rows!
+              ast-node-pool-reader-type-segment-bases
+              blocks-copy
+              function-loop-depths
+              cand
+              order
+              1
+              vars
+              (reg.compiler-reg-global-shared-view buckets)))
+          (array-ref buckets 0))])))
 
 ;; (a) A read-only loop invariant gets ONE loop row anchored in the preheader.
 (cfg
@@ -5678,14 +5624,13 @@
       i64)
     (let
       [ranges : (__tl_dyn-array i64) (__tl_make-array i64 6)]
-      (begin
-        (set! (array-ref ranges 0) 3)
-        (set! (array-ref ranges 1) (- 0 1))
-        (set! (array-ref ranges 2) header-lo)
-        (set! (array-ref ranges 3) header-hi)
-        (set! (array-ref ranges 4) 1)
-        (set! (array-ref ranges 5) 1)
-        ranges))))
+      (set! (array-ref ranges 0) 3)
+      (set! (array-ref ranges 1) (- 0 1))
+      (set! (array-ref ranges 2) header-lo)
+      (set! (array-ref ranges 3) header-hi)
+      (set! (array-ref ranges 4) 1)
+      (set! (array-ref ranges 5) 1)
+      ranges)))
 
 (cfg
   test
@@ -5693,40 +5638,37 @@
       i64)
     (let
       [depths : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-      (begin
-        (set! (array-ref depths 0) 0)
-        (set! (array-ref depths 1) header-depth)
-        (set! (array-ref depths 2) 0)
-        depths))))
+      (set! (array-ref depths 0) 0)
+      (set! (array-ref depths 1) header-depth)
+      (set! (array-ref depths 2) 0)
+      depths)))
 
 (cfg
   test
   (define (compiler-reg-loop-region-rotated-ranges) : (__tl_dyn-array i64)
     (let
       [ranges : (__tl_dyn-array i64) (__tl_make-array i64 6)]
-      (begin
-        ;; block 0: the preheader, no predecessors
-        (set! (array-ref ranges 0) 3)
-        (set! (array-ref ranges 1) (- 0 1))
-        ;; block 1: the body, entered only from the header at block 2
-        (set! (array-ref ranges 2) 2)
-        (set! (array-ref ranges 3) 2)
-        ;; block 2: the header, entered from the preheader and over the back
-        ;; edge from the body
-        (set! (array-ref ranges 4) 0)
-        (set! (array-ref ranges 5) 1)
-        ranges))))
+      ;; block 0: the preheader, no predecessors
+      (set! (array-ref ranges 0) 3)
+      (set! (array-ref ranges 1) (- 0 1))
+      ;; block 1: the body, entered only from the header at block 2
+      (set! (array-ref ranges 2) 2)
+      (set! (array-ref ranges 3) 2)
+      ;; block 2: the header, entered from the preheader and over the back
+      ;; edge from the body
+      (set! (array-ref ranges 4) 0)
+      (set! (array-ref ranges 5) 1)
+      ranges)))
 
 (cfg
   test
   (define (compiler-reg-loop-region-rotated-depths) : (__tl_dyn-array i64)
     (let
       [depths : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-      (begin
-        (set! (array-ref depths 0) 0)
-        (set! (array-ref depths 1) 1)
-        (set! (array-ref depths 2) 1)
-        depths))))
+      (set! (array-ref depths 0) 0)
+      (set! (array-ref depths 1) 1)
+      (set! (array-ref depths 2) 1)
+      depths)))
 
 ;; (e) Single-entry admission. The header may be entered ONLY from its layout
 ;; predecessor and from inside the region; any other edge in means the anchor
@@ -5849,48 +5791,47 @@
           0
           3
           (reg.compiler-reg-call-region-kind-loop))]
-      (begin
-        (reg.compiler-reg-fill-i64-array (&mut ends) 1073741824)
-        (and
-          ;; one use, one entry mov: no static win, so the block row is refused
-          (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
-          ;; The same shape as a loop row pays weight(1) * T - 1 reloads. The
-          ;; trip factor entered here with P11b phase 3: admission proves the
-          ;; anchor block is the loop's sole preheader, so the body sits exactly
-          ;; one loop level below the entry mov and the ladder's trip-2
-          ;; assumption is the wrong absolute frequency. Block rows are NOT
-          ;; amplified -- both of their sides sit at the same point.
-          (reg.compiler-reg-call-region-stat-eligible? one-use-loop ends)
-          (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 15)
-          ;; depth 3, two uses: 2 * 8 * T - 1
-          (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 127)
-          ;; the block row's score is untouched by the trip factor
-          (=
-            (reg.compiler-reg-call-region-stat-score
-              (CompilerRegCallRegionStat
-                0
-                4
-                10
-                3
-                0
-                0
-                1
-                (reg.compiler-reg-call-region-kind-block))
-              ends)
-            4)
-          ;; a loop row outside any loop is not a loop row
-          (not
-            (reg.compiler-reg-call-region-stat-eligible?
-              (CompilerRegCallRegionStat
-                0
-                4
-                10
-                1
-                0
-                0
-                0
-                (reg.compiler-reg-call-region-kind-loop))
-              ends)))))))
+      (reg.compiler-reg-fill-i64-array (&mut ends) 1073741824)
+      (and
+        ;; one use, one entry mov: no static win, so the block row is refused
+        (not (reg.compiler-reg-call-region-stat-eligible? one-use-block ends))
+        ;; The same shape as a loop row pays weight(1) * T - 1 reloads. The
+        ;; trip factor entered here with P11b phase 3: admission proves the
+        ;; anchor block is the loop's sole preheader, so the body sits exactly
+        ;; one loop level below the entry mov and the ladder's trip-2
+        ;; assumption is the wrong absolute frequency. Block rows are NOT
+        ;; amplified -- both of their sides sit at the same point.
+        (reg.compiler-reg-call-region-stat-eligible? one-use-loop ends)
+        (= (reg.compiler-reg-call-region-stat-score one-use-loop ends) 15)
+        ;; depth 3, two uses: 2 * 8 * T - 1
+        (= (reg.compiler-reg-call-region-stat-score deep-loop ends) 127)
+        ;; the block row's score is untouched by the trip factor
+        (=
+          (reg.compiler-reg-call-region-stat-score
+            (CompilerRegCallRegionStat
+              0
+              4
+              10
+              3
+              0
+              0
+              1
+              (reg.compiler-reg-call-region-kind-block))
+            ends)
+          4)
+        ;; a loop row outside any loop is not a loop row
+        (not
+          (reg.compiler-reg-call-region-stat-eligible?
+            (CompilerRegCallRegionStat
+              0
+              4
+              10
+              1
+              0
+              0
+              0
+              (reg.compiler-reg-call-region-kind-loop))
+            ends))))))
 
 ;; Picked-row exclusion is an OVERLAP test now: a loop row spans the block rows
 ;; nested inside it, and one root can only hold one shadow at a time.
@@ -5900,20 +5841,19 @@
     (let
       [lo : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       [hi : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-      (begin
-        (set! (array-ref lo 0) 100)
-        (set! (array-ref hi 0) 200)
-        (and
-          ;; strictly inside
-          (reg.compiler-reg-call-region-picked? lo hi 1 120 140)
-          ;; touching at either end still overlaps
-          (reg.compiler-reg-call-region-picked? lo hi 1 200 260)
-          (reg.compiler-reg-call-region-picked? lo hi 1 40 100)
-          ;; disjoint on both sides
-          (not (reg.compiler-reg-call-region-picked? lo hi 1 40 98))
-          (not (reg.compiler-reg-call-region-picked? lo hi 1 202 260))
-          ;; nothing picked yet
-          (not (reg.compiler-reg-call-region-picked? lo hi 0 120 140)))))))
+      (set! (array-ref lo 0) 100)
+      (set! (array-ref hi 0) 200)
+      (and
+        ;; strictly inside
+        (reg.compiler-reg-call-region-picked? lo hi 1 120 140)
+        ;; touching at either end still overlaps
+        (reg.compiler-reg-call-region-picked? lo hi 1 200 260)
+        (reg.compiler-reg-call-region-picked? lo hi 1 40 100)
+        ;; disjoint on both sides
+        (not (reg.compiler-reg-call-region-picked? lo hi 1 40 98))
+        (not (reg.compiler-reg-call-region-picked? lo hi 1 202 260))
+        ;; nothing picked yet
+        (not (reg.compiler-reg-call-region-picked? lo hi 0 120 140))))))
 
 ;; ---------------------------------------------------------------------------
 ;; P11b phase 3: loop-scope EVICTION of a parked occupant.
@@ -5979,12 +5919,10 @@
     (let
       [parents : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       [i : i64 0]
-      (begin
-        (while (< i 7)
-          (begin
-            (set! (array-ref parents i) i)
-            (set! i (+ i 1))))
-        parents))))
+      (while (< i 7)
+        (set! (array-ref parents i) i)
+        (set! i (+ i 1)))
+      parents)))
 
 ;; v3 spans the region and is read after it (`victim-end` 18); v5 is defined and
 ;; consumed strictly inside the loop, which is what a BUSY co-occupant looks
@@ -5995,17 +5933,16 @@
     (let
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       [ends : (__tl_dyn-array i64) (__tl_make-array i64 7)]
-      (begin
-        (reg.compiler-reg-fill-i64-array (&mut starts) (- 0 1))
-        (reg.compiler-reg-fill-i64-array (&mut ends) (- 0 1))
-        (set! (array-ref starts 3) 2)
-        (set! (array-ref ends 3) victim-end)
-        (set! (array-ref starts 5) 12)
-        (set! (array-ref ends 5) 14)
-        (reg.CompilerRegIntervalIndex
-          starts
-          ends
-          (__tl_make-array reg.CompilerRegIntervalSeq 0))))))
+      (reg.compiler-reg-fill-i64-array (&mut starts) (- 0 1))
+      (reg.compiler-reg-fill-i64-array (&mut ends) (- 0 1))
+      (set! (array-ref starts 3) 2)
+      (set! (array-ref ends 3) victim-end)
+      (set! (array-ref starts 5) 12)
+      (set! (array-ref ends 5) 14)
+      (reg.CompilerRegIntervalIndex
+        starts
+        ends
+        (__tl_make-array reg.CompilerRegIntervalSeq 0)))))
 
 (cfg
   test
@@ -6048,49 +5985,48 @@
           [metrics : profile_state.CompilerProfileMetrics
             (profile_state.compiler-profile-state-metrics
               (profile_state.compiler-profile-state-new))]
-          (begin
-            (set! (array-ref occ-var 0) 3)
-            (set! (array-ref occ-reg 0) 0)
-            (set!
-              (array-ref occ-kind 0)
-              (reg.compiler-reg-call-region-occ-kind-scalar))
-            (set! (array-ref occ-var 1) 5)
-            (set! (array-ref occ-reg 1) 1)
-            (set!
-              (array-ref occ-kind 1)
-              (reg.compiler-reg-call-region-occ-kind-scalar))
-            (set! (array-ref weights 3) 5)
-            (set! (array-ref weights 5) 9)
-            (when already-evicted? (set! (array-ref evicted 3) 1))
-            (when coalesced? (set! (array-ref parents 5) 3))
-            (let
-              [blocks-copy (owned_view.compiler-owned-shared-view blocks)]
-              [function-loop-depths
-                (reg.compiler-reg-function-loop-depths blocks)]
-              [evict-test-index (compiler-reg-evict-test-index victim-end)]
-              [evict-test-assignments (compiler-reg-evict-test-assignments)]
-              [evict-test-pool (compiler-reg-evict-test-pool)]
-              (reg.compiler-reg-call-region-evict-try
-                blocks-copy
-                function-loop-depths
-                weights
-                evict-test-index
-                parents
-                evict-test-assignments
-                evict-test-pool
-                2
-                occ-var
-                occ-reg
-                occ-kind
-                occupants
-                evicted
-                0
-                uses
-                6
-                16
-                7
-                (&mut out-points)
-                (&mut out-saves)))))])))
+          (set! (array-ref occ-var 0) 3)
+          (set! (array-ref occ-reg 0) 0)
+          (set!
+            (array-ref occ-kind 0)
+            (reg.compiler-reg-call-region-occ-kind-scalar))
+          (set! (array-ref occ-var 1) 5)
+          (set! (array-ref occ-reg 1) 1)
+          (set!
+            (array-ref occ-kind 1)
+            (reg.compiler-reg-call-region-occ-kind-scalar))
+          (set! (array-ref weights 3) 5)
+          (set! (array-ref weights 5) 9)
+          (when already-evicted? (set! (array-ref evicted 3) 1))
+          (when coalesced? (set! (array-ref parents 5) 3))
+          (let
+            [blocks-copy (owned_view.compiler-owned-shared-view blocks)]
+            [function-loop-depths
+              (reg.compiler-reg-function-loop-depths blocks)]
+            [evict-test-index (compiler-reg-evict-test-index victim-end)]
+            [evict-test-assignments (compiler-reg-evict-test-assignments)]
+            [evict-test-pool (compiler-reg-evict-test-pool)]
+            (reg.compiler-reg-call-region-evict-try
+              blocks-copy
+              function-loop-depths
+              weights
+              evict-test-index
+              parents
+              evict-test-assignments
+              evict-test-pool
+              2
+              occ-var
+              occ-reg
+              occ-kind
+              occupants
+              evicted
+              0
+              uses
+              6
+              16
+              7
+              (&mut out-points)
+              (&mut out-saves))))])))
 
 (cfg
   test
@@ -6300,22 +6236,67 @@
       [index : reg.CompilerRegIntervalIndex (compiler-reg-evict-test-index 18)]
       [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
       [class-parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
-      (begin
-        (set! (array-ref occ-var 0) 3)
-        (set! (array-ref occ-reg 0) 0)
-        (set!
-          (array-ref occ-kind 0)
-          (reg.compiler-reg-call-region-occ-kind-scalar))
-        (set! (array-ref occ-var 1) 5)
-        (set! (array-ref occ-reg 1) 0)
-        (set!
-          (array-ref occ-kind 1)
-          (reg.compiler-reg-call-region-occ-kind-scalar))
-        ;; v5 joins v3's storage class
-        (set! (array-ref class-parents 5) 3)
-        (and
-          ;; one entry, one value
-          (=
+      (set! (array-ref occ-var 0) 3)
+      (set! (array-ref occ-reg 0) 0)
+      (set!
+        (array-ref occ-kind 0)
+        (reg.compiler-reg-call-region-occ-kind-scalar))
+      (set! (array-ref occ-var 1) 5)
+      (set! (array-ref occ-reg 1) 0)
+      (set!
+        (array-ref occ-kind 1)
+        (reg.compiler-reg-call-region-occ-kind-scalar))
+      ;; v5 joins v3's storage class
+      (set! (array-ref class-parents 5) 3)
+      (and
+        ;; one entry, one value
+        (=
+          (reg.compiler-reg-call-region-evict-sole-occupant
+            occ-var
+            occ-reg
+            occ-kind
+            1
+            index
+            parents
+            7
+            0
+            6
+            16)
+          3)
+        ;; two entries, two distinct classes -> not lendable
+        (<
+          (reg.compiler-reg-call-region-evict-sole-occupant
+            occ-var
+            occ-reg
+            occ-kind
+            2
+            index
+            parents
+            7
+            0
+            6
+            16)
+          0)
+        ;; the same two entries as ONE storage class -> lendable again
+        (=
+          (reg.compiler-reg-call-region-evict-sole-occupant
+            occ-var
+            occ-reg
+            occ-kind
+            2
+            index
+            class-parents
+            7
+            0
+            6
+            16)
+          3)
+        ;; an accepted shadow already owns the register
+        (begin
+          (set!
+            (array-ref occ-kind 0)
+            (reg.compiler-reg-call-region-occ-kind-shadow))
+          (<
             (reg.compiler-reg-call-region-evict-sole-occupant
               occ-var
               occ-reg
@@ -6327,71 +6308,25 @@
               0
               6
               16)
-            3)
-          ;; two entries, two distinct classes -> not lendable
+            0))
+        ;; ... and a register pair half is not a lendable scalar either
+        (begin
+          (set!
+            (array-ref occ-kind 0)
+            (reg.compiler-reg-call-region-occ-kind-pair))
           (<
             (reg.compiler-reg-call-region-evict-sole-occupant
               occ-var
               occ-reg
               occ-kind
-              2
+              1
               index
               parents
               7
               0
               6
               16)
-            0)
-          ;; the same two entries as ONE storage class -> lendable again
-          (=
-            (reg.compiler-reg-call-region-evict-sole-occupant
-              occ-var
-              occ-reg
-              occ-kind
-              2
-              index
-              class-parents
-              7
-              0
-              6
-              16)
-            3)
-          ;; an accepted shadow already owns the register
-          (begin
-            (set!
-              (array-ref occ-kind 0)
-              (reg.compiler-reg-call-region-occ-kind-shadow))
-            (<
-              (reg.compiler-reg-call-region-evict-sole-occupant
-                occ-var
-                occ-reg
-                occ-kind
-                1
-                index
-                parents
-                7
-                0
-                6
-                16)
-              0))
-          ;; ... and a register pair half is not a lendable scalar either
-          (begin
-            (set!
-              (array-ref occ-kind 0)
-              (reg.compiler-reg-call-region-occ-kind-pair))
-            (<
-              (reg.compiler-reg-call-region-evict-sole-occupant
-                occ-var
-                occ-reg
-                occ-kind
-                1
-                index
-                parents
-                7
-                0
-                6
-                16)
-              0)))))))
+            0))))))
 
 ;; A sibling's read is the class's read: with v5 (used inside the loop) coalesced
 ;; onto v3, v3 is no longer parked and the verifier says so. Checking the root
@@ -6411,43 +6346,42 @@
           [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
           [class-parents : (__tl_dyn-array i64)
             (compiler-reg-evict-test-parents)]
-          (begin
-            (set! (array-ref class-parents 5) 3)
-            (and
-              ;; the anchor's point is the preheader's terminator
-              (= (- (array-ref points 1) 2) 6)
-              (= (- (array-ref points 2) 2) 16)
-              ;; v3 alone: parked
-              (not
-                (reg.compiler-reg-call-region-evict-var-mentioned?
-                  (reg.compiler-reg-global-shared-view bslots)
-                  (reg.compiler-reg-global-shared-view points)
-                  0
-                  1
-                  6
-                  parents
-                  7
-                  3))
-              ;; v3 with v5 in its class: busy
+          (set! (array-ref class-parents 5) 3)
+          (and
+            ;; the anchor's point is the preheader's terminator
+            (= (- (array-ref points 1) 2) 6)
+            (= (- (array-ref points 2) 2) 16)
+            ;; v3 alone: parked
+            (not
               (reg.compiler-reg-call-region-evict-var-mentioned?
                 (reg.compiler-reg-global-shared-view bslots)
                 (reg.compiler-reg-global-shared-view points)
                 0
                 1
                 6
-                class-parents
-                7
-                3)
-              ;; v0 is read three times in the loop under any parenting
-              (reg.compiler-reg-call-region-evict-var-mentioned?
-                bslots
-                points
-                0
-                1
-                6
                 parents
                 7
-                0))))])))
+                3))
+            ;; v3 with v5 in its class: busy
+            (reg.compiler-reg-call-region-evict-var-mentioned?
+              (reg.compiler-reg-global-shared-view bslots)
+              (reg.compiler-reg-global-shared-view points)
+              0
+              1
+              6
+              class-parents
+              7
+              3)
+            ;; v0 is read three times in the loop under any parenting
+            (reg.compiler-reg-call-region-evict-var-mentioned?
+              bslots
+              points
+              0
+              1
+              6
+              parents
+              7
+              0)))])))
 
 ;; (g) PLAN SHAPE. The rewrite realizes exactly three movs for the accepted
 ;; eviction above: the victim's store right after its definition, the shadow's
@@ -6911,20 +6845,19 @@
         (profile_state.compiler-profile-state-new)]
       [metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics profile)]
-      (begin
-        (reg.compiler-reg-liveness-census-reset!
-          (owned_view.compiler-owned-shared-view metrics))
-        (let
-          [_handle : reg.CompilerRegLivenessHandle
-            (reg.compiler-reg-liveness-handle-make
-              func
-              true
-              (owned_view.compiler-owned-shared-view metrics))]
-          (and
-            (= (compiler-reg-liveness-census-baseline-count metrics) 1)
-            ;; The linear fixture is phi-free, so the edge-precise analysis is
-            ;; the baseline itself and no second fixpoint is computed.
-            (= (compiler-reg-liveness-census-edge-precise-count metrics) 0)))))))
+      (reg.compiler-reg-liveness-census-reset!
+        (owned_view.compiler-owned-shared-view metrics))
+      (let
+        [_handle : reg.CompilerRegLivenessHandle
+          (reg.compiler-reg-liveness-handle-make
+            func
+            true
+            (owned_view.compiler-owned-shared-view metrics))]
+        (and
+          (= (compiler-reg-liveness-census-baseline-count metrics) 1)
+          ;; The linear fixture is phi-free, so the edge-precise analysis is
+          ;; the baseline itself and no second fixpoint is computed.
+          (= (compiler-reg-liveness-census-edge-precise-count metrics) 0))))))
 
 (cfg
   test
@@ -6947,19 +6880,18 @@
         (profile_state.compiler-profile-state-new)]
       [metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics profile)]
-      (begin
-        (reg.compiler-reg-liveness-census-reset!
-          (owned_view.compiler-owned-shared-view metrics))
-        (let
-          [_handle : reg.CompilerRegLivenessHandle
-            (reg.compiler-reg-liveness-handle-make
-              (compiler-reg-liveness-handle-phi-fixture)
-              true
-              (owned_view.compiler-owned-shared-view metrics))]
-          (and
-            (= (compiler-reg-liveness-census-baseline-count metrics) 1)
-            ;; Phi present: the second, edge-precise fixpoint is computed.
-            (= (compiler-reg-liveness-census-edge-precise-count metrics) 1)))))))
+      (reg.compiler-reg-liveness-census-reset!
+        (owned_view.compiler-owned-shared-view metrics))
+      (let
+        [_handle : reg.CompilerRegLivenessHandle
+          (reg.compiler-reg-liveness-handle-make
+            (compiler-reg-liveness-handle-phi-fixture)
+            true
+            (owned_view.compiler-owned-shared-view metrics))]
+        (and
+          (= (compiler-reg-liveness-census-baseline-count metrics) 1)
+          ;; Phi present: the second, edge-precise fixpoint is computed.
+          (= (compiler-reg-liveness-census-edge-precise-count metrics) 1))))))
 
 (cfg
   test
@@ -6974,41 +6906,39 @@
         (profile_state.compiler-profile-state-metrics left-profile)]
       [right : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics right-profile)]
-      (begin
+      (reg.compiler-reg-liveness-census-reset!
+        (owned_view.compiler-owned-shared-view left))
+      (reg.compiler-reg-liveness-census-reset!
+        (owned_view.compiler-owned-shared-view right))
+      (let
+        [_left : reg.CompilerRegLivenessHandle
+          (reg.compiler-reg-liveness-handle-make
+            (compiler-reg-liveness-handle-phi-fixture)
+            true
+            (owned_view.compiler-owned-shared-view left))]
+        [_right : reg.CompilerRegLivenessHandle
+          (reg.compiler-reg-liveness-handle-make
+            (compiler-reg-linear-jump-function)
+            true
+            (owned_view.compiler-owned-shared-view right))]
+        (test.assert-i64-eq
+          (compiler-reg-liveness-census-edge-precise-count left)
+          1
+          "left owner records edge-precise liveness")
+        (test.assert-i64-eq
+          (compiler-reg-liveness-census-edge-precise-count right)
+          0
+          "right owner retains its serial result")
         (reg.compiler-reg-liveness-census-reset!
           (owned_view.compiler-owned-shared-view left))
-        (reg.compiler-reg-liveness-census-reset!
-          (owned_view.compiler-owned-shared-view right))
-        (let
-          [_left : reg.CompilerRegLivenessHandle
-            (reg.compiler-reg-liveness-handle-make
-              (compiler-reg-liveness-handle-phi-fixture)
-              true
-              (owned_view.compiler-owned-shared-view left))]
-          [_right : reg.CompilerRegLivenessHandle
-            (reg.compiler-reg-liveness-handle-make
-              (compiler-reg-linear-jump-function)
-              true
-              (owned_view.compiler-owned-shared-view right))]
-          (begin
-            (test.assert-i64-eq
-              (compiler-reg-liveness-census-edge-precise-count left)
-              1
-              "left owner records edge-precise liveness")
-            (test.assert-i64-eq
-              (compiler-reg-liveness-census-edge-precise-count right)
-              0
-              "right owner retains its serial result")
-            (reg.compiler-reg-liveness-census-reset!
-              (owned_view.compiler-owned-shared-view left))
-            (test.assert-i64-eq
-              (compiler-reg-liveness-census-baseline-count left)
-              0
-              "left reset clears only left baseline")
-            (test.assert-i64-eq
-              (compiler-reg-liveness-census-baseline-count right)
-              1
-              "left reset leaves right baseline intact")))))))
+        (test.assert-i64-eq
+          (compiler-reg-liveness-census-baseline-count left)
+          0
+          "left reset clears only left baseline")
+        (test.assert-i64-eq
+          (compiler-reg-liveness-census-baseline-count right)
+          1
+          "left reset leaves right baseline intact")))))
 
 (cfg
   test
@@ -7149,295 +7079,291 @@
       [nonoccupying : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-assignment-table-make vars)]
       [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-      (begin
-        (reg.compiler-reg-fill-i64-array
-          (&mut shadow-regs)
-          cabi.compiler-reg-id-invalid)
-        (set! (array-ref members 0) 0)
-        ;; Greedy worklist keys, not bare weights: the pair pass reads them
-        ;; through compiler-reg-group-pair-weight, which strips the priority band
-        ;; (compiler-reg-priority-keys!). Weights 1 and 10 on that scale.
-        (reg.compiler-reg-fill-i64-array
-          (&mut weights)
-          (reg.compiler-reg-priority-band-span))
-        (set!
-          (array-ref weights 0)
-          (* 10 (reg.compiler-reg-priority-band-span)))
-        (let
-          [v : i64 0]
-          (while (< v vars)
-            (begin
-              (set! (array-ref parents v) v)
-              (set! (array-ref poisoned v) false)
-              (set! v (+ v 1)))))
-        (set! (array-ref shadow-regs 1) cabi.compiler-reg-id-r8)
-        (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
-        (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
-        (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
-        (let
-          [_nonoccupying-spill : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-assignment-table-insert
-              nonoccupying
-              1
-              (Spill (reg.compiler-reg-stack-slot-offset 1)))]
-          [_nonoccupying-pair : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-assignment-table-insert
-              nonoccupying
-              2
-              (RegisterPair cabi.compiler-reg-id-r12 cabi.compiler-reg-id-r13))]
-          [_caller-occupied-r8 : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-assignment-table-insert
-              caller-occupied
-              1
-              (Register cabi.compiler-reg-id-r8))]
-          [_caller-occupied-r12 : reg.CompilerRegAssignmentTable
-            (reg.compiler-reg-assignment-table-insert
-              caller-occupied
-              6
-              (Register cabi.compiler-reg-id-r12))]
-          [empty-split : reg.CompilerRegCallSplit
-            (reg.compiler-reg-call-split-empty)]
-          [shadow-split : reg.CompilerRegCallSplit
-            (CompilerRegCallSplit
-              (live.compiler-live-set-empty)
-              shadow-regs
-              (reg.compiler-reg-call-region-seq-push
-                (reg.compiler-reg-call-region-seq-empty)
-                (reg.CompilerRegCallRegion 1 0 10 0 0))
-              (reg.compiler-reg-call-evict-seq-empty))]
-          [phi-excluded : live.CompilerLiveI64Set
-            (let
-              [set-empty (live.compiler-live-set-empty)]
-              [phi (irt.instr "%0 = phi  : Pair")]
-              [set1 (live.compiler-live-set1 0)]
-              (reg.compiler-reg-group-pair-excluded-instr set-empty phi set1))]
-          [call-caller-unsafe : live.CompilerLiveI64Set
-            (reg.compiler-reg-group-pair-caller-unsafe-instr
-              (live.compiler-live-set-empty)
-              (irt.instr "%1 = call callee(%0) : i64"))]
-          [indirect-call-caller-unsafe : live.CompilerLiveI64Set
-            (reg.compiler-reg-group-pair-caller-unsafe-instr
-              (live.compiler-live-set-empty)
-              (irt.instr "%1 = call* %2(%0) : i64"))]
-          [indirect-c-call-caller-unsafe : live.CompilerLiveI64Set
-            (reg.compiler-reg-group-pair-caller-unsafe-instr
-              (live.compiler-live-set-empty)
-              (irt.instr "%1 = call_c* %2(%0) : i64"))]
-          [pair-conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [pair-conflict-count : i64
-            (reg.compiler-reg-group-pair-conflict-vars!
-              interval-index
-              members
-              1
+      (reg.compiler-reg-fill-i64-array
+        (&mut shadow-regs)
+        cabi.compiler-reg-id-invalid)
+      (set! (array-ref members 0) 0)
+      ;; Greedy worklist keys, not bare weights: the pair pass reads them
+      ;; through compiler-reg-group-pair-weight, which strips the priority band
+      ;; (compiler-reg-priority-keys!). Weights 1 and 10 on that scale.
+      (reg.compiler-reg-fill-i64-array
+        (&mut weights)
+        (reg.compiler-reg-priority-band-span))
+      (set! (array-ref weights 0) (* 10 (reg.compiler-reg-priority-band-span)))
+      (let
+        [v : i64 0]
+        (while (< v vars)
+          (set! (array-ref parents v) v)
+          (set! (array-ref poisoned v) false)
+          (set! v (+ v 1))))
+      (set! (array-ref shadow-regs 1) cabi.compiler-reg-id-r8)
+      (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
+      (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
+      (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
+      (let
+        [_nonoccupying-spill : reg.CompilerRegAssignmentTable
+          (reg.compiler-reg-assignment-table-insert
+            nonoccupying
+            1
+            (Spill (reg.compiler-reg-stack-slot-offset 1)))]
+        [_nonoccupying-pair : reg.CompilerRegAssignmentTable
+          (reg.compiler-reg-assignment-table-insert
+            nonoccupying
+            2
+            (RegisterPair cabi.compiler-reg-id-r12 cabi.compiler-reg-id-r13))]
+        [_caller-occupied-r8 : reg.CompilerRegAssignmentTable
+          (reg.compiler-reg-assignment-table-insert
+            caller-occupied
+            1
+            (Register cabi.compiler-reg-id-r8))]
+        [_caller-occupied-r12 : reg.CompilerRegAssignmentTable
+          (reg.compiler-reg-assignment-table-insert
+            caller-occupied
+            6
+            (Register cabi.compiler-reg-id-r12))]
+        [empty-split : reg.CompilerRegCallSplit
+          (reg.compiler-reg-call-split-empty)]
+        [shadow-split : reg.CompilerRegCallSplit
+          (CompilerRegCallSplit
+            (live.compiler-live-set-empty)
+            shadow-regs
+            (reg.compiler-reg-call-region-seq-push
+              (reg.compiler-reg-call-region-seq-empty)
+              (reg.CompilerRegCallRegion 1 0 10 0 0))
+            (reg.compiler-reg-call-evict-seq-empty))]
+        [phi-excluded : live.CompilerLiveI64Set
+          (let
+            [set-empty (live.compiler-live-set-empty)]
+            [phi (irt.instr "%0 = phi  : Pair")]
+            [set1 (live.compiler-live-set1 0)]
+            (reg.compiler-reg-group-pair-excluded-instr set-empty phi set1))]
+        [call-caller-unsafe : live.CompilerLiveI64Set
+          (reg.compiler-reg-group-pair-caller-unsafe-instr
+            (live.compiler-live-set-empty)
+            (irt.instr "%1 = call callee(%0) : i64"))]
+        [indirect-call-caller-unsafe : live.CompilerLiveI64Set
+          (reg.compiler-reg-group-pair-caller-unsafe-instr
+            (live.compiler-live-set-empty)
+            (irt.instr "%1 = call* %2(%0) : i64"))]
+        [indirect-c-call-caller-unsafe : live.CompilerLiveI64Set
+          (reg.compiler-reg-group-pair-caller-unsafe-instr
+            (live.compiler-live-set-empty)
+            (irt.instr "%1 = call_c* %2(%0) : i64"))]
+        [pair-conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [pair-conflict-count : i64
+          (reg.compiler-reg-group-pair-conflict-vars!
+            interval-index
+            members
+            1
+            vars
+            (&mut pair-conflicts))]
+        [shadow-cost : i64
+          (reg.compiler-reg-group-pair-component-register-cost
+            assignments
+            interval-index
+            members
+            1
+            pair-conflicts
+            pair-conflict-count
+            weights
+            10
+            true
+            shadow-split
+            cabi.compiler-reg-id-r8)]
+        [free-r8-cost : i64
+          (reg.compiler-reg-group-pair-component-register-cost
+            nonoccupying
+            interval-index
+            members
+            1
+            pair-conflicts
+            pair-conflict-count
+            weights
+            10
+            true
+            (reg.compiler-reg-global-shared-view empty-split)
+            cabi.compiler-reg-id-r8)]
+        [occupied-r8-cost : i64
+          (reg.compiler-reg-group-pair-component-register-cost
+            caller-occupied
+            interval-index
+            members
+            1
+            pair-conflicts
+            pair-conflict-count
+            weights
+            10
+            true
+            (reg.compiler-reg-global-shared-view empty-split)
+            cabi.compiler-reg-id-r8)]
+        [csr-evict-cost : i64
+          (reg.compiler-reg-group-pair-component-register-cost
+            assignments
+            interval-index
+            members
+            1
+            pair-conflicts
+            pair-conflict-count
+            weights
+            10
+            false
+            (reg.compiler-reg-global-shared-view empty-split)
+            cabi.compiler-reg-id-r12)]
+        [blocked-r12-cost : i64
+          (reg.compiler-reg-group-pair-component-register-cost
+            nonoccupying
+            interval-index
+            members
+            1
+            pair-conflicts
+            pair-conflict-count
+            weights
+            10
+            false
+            (reg.compiler-reg-global-shared-view empty-split)
+            cabi.compiler-reg-id-r12)]
+        [_caller-placed : unit
+          (let
+            [ast-node-pool-reader-type-segment-bases
+              (ast.ast-node-pool-reader-type-segment-bases)]
+            [coalesce-test-i64-types
+              (compiler-reg-coalesce-test-i64-types vars)]
+            [set1 (live.compiler-live-set1 0)]
+            [set-empty (live.compiler-live-set-empty)]
+            [set-empty-b (live.compiler-live-set-empty)]
+            [interval-index-copy
+              (reg.compiler-reg-global-shared-view interval-index)]
+            [caller-occupied-copy caller-occupied]
+            [set-empty-2 (live.compiler-live-set-empty)]
+            (reg.compiler-reg-assign-group-pair-component
+              ast-node-pool-reader-type-segment-bases
+              0
               vars
-              (&mut pair-conflicts))]
-          [shadow-cost : i64
-            (reg.compiler-reg-group-pair-component-register-cost
-              assignments
-              interval-index
-              members
-              1
-              pair-conflicts
-              pair-conflict-count
+              coalesce-test-i64-types
+              set1
+              set-empty
+              set-empty-b
+              interval-index.starts
+              interval-index.ends
+              poisoned
+              (&mut parents)
+              (&mut members)
+              interval-index-copy
+              caller-occupied-copy
               weights
-              10
-              true
-              shadow-split
-              cabi.compiler-reg-id-r8)]
-          [free-r8-cost : i64
-            (reg.compiler-reg-group-pair-component-register-cost
-              nonoccupying
-              interval-index
-              members
-              1
-              pair-conflicts
-              pair-conflict-count
+              set-empty-2
+              (reg.compiler-reg-global-shared-view empty-split)))]
+        [_csr-placed : unit
+          (let
+            [ast-node-pool-reader-type-segment-bases
+              (ast.ast-node-pool-reader-type-segment-bases)]
+            [coalesce-test-i64-types
+              (compiler-reg-coalesce-test-i64-types vars)]
+            [set1 (live.compiler-live-set1 0)]
+            [set-empty (live.compiler-live-set-empty)]
+            [set1-b (live.compiler-live-set1 0)]
+            [interval-index-copy
+              (reg.compiler-reg-global-shared-view interval-index)]
+            [csr-assignments-copy csr-assignments]
+            [set-empty-2 (live.compiler-live-set-empty)]
+            (reg.compiler-reg-assign-group-pair-component
+              ast-node-pool-reader-type-segment-bases
+              0
+              vars
+              coalesce-test-i64-types
+              set1
+              set-empty
+              set1-b
+              interval-index.starts
+              interval-index.ends
+              poisoned
+              (&mut parents)
+              (&mut members)
+              interval-index-copy
+              csr-assignments-copy
               weights
-              10
-              true
-              (reg.compiler-reg-global-shared-view empty-split)
-              cabi.compiler-reg-id-r8)]
-          [occupied-r8-cost : i64
-            (reg.compiler-reg-group-pair-component-register-cost
-              caller-occupied
-              interval-index
-              members
-              1
-              pair-conflicts
-              pair-conflict-count
+              set-empty-2
+              (reg.compiler-reg-global-shared-view empty-split)))]
+        [_placed : unit
+          (let
+            [ast-node-pool-reader-type-segment-bases
+              (ast.ast-node-pool-reader-type-segment-bases)]
+            [coalesce-test-i64-types
+              (compiler-reg-coalesce-test-i64-types vars)]
+            [set1 (live.compiler-live-set1 0)]
+            [set-empty (live.compiler-live-set-empty)]
+            [set-empty-b (live.compiler-live-set-empty)]
+            [interval-index-copy
+              (reg.compiler-reg-global-shared-view interval-index)]
+            [assignments-copy assignments]
+            [set-empty-2 (live.compiler-live-set-empty)]
+            (reg.compiler-reg-assign-group-pair-component
+              ast-node-pool-reader-type-segment-bases
+              0
+              vars
+              coalesce-test-i64-types
+              set1
+              set-empty
+              set-empty-b
+              interval-index.starts
+              interval-index.ends
+              poisoned
+              (&mut parents)
+              (&mut members)
+              interval-index-copy
+              assignments-copy
               weights
-              10
-              true
-              (reg.compiler-reg-global-shared-view empty-split)
-              cabi.compiler-reg-id-r8)]
-          [csr-evict-cost : i64
-            (reg.compiler-reg-group-pair-component-register-cost
-              assignments
-              interval-index
+              set-empty-2
+              empty-split))]
+        (and
+          (= (reg.compiler-reg-group-pair-candidate-count true) 7)
+          (=
+            (reg.compiler-reg-group-pair-candidate true 0)
+            cabi.compiler-reg-id-r8)
+          (=
+            (reg.compiler-reg-group-pair-candidate true 1)
+            cabi.compiler-reg-id-r9)
+          (=
+            (reg.compiler-reg-group-pair-candidate true 2)
+            cabi.compiler-reg-id-r12)
+          (= (reg.compiler-reg-group-pair-candidate-count false) 5)
+          (=
+            (reg.compiler-reg-group-pair-candidate false 0)
+            cabi.compiler-reg-id-r12)
+          (let
+            [interval-index-copy
+              (reg.compiler-reg-global-shared-view interval-index)]
+            [set-empty (live.compiler-live-set-empty)]
+            (reg.compiler-reg-group-pair-component-clobber-free?
+              interval-index-copy
+              set-empty
               members
-              1
-              pair-conflicts
-              pair-conflict-count
-              weights
-              10
-              false
-              (reg.compiler-reg-global-shared-view empty-split)
-              cabi.compiler-reg-id-r12)]
-          [blocked-r12-cost : i64
-            (reg.compiler-reg-group-pair-component-register-cost
-              nonoccupying
-              interval-index
-              members
-              1
-              pair-conflicts
-              pair-conflict-count
-              weights
-              10
-              false
-              (reg.compiler-reg-global-shared-view empty-split)
-              cabi.compiler-reg-id-r12)]
-          [_caller-placed : unit
+              1))
+          (not
             (let
-              [ast-node-pool-reader-type-segment-bases
-                (ast.ast-node-pool-reader-type-segment-bases)]
-              [coalesce-test-i64-types
-                (compiler-reg-coalesce-test-i64-types vars)]
-              [set1 (live.compiler-live-set1 0)]
-              [set-empty (live.compiler-live-set-empty)]
-              [set-empty-b (live.compiler-live-set-empty)]
-              [interval-index-copy
-                (reg.compiler-reg-global-shared-view interval-index)]
-              [caller-occupied-copy caller-occupied]
-              [set-empty-2 (live.compiler-live-set-empty)]
-              (reg.compiler-reg-assign-group-pair-component
-                ast-node-pool-reader-type-segment-bases
-                0
-                vars
-                coalesce-test-i64-types
-                set1
-                set-empty
-                set-empty-b
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                (&mut parents)
-                (&mut members)
-                interval-index-copy
-                caller-occupied-copy
-                weights
-                set-empty-2
-                (reg.compiler-reg-global-shared-view empty-split)))]
-          [_csr-placed : unit
-            (let
-              [ast-node-pool-reader-type-segment-bases
-                (ast.ast-node-pool-reader-type-segment-bases)]
-              [coalesce-test-i64-types
-                (compiler-reg-coalesce-test-i64-types vars)]
-              [set1 (live.compiler-live-set1 0)]
-              [set-empty (live.compiler-live-set-empty)]
-              [set1-b (live.compiler-live-set1 0)]
-              [interval-index-copy
-                (reg.compiler-reg-global-shared-view interval-index)]
-              [csr-assignments-copy csr-assignments]
-              [set-empty-2 (live.compiler-live-set-empty)]
-              (reg.compiler-reg-assign-group-pair-component
-                ast-node-pool-reader-type-segment-bases
-                0
-                vars
-                coalesce-test-i64-types
-                set1
-                set-empty
-                set1-b
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                (&mut parents)
-                (&mut members)
-                interval-index-copy
-                csr-assignments-copy
-                weights
-                set-empty-2
-                (reg.compiler-reg-global-shared-view empty-split)))]
-          [_placed : unit
-            (let
-              [ast-node-pool-reader-type-segment-bases
-                (ast.ast-node-pool-reader-type-segment-bases)]
-              [coalesce-test-i64-types
-                (compiler-reg-coalesce-test-i64-types vars)]
-              [set1 (live.compiler-live-set1 0)]
-              [set-empty (live.compiler-live-set-empty)]
-              [set-empty-b (live.compiler-live-set-empty)]
-              [interval-index-copy
-                (reg.compiler-reg-global-shared-view interval-index)]
-              [assignments-copy assignments]
-              [set-empty-2 (live.compiler-live-set-empty)]
-              (reg.compiler-reg-assign-group-pair-component
-                ast-node-pool-reader-type-segment-bases
-                0
-                vars
-                coalesce-test-i64-types
-                set1
-                set-empty
-                set-empty-b
-                interval-index.starts
-                interval-index.ends
-                poisoned
-                (&mut parents)
-                (&mut members)
-                interval-index-copy
-                assignments-copy
-                weights
-                set-empty-2
-                empty-split))]
-          (and
-            (= (reg.compiler-reg-group-pair-candidate-count true) 7)
-            (=
-              (reg.compiler-reg-group-pair-candidate true 0)
-              cabi.compiler-reg-id-r8)
-            (=
-              (reg.compiler-reg-group-pair-candidate true 1)
-              cabi.compiler-reg-id-r9)
-            (=
-              (reg.compiler-reg-group-pair-candidate true 2)
-              cabi.compiler-reg-id-r12)
-            (= (reg.compiler-reg-group-pair-candidate-count false) 5)
-            (=
-              (reg.compiler-reg-group-pair-candidate false 0)
-              cabi.compiler-reg-id-r12)
-            (let
-              [interval-index-copy
-                (reg.compiler-reg-global-shared-view interval-index)]
-              [set-empty (live.compiler-live-set-empty)]
+              [set1 (live.compiler-live-set1 5)]
               (reg.compiler-reg-group-pair-component-clobber-free?
-                interval-index-copy
-                set-empty
+                interval-index
+                set1
                 members
-                1))
-            (not
-              (let
-                [set1 (live.compiler-live-set1 5)]
-                (reg.compiler-reg-group-pair-component-clobber-free?
-                  interval-index
-                  set1
-                  members
-                  1)))
-            (not (live.compiler-live-set-contains? phi-excluded 0))
-            (live.compiler-live-set-contains? call-caller-unsafe 0)
-            (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
-            (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
-            (reg.compiler-reg-group-pair-component-contains?
-              call-caller-unsafe
-              members
-              1)
-            (= shadow-cost (- 0 1))
-            (= free-r8-cost 0)
-            (> occupied-r8-cost 0)
-            (> csr-evict-cost 0)
-            (= blocked-r12-cost (- 0 1))
-            (compiler-reg-group-pair-placement-shapes?
-              assignments
-              caller-occupied
-              csr-assignments)))))))
+                1)))
+          (not (live.compiler-live-set-contains? phi-excluded 0))
+          (live.compiler-live-set-contains? call-caller-unsafe 0)
+          (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
+          (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
+          (reg.compiler-reg-group-pair-component-contains?
+            call-caller-unsafe
+            members
+            1)
+          (= shadow-cost (- 0 1))
+          (= free-r8-cost 0)
+          (> occupied-r8-cost 0)
+          (> csr-evict-cost 0)
+          (= blocked-r12-cost (- 0 1))
+          (compiler-reg-group-pair-placement-shapes?
+            assignments
+            caller-occupied
+            csr-assignments))))))
 
 (cfg
   test
@@ -7472,118 +7398,116 @@
       [zero-right : reg.CompilerRegIntervalSeq
         (reg.compiler-reg-interval-seq-empty)]
       [i : i64 0]
-      (begin
-        ;; Cross several capacity boundaries in both construction directions.
-        (while (< i 10)
-          (begin
-            (set!
-              appended
-              (reg.compiler-reg-interval-seq-append
-                appended
-                (reg.CompilerRegInterval i (* i 2) (+ (* i 2) 1))))
-            (set!
-              prepended
-              (reg.compiler-reg-interval-seq-prepend
-                (reg.CompilerRegInterval i (* i 2) (+ (* i 2) 1))
-                prepended))
-            (set! i (+ i 1))))
+      ;; Cross several capacity boundaries in both construction directions.
+      (while (< i 10)
         (set!
+          appended
+          (reg.compiler-reg-interval-seq-append
+            appended
+            (reg.CompilerRegInterval i (* i 2) (+ (* i 2) 1))))
+        (set!
+          prepended
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval i (* i 2) (+ (* i 2) 1))
+            prepended))
+        (set! i (+ i 1)))
+      (set!
+        inserted
+        (reg.compiler-reg-interval-seq-append
           inserted
-          (reg.compiler-reg-interval-seq-append
-            inserted
-            (reg.CompilerRegInterval 0 0 1)))
-        (set!
+          (reg.CompilerRegInterval 0 0 1)))
+      (set!
+        inserted
+        (reg.compiler-reg-interval-seq-append
           inserted
-          (reg.compiler-reg-interval-seq-append
-            inserted
-            (reg.CompilerRegInterval 2 4 5)))
-        (set!
+          (reg.CompilerRegInterval 2 4 5)))
+      (set!
+        inserted
+        (reg.compiler-reg-interval-seq-append
           inserted
-          (reg.compiler-reg-interval-seq-append
-            inserted
-            (reg.CompilerRegInterval 1 2 3)))
-        (set! inserted (reg.compiler-reg-candidate-sort inserted))
-        (set!
+          (reg.CompilerRegInterval 1 2 3)))
+      (set! inserted (reg.compiler-reg-candidate-sort inserted))
+      (set!
+        separated-left
+        (reg.compiler-reg-interval-seq-append
           separated-left
-          (reg.compiler-reg-interval-seq-append
-            separated-left
-            (reg.CompilerRegInterval 0 1 2)))
-        (set!
+          (reg.CompilerRegInterval 0 1 2)))
+      (set!
+        separated-left
+        (reg.compiler-reg-interval-seq-append
           separated-left
-          (reg.compiler-reg-interval-seq-append
-            separated-left
-            (reg.CompilerRegInterval 0 6 8)))
-        (set!
+          (reg.CompilerRegInterval 0 6 8)))
+      (set!
+        separated-left
+        (reg.compiler-reg-interval-seq-append
           separated-left
-          (reg.compiler-reg-interval-seq-append
-            separated-left
-            (reg.CompilerRegInterval 0 12 15)))
-        (set!
+          (reg.CompilerRegInterval 0 12 15)))
+      (set!
+        separated-right
+        (reg.compiler-reg-interval-seq-append
           separated-right
-          (reg.compiler-reg-interval-seq-append
-            separated-right
-            (reg.CompilerRegInterval 1 2 4)))
-        (set!
+          (reg.CompilerRegInterval 1 2 4)))
+      (set!
+        separated-right
+        (reg.compiler-reg-interval-seq-append
           separated-right
-          (reg.compiler-reg-interval-seq-append
-            separated-right
-            (reg.CompilerRegInterval 1 8 10)))
-        (set!
+          (reg.CompilerRegInterval 1 8 10)))
+      (set!
+        separated-right
+        (reg.compiler-reg-interval-seq-append
           separated-right
-          (reg.compiler-reg-interval-seq-append
-            separated-right
-            (reg.CompilerRegInterval 1 15 18)))
-        (set!
+          (reg.CompilerRegInterval 1 15 18)))
+      (set!
+        late-overlap-right
+        (reg.compiler-reg-interval-seq-append
           late-overlap-right
-          (reg.compiler-reg-interval-seq-append
-            late-overlap-right
-            (reg.CompilerRegInterval 1 2 4)))
-        (set!
+          (reg.CompilerRegInterval 1 2 4)))
+      (set!
+        late-overlap-right
+        (reg.compiler-reg-interval-seq-append
           late-overlap-right
-          (reg.compiler-reg-interval-seq-append
-            late-overlap-right
-            (reg.CompilerRegInterval 1 8 10)))
-        (set!
+          (reg.CompilerRegInterval 1 8 10)))
+      (set!
+        late-overlap-right
+        (reg.compiler-reg-interval-seq-append
           late-overlap-right
-          (reg.compiler-reg-interval-seq-append
-            late-overlap-right
-            (reg.CompilerRegInterval 1 14 18)))
-        (set!
+          (reg.CompilerRegInterval 1 14 18)))
+      (set!
+        zero-left
+        (reg.compiler-reg-interval-seq-append
           zero-left
-          (reg.compiler-reg-interval-seq-append
-            zero-left
-            (reg.CompilerRegInterval 0 0 0)))
-        (set!
+          (reg.CompilerRegInterval 0 0 0)))
+      (set!
+        zero-right
+        (reg.compiler-reg-interval-seq-append
           zero-right
-          (reg.compiler-reg-interval-seq-append
-            zero-right
-            (reg.CompilerRegInterval 1 0 2)))
-        (and
-          (= (reg.compiler-reg-interval-seq-count appended) 10)
-          (compiler-reg-test-interval-shape? appended 0 0 0 1)
-          (compiler-reg-test-interval-shape? appended 9 9 18 19)
-          (= (reg.compiler-reg-interval-seq-count prepended) 10)
-          (compiler-reg-test-interval-shape? prepended 0 9 18 19)
-          (compiler-reg-test-interval-shape? prepended 9 0 0 1)
-          (= (reg.compiler-reg-interval-seq-count inserted) 3)
-          (compiler-reg-test-interval-shape? inserted 0 0 0 1)
-          (compiler-reg-test-interval-shape? inserted 1 1 2 3)
-          (compiler-reg-test-interval-shape? inserted 2 2 4 5)
-          ;; Touching boundaries after point zero remain non-overlapping.
-          (not
-            (reg.compiler-reg-interval-seq-overlaps?
-              separated-left
-              separated-right))
-          ;; The ordered scan must continue far enough to find a late overlap.
+          (reg.CompilerRegInterval 1 0 2)))
+      (and
+        (= (reg.compiler-reg-interval-seq-count appended) 10)
+        (compiler-reg-test-interval-shape? appended 0 0 0 1)
+        (compiler-reg-test-interval-shape? appended 9 9 18 19)
+        (= (reg.compiler-reg-interval-seq-count prepended) 10)
+        (compiler-reg-test-interval-shape? prepended 0 9 18 19)
+        (compiler-reg-test-interval-shape? prepended 9 0 0 1)
+        (= (reg.compiler-reg-interval-seq-count inserted) 3)
+        (compiler-reg-test-interval-shape? inserted 0 0 0 1)
+        (compiler-reg-test-interval-shape? inserted 1 1 2 3)
+        (compiler-reg-test-interval-shape? inserted 2 2 4 5)
+        ;; Touching boundaries after point zero remain non-overlapping.
+        (not
           (reg.compiler-reg-interval-seq-overlaps?
             separated-left
-            late-overlap-right)
-          (not
-            (reg.compiler-reg-interval-seq-overlaps-one?
-              separated-left
-              (reg.CompilerRegInterval 2 4 6)))
-          ;; Entry-point touches preserve the prologue-home exception.
-          (reg.compiler-reg-interval-seq-overlaps? zero-left zero-right))))))
+            separated-right))
+        ;; The ordered scan must continue far enough to find a late overlap.
+        (reg.compiler-reg-interval-seq-overlaps?
+          separated-left
+          late-overlap-right)
+        (not
+          (reg.compiler-reg-interval-seq-overlaps-one?
+            separated-left
+            (reg.CompilerRegInterval 2 4 6)))
+        ;; Entry-point touches preserve the prologue-home exception.
+        (reg.compiler-reg-interval-seq-overlaps? zero-left zero-right)))))
 
 (cfg
   test
@@ -7600,40 +7524,35 @@
       [ids : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-with-capacity 4)]
       [id-snapshot : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
       [id-prepended : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-empty)]
-      (begin
-        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
-        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r13))
-        ;; A retained snapshot has an exact logical length and prefix even while
-        ;; the continuing builder fills its spare suffix.
-        (set! id-snapshot (clone ids))
-        (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
-        (set!
-          id-prepended
-          (reg.compiler-reg-id-seq-prepend
-            cabi.compiler-reg-id-rbx
-            (reg.compiler-reg-global-shared-view id-snapshot)))
-        (and
-          (= (reg.compiler-reg-id-seq-count id-snapshot) 2)
-          (=
-            (reg.compiler-reg-id-seq-ref id-snapshot 0)
-            cabi.compiler-reg-id-r12)
-          (=
-            (reg.compiler-reg-id-seq-ref id-snapshot 1)
-            cabi.compiler-reg-id-r13)
-          (= (reg.compiler-reg-id-seq-count ids) 3)
-          ;; Duplicate register IDs remain ordered rather than being setified.
-          (= (reg.compiler-reg-id-seq-ref ids 2) cabi.compiler-reg-id-r12)
-          (reg.compiler-reg-id-seq-contains? ids cabi.compiler-reg-id-r13)
-          (= (reg.compiler-reg-id-seq-count id-prepended) 3)
-          (=
-            (reg.compiler-reg-id-seq-ref id-prepended 0)
-            cabi.compiler-reg-id-rbx)
-          (=
-            (reg.compiler-reg-id-seq-ref id-prepended 1)
-            cabi.compiler-reg-id-r12)
-          (=
-            (reg.compiler-reg-id-seq-ref id-prepended 2)
-            cabi.compiler-reg-id-r13))))))
+      (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
+      (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r13))
+      ;; A retained snapshot has an exact logical length and prefix even while
+      ;; the continuing builder fills its spare suffix.
+      (set! id-snapshot (clone ids))
+      (set! ids (reg.compiler-reg-id-seq-push ids cabi.compiler-reg-id-r12))
+      (set!
+        id-prepended
+        (reg.compiler-reg-id-seq-prepend
+          cabi.compiler-reg-id-rbx
+          (reg.compiler-reg-global-shared-view id-snapshot)))
+      (and
+        (= (reg.compiler-reg-id-seq-count id-snapshot) 2)
+        (= (reg.compiler-reg-id-seq-ref id-snapshot 0) cabi.compiler-reg-id-r12)
+        (= (reg.compiler-reg-id-seq-ref id-snapshot 1) cabi.compiler-reg-id-r13)
+        (= (reg.compiler-reg-id-seq-count ids) 3)
+        ;; Duplicate register IDs remain ordered rather than being setified.
+        (= (reg.compiler-reg-id-seq-ref ids 2) cabi.compiler-reg-id-r12)
+        (reg.compiler-reg-id-seq-contains? ids cabi.compiler-reg-id-r13)
+        (= (reg.compiler-reg-id-seq-count id-prepended) 3)
+        (=
+          (reg.compiler-reg-id-seq-ref id-prepended 0)
+          cabi.compiler-reg-id-rbx)
+        (=
+          (reg.compiler-reg-id-seq-ref id-prepended 1)
+          cabi.compiler-reg-id-r12)
+        (=
+          (reg.compiler-reg-id-seq-ref id-prepended 2)
+          cabi.compiler-reg-id-r13)))))
 
 (cfg
   test
@@ -8323,37 +8242,35 @@
   (let
     [out : comptime.ExprList (comptime.expr-list-empty)]
     [i : i64 (comptime.expr-list-length checks)]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (let
-            [check : comptime.Expr (comptime.expr-list-nth checks i)]
-            (match check
-              [(comptime.Expr.Call head _)
-                (match head
-                  [(comptime.Expr.Var name)
-                    (set!
-                      out
-                      (comptime.expr-list-cons
-                        `(compiler-regalloc-self-test-require!
-                          ,(comptime.expr-string name)
-                          ,check)
-                        out))]
-                  [_
-                    (comptime.comptime-error
-                      "require-each! checks call a named predicate")])]
-              [(comptime.Expr.Bool always)
-                (if always
-                  unit
-                  (comptime.comptime-error
-                    "require-each! checks call a named predicate"))]
+    (while (> i 0)
+      (set! i (- i 1))
+      (let
+        [check : comptime.Expr (comptime.expr-list-nth checks i)]
+        (match check
+          [(comptime.Expr.Call head _)
+            (match head
+              [(comptime.Expr.Var name)
+                (set!
+                  out
+                  (comptime.expr-list-cons
+                    `(compiler-regalloc-self-test-require!
+                      ,(comptime.expr-string name)
+                      ,check)
+                    out))]
               [_
                 (comptime.comptime-error
-                  "require-each! checks call a named predicate")]))))
-      `(begin
-        ,@out
-        unit))))
+                  "require-each! checks call a named predicate")])]
+          [(comptime.Expr.Bool always)
+            (if always
+              unit
+              (comptime.comptime-error
+                "require-each! checks call a named predicate"))]
+          [_
+            (comptime.comptime-error
+              "require-each! checks call a named predicate")])))
+    `(begin
+      ,@out
+      unit)))
 
 (define (compiler-reg-location-remat? [location : reg.CompilerRegLocation]) : bool
   (match location
@@ -8522,9 +8439,8 @@
         xmm-registers)]
     [out : (__tl_dyn-array i64)
       (__tl_make-array i64 (reg.compiler-reg-id-seq-count registers))]
-    (begin
-      (reg.compiler-reg-greedy-id-seq-to-array registers (&mut out) 0)
-      out)))
+    (reg.compiler-reg-greedy-id-seq-to-array registers (&mut out) 0)
+    out))
 
 (define (compiler-reg-live-union-test-seq [var : i64] [start : i64] [end : i64]) : reg.CompilerRegIntervalSeq
   (reg.compiler-reg-interval-seq-append
@@ -8548,104 +8464,82 @@
       (reg.compiler-reg-assignment-table-make vars)]
     [registers : (__tl_dyn-array i64)
       (compiler-reg-test-register-array (Linux))]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
-      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
-      (reg.compiler-reg-fill-interval-seq-array! (&mut segments) 0)
-      ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
-      ;; 4: two segments past the resident  5: no segments (coarse [4,8))
-      ;; 6: overlaps segment 4's second range
-      (set! (array-ref segments 0) (compiler-reg-live-union-test-seq 0 0 4))
-      (set! (array-ref segments 1) (compiler-reg-live-union-test-seq 1 4 8))
-      (set! (array-ref segments 2) (compiler-reg-live-union-test-seq 2 3 6))
-      (set! (array-ref segments 3) (compiler-reg-live-union-test-seq 3 0 0))
+    (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+    (reg.compiler-reg-fill-i64-array (&mut ends) -1)
+    (reg.compiler-reg-fill-interval-seq-array! (&mut segments) 0)
+    ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
+    ;; 4: two segments past the resident  5: no segments (coarse [4,8))
+    ;; 6: overlaps segment 4's second range
+    (set! (array-ref segments 0) (compiler-reg-live-union-test-seq 0 0 4))
+    (set! (array-ref segments 1) (compiler-reg-live-union-test-seq 1 4 8))
+    (set! (array-ref segments 2) (compiler-reg-live-union-test-seq 2 3 6))
+    (set! (array-ref segments 3) (compiler-reg-live-union-test-seq 3 0 0))
+    (set!
+      (array-ref segments 4)
+      (reg.compiler-reg-interval-seq-append
+        (compiler-reg-live-union-test-seq 4 8 9)
+        (reg.CompilerRegInterval 4 12 14)))
+    (set! (array-ref segments 6) (compiler-reg-live-union-test-seq 6 13 15))
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 4)
+    (set! (array-ref starts 5) 4)
+    (set! (array-ref ends 5) 8)
+    (let
+      [index : reg.CompilerRegIntervalIndex
+        (reg.CompilerRegIntervalIndex starts ends segments)]
+      [occupancy : reg.CompilerRegGreedyOccupancy
+        (reg.compiler-reg-greedy-occupancy-make
+          assignments
+          (reg.compiler-reg-global-shared-view index)
+          registers
+          (array-length registers))]
+      [resident-0-ok? : bool false]
+      [emptied-ok? : bool false]
+      [multi-ok? : bool false]
+      [coarse-resident-ok? : bool false]
+      (reg.compiler-reg-greedy-occupancy-assign! occupancy 0 0 -1)
       (set!
-        (array-ref segments 4)
-        (reg.compiler-reg-interval-seq-append
-          (compiler-reg-live-union-test-seq 4 8 9)
-          (reg.CompilerRegInterval 4 12 14)))
-      (set! (array-ref segments 6) (compiler-reg-live-union-test-seq 6 13 15))
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 4)
-      (set! (array-ref starts 5) 4)
-      (set! (array-ref ends 5) 8)
-      (let
-        [index : reg.CompilerRegIntervalIndex
-          (reg.CompilerRegIntervalIndex starts ends segments)]
-        [occupancy : reg.CompilerRegGreedyOccupancy
-          (reg.compiler-reg-greedy-occupancy-make
-            assignments
-            (reg.compiler-reg-global-shared-view index)
-            registers
-            (array-length registers))]
-        [resident-0-ok? : bool false]
-        [emptied-ok? : bool false]
-        [multi-ok? : bool false]
-        [coarse-resident-ok? : bool false]
-        (begin
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 0 0 -1)
-          (set!
-            resident-0-ok?
-            (and
-              ;; touch at 4 is half-open, so [4,8) may share the register
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
-              ;; [3,6) genuinely overlaps [0,4)
-              (not
-                (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
-                  2
-                  0))
-              ;; a point-0 touch counts as overlap (M-A RC1)
-              (not
-                (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
-                  3
-                  0))
-              ;; both of var 4's segments clear [0,4)
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 4 0)
-              ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 5 0)))
-          (reg.compiler-reg-greedy-occupancy-clear! occupancy 0)
-          (set!
-            emptied-ok?
-            (and
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0)
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0)))
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 4 0 -1)
-          (set!
-            multi-ok?
-            (and
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
-              ;; [13,15) overlaps var 4's second segment [12,14)
-              (not
-                (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
-                  6
-                  0))))
-          (reg.compiler-reg-greedy-occupancy-clear! occupancy 4)
-          (reg.compiler-reg-greedy-occupancy-assign! occupancy 5 0 -1)
-          (set!
-            coarse-resident-ok?
-            (and
-              ;; a segment-less resident forces the per-resident scan: var 0's
-              ;; coarse [0,4) clears var 5's coarse [4,8) ...
-              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 0 0)
-              ;; ... while var 1 has no coarse interval at all, which the
-              ;; predicate answers conservatively as interference
-              (not
-                (reg.compiler-reg-greedy-reg-free?
-                  occupancy
-                  index
-                  ref-counts
-                  1
-                  0))))
-          (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))))
+        resident-0-ok?
+        (and
+          ;; touch at 4 is half-open, so [4,8) may share the register
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+          ;; [3,6) genuinely overlaps [0,4)
+          (not
+            (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0))
+          ;; a point-0 touch counts as overlap (M-A RC1)
+          (not
+            (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0))
+          ;; both of var 4's segments clear [0,4)
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 4 0)
+          ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 5 0)))
+      (reg.compiler-reg-greedy-occupancy-clear! occupancy 0)
+      (set!
+        emptied-ok?
+        (and
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0)
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0)))
+      (reg.compiler-reg-greedy-occupancy-assign! occupancy 4 0 -1)
+      (set!
+        multi-ok?
+        (and
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
+          ;; [13,15) overlaps var 4's second segment [12,14)
+          (not
+            (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 6 0))))
+      (reg.compiler-reg-greedy-occupancy-clear! occupancy 4)
+      (reg.compiler-reg-greedy-occupancy-assign! occupancy 5 0 -1)
+      (set!
+        coarse-resident-ok?
+        (and
+          ;; a segment-less resident forces the per-resident scan: var 0's
+          ;; coarse [0,4) clears var 5's coarse [4,8) ...
+          (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 0 0)
+          ;; ... while var 1 has no coarse interval at all, which the
+          ;; predicate answers conservatively as interference
+          (not
+            (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0))))
+      (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))
 
 (define (compiler-reg-scratch-borrow-masks-ok?) : bool
   (and
@@ -8697,71 +8591,70 @@
     [scratch-weights : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [weights : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [hints : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref base-weights 0) 3)
-      (set! (array-ref raw-weights 0) 1)
-      (set! (array-ref scratch-weights 0) 1)
-      (set!
-        weights
-        (reg.compiler-reg-early-scratch-extend-weights
-          base-weights
-          raw-weights
-          2
-          1
-          1
-          scratch-weights))
-      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
-      (match (let
-        [regs
-          (reg.compiler-reg-id-seq-prepend
-            cabi.compiler-reg-id-r12
-            (reg.compiler-reg-id-seq-empty))]
-        [group-vars (live.compiler-live-set-empty)]
-        [param-roots (live.compiler-live-set-empty)]
-        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
-        [call-points (live.compiler-live-set-empty)]
-        [div-points (live.compiler-live-set-empty)]
-        [shift-points (live.compiler-live-set-empty)]
-        (reg.compiler-reg-greedy-state
-          intervals
-          regs
-          assignments
-          index
-          group-vars
-          param-roots
-          param-entry-forbidden
-          (reg.compiler-reg-global-shared-view weights)
-          hints
-          (reg.compiler-reg-global-shared-view hints)
-          call-points
-          div-points
-          shift-points
-          (reg.compiler-reg-id-seq-prepend
-            cabi.compiler-reg-id-r12
-            (reg.compiler-reg-id-seq-empty))
-          0
-          1))
-        [(State _ out)
-          (and
-            (= (array-ref weights 0) 3)
-            ;; R1 scale: the pseudo's demand (1) is combined with the
-            ;; compressed raw tie-break against the same radix (max raw = 1) as a
-            ;; real value's, given the one-unit tie-break, and enqueued in the
-            ;; GLOBAL priority band.
-            (=
-              (array-ref weights 1)
-              (let
-                [span : i64 (reg.compiler-reg-greedy-combine-tie-span)]
-                [priced : i64 (+ (+ span (/ span 2)) 1)]
-                (+
-                  (* priced (reg.compiler-reg-priority-band-span))
-                  (- (reg.compiler-reg-priority-band-span) 1))))
-            (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-table-lookup out 0)
-              (reg.compiler-reg-stack-slot-offset 0))
-            (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-table-lookup out 1)
-              cabi.compiler-reg-id-r12))]))))
+    (set! (array-ref base-weights 0) 3)
+    (set! (array-ref raw-weights 0) 1)
+    (set! (array-ref scratch-weights 0) 1)
+    (set!
+      weights
+      (reg.compiler-reg-early-scratch-extend-weights
+        base-weights
+        raw-weights
+        2
+        1
+        1
+        scratch-weights))
+    (reg.compiler-reg-fill-i64-array (&mut hints) -1)
+    (match (let
+      [regs
+        (reg.compiler-reg-id-seq-prepend
+          cabi.compiler-reg-id-r12
+          (reg.compiler-reg-id-seq-empty))]
+      [group-vars (live.compiler-live-set-empty)]
+      [param-roots (live.compiler-live-set-empty)]
+      [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+      [call-points (live.compiler-live-set-empty)]
+      [div-points (live.compiler-live-set-empty)]
+      [shift-points (live.compiler-live-set-empty)]
+      (reg.compiler-reg-greedy-state
+        intervals
+        regs
+        assignments
+        index
+        group-vars
+        param-roots
+        param-entry-forbidden
+        (reg.compiler-reg-global-shared-view weights)
+        hints
+        (reg.compiler-reg-global-shared-view hints)
+        call-points
+        div-points
+        shift-points
+        (reg.compiler-reg-id-seq-prepend
+          cabi.compiler-reg-id-r12
+          (reg.compiler-reg-id-seq-empty))
+        0
+        1))
+      [(State _ out)
+        (and
+          (= (array-ref weights 0) 3)
+          ;; R1 scale: the pseudo's demand (1) is combined with the
+          ;; compressed raw tie-break against the same radix (max raw = 1) as a
+          ;; real value's, given the one-unit tie-break, and enqueued in the
+          ;; GLOBAL priority band.
+          (=
+            (array-ref weights 1)
+            (let
+              [span : i64 (reg.compiler-reg-greedy-combine-tie-span)]
+              [priced : i64 (+ (+ span (/ span 2)) 1)]
+              (+
+                (* priced (reg.compiler-reg-priority-band-span))
+                (- (reg.compiler-reg-priority-band-span) 1))))
+          (compiler-reg-location-spill-offset?
+            (reg.compiler-reg-assignment-table-lookup out 0)
+            (reg.compiler-reg-stack-slot-offset 0))
+          (reg.compiler-reg-location-register?
+            (reg.compiler-reg-assignment-table-lookup out 1)
+            cabi.compiler-reg-id-r12))])))
 
 (define (compiler-reg-early-scratch-exclusion-rehomes-ok?) : bool
   (let
@@ -8784,62 +8677,61 @@
     [hints : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
       (__tl_make-array reg.CompilerRegIdSeq 2)]
-    (begin
-      ;; Greedy worklist keys (weight * band span + band), not bare weights:
-      ;; the eviction gate strips the band with compiler-reg-priority-key-weight.
-      (set! (array-ref weights 0) (reg.compiler-reg-priority-band-span))
-      (set! (array-ref weights 1) (* 2 (reg.compiler-reg-priority-band-span)))
-      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
-      ;; %r10 is free but is the instruction operand home. The scratch pseudo
-      ;; must instead evict the colder, CSR-only real value from %r12; when that
-      ;; value is requeued it has no legal register and receives a real spill.
-      (set!
-        (array-ref excluded 1)
+    ;; Greedy worklist keys (weight * band span + band), not bare weights:
+    ;; the eviction gate strips the band with compiler-reg-priority-key-weight.
+    (set! (array-ref weights 0) (reg.compiler-reg-priority-band-span))
+    (set! (array-ref weights 1) (* 2 (reg.compiler-reg-priority-band-span)))
+    (reg.compiler-reg-fill-i64-array (&mut hints) -1)
+    ;; %r10 is free but is the instruction operand home. The scratch pseudo
+    ;; must instead evict the colder, CSR-only real value from %r12; when that
+    ;; value is requeued it has no legal register and receives a real spill.
+    (set!
+      (array-ref excluded 1)
+      (reg.compiler-reg-id-seq-prepend
+        cabi.compiler-reg-id-r10
+        (reg.compiler-reg-id-seq-empty)))
+    (match (let
+      [regs
         (reg.compiler-reg-id-seq-prepend
           cabi.compiler-reg-id-r10
-          (reg.compiler-reg-id-seq-empty)))
-      (match (let
-        [regs
-          (reg.compiler-reg-id-seq-prepend
-            cabi.compiler-reg-id-r10
-            (reg.compiler-reg-id-seq-prepend
-              cabi.compiler-reg-id-r12
-              (reg.compiler-reg-id-seq-empty)))]
-        [group-vars (live.compiler-live-set-empty)]
-        [param-roots
-          (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)]
-        [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
-        [call-points (live.compiler-live-set-empty)]
-        [div-points (live.compiler-live-set-empty)]
-        [shift-points (live.compiler-live-set-empty)]
-        (reg.compiler-reg-greedy-state-with-scratch-exclusions
-          intervals
-          regs
-          assignments
-          index
-          group-vars
-          param-roots
-          param-entry-forbidden
-          weights
-          hints
-          (reg.compiler-reg-global-shared-view hints)
-          call-points
-          div-points
-          shift-points
           (reg.compiler-reg-id-seq-prepend
             cabi.compiler-reg-id-r12
-            (reg.compiler-reg-id-seq-empty))
-          1
-          1
-          excluded))
-        [(State _ out)
-          (and
-            (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-table-lookup out 0)
-              (reg.compiler-reg-stack-slot-offset 0))
-            (reg.compiler-reg-location-register?
-              (reg.compiler-reg-assignment-table-lookup out 1)
-              cabi.compiler-reg-id-r12))]))))
+            (reg.compiler-reg-id-seq-empty)))]
+      [group-vars (live.compiler-live-set-empty)]
+      [param-roots
+        (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)]
+      [param-entry-forbidden (__tl_make-array reg.CompilerRegIdSeq 0)]
+      [call-points (live.compiler-live-set-empty)]
+      [div-points (live.compiler-live-set-empty)]
+      [shift-points (live.compiler-live-set-empty)]
+      (reg.compiler-reg-greedy-state-with-scratch-exclusions
+        intervals
+        regs
+        assignments
+        index
+        group-vars
+        param-roots
+        param-entry-forbidden
+        weights
+        hints
+        (reg.compiler-reg-global-shared-view hints)
+        call-points
+        div-points
+        shift-points
+        (reg.compiler-reg-id-seq-prepend
+          cabi.compiler-reg-id-r12
+          (reg.compiler-reg-id-seq-empty))
+        1
+        1
+        excluded))
+      [(State _ out)
+        (and
+          (compiler-reg-location-spill-offset?
+            (reg.compiler-reg-assignment-table-lookup out 0)
+            (reg.compiler-reg-stack-slot-offset 0))
+          (reg.compiler-reg-location-register?
+            (reg.compiler-reg-assignment-table-lookup out 1)
+            cabi.compiler-reg-id-r12))])))
 
 (define (compiler-reg-i64-ty) : ast.AstType
   (I64))
@@ -8997,25 +8889,24 @@
   (let
     [args : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue 4)]
-    (begin
-      (set! (array-ref args 0) (ir.CompilerIrValue.Var 1))
-      (set! (array-ref args 1) (ir.CompilerIrValue.Var 2))
-      (set! (array-ref args 2) (ir.CompilerIrValue.Var 3))
-      (set! (array-ref args 3) (ir.CompilerIrValue.Var 4))
-      (Function
-        (ir.compiler-ir-test-symbol "indirect_call_arg4")
-        (ir.compiler-ir-param-seq-prepend
-          (Param "callee" (compiler-reg-func4-ty) 0)
-          (irt.params "a=%1:i64, b=%2:i64, c=%3:i64, d=%4:i64"))
-        (compiler-reg-i64-ty)
-        6
-        (ir.compiler-ir-blocks
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-reg-test-instr-seq-prepend
-              (CallIndirect 5 (Var 0) (Array args) (compiler-reg-i64-ty))
-              (irt.instrs "return %5"))))
-        Ordinary))))
+    (set! (array-ref args 0) (ir.CompilerIrValue.Var 1))
+    (set! (array-ref args 1) (ir.CompilerIrValue.Var 2))
+    (set! (array-ref args 2) (ir.CompilerIrValue.Var 3))
+    (set! (array-ref args 3) (ir.CompilerIrValue.Var 4))
+    (Function
+      (ir.compiler-ir-test-symbol "indirect_call_arg4")
+      (ir.compiler-ir-param-seq-prepend
+        (Param "callee" (compiler-reg-func4-ty) 0)
+        (irt.params "a=%1:i64, b=%2:i64, c=%3:i64, d=%4:i64"))
+      (compiler-reg-i64-ty)
+      6
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (CallIndirect 5 (Var 0) (Array args) (compiler-reg-i64-ty))
+            (irt.instrs "return %5"))))
+      Ordinary)))
 
 (define (compiler-reg-c-abi-store-result-arg-function) : ir.CompilerIrFunction
   (Function
@@ -9397,21 +9288,19 @@
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [flags : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [index : i64 0]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut hints) -1)
-      (while (< index 8)
-        (begin
-          (set! (array-ref parents index) index)
-          (set! index (+ index 1))))
-      (if flip?
-        (set! (array-ref flags 6) 1)
-        unit)
-      (reg.compiler-reg-copy-hints-from-binops-instr!
-        (irt.instr "%6 = bit_and %5, %3 : i64")
-        (&mut hints)
-        parents
-        flags)
-      (array-ref hints 6))))
+    (reg.compiler-reg-fill-i64-array (&mut hints) -1)
+    (while (< index 8)
+      (set! (array-ref parents index) index)
+      (set! index (+ index 1)))
+    (if flip?
+      (set! (array-ref flags 6) 1)
+      unit)
+    (reg.compiler-reg-copy-hints-from-binops-instr!
+      (irt.instr "%6 = bit_and %5, %3 : i64")
+      (&mut hints)
+      parents
+      flags)
+    (array-ref hints 6)))
 
 (define (compiler-reg-alu-load-lhs-tie-ok?) : bool
   (let
@@ -10380,12 +10269,10 @@
       (reg.compiler-reg-assignment-table-present assignments)]
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index (array-length present))
-        (begin
-          (when (not (= (array-ref present index) 0)) (set! count (+ count 1)))
-          (set! index (+ index 1))))
-      count)))
+    (while (< index (array-length present))
+      (when (not (= (array-ref present index) 0)) (set! count (+ count 1)))
+      (set! index (+ index 1)))
+    count))
 
 (define (compiler-reg-dense-assignment-snapshot-ok?) : bool
   (let
@@ -10432,40 +10319,38 @@
         (reg.compiler-reg-global-shared-view starts)
         (reg.compiler-reg-global-shared-view ends)
         (reg.compiler-reg-global-shared-view segments))]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
-      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 8)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref ends 1) 8)
-      (set! (array-ref starts 3) 3)
-      (set! (array-ref ends 3) 5)
-      (set! (array-ref starts 4) 7)
-      (set! (array-ref ends 4) 9)
-      (set!
-        (array-ref segments 1)
+    (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+    (reg.compiler-reg-fill-i64-array (&mut ends) -1)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 8)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref ends 1) 8)
+    (set! (array-ref starts 3) 3)
+    (set! (array-ref ends 3) 5)
+    (set! (array-ref starts 4) 7)
+    (set! (array-ref ends 4) 9)
+    (set!
+      (array-ref segments 1)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 0 2)
         (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 1 0 2)
-          (reg.compiler-reg-interval-seq-prepend
-            (reg.CompilerRegInterval 1 6 8)
-            (reg.compiler-reg-interval-seq-empty))))
-      (set!
-        (array-ref segments 3)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 3 3 5)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 4)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 4 7 9)
-          (reg.compiler-reg-interval-seq-empty)))
-      (and
-        (not
-          (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
-        (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 2)))))
+          (reg.CompilerRegInterval 1 6 8)
+          (reg.compiler-reg-interval-seq-empty))))
+    (set!
+      (array-ref segments 3)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 3 3 5)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 4)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 4 7 9)
+        (reg.compiler-reg-interval-seq-empty)))
+    (and
+      (not (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
+      (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
+      (reg.compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
+      (reg.compiler-reg-vars-interfere-segmented-index? segment-index 1 2))))
 
 (define (compiler-reg-hole-aware-register-reuse-ok?) : bool
   (let
@@ -10492,138 +10377,135 @@
         (reg.CompilerRegActive 1 10 cabi.compiler-reg-id-r12))]
     [hole-aware : live.CompilerLiveI64Set (live_tests.compiler-live-set3 0 2 3)]
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 5)]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
-      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 10)
-      (set! (array-ref starts 1) 4)
-      (set! (array-ref ends 1) 6)
-      (set! (array-ref starts 2) 4)
-      (set! (array-ref ends 2) 6)
-      (set! (array-ref starts 3) 1)
-      (set! (array-ref ends 3) 3)
-      (set! (array-ref starts 4) 8)
-      (set! (array-ref ends 4) 9)
-      (set!
-        (array-ref segments 0)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 0 0 2)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 1)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 1 4 6)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 2)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 2 4 6)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 3)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 3 1 3)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 4)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 4 8 9)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set! (array-ref parents 0) 0)
-      (set! (array-ref parents 1) 0)
-      (set! (array-ref parents 2) 2)
-      (set! (array-ref parents 3) 2)
-      (set! (array-ref parents 4) 4)
-      (let
-        ;; General hole-filling: the allocator runs on the merged-root
-        ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
-        ;; its own live range, a class root the union of its members'. Every
-        ;; segment hole is therefore genuine deadness, so ANY value may reuse an
-        ;; active register in a hole whose segments are disjoint, regardless of
-        ;; whether it is a coalesce root or a singleton. var 1's segment [4,6] is
-        ;; disjoint from the active root var 0's [0,2], so it reuses %r12.
-        [var1-disjoint-reuses : bool
-          (match (compiler-reg-first-free-register-holes
-            (clone one-reg)
-            (clone active-root)
-            (clone segment-index)
-            1
-            (clone hole-aware))
-            [(Some reg) (= reg cabi.compiler-reg-id-r12)]
-            [(No) false])]
-        [root-hole-reuses : bool
-          (match (compiler-reg-first-free-register-holes
-            (clone one-reg)
-            (clone active-root)
-            (clone segment-index)
-            2
-            (clone hole-aware))
-            [(Some reg) (= reg cabi.compiler-reg-id-r12)]
-            [(No) false])]
-        ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
-        [root-overlap-conflicts : bool
-          (match (compiler-reg-first-free-register-holes
-            (clone one-reg)
-            (clone active-root)
-            (clone segment-index)
-            3
-            (clone hole-aware))
-            [(No) true]
-            [(Some _) false])]
-        ;; var 4's [8,9] is disjoint from the active ordinary var 1's [4,6].
-        [var4-disjoint-reuses : bool
-          (match (compiler-reg-first-free-register-holes
-            (clone one-reg)
-            (clone active-ordinary)
-            (clone segment-index)
-            4
-            (clone hole-aware))
-            [(Some reg) (= reg cabi.compiler-reg-id-r12)]
-            [(No) false])]
-        [roots : live.CompilerLiveI64Set
-          (let
-            [coalesce-map (reg.CompilerRegCoalesceMap (clone parents))]
-            (reg.compiler-reg-coalesce-merged-root-set coalesce-map))]
-        [mapped-blocked : live.CompilerLiveI64Set
-          (let
-            [coalesce-map (reg.CompilerRegCoalesceMap (clone parents))]
-            (reg.compiler-reg-coalesce-root-set-from-vars
-              coalesce-map
-              (live_tests.compiler-live-set2 1 4)))]
-        (and
-          var1-disjoint-reuses
-          root-hole-reuses
-          root-overlap-conflicts
-          var4-disjoint-reuses
-          (live.compiler-live-set-contains? roots 0)
-          (live.compiler-live-set-contains? roots 2)
-          (not (live.compiler-live-set-contains? roots 1))
-          (not (live.compiler-live-set-contains? roots 3))
-          (not (live.compiler-live-set-contains? roots 4))
-          (live.compiler-live-set-contains? mapped-blocked 0)
-          (live.compiler-live-set-contains? mapped-blocked 4)
-          (not (live.compiler-live-set-contains? mapped-blocked 1))
-          (not (live.compiler-live-set-contains? mapped-blocked 2))
-          (not (live.compiler-live-set-contains? mapped-blocked 3)))))))
+    (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+    (reg.compiler-reg-fill-i64-array (&mut ends) -1)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 10)
+    (set! (array-ref starts 1) 4)
+    (set! (array-ref ends 1) 6)
+    (set! (array-ref starts 2) 4)
+    (set! (array-ref ends 2) 6)
+    (set! (array-ref starts 3) 1)
+    (set! (array-ref ends 3) 3)
+    (set! (array-ref starts 4) 8)
+    (set! (array-ref ends 4) 9)
+    (set!
+      (array-ref segments 0)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 2)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 1)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 4 6)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 2)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 2 4 6)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 3)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 3 1 3)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 4)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 4 8 9)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set! (array-ref parents 0) 0)
+    (set! (array-ref parents 1) 0)
+    (set! (array-ref parents 2) 2)
+    (set! (array-ref parents 3) 2)
+    (set! (array-ref parents 4) 4)
+    (let
+      ;; General hole-filling: the allocator runs on the merged-root
+      ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
+      ;; its own live range, a class root the union of its members'. Every
+      ;; segment hole is therefore genuine deadness, so ANY value may reuse an
+      ;; active register in a hole whose segments are disjoint, regardless of
+      ;; whether it is a coalesce root or a singleton. var 1's segment [4,6] is
+      ;; disjoint from the active root var 0's [0,2], so it reuses %r12.
+      [var1-disjoint-reuses : bool
+        (match (compiler-reg-first-free-register-holes
+          (clone one-reg)
+          (clone active-root)
+          (clone segment-index)
+          1
+          (clone hole-aware))
+          [(Some reg) (= reg cabi.compiler-reg-id-r12)]
+          [(No) false])]
+      [root-hole-reuses : bool
+        (match (compiler-reg-first-free-register-holes
+          (clone one-reg)
+          (clone active-root)
+          (clone segment-index)
+          2
+          (clone hole-aware))
+          [(Some reg) (= reg cabi.compiler-reg-id-r12)]
+          [(No) false])]
+      ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
+      [root-overlap-conflicts : bool
+        (match (compiler-reg-first-free-register-holes
+          (clone one-reg)
+          (clone active-root)
+          (clone segment-index)
+          3
+          (clone hole-aware))
+          [(No) true]
+          [(Some _) false])]
+      ;; var 4's [8,9] is disjoint from the active ordinary var 1's [4,6].
+      [var4-disjoint-reuses : bool
+        (match (compiler-reg-first-free-register-holes
+          (clone one-reg)
+          (clone active-ordinary)
+          (clone segment-index)
+          4
+          (clone hole-aware))
+          [(Some reg) (= reg cabi.compiler-reg-id-r12)]
+          [(No) false])]
+      [roots : live.CompilerLiveI64Set
+        (let
+          [coalesce-map (reg.CompilerRegCoalesceMap (clone parents))]
+          (reg.compiler-reg-coalesce-merged-root-set coalesce-map))]
+      [mapped-blocked : live.CompilerLiveI64Set
+        (let
+          [coalesce-map (reg.CompilerRegCoalesceMap (clone parents))]
+          (reg.compiler-reg-coalesce-root-set-from-vars
+            coalesce-map
+            (live_tests.compiler-live-set2 1 4)))]
+      (and
+        var1-disjoint-reuses
+        root-hole-reuses
+        root-overlap-conflicts
+        var4-disjoint-reuses
+        (live.compiler-live-set-contains? roots 0)
+        (live.compiler-live-set-contains? roots 2)
+        (not (live.compiler-live-set-contains? roots 1))
+        (not (live.compiler-live-set-contains? roots 3))
+        (not (live.compiler-live-set-contains? roots 4))
+        (live.compiler-live-set-contains? mapped-blocked 0)
+        (live.compiler-live-set-contains? mapped-blocked 4)
+        (not (live.compiler-live-set-contains? mapped-blocked 1))
+        (not (live.compiler-live-set-contains? mapped-blocked 2))
+        (not (live.compiler-live-set-contains? mapped-blocked 3))))))
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : reg.CompilerRegVarTypes
   (let
     [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType vars)]
     [index : i64 0]
-    (begin
-      (while (< index vars)
-        (begin
-          (set! (array-ref present index) 1)
-          (set! (array-ref types index) (compiler-reg-i64-ty))
-          (set! index (+ index 1))))
-      (reg.compiler-reg-var-types-new
-        present
-        types
-        (ir.compiler-ir-representation-index-empty)
-        (profile_state.compiler-profile-state-metrics
-          (profile_state.compiler-profile-state-new))))))
+    (while (< index vars)
+      (set! (array-ref present index) 1)
+      (set! (array-ref types index) (compiler-reg-i64-ty))
+      (set! index (+ index 1)))
+    (reg.compiler-reg-var-types-new
+      present
+      types
+      (ir.compiler-ir-representation-index-empty)
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new)))))
 
 (define (compiler-reg-coalesce-test-flat-index) : reg.CompilerRegIntervalIndex
   (reg.compiler-reg-interval-index-build
@@ -10651,24 +10533,23 @@
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (__tl_make-array reg.CompilerRegIntervalSeq 2)]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
-      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 10)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref ends 1) 10)
-      (set!
-        (array-ref segments 0)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 0 0 2)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set!
-        (array-ref segments 1)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 1 4 6)
-          (reg.compiler-reg-interval-seq-empty)))
-      (reg.CompilerRegIntervalIndex starts ends segments))))
+    (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+    (reg.compiler-reg-fill-i64-array (&mut ends) -1)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 10)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref ends 1) 10)
+    (set!
+      (array-ref segments 0)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 2)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set!
+      (array-ref segments 1)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 4 6)
+        (reg.compiler-reg-interval-seq-empty)))
+    (reg.CompilerRegIntervalIndex starts ends segments)))
 
 (define (compiler-reg-coalesce-fixpoint-map-ok?) : bool
   (let
@@ -10842,49 +10723,46 @@
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
       (__tl_make-array reg.CompilerRegIntervalSeq 3)]
     [parents : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    (begin
-      (reg.compiler-reg-fill-i64-array (&mut starts) -1)
-      (reg.compiler-reg-fill-i64-array (&mut ends) -1)
-      (set! (array-ref segments 0) (reg.compiler-reg-interval-seq-empty))
-      (set! (array-ref segments 1) (reg.compiler-reg-interval-seq-empty))
-      (set! (array-ref segments 2) (reg.compiler-reg-interval-seq-empty))
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 6)
-      (set! (array-ref starts 1) 2)
-      (set! (array-ref ends 1) 8)
-      (set!
-        (array-ref segments 0)
+    (reg.compiler-reg-fill-i64-array (&mut starts) -1)
+    (reg.compiler-reg-fill-i64-array (&mut ends) -1)
+    (set! (array-ref segments 0) (reg.compiler-reg-interval-seq-empty))
+    (set! (array-ref segments 1) (reg.compiler-reg-interval-seq-empty))
+    (set! (array-ref segments 2) (reg.compiler-reg-interval-seq-empty))
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 6)
+    (set! (array-ref starts 1) 2)
+    (set! (array-ref ends 1) 8)
+    (set!
+      (array-ref segments 0)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 4)
         (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 0 0 4)
-          (reg.compiler-reg-interval-seq-prepend
-            (reg.CompilerRegInterval 0 5 6)
-            (reg.compiler-reg-interval-seq-empty))))
-      (set!
-        (array-ref segments 1)
-        (reg.compiler-reg-interval-seq-prepend
-          (reg.CompilerRegInterval 1 2 8)
-          (reg.compiler-reg-interval-seq-empty)))
-      (set! (array-ref parents 0) 0)
-      (set! (array-ref parents 1) 0)
-      (set! (array-ref parents 2) 2)
-      (let
-        [merged : reg.CompilerRegIntervalIndex
-          (let
-            [coalesce-map (reg.CompilerRegCoalesceMap parents)]
-            (reg.compiler-reg-merged-root-index
-              coalesce-map
-              (reg.CompilerRegIntervalIndex starts ends segments)))]
-        (and
-          (= (array-ref merged.starts 0) 0)
-          (= (array-ref merged.ends 0) 8)
-          (< (array-ref merged.starts 1) 0)
-          (compiler-reg-single-segment-range?
-            (reg.compiler-reg-global-array-element-shared-view
-              merged.segments
-              0)
-            0
-            0
-            8))))))
+          (reg.CompilerRegInterval 0 5 6)
+          (reg.compiler-reg-interval-seq-empty))))
+    (set!
+      (array-ref segments 1)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 2 8)
+        (reg.compiler-reg-interval-seq-empty)))
+    (set! (array-ref parents 0) 0)
+    (set! (array-ref parents 1) 0)
+    (set! (array-ref parents 2) 2)
+    (let
+      [merged : reg.CompilerRegIntervalIndex
+        (let
+          [coalesce-map (reg.CompilerRegCoalesceMap parents)]
+          (reg.compiler-reg-merged-root-index
+            coalesce-map
+            (reg.CompilerRegIntervalIndex starts ends segments)))]
+      (and
+        (= (array-ref merged.starts 0) 0)
+        (= (array-ref merged.ends 0) 8)
+        (< (array-ref merged.starts 1) 0)
+        (compiler-reg-single-segment-range?
+          (reg.compiler-reg-global-array-element-shared-view merged.segments 0)
+          0
+          0
+          8)))))
 
 (define (compiler-reg-same-value-multi-def-census-ok?) : bool
   (let
@@ -11896,23 +11774,21 @@
     [slots : (__tl_dyn-array reg.CompilerRegInterval) hulls.slots]
     [out : String ""]
     [index : i64 0]
-    (begin
-      (while (< index hulls.len)
-        (let
-          [hull : reg.CompilerRegInterval (array-ref slots index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                (string.int->string hull.var)
-                ":"
-                (string.int->string hull.start)
-                "-"
-                (string.int->string hull.end)
-                " "))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index hulls.len)
+      (let
+        [hull : reg.CompilerRegInterval (array-ref slots index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            (string.int->string hull.var)
+            ":"
+            (string.int->string hull.start)
+            "-"
+            (string.int->string hull.end)
+            " "))
+        (set! index (+ index 1))))
+    out))
 
 ;; A loop: the phi'd counter and the bound stay live around the back edge.
 (define (compiler-reg-block-hulls-loop-function) : ir.CompilerIrFunction
@@ -11979,52 +11855,48 @@
     [text : String "function @hulls_wide() -> i64 vars 67 {\n entry:\n"]
     [args : String ""]
     [index : i64 1]
-    (begin
-      (while (<= index 65)
-        (begin
-          (set!
-            text
-            (str_cat.str-cat
-              text
-              "   %"
-              (string.int->string index)
-              " = mov "
-              (string.int->string index)
-              " : i64\n"))
-          (set!
-            args
-            (str_cat.str-cat
-              args
-              (if (= index 1)
-                ""
-                ", ")
-              "%"
-              (string.int->string index)))
-          (set! index (+ index 1))))
-      (irt.func
+    (while (<= index 65)
+      (set!
+        text
         (str_cat.str-cat
           text
-          "   jump call\n call:\n   %66 = call wide("
+          "   %"
+          (string.int->string index)
+          " = mov "
+          (string.int->string index)
+          " : i64\n"))
+      (set!
+        args
+        (str_cat.str-cat
           args
-          ") : i64\n   return %66\n }")))))
+          (if (= index 1)
+            ""
+            ", ")
+          "%"
+          (string.int->string index)))
+      (set! index (+ index 1)))
+    (irt.func
+      (str_cat.str-cat
+        text
+        "   jump call\n call:\n   %66 = call wide("
+        args
+        ") : i64\n   return %66\n }"))))
 
 (define (compiler-reg-block-hulls-wide-expected) : String
   (let
     [out : String ""]
     [index : i64 1]
-    (begin
-      (while (<= index 65)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (string.int->string index)
-              ":"
-              (string.int->string (* 2 (- index 1)))
-              "-132 "))
-          (set! index (+ index 1))))
-      (str_cat.str-cat out "66:132-134 "))))
+    (while (<= index 65)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (string.int->string index)
+          ":"
+          (string.int->string (* 2 (- index 1)))
+          "-132 "))
+      (set! index (+ index 1)))
+    (str_cat.str-cat out "66:132-134 ")))
 
 (define (compiler-reg-block-hulls-ok?) : bool
   (and
@@ -12271,34 +12143,33 @@
               (clone assignments))]
           [rebuilt-index : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-assignment-table-with-min-capacity rebuilt 3)]
-          (begin
-            (compiler-regalloc-self-test-require!
-              "AVX2 special parameter range reservation"
+          (compiler-regalloc-self-test-require!
+            "AVX2 special parameter range reservation"
+            (and
+              (= uniform 2)
+              (>= active 3)
+              (<= (+ active 1) slots)
+              (or (< uniform (- active 3)) (> uniform active))
+              (not (= varying active))))
+          (compiler-regalloc-self-test-require!
+            "AVX2 special parameter assignment remap"
+            (reg.compiler-reg-location-register?
+              (reg.compiler-reg-assignment-table-lookup rebuilt-index varying)
+              cabi.compiler-reg-id-r12))
+          (compiler-regalloc-self-test-require!
+            "AVX2 emitted parameter id remap"
+            (let
+              [remapped : ir.CompilerIrParamSeq
+                (reg.compiler-reg-remap-params remap params)]
               (and
-                (= uniform 2)
-                (>= active 3)
-                (<= (+ active 1) slots)
-                (or (< uniform (- active 3)) (> uniform active))
-                (not (= varying active))))
-            (compiler-regalloc-self-test-require!
-              "AVX2 special parameter assignment remap"
-              (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-table-lookup rebuilt-index varying)
-                cabi.compiler-reg-id-r12))
-            (compiler-regalloc-self-test-require!
-              "AVX2 emitted parameter id remap"
-              (let
-                [remapped : ir.CompilerIrParamSeq
-                  (reg.compiler-reg-remap-params remap params)]
-                (and
-                  (= remapped.len 3)
-                  (match (ir.compiler-ir-param-seq-ref remapped 0)
-                    [(Param _ _ active-param) (= active-param active)])
-                  (match (ir.compiler-ir-param-seq-ref remapped 1)
-                    [(Param _ _ varying-param) (= varying-param varying)])
-                  (match (ir.compiler-ir-param-seq-ref remapped 2)
-                    [(Param _ _ uniform-param) (= uniform-param uniform)]))))
-            true))]
+                (= remapped.len 3)
+                (match (ir.compiler-ir-param-seq-ref remapped 0)
+                  [(Param _ _ active-param) (= active-param active)])
+                (match (ir.compiler-ir-param-seq-ref remapped 1)
+                  [(Param _ _ varying-param) (= varying-param varying)])
+                (match (ir.compiler-ir-param-seq-ref remapped 2)
+                  [(Param _ _ uniform-param) (= uniform-param uniform)]))))
+          true)]
       [(None) false])))
 
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
@@ -12394,32 +12265,31 @@
 (define (compiler-reg-vector-stack-mask-words-ok?) : bool
   (let
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
-    (begin
-      (reg.compiler-reg-vector-stack-words-instr!
-        (ir.ir-instr-vector-compare 0 (Eq) (I64 0) (I64 0) 8 (I32))
-        (&mut words))
-      (reg.compiler-reg-vector-stack-words-instr!
-        (irt.instr "%1 = mask_and %0, %0 lanes 8")
-        (&mut words))
-      (reg.compiler-reg-vector-stack-words-instr!
-        (MaskNot 2 (Var 1) 8)
-        (&mut words))
-      (reg.compiler-reg-vector-stack-words-instr!
-        (irt.instr "%3 = tail_mask 0, 1 lanes 8")
-        (&mut words))
-      (reg.compiler-reg-vector-stack-words-instr!
-        (ir.ir-instr-predicated-load 4 (I64 0) (I64 0) (Var 3) 8 (Bool))
-        (&mut words))
-      (reg.compiler-reg-vector-stack-words-instr!
-        (ir.ir-instr-select 5 (Var 3) (Var 4) (Var 4) 8 (Bool))
-        (&mut words))
-      (and
-        (= (array-ref words 0) 4)
-        (= (array-ref words 1) 4)
-        (= (array-ref words 2) 4)
-        (= (array-ref words 3) 4)
-        (= (array-ref words 4) 4)
-        (= (array-ref words 5) 4)))))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (ir.ir-instr-vector-compare 0 (Eq) (I64 0) (I64 0) 8 (I32))
+      (&mut words))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (irt.instr "%1 = mask_and %0, %0 lanes 8")
+      (&mut words))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (MaskNot 2 (Var 1) 8)
+      (&mut words))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (irt.instr "%3 = tail_mask 0, 1 lanes 8")
+      (&mut words))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (ir.ir-instr-predicated-load 4 (I64 0) (I64 0) (Var 3) 8 (Bool))
+      (&mut words))
+    (reg.compiler-reg-vector-stack-words-instr!
+      (ir.ir-instr-select 5 (Var 3) (Var 4) (Var 4) 8 (Bool))
+      (&mut words))
+    (and
+      (= (array-ref words 0) 4)
+      (= (array-ref words 1) 4)
+      (= (array-ref words 2) 4)
+      (= (array-ref words 3) 4)
+      (= (array-ref words 4) 4)
+      (= (array-ref words 5) 4))))
 
 (define (compiler-reg-simd-copy-class-function) : ir.CompilerIrFunction
   (Function
@@ -12454,26 +12324,25 @@
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (match func
       [(Function _ _ _ _ blocks _)
-        (begin
-          (reg.compiler-reg-vector-stack-words-blocks!
-            (reg.compiler-reg-global-shared-view blocks)
-            (&mut words))
-          (reg.compiler-reg-vector-stack-words-fixpoint! blocks (&mut words))
-          (and
-            (live.compiler-live-set-contains? classes.uses 0)
-            (live.compiler-live-set-contains? classes.uses 1)
-            (live.compiler-live-set-contains? classes.uses 2)
-            (not (live.compiler-live-set-contains? classes.uses 3))
-            (live.compiler-live-set-contains? classes.defs 3)
-            (live.compiler-live-set-contains? classes.defs 4)
-            (live.compiler-live-set-contains? classes.defs 5)
-            (not (live.compiler-live-set-contains? classes.defs 0))
-            (= (array-ref words 0) 8)
-            (= (array-ref words 1) 8)
-            (= (array-ref words 2) 8)
-            (= (array-ref words 3) 4)
-            (= (array-ref words 4) 4)
-            (= (array-ref words 5) 4)))])))
+        (reg.compiler-reg-vector-stack-words-blocks!
+          (reg.compiler-reg-global-shared-view blocks)
+          (&mut words))
+        (reg.compiler-reg-vector-stack-words-fixpoint! blocks (&mut words))
+        (and
+          (live.compiler-live-set-contains? classes.uses 0)
+          (live.compiler-live-set-contains? classes.uses 1)
+          (live.compiler-live-set-contains? classes.uses 2)
+          (not (live.compiler-live-set-contains? classes.uses 3))
+          (live.compiler-live-set-contains? classes.defs 3)
+          (live.compiler-live-set-contains? classes.defs 4)
+          (live.compiler-live-set-contains? classes.defs 5)
+          (not (live.compiler-live-set-contains? classes.defs 0))
+          (= (array-ref words 0) 8)
+          (= (array-ref words 1) 8)
+          (= (array-ref words 2) 8)
+          (= (array-ref words 3) 4)
+          (= (array-ref words 4) 4)
+          (= (array-ref words 5) 4))])))
 
 (test
   regalloc-simd-copy-class-fixpoint
@@ -12519,100 +12388,99 @@
     [big : ast.AstType (Struct (ci.intern "SretColor"))]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 12)]
-    (begin
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Alloc 0 (clone big)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Alloc 1 (clone big)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.AddrOf 2 1))
+    (if structural?
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Alloc 0 (clone big)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Alloc 1 (clone big)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.AddrOf 2 1))
-      (if structural?
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (irt.instr "%12 = cast %2 : (Array i64 2) to u64"))
-        unit)
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Call
-          3
-          (ir.compiler-ir-test-symbol "sret_one")
-          (if ordinary?
-            (One
-              (Var
-                (if structural?
-                  12
-                  2)))
-            (ir.compiler-ir-call-args-sret-from-seq
-              (ir.compiler-ir-value-seq1
-                (Var
-                  (if structural?
-                    12
-                    2)))
-              0))
-          (U64)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Load
-          4
-          (Var
-            (if ordinary?
-              2
-              3))
-          (I64)))
-      (if derived-escape?
-        (begin
-          (ir.compiler-ir-instr-builder-push!
-            (&mut builder)
-            (irt.instr "%10 = gep %2, 0 : u64"))
-          (ir.compiler-ir-instr-builder-push!
-            (&mut builder)
-            (irt.instr "%11 = call escaping_pointer(%10) : u64")))
-        unit)
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Alloc 5 (clone big)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Alloc 6 big))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.AddrOf 7 6))
-      (if structural?
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (irt.instr "%13 = cast %7 : (Array i64 2) to u64"))
-        unit)
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Call
-          8
-          (ir.compiler-ir-test-symbol "sret_two")
+        (irt.instr "%12 = cast %2 : (Array i64 2) to u64"))
+      unit)
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Call
+        3
+        (ir.compiler-ir-test-symbol "sret_one")
+        (if ordinary?
+          (One
+            (Var
+              (if structural?
+                12
+                2)))
           (ir.compiler-ir-call-args-sret-from-seq
             (ir.compiler-ir-value-seq1
               (Var
                 (if structural?
-                  13
-                  7)))
-            0)
-          (U64)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (ir.CompilerIrInstr.Load 9 (Var 8) (I64)))
-      (if overlap?
+                  12
+                  2)))
+            0))
+        (U64)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Load
+        4
+        (Var
+          (if ordinary?
+            2
+            3))
+        (I64)))
+    (if derived-escape?
+      (begin
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (irt.instr "%10 = load %3 : i64"))
-        unit)
+          (irt.instr "%10 = gep %2, 0 : u64"))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (irt.instr "%11 = call escaping_pointer(%10) : u64")))
+      unit)
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Alloc 5 (clone big)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Alloc 6 big))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.AddrOf 7 6))
+    (if structural?
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (ir.CompilerIrInstr.Return No))
-      (ir.compiler-ir-blocks
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-builder-to-seq builder))))))
+        (irt.instr "%13 = cast %7 : (Array i64 2) to u64"))
+      unit)
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Call
+        8
+        (ir.compiler-ir-test-symbol "sret_two")
+        (ir.compiler-ir-call-args-sret-from-seq
+          (ir.compiler-ir-value-seq1
+            (Var
+              (if structural?
+                13
+                7)))
+          0)
+        (U64)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Load 9 (Var 8) (I64)))
+    (if overlap?
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (irt.instr "%10 = load %3 : i64"))
+      unit)
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Return No))
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-builder-to-seq builder)))))
 
 (define (compiler-reg-sret-color-intervals
   [overlap? : bool]
@@ -12678,32 +12546,29 @@
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 32)]
     [remap : (__tl_dyn-array i64) (__tl_make-array i64 14)]
     [index : i64 0]
-    (begin
-      (while (< index 32)
-        (begin
-          (set! (array-ref slots index) -1)
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 14)
-        (begin
-          (set! (array-ref remap index) -1)
-          (set! index (+ index 1))))
-      (reg.compiler-reg-color-inline-storage
-        (compiler-reg-sret-color-blocks
-          ordinary?
-          overlap?
-          derived-escape?
-          structural?)
-        (compiler-reg-sret-color-intervals overlap? derived-escape? structural?)
-        (&mut slots)
-        (&mut remap)
-        14
-        0)
-      (if (or ordinary? overlap? derived-escape?)
-        (not (= (array-ref remap 0) (array-ref remap 5)))
-        (and
-          (= (array-ref remap 0) (array-ref remap 5))
-          (= (array-ref remap 1) (array-ref remap 6)))))))
+    (while (< index 32)
+      (set! (array-ref slots index) -1)
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 14)
+      (set! (array-ref remap index) -1)
+      (set! index (+ index 1)))
+    (reg.compiler-reg-color-inline-storage
+      (compiler-reg-sret-color-blocks
+        ordinary?
+        overlap?
+        derived-escape?
+        structural?)
+      (compiler-reg-sret-color-intervals overlap? derived-escape? structural?)
+      (&mut slots)
+      (&mut remap)
+      14
+      0)
+    (if (or ordinary? overlap? derived-escape?)
+      (not (= (array-ref remap 0) (array-ref remap 5)))
+      (and
+        (= (array-ref remap 0) (array-ref remap 5))
+        (= (array-ref remap 1) (array-ref remap 6))))))
 
 (test
   regalloc-call-scoped-sret-storage
@@ -12742,15 +12607,13 @@
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [ends : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       [index : i64 0]
-      (begin
-        (reg.compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
-        (reg.compiler-reg-coalesce-chains-init! (&mut next) (&mut tail))
-        (while (< index n)
-          (begin
-            (set! (array-ref starts index) -1)
-            (set! (array-ref ends index) -1)
-            (set! index (+ index 1))))
-        (CompilerRegCoalesceTestMap parents sizes next tail starts ends)))))
+      (reg.compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
+      (reg.compiler-reg-coalesce-chains-init! (&mut next) (&mut tail))
+      (while (< index n)
+        (set! (array-ref starts index) -1)
+        (set! (array-ref ends index) -1)
+        (set! index (+ index 1)))
+      (CompilerRegCoalesceTestMap parents sizes next tail starts ends))))
 
 ;; Merges the classes of `left` and `right` the way the coalescer does: the
 ;; smaller root wins. Returns false when they already share a class.
@@ -12793,46 +12656,41 @@
       [seen : (__tl_dyn-array bool) (__tl_make-array bool n)]
       [root : i64 0]
       [ok : bool true]
-      (begin
-        (while (and ok (< root n))
-          (let
-            [scanned : i64 0]
-            [var : i64 0]
-            (begin
-              (while (< var n)
-                (begin
-                  (if (= (array-ref map.parents var) root)
-                    (set! scanned (+ scanned 1))
-                    unit)
-                  (set! var (+ var 1))))
-              (if (= (array-ref map.parents root) root)
-                (let
-                  [member : i64 root]
-                  [walked : i64 0]
-                  [last : i64 -1]
-                  (begin
-                    (while (and ok (>= member 0) (<= walked n))
-                      (begin
-                        (set!
-                          ok
-                          (and
-                            (= (array-ref map.parents member) root)
-                            (not (array-ref seen member))))
-                        (set! (array-ref seen member) true)
-                        (set! last member)
-                        (set! walked (+ walked 1))
-                        (set! member (array-ref map.next member))))
-                    (set!
-                      ok
-                      (and
-                        ok
-                        (< member 0)
-                        (= walked scanned)
-                        (= walked (array-ref map.sizes root))
-                        (= last (array-ref map.tail root))))))
-                (set! ok (and (= scanned 0) (= (array-ref map.sizes root) 0))))
-              (set! root (+ root 1)))))
-        ok))))
+      (while (and ok (< root n))
+        (let
+          [scanned : i64 0]
+          [var : i64 0]
+          (while (< var n)
+            (if (= (array-ref map.parents var) root)
+              (set! scanned (+ scanned 1))
+              unit)
+            (set! var (+ var 1)))
+          (if (= (array-ref map.parents root) root)
+            (let
+              [member : i64 root]
+              [walked : i64 0]
+              [last : i64 -1]
+              (while (and ok (>= member 0) (<= walked n))
+                (set!
+                  ok
+                  (and
+                    (= (array-ref map.parents member) root)
+                    (not (array-ref seen member))))
+                (set! (array-ref seen member) true)
+                (set! last member)
+                (set! walked (+ walked 1))
+                (set! member (array-ref map.next member)))
+              (set!
+                ok
+                (and
+                  ok
+                  (< member 0)
+                  (= walked scanned)
+                  (= walked (array-ref map.sizes root))
+                  (= last (array-ref map.tail root)))))
+            (set! ok (and (= scanned 0) (= (array-ref map.sizes root) 0))))
+          (set! root (+ root 1))))
+      ok)))
 
 ;; The members of `root`'s class in chain order, as one comparable number:
 ;; each member contributes a base-64 digit.
@@ -12844,12 +12702,10 @@
     (let
       [member : i64 root]
       [digits : i64 0]
-      (begin
-        (while (>= member 0)
-          (begin
-            (set! digits (+ (* digits 64) member))
-            (set! member (array-ref map.next member))))
-        digits))))
+      (while (>= member 0)
+        (set! digits (+ (* digits 64) member))
+        (set! member (array-ref map.next member)))
+      digits)))
 
 (cfg
   test
@@ -12910,35 +12766,34 @@
     (let
       [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map 6)]
       [heads : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-      (begin
-        (set! (array-ref heads 0) 1)
-        (set! (array-ref heads 1) 4)
-        (set! (array-ref heads 2) 5)
-        (and
-          (compiler-reg-coalesce-test-union!
-            (owned_view.compiler-owned-shared-view map)
-            1
-            0)
-          (compiler-reg-coalesce-test-union!
-            (owned_view.compiler-owned-shared-view map)
-            3
-            2)
-          (compiler-reg-coalesce-test-union!
-            (owned_view.compiler-owned-shared-view map)
-            4
-            3)
-          (compiler-reg-coalesce-test-union!
-            (owned_view.compiler-owned-shared-view map)
-            (array-ref heads first)
-            (array-ref heads second))
-          (compiler-reg-coalesce-test-chains-match-scan? (& map))
-          (compiler-reg-coalesce-test-union!
-            (owned_view.compiler-owned-shared-view map)
-            (array-ref heads second)
-            (array-ref heads third))
-          (compiler-reg-coalesce-test-chains-match-scan? (& map))
-          (= (array-ref map.sizes 0) 6)
-          (= (array-ref map.parents 5) 0))))))
+      (set! (array-ref heads 0) 1)
+      (set! (array-ref heads 1) 4)
+      (set! (array-ref heads 2) 5)
+      (and
+        (compiler-reg-coalesce-test-union!
+          (owned_view.compiler-owned-shared-view map)
+          1
+          0)
+        (compiler-reg-coalesce-test-union!
+          (owned_view.compiler-owned-shared-view map)
+          3
+          2)
+        (compiler-reg-coalesce-test-union!
+          (owned_view.compiler-owned-shared-view map)
+          4
+          3)
+        (compiler-reg-coalesce-test-union!
+          (owned_view.compiler-owned-shared-view map)
+          (array-ref heads first)
+          (array-ref heads second))
+        (compiler-reg-coalesce-test-chains-match-scan? (& map))
+        (compiler-reg-coalesce-test-union!
+          (owned_view.compiler-owned-shared-view map)
+          (array-ref heads second)
+          (array-ref heads third))
+        (compiler-reg-coalesce-test-chains-match-scan? (& map))
+        (= (array-ref map.sizes 0) 6)
+        (= (array-ref map.parents 5) 0)))))
 
 (cfg
   test
@@ -13020,28 +12875,23 @@
       [step : i64 0]
       [joins : i64 0]
       [ok : bool true]
-      (begin
-        (while (and ok (< step steps))
-          (let
-            [left : i64 0]
-            [right : i64 0]
-            (begin
-              (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-              (set! left (% (shr state 8) n))
-              (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-              (set! right (% (shr state 8) n))
-              (if (compiler-reg-coalesce-test-union!
-                (owned_view.compiler-owned-shared-view map)
-                left
-                right)
-                (begin
-                  (set! joins (+ joins 1))
-                  (set!
-                    ok
-                    (compiler-reg-coalesce-test-chains-match-scan? (& map))))
-                unit)
-              (set! step (+ step 1)))))
-        (and ok (>= joins (/ n 2)))))))
+      (while (and ok (< step steps))
+        (let
+          [left : i64 0]
+          [right : i64 0]
+          (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+          (set! left (% (shr state 8) n))
+          (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+          (set! right (% (shr state 8) n))
+          (when
+            (compiler-reg-coalesce-test-union!
+              (owned_view.compiler-owned-shared-view map)
+              left
+              right)
+            (set! joins (+ joins 1))
+            (set! ok (compiler-reg-coalesce-test-chains-match-scan? (& map))))
+          (set! step (+ step 1))))
+      (and ok (>= joins (/ n 2))))))
 
 (cfg
   test
@@ -13583,33 +13433,29 @@
     [mine : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index (reg.compiler-reg-loop-nest-header-count nest))
-        (let
-          [header : i64
-            (reg.compiler-reg-loop-nest-header
-              (reg.compiler-reg-global-shared-view nest)
-              index)]
-          [generation : i64 (+ index 1)]
-          [_total : i64
-            (reg.compiler-reg-loop-nest-header-members! nest header generation)]
-          [block : i64 0]
-          (begin
-            (while (< block count)
-              (begin
-                (if (reg.compiler-reg-loop-nest-member? nest block generation)
-                  (set! (array-ref mine block) (+ (array-ref mine block) 1))
-                  unit)
-                (set! block (+ block 1))))
-            (set! index (+ index 1)))))
-      (set! index 0)
-      (while (< index count)
-        (begin
-          (if (= (array-ref mine index) (array-ref depths index))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (< index (reg.compiler-reg-loop-nest-header-count nest))
+      (let
+        [header : i64
+          (reg.compiler-reg-loop-nest-header
+            (reg.compiler-reg-global-shared-view nest)
+            index)]
+        [generation : i64 (+ index 1)]
+        [_total : i64
+          (reg.compiler-reg-loop-nest-header-members! nest header generation)]
+        [block : i64 0]
+        (while (< block count)
+          (if (reg.compiler-reg-loop-nest-member? nest block generation)
+            (set! (array-ref mine block) (+ (array-ref mine block) 1))
+            unit)
+          (set! block (+ block 1)))
+        (set! index (+ index 1))))
+    (set! index 0)
+    (while (< index count)
+      (if (= (array-ref mine index) (array-ref depths index))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (compiler-reg-loop-nest-consumer-ok?) : bool
   (and
@@ -13742,14 +13588,12 @@
     [count : i64 (array-length first)]
     [index : i64 0]
     [ok : bool (= count (array-length second))]
-    (begin
-      (while (< index count)
-        (begin
-          (if (= (array-ref first index) (array-ref second index))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (< index count)
+      (if (= (array-ref first index) (array-ref second index))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 ;; --- live-in bridge at a block that opens with a call -----------------------
 ;;
@@ -13820,208 +13664,200 @@
     [count : i64 (array-length first)]
     [index : i64 0]
     [ok : bool (= count (array-length second))]
-    (begin
-      (while (< index count)
-        (begin
-          (if (= (array-ref first index) (array-ref second index))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (< index count)
+      (if (= (array-ref first index) (array-ref second index))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (compiler-regalloc-core-self-test?) : bool
-  (begin
-    (require-each!
-      (compiler-reg-loop-nest-early-exit-ok?)
-      (compiler-reg-loop-nest-sunk-cold-ok?)
-      (compiler-reg-loop-nest-two-latch-ok?)
-      (compiler-reg-loop-nest-nested-ok?)
-      (compiler-reg-loop-nest-fallthrough-ok?)
-      (compiler-reg-loop-nest-unreachable-ok?)
-      (compiler-reg-loop-nest-deterministic-ok?)
-      (compiler-reg-loop-nest-rotated-ok?)
-      (compiler-reg-loop-nest-multi-entry-ok?)
-      (compiler-reg-loop-nest-non-member-ok?)
-      (compiler-reg-loop-nest-consumer-ok?)
-      (compiler-reg-loop-nest-regeneration-ok?)
-      (compiler-reg-loop-nest-spans-ok?)
-      (compiler-reg-loop-nest-spans-deterministic-ok?)
-      (compiler-reg-live-in-call-ok?)
-      (compiler-reg-program-maps-suppression-ok?)
-      (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
-      (compiler-reg-reuse-ok?)
-      (compiler-reg-f64-reuse-ok?)
-      (compiler-reg-overlap-spill-ok?)
-      (compiler-reg-f64-overlap-spill-ok?)
-      (compiler-reg-call-live-ok?)
-      (compiler-reg-f64-call-live-ok?)
-      (compiler-reg-call-arg-ok?)
-      (compiler-reg-f64-call-arg-ok?)
-      (compiler-reg-ineligible-ok?)
-      (compiler-reg-target-clobbers-ok?)
-      (compiler-reg-xmm-clobbers-ok?)
-      (compiler-reg-xmm-abi-call-constraints-ok?)
-      (compiler-reg-xmm-shared-greedy-bank-ok?)
-      (compiler-reg-xmm-vector-class-reset-ok?)
-      (compiler-reg-coalesce-ok?)
-      (compiler-reg-p22-nested-copy-ok?)
-      (cfg test (compiler-reg-liveness-handle-ok?) true)
-      (cfg test (compiler-reg-liveness-handle-phi-ok?) true)
-      (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
-      (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
-      (compiler-reg-vector-mask-homes-ok?)
-      (compiler-reg-mask-pressure-spill-home-ok?)
-      (compiler-reg-segmented-interference-ok?)
-      (compiler-reg-hole-aware-register-reuse-ok?)
-      (compiler-reg-tail-call-clobber-ok?))
-    true))
+  (require-each!
+    (compiler-reg-loop-nest-early-exit-ok?)
+    (compiler-reg-loop-nest-sunk-cold-ok?)
+    (compiler-reg-loop-nest-two-latch-ok?)
+    (compiler-reg-loop-nest-nested-ok?)
+    (compiler-reg-loop-nest-fallthrough-ok?)
+    (compiler-reg-loop-nest-unreachable-ok?)
+    (compiler-reg-loop-nest-deterministic-ok?)
+    (compiler-reg-loop-nest-rotated-ok?)
+    (compiler-reg-loop-nest-multi-entry-ok?)
+    (compiler-reg-loop-nest-non-member-ok?)
+    (compiler-reg-loop-nest-consumer-ok?)
+    (compiler-reg-loop-nest-regeneration-ok?)
+    (compiler-reg-loop-nest-spans-ok?)
+    (compiler-reg-loop-nest-spans-deterministic-ok?)
+    (compiler-reg-live-in-call-ok?)
+    (compiler-reg-program-maps-suppression-ok?)
+    (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
+    (compiler-reg-reuse-ok?)
+    (compiler-reg-f64-reuse-ok?)
+    (compiler-reg-overlap-spill-ok?)
+    (compiler-reg-f64-overlap-spill-ok?)
+    (compiler-reg-call-live-ok?)
+    (compiler-reg-f64-call-live-ok?)
+    (compiler-reg-call-arg-ok?)
+    (compiler-reg-f64-call-arg-ok?)
+    (compiler-reg-ineligible-ok?)
+    (compiler-reg-target-clobbers-ok?)
+    (compiler-reg-xmm-clobbers-ok?)
+    (compiler-reg-xmm-abi-call-constraints-ok?)
+    (compiler-reg-xmm-shared-greedy-bank-ok?)
+    (compiler-reg-xmm-vector-class-reset-ok?)
+    (compiler-reg-coalesce-ok?)
+    (compiler-reg-p22-nested-copy-ok?)
+    (cfg test (compiler-reg-liveness-handle-ok?) true)
+    (cfg test (compiler-reg-liveness-handle-phi-ok?) true)
+    (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
+    (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
+    (compiler-reg-vector-mask-homes-ok?)
+    (compiler-reg-mask-pressure-spill-home-ok?)
+    (compiler-reg-segmented-interference-ok?)
+    (compiler-reg-hole-aware-register-reuse-ok?)
+    (compiler-reg-tail-call-clobber-ok?))
+  true)
 
 (define (compiler-regalloc-scalar-self-test?) : bool
-  (begin
-    (require-each!
-      (cfg test (compiler-reg-early-exit-general-ok?) true)
-      (cfg test (compiler-reg-early-exit-float-guard-refused-ok?) true)
-      (cfg test (compiler-reg-cold-call-split-ok?) true)
-      (cfg test (compiler-reg-call-hole-weights-ok?) true)
-      (cfg test (compiler-reg-block-weights-ok?) true)
-      (cfg test (compiler-reg-call-hole-select-ok?) true)
-      (cfg test (compiler-reg-call-hole-rewrite-shape-ok?) true)
-      (cfg test (compiler-reg-call-hole-cross-block-ok?) true)
-      (cfg test (compiler-reg-call-hole-join-ok?) true)
-      (cfg test (compiler-reg-call-hole-redef-ok?) true)
-      (cfg test (compiler-reg-call-hole-flow-conservative-ok?) true)
-      (cfg test (compiler-reg-call-hole-drop-ok?) true)
-      (cfg test (compiler-reg-call-hole-round-ok?) true)
-      (cfg test (compiler-reg-call-hole-declines-ok?) true)
-      (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true)
-      (cfg test (compiler-reg-call-hole-loop-arm-weight-ok?) true)
-      (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true)
-      (cfg test (compiler-reg-call-hole-csr-split-ok?) true)
-      (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true)
-      (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true)
-      (cfg test (compiler-reg-loop-park-detect-ok?) true)
-      (cfg test (compiler-reg-loop-park-eligible-ok?) true)
-      (cfg test (compiler-reg-loop-park-sites-ok?) true)
-      (cfg test (compiler-reg-loop-park-redirectable-ok?) true)
-      (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true)
-      (cfg test (compiler-reg-loop-park-splice-rewrite-ok?) true)
-      (cfg test (compiler-reg-loop-park-verify-ok?) true)
-      (cfg test (compiler-reg-loop-park-round-ok?) true)
-      (cfg test (compiler-reg-loop-park-declines-ok?) true)
-      (cfg test (compiler-reg-loop-park-deep-parks-ok?) true)
-      (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true)
-      (cfg test (compiler-reg-loop-park-deep-declines-ok?) true)
-      (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true)
-      (cfg test (compiler-reg-park-ladder-ok?) true)
-      (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true)
-      (compiler-reg-scalar-call-live-ok?)
-      (compiler-reg-scalar-f64-call-live-ok?)
-      (compiler-reg-scalar-win64-f64-call-live-ok?)
-      (compiler-reg-scalar-handle-eligible-ok?)
-      (compiler-reg-scalar-handle-call-arg-ok?)
-      (compiler-reg-scalar-indirect-call-arg-ok?)
-      (compiler-reg-scalar-c-abi-store-result-call-arg-ok?)
-      (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?)
-      (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
-      (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
-      (cfg test (compiler-reg-param-entry-forbidden-ok?) true)
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true)
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true)
-      (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true)
-      (cfg test (compiler-reg-scalar-float-param-registers-ok?) true)
-      (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true)
-      (cfg test (compiler-reg-scalar-mixed-float-call-args-ok?) true)
-      (cfg test (compiler-reg-scalar-win64-mixed-float-call-args-ok?) true)
-      (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
-      (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
-      (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true)
-      (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
-      (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
-      (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)
-      (cfg test (compiler-reg-scalar-param-dead-before-call-pin-ok?) true)
-      (cfg test (compiler-reg-scalar-param-rdx-div-span-ok?) true)
-      (cfg test (compiler-reg-scalar-param-rcx-shift-span-ok?) true)
-      (cfg test (compiler-reg-scalar-param-pin-coalesce-demote-ok?) true)
-      (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true)
-      (compiler-reg-scalar-function-intervals-ok?)
-      (compiler-reg-scalar-interval-guardrail-ok?)
-      (compiler-reg-scalar-edge-precise-allocation-intervals-ok?)
-      (compiler-reg-scalar-loop-backedge-ok?)
-      (compiler-reg-scalar-zero-call-caller-saved-ok?)
-      (cfg test (compiler-reg-scalar-zero-call-param-conflict-ok?) true)
-      (compiler-reg-scalar-caller-saved-clobber-ok?)
-      (compiler-reg-scalar-call-spanning-caller-saved-ok?)
-      (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)
-      (cfg
-        test
-        (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?)
-        true)
-      (cfg test (compiler-reg-loop-region-invariant-ok?) true)
-      (cfg test (compiler-reg-loop-region-defined-in-loop-refused?) true)
-      (cfg test (compiler-reg-loop-region-call-refused?) true)
-      (cfg test (compiler-reg-loop-region-admit-ok?) true)
-      (cfg test (compiler-reg-loop-region-score-ok?) true)
-      (cfg test (compiler-reg-loop-region-overlap-ok?) true)
-      (cfg test (compiler-reg-evict-parked-ok?) true)
-      (cfg test (compiler-reg-evict-busy-victim-refused?) true)
-      (cfg test (compiler-reg-evict-all-busy-refused?) true)
-      (cfg test (compiler-reg-evict-dead-exit-ok?) true)
-      (cfg test (compiler-reg-evict-price-refused?) true)
-      (cfg test (compiler-reg-evict-double-lend-refused?) true)
-      (cfg test (compiler-reg-evict-coalesced-victim-refused?) true)
-      (cfg test (compiler-reg-evict-sole-occupant-ok?) true)
-      (cfg test (compiler-reg-evict-class-mention-ok?) true)
-      (cfg test (compiler-reg-evict-rewrite-shape-ok?) true))
-    true))
+  (require-each!
+    (cfg test (compiler-reg-early-exit-general-ok?) true)
+    (cfg test (compiler-reg-early-exit-float-guard-refused-ok?) true)
+    (cfg test (compiler-reg-cold-call-split-ok?) true)
+    (cfg test (compiler-reg-call-hole-weights-ok?) true)
+    (cfg test (compiler-reg-block-weights-ok?) true)
+    (cfg test (compiler-reg-call-hole-select-ok?) true)
+    (cfg test (compiler-reg-call-hole-rewrite-shape-ok?) true)
+    (cfg test (compiler-reg-call-hole-cross-block-ok?) true)
+    (cfg test (compiler-reg-call-hole-join-ok?) true)
+    (cfg test (compiler-reg-call-hole-redef-ok?) true)
+    (cfg test (compiler-reg-call-hole-flow-conservative-ok?) true)
+    (cfg test (compiler-reg-call-hole-drop-ok?) true)
+    (cfg test (compiler-reg-call-hole-round-ok?) true)
+    (cfg test (compiler-reg-call-hole-declines-ok?) true)
+    (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true)
+    (cfg test (compiler-reg-call-hole-loop-arm-weight-ok?) true)
+    (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true)
+    (cfg test (compiler-reg-call-hole-csr-split-ok?) true)
+    (cfg test (compiler-reg-call-hole-csr-cost-strict-ok?) true)
+    (cfg test (compiler-reg-call-hole-recursive-arm-ok?) true)
+    (cfg test (compiler-reg-loop-park-detect-ok?) true)
+    (cfg test (compiler-reg-loop-park-eligible-ok?) true)
+    (cfg test (compiler-reg-loop-park-sites-ok?) true)
+    (cfg test (compiler-reg-loop-park-redirectable-ok?) true)
+    (cfg test (compiler-reg-loop-park-direct-rewrite-ok?) true)
+    (cfg test (compiler-reg-loop-park-splice-rewrite-ok?) true)
+    (cfg test (compiler-reg-loop-park-verify-ok?) true)
+    (cfg test (compiler-reg-loop-park-round-ok?) true)
+    (cfg test (compiler-reg-loop-park-declines-ok?) true)
+    (cfg test (compiler-reg-loop-park-deep-parks-ok?) true)
+    (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true)
+    (cfg test (compiler-reg-loop-park-deep-declines-ok?) true)
+    (cfg test (compiler-reg-loop-park-deep-ranking-ok?) true)
+    (cfg test (compiler-reg-park-ladder-ok?) true)
+    (cfg test (compiler-reg-scavenge-segment-hulls-ok?) true)
+    (compiler-reg-scalar-call-live-ok?)
+    (compiler-reg-scalar-f64-call-live-ok?)
+    (compiler-reg-scalar-win64-f64-call-live-ok?)
+    (compiler-reg-scalar-handle-eligible-ok?)
+    (compiler-reg-scalar-handle-call-arg-ok?)
+    (compiler-reg-scalar-indirect-call-arg-ok?)
+    (compiler-reg-scalar-c-abi-store-result-call-arg-ok?)
+    (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?)
+    (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+    (cfg test (compiler-reg-param-entry-forbidden-ok?) true)
+    (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true)
+    (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true)
+    (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true)
+    (cfg test (compiler-reg-scalar-float-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-mixed-float-call-args-ok?) true)
+    (cfg test (compiler-reg-scalar-win64-mixed-float-call-args-ok?) true)
+    (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
+    (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
+    (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true)
+    (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
+    (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-dead-before-call-pin-ok?) true)
+    (cfg test (compiler-reg-scalar-param-rdx-div-span-ok?) true)
+    (cfg test (compiler-reg-scalar-param-rcx-shift-span-ok?) true)
+    (cfg test (compiler-reg-scalar-param-pin-coalesce-demote-ok?) true)
+    (cfg test (compiler-reg-scalar-aggregate-param-pinned-ok?) true)
+    (compiler-reg-scalar-function-intervals-ok?)
+    (compiler-reg-scalar-interval-guardrail-ok?)
+    (compiler-reg-scalar-edge-precise-allocation-intervals-ok?)
+    (compiler-reg-scalar-loop-backedge-ok?)
+    (compiler-reg-scalar-zero-call-caller-saved-ok?)
+    (cfg test (compiler-reg-scalar-zero-call-param-conflict-ok?) true)
+    (compiler-reg-scalar-caller-saved-clobber-ok?)
+    (compiler-reg-scalar-call-spanning-caller-saved-ok?)
+    (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)
+    (cfg test (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?) true)
+    (cfg test (compiler-reg-loop-region-invariant-ok?) true)
+    (cfg test (compiler-reg-loop-region-defined-in-loop-refused?) true)
+    (cfg test (compiler-reg-loop-region-call-refused?) true)
+    (cfg test (compiler-reg-loop-region-admit-ok?) true)
+    (cfg test (compiler-reg-loop-region-score-ok?) true)
+    (cfg test (compiler-reg-loop-region-overlap-ok?) true)
+    (cfg test (compiler-reg-evict-parked-ok?) true)
+    (cfg test (compiler-reg-evict-busy-victim-refused?) true)
+    (cfg test (compiler-reg-evict-all-busy-refused?) true)
+    (cfg test (compiler-reg-evict-dead-exit-ok?) true)
+    (cfg test (compiler-reg-evict-price-refused?) true)
+    (cfg test (compiler-reg-evict-double-lend-refused?) true)
+    (cfg test (compiler-reg-evict-coalesced-victim-refused?) true)
+    (cfg test (compiler-reg-evict-sole-occupant-ok?) true)
+    (cfg test (compiler-reg-evict-class-mention-ok?) true)
+    (cfg test (compiler-reg-evict-rewrite-shape-ok?) true))
+  true)
 
 (define (compiler-regalloc-storage-self-test?) : bool
-  (begin
-    (require-each!
-      (cfg test (compiler-reg-remat-classifier-ok?) true)
-      (cfg test (compiler-reg-invariant-element-store-cells-clean-ok?) true)
-      (cfg test (compiler-reg-invariant-field-store-refused-ok?) true)
-      (cfg test (compiler-reg-invariant-call-refused-ok?) true)
-      (cfg test (compiler-reg-remat-recompute-classifier-ok?) true)
-      (cfg test (compiler-reg-remat-literal-assignment-ok?) true)
-      (cfg test (compiler-reg-remat-frozen-global-ok?) true)
-      (cfg test (compiler-reg-remat-discount-weights-ok?) true)
-      (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true)
-      (cfg test (compiler-reg-remat-parameters-poisoned-ok?) true)
-      (cfg test (compiler-reg-remat-parameter-assignment-keeps-home-ok?) true)
-      (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
-      (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
-      (cfg test (compiler-reg-foldable-rebate-classification-ok?) true)
-      (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true)
-      (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true)
-      (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true)
-      (cfg test (compiler-reg-call-span-counts-ok?) true)
-      (cfg test (compiler-reg-group-pair-widening-ok?) true)
-      (compiler-reg-early-scratch-model-ok?)
-      (compiler-reg-greedy-live-union-invariant-ok?)
-      (compiler-reg-scratch-borrow-masks-ok?)
-      (compiler-reg-early-scratch-never-spills-ok?)
-      (compiler-reg-early-scratch-exclusion-rehomes-ok?)
-      (compiler-reg-dense-lookups-ok?)
-      (compiler-reg-dense-assignment-snapshot-ok?)
-      (compiler-reg-color-stack-group-ok?)
-      (compiler-reg-color-spill-slot-sharing-ok?)
-      (compiler-reg-color-fusion-pin-slots-ok?)
-      (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true)
-      (cfg test (compiler-reg-color-web-merge-ok?) true)
-      (cfg test (compiler-reg-color-carry-priority-ok?) true)
-      (cfg test (compiler-reg-color-witness-chain-ok?) true)
-      (compiler-reg-color-spill-param-pins-ok?)
-      (compiler-reg-color-avx2-param-ranges-ok?)
-      (compiler-reg-color-spill-hole-demand-ok?)
-      (compiler-reg-color-spill-scratch-demand-ok?)
-      (compiler-reg-color-vector-stack-slots-ok?)
-      (compiler-reg-vector-stack-mask-words-ok?)
-      (compiler-reg-color-storage-ranges-ok?)
-      (compiler-reg-stack-only-storage-branch-ok?)
-      (compiler-reg-stack-only-storage-escape-ok?)
-      (compiler-reg-block-hulls-ok?)
-      (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
-    true))
+  (require-each!
+    (cfg test (compiler-reg-remat-classifier-ok?) true)
+    (cfg test (compiler-reg-invariant-element-store-cells-clean-ok?) true)
+    (cfg test (compiler-reg-invariant-field-store-refused-ok?) true)
+    (cfg test (compiler-reg-invariant-call-refused-ok?) true)
+    (cfg test (compiler-reg-remat-recompute-classifier-ok?) true)
+    (cfg test (compiler-reg-remat-literal-assignment-ok?) true)
+    (cfg test (compiler-reg-remat-frozen-global-ok?) true)
+    (cfg test (compiler-reg-remat-discount-weights-ok?) true)
+    (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true)
+    (cfg test (compiler-reg-remat-parameters-poisoned-ok?) true)
+    (cfg test (compiler-reg-remat-parameter-assignment-keeps-home-ok?) true)
+    (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
+    (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
+    (cfg test (compiler-reg-foldable-rebate-classification-ok?) true)
+    (cfg test (compiler-reg-foldable-rebate-keeps-counter-ok?) true)
+    (cfg test (compiler-reg-foldable-rebate-index-not-discounted-ok?) true)
+    (cfg test (compiler-reg-foldable-rebate-idempotent-ok?) true)
+    (cfg test (compiler-reg-call-span-counts-ok?) true)
+    (cfg test (compiler-reg-group-pair-widening-ok?) true)
+    (compiler-reg-early-scratch-model-ok?)
+    (compiler-reg-greedy-live-union-invariant-ok?)
+    (compiler-reg-scratch-borrow-masks-ok?)
+    (compiler-reg-early-scratch-never-spills-ok?)
+    (compiler-reg-early-scratch-exclusion-rehomes-ok?)
+    (compiler-reg-dense-lookups-ok?)
+    (compiler-reg-dense-assignment-snapshot-ok?)
+    (compiler-reg-color-stack-group-ok?)
+    (compiler-reg-color-spill-slot-sharing-ok?)
+    (compiler-reg-color-fusion-pin-slots-ok?)
+    (cfg test (compiler-reg-color-phi-web-slot-sharing-ok?) true)
+    (cfg test (compiler-reg-color-web-merge-ok?) true)
+    (cfg test (compiler-reg-color-carry-priority-ok?) true)
+    (cfg test (compiler-reg-color-witness-chain-ok?) true)
+    (compiler-reg-color-spill-param-pins-ok?)
+    (compiler-reg-color-avx2-param-ranges-ok?)
+    (compiler-reg-color-spill-hole-demand-ok?)
+    (compiler-reg-color-spill-scratch-demand-ok?)
+    (compiler-reg-color-vector-stack-slots-ok?)
+    (compiler-reg-vector-stack-mask-words-ok?)
+    (compiler-reg-color-storage-ranges-ok?)
+    (compiler-reg-stack-only-storage-branch-ok?)
+    (compiler-reg-stack-only-storage-escape-ok?)
+    (compiler-reg-block-hulls-ok?)
+    (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
+  true)
 
 (cfg
   test
@@ -14197,11 +14033,10 @@
     (let
       [index : i64 0]
       (while (< index 7)
-        (begin
-          (set!
-            (array-ref items (+ base index))
-            (compiler-reg-heapsort-golden-input index))
-          (set! index (+ index 1)))))))
+        (set!
+          (array-ref items (+ base index))
+          (compiler-reg-heapsort-golden-input index))
+        (set! index (+ index 1))))))
 
 (cfg
   test
@@ -14211,16 +14046,14 @@
     [candidate? : bool]) : bool
     (let
       [index : i64 0]
-      (begin
-        (while (< index 7)
-          (begin
-            (unless
-              (compiler-reg-heapsort-interval-eq?
-                (array-ref items (+ base index))
-                (compiler-reg-heapsort-golden-output candidate? index))
-              (return false))
-            (set! index (+ index 1))))
-        true))))
+      (while (< index 7)
+        (unless
+          (compiler-reg-heapsort-interval-eq?
+            (array-ref items (+ base index))
+            (compiler-reg-heapsort-golden-output candidate? index))
+          (return false))
+        (set! index (+ index 1)))
+      true)))
 
 (cfg
   test
@@ -14234,9 +14067,8 @@
     (let
       [index : i64 0]
       (while (< index (array-length items))
-        (begin
-          (set! (array-ref items index) (compiler-reg-heapsort-sentinel index))
-          (set! index (+ index 1)))))))
+        (set! (array-ref items index) (compiler-reg-heapsort-sentinel index))
+        (set! index (+ index 1))))))
 
 (cfg
   test
@@ -14246,18 +14078,16 @@
     [count : i64]) : bool
     (let
       [index : i64 0]
-      (begin
-        (while (< index (array-length items))
-          (begin
-            (when
-              (or (< index base) (>= index (+ base count)))
-              (unless
-                (compiler-reg-heapsort-interval-eq?
-                  (array-ref items index)
-                  (compiler-reg-heapsort-sentinel index))
-                (return false)))
-            (set! index (+ index 1))))
-        true))))
+      (while (< index (array-length items))
+        (when
+          (or (< index base) (>= index (+ base count)))
+          (unless
+            (compiler-reg-heapsort-interval-eq?
+              (array-ref items index)
+              (compiler-reg-heapsort-sentinel index))
+            (return false)))
+        (set! index (+ index 1)))
+      true)))
 
 (cfg
   test
@@ -14279,11 +14109,10 @@
     (let
       [index : i64 0]
       (while (< index count)
-        (begin
-          (set!
-            (array-ref items (+ base index))
-            (compiler-reg-heapsort-large-item index))
-          (set! index (+ index 1)))))))
+        (set!
+          (array-ref items (+ base index))
+          (compiler-reg-heapsort-large-item index))
+        (set! index (+ index 1))))))
 
 (cfg
   test
@@ -14295,32 +14124,30 @@
     (let
       [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (let
-            [item : reg.CompilerRegInterval (array-ref items (+ base index))]
-            [var : i64 item.var]
-            (begin
-              (when (or (< var 0) (>= var count)) (return false))
-              (when (= (array-ref seen var) 1) (return false))
-              (unless
-                (compiler-reg-heapsort-interval-eq?
-                  item
-                  (compiler-reg-heapsort-large-item var))
-                (return false))
+      (while (< index count)
+        (let
+          [item : reg.CompilerRegInterval (array-ref items (+ base index))]
+          [var : i64 item.var]
+          (when (or (< var 0) (>= var count)) (return false))
+          (when (= (array-ref seen var) 1) (return false))
+          (unless
+            (compiler-reg-heapsort-interval-eq?
+              item
+              (compiler-reg-heapsort-large-item var))
+            (return false))
+          (when
+            (> index 0)
+            (let
+              [previous : reg.CompilerRegInterval
+                (array-ref items (+ base (- index 1)))]
               (when
-                (> index 0)
-                (let
-                  [previous : reg.CompilerRegInterval
-                    (array-ref items (+ base (- index 1)))]
-                  (when
-                    (if candidate?
-                      (reg.compiler-reg-interval-before? item previous)
-                      (reg.compiler-reg-color-interval-before? item previous))
-                    (return false))))
-              (set! (array-ref seen var) 1)
-              (set! index (+ index 1)))))
-        true))))
+                (if candidate?
+                  (reg.compiler-reg-interval-before? item previous)
+                  (reg.compiler-reg-color-interval-before? item previous))
+                (return false))))
+          (set! (array-ref seen var) 1)
+          (set! index (+ index 1))))
+      true)))
 
 (cfg
   test
@@ -14334,50 +14161,48 @@
         (__tl_make-array reg.CompilerRegInterval 7)]
       [range : (__tl_dyn-array reg.CompilerRegInterval)
         (__tl_make-array reg.CompilerRegInterval 14)]
-      (begin
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view candidate)
-          0)
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view color)
-          0)
-        (compiler-reg-heapsort-fill-sentinels!
-          (reg.compiler-reg-global-shared-view range))
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view range)
-          3)
-        (reg.compiler-reg-candidate-heapsort!
-          (reg.compiler-reg-global-shared-view candidate)
-          7)
-        (reg.compiler-reg-color-heapsort-unordered!
-          (reg.compiler-reg-global-shared-view color)
-          7)
-        (reg.compiler-reg-scratch-hull-heapsort-range!
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view candidate)
+        0)
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view color)
+        0)
+      (compiler-reg-heapsort-fill-sentinels!
+        (reg.compiler-reg-global-shared-view range))
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view range)
+        3)
+      (reg.compiler-reg-candidate-heapsort!
+        (reg.compiler-reg-global-shared-view candidate)
+        7)
+      (reg.compiler-reg-color-heapsort-unordered!
+        (reg.compiler-reg-global-shared-view color)
+        7)
+      (reg.compiler-reg-scratch-hull-heapsort-range!
+        (reg.compiler-reg-global-shared-view range)
+        3
+        7)
+      ;; The unordered heap would permute these four equivalent records, so
+      ;; exact preservation proves the handwritten ordered scan returned.
+      (let
+        [index : i64 0]
+        (while (< index 7)
+          (set!
+            (array-ref ordered index)
+            (compiler-reg-heapsort-golden-output false index))
+          (set! index (+ index 1))))
+      (reg.compiler-reg-color-heapsort
+        (reg.compiler-reg-global-shared-view ordered)
+        7)
+      (and
+        (compiler-reg-heapsort-matches-golden? candidate 0 true)
+        (compiler-reg-heapsort-matches-golden? color 0 false)
+        (compiler-reg-heapsort-matches-golden? ordered 0 false)
+        (compiler-reg-heapsort-sentinels-ok?
           (reg.compiler-reg-global-shared-view range)
           3
           7)
-        ;; The unordered heap would permute these four equivalent records, so
-        ;; exact preservation proves the handwritten ordered scan returned.
-        (let
-          [index : i64 0]
-          (while (< index 7)
-            (begin
-              (set!
-                (array-ref ordered index)
-                (compiler-reg-heapsort-golden-output false index))
-              (set! index (+ index 1)))))
-        (reg.compiler-reg-color-heapsort
-          (reg.compiler-reg-global-shared-view ordered)
-          7)
-        (and
-          (compiler-reg-heapsort-matches-golden? candidate 0 true)
-          (compiler-reg-heapsort-matches-golden? color 0 false)
-          (compiler-reg-heapsort-matches-golden? ordered 0 false)
-          (compiler-reg-heapsort-sentinels-ok?
-            (reg.compiler-reg-global-shared-view range)
-            3
-            7)
-          (compiler-reg-heapsort-matches-golden? range 3 false))))))
+        (compiler-reg-heapsort-matches-golden? range 3 false)))))
 
 (cfg
   test
@@ -14386,23 +14211,22 @@
       [base : i64 3]
       [items : (__tl_dyn-array reg.CompilerRegInterval)
         (__tl_make-array reg.CompilerRegInterval (+ base (+ count 4)))]
-      (begin
-        (compiler-reg-heapsort-fill-sentinels!
-          (reg.compiler-reg-global-shared-view items))
-        (compiler-reg-heapsort-fill-large!
+      (compiler-reg-heapsort-fill-sentinels!
+        (reg.compiler-reg-global-shared-view items))
+      (compiler-reg-heapsort-fill-large!
+        (reg.compiler-reg-global-shared-view items)
+        base
+        count)
+      (reg.compiler-reg-scratch-hull-heapsort-range!
+        (reg.compiler-reg-global-shared-view items)
+        base
+        count)
+      (and
+        (compiler-reg-heapsort-sentinels-ok?
           (reg.compiler-reg-global-shared-view items)
           base
           count)
-        (reg.compiler-reg-scratch-hull-heapsort-range!
-          (reg.compiler-reg-global-shared-view items)
-          base
-          count)
-        (and
-          (compiler-reg-heapsort-sentinels-ok?
-            (reg.compiler-reg-global-shared-view items)
-            base
-            count)
-          (compiler-reg-heapsort-order-permutation-ok? items base count false))))))
+        (compiler-reg-heapsort-order-permutation-ok? items base count false)))))
 
 (cfg
   test
@@ -14413,24 +14237,23 @@
         (__tl_make-array reg.CompilerRegInterval count)]
       [color : (__tl_dyn-array reg.CompilerRegInterval)
         (__tl_make-array reg.CompilerRegInterval count)]
-      (begin
-        (compiler-reg-heapsort-fill-large!
-          (reg.compiler-reg-global-shared-view candidate)
-          0
-          count)
-        (compiler-reg-heapsort-fill-large!
-          (reg.compiler-reg-global-shared-view color)
-          0
-          count)
-        (reg.compiler-reg-candidate-heapsort!
-          (reg.compiler-reg-global-shared-view candidate)
-          count)
-        (reg.compiler-reg-color-heapsort-unordered!
-          (reg.compiler-reg-global-shared-view color)
-          count)
-        (and
-          (compiler-reg-heapsort-order-permutation-ok? candidate 0 count true)
-          (compiler-reg-heapsort-order-permutation-ok? color 0 count false))))))
+      (compiler-reg-heapsort-fill-large!
+        (reg.compiler-reg-global-shared-view candidate)
+        0
+        count)
+      (compiler-reg-heapsort-fill-large!
+        (reg.compiler-reg-global-shared-view color)
+        0
+        count)
+      (reg.compiler-reg-candidate-heapsort!
+        (reg.compiler-reg-global-shared-view candidate)
+        count)
+      (reg.compiler-reg-color-heapsort-unordered!
+        (reg.compiler-reg-global-shared-view color)
+        count)
+      (and
+        (compiler-reg-heapsort-order-permutation-ok? candidate 0 count true)
+        (compiler-reg-heapsort-order-permutation-ok? color 0 count false)))))
 
 (cfg
   test
@@ -14444,35 +14267,34 @@
         (__tl_make-array reg.CompilerRegInterval 14)]
       [before : i64 0]
       [after : i64 0]
-      (begin
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view candidate)
-          0)
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view color)
-          0)
-        (compiler-reg-heapsort-fill-sentinels!
-          (reg.compiler-reg-global-shared-view range))
-        (compiler-reg-heapsort-fill-golden!
-          (reg.compiler-reg-global-shared-view range)
-          3)
-        (set! before (profile.alloc-total))
-        (reg.compiler-reg-candidate-heapsort!
-          (reg.compiler-reg-global-shared-view candidate)
-          7)
-        (reg.compiler-reg-color-heapsort-unordered!
-          (reg.compiler-reg-global-shared-view color)
-          7)
-        (reg.compiler-reg-scratch-hull-heapsort-range!
-          (reg.compiler-reg-global-shared-view range)
-          3
-          7)
-        (set! after (profile.alloc-total))
-        (and
-          (= after before)
-          (= (array-ref candidate 0).end 40)
-          (= (array-ref color 1).end 70)
-          (= (array-ref range 4).end 70))))))
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view candidate)
+        0)
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view color)
+        0)
+      (compiler-reg-heapsort-fill-sentinels!
+        (reg.compiler-reg-global-shared-view range))
+      (compiler-reg-heapsort-fill-golden!
+        (reg.compiler-reg-global-shared-view range)
+        3)
+      (set! before (profile.alloc-total))
+      (reg.compiler-reg-candidate-heapsort!
+        (reg.compiler-reg-global-shared-view candidate)
+        7)
+      (reg.compiler-reg-color-heapsort-unordered!
+        (reg.compiler-reg-global-shared-view color)
+        7)
+      (reg.compiler-reg-scratch-hull-heapsort-range!
+        (reg.compiler-reg-global-shared-view range)
+        3
+        7)
+      (set! after (profile.alloc-total))
+      (and
+        (= after before)
+        (= (array-ref candidate 0).end 40)
+        (= (array-ref color 1).end 70)
+        (= (array-ref range 4).end 70)))))
 
 (cfg
   test
@@ -14633,79 +14455,68 @@
       [ok : bool (and (= seq.len 0) (= (array-length seq.slots) 0))]
       [count : i64 0]
       [index : i64 0]
-      (begin
-        (while (< count 17)
-          (begin
-            (set! seq (,push seq (,item count)))
-            (set! count (+ count 1))
+      (while (< count 17)
+        (set! seq (,push seq (,item count)))
+        (set! count (+ count 1))
+        (set!
+          ok
+          (and
+            ok
+            (= seq.len count)
+            (=
+              (array-length seq.slots)
+              (compiler-reg-dense-seq-expected-capacity count))))
+        (set! index 0)
+        (while (< index count)
+          (set! ok (and ok (,same? (array-ref seq.slots index) (,item index))))
+          (set! index (+ index 1))))
+      (let
+        [five : ,seq-type (,empty)]
+        [full : ,seq-type (,empty)]
+        [spare-item (,item 102)]
+        (set! index 0)
+        (while (< index 8)
+          (if (< index 5)
+            (set! five (,push five (,item index)))
+            unit)
+          (set! full (,push full (,item index)))
+          (set! index (+ index 1)))
+        (let
+          [view : ,seq-type (reg.compiler-reg-global-shared-view five)]
+          [full-view : ,seq-type (reg.compiler-reg-global-shared-view full)]
+          [first : ,seq-type (,push five (,item 100))]
+          [view-intact : bool
+            (and
+              (= view.len 5)
+              (,same? (array-ref view.slots 0) (,item 0))
+              (,same? (array-ref view.slots 4) (,item 4)))]
+          [second : ,seq-type (,push view (,item 101))]
+          [grown-a : ,seq-type (,push full (,item 200))]
+          [grown-b : ,seq-type (,push full-view (,item 201))]
+          [before : i64 (profile.alloc-total)]
+          [extra : ,seq-type (,push second spare-item)]
+          [after : i64 (profile.alloc-total)]
+          (set! index 0)
+          (while (< index 5)
             (set!
               ok
-              (and
-                ok
-                (= seq.len count)
-                (=
-                  (array-length seq.slots)
-                  (compiler-reg-dense-seq-expected-capacity count))))
-            (set! index 0)
-            (while (< index count)
-              (begin
-                (set!
-                  ok
-                  (and ok (,same? (array-ref seq.slots index) (,item index))))
-                (set! index (+ index 1))))))
-        (let
-          [five : ,seq-type (,empty)]
-          [full : ,seq-type (,empty)]
-          [spare-item (,item 102)]
-          (begin
-            (set! index 0)
-            (while (< index 8)
-              (begin
-                (if (< index 5)
-                  (set! five (,push five (,item index)))
-                  unit)
-                (set! full (,push full (,item index)))
-                (set! index (+ index 1))))
-            (let
-              [view : ,seq-type (reg.compiler-reg-global-shared-view five)]
-              [full-view : ,seq-type (reg.compiler-reg-global-shared-view full)]
-              [first : ,seq-type (,push five (,item 100))]
-              [view-intact : bool
-                (and
-                  (= view.len 5)
-                  (,same? (array-ref view.slots 0) (,item 0))
-                  (,same? (array-ref view.slots 4) (,item 4)))]
-              [second : ,seq-type (,push view (,item 101))]
-              [grown-a : ,seq-type (,push full (,item 200))]
-              [grown-b : ,seq-type (,push full-view (,item 201))]
-              [before : i64 (profile.alloc-total)]
-              [extra : ,seq-type (,push second spare-item)]
-              [after : i64 (profile.alloc-total)]
-              (begin
-                (set! index 0)
-                (while (< index 5)
-                  (begin
-                    (set!
-                      ok
-                      (and
-                        ok
-                        (,same? (array-ref first.slots index) (,item index))))
-                    (set! index (+ index 1))))
-                (and
-                  ok
-                  view-intact
-                  (= first.len 6)
-                  (= (array-length first.slots) 8)
-                  (,same? (array-ref first.slots 5) (,item 101))
-                  (= grown-a.len 9)
-                  (= (array-length grown-a.slots) 16)
-                  (,same? (array-ref grown-a.slots 7) (,item 7))
-                  (,same? (array-ref grown-a.slots 8) (,item 200))
-                  (= grown-b.len 9)
-                  (,same? (array-ref grown-b.slots 8) (,item 201))
-                  (= extra.len 7)
-                  (,same? (array-ref extra.slots 6) spare-item)
-                  (= after before))))))))))
+              (and ok (,same? (array-ref first.slots index) (,item index))))
+            (set! index (+ index 1)))
+          (and
+            ok
+            view-intact
+            (= first.len 6)
+            (= (array-length first.slots) 8)
+            (,same? (array-ref first.slots 5) (,item 101))
+            (= grown-a.len 9)
+            (= (array-length grown-a.slots) 16)
+            (,same? (array-ref grown-a.slots 7) (,item 7))
+            (,same? (array-ref grown-a.slots 8) (,item 200))
+            (= grown-b.len 9)
+            (,same? (array-ref grown-b.slots 8) (,item 201))
+            (= extra.len 7)
+            (,same? (array-ref extra.slots 6) spare-item)
+            (= after before)))))))
 
 (cfg
   test
@@ -14760,33 +14571,29 @@
     (let
       [roots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [invalid : (__tl_dyn-array bool) (__tl_make-array bool 2)]
-      (begin
-        (set! (array-ref roots 0) -1)
-        (test.assert-true
-          (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 0)
-          "first root propagates")
-        (test.assert-true
-          (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 1)
-          "conflicting root invalidates")
-        (test.assert-i64-eq (array-ref roots 0) -2 "conflict sentinel")
-        (test.assert-true (array-ref invalid 0) "first root invalidated")
-        (test.assert-true (array-ref invalid 1) "second root invalidated")
-        (test.assert-true
-          (not
-            (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 0))
-          "replay cannot restore first root")
-        (test.assert-true
-          (not
-            (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 1))
-          "replay cannot restore second root")
-        (test.assert-i64-eq (array-ref roots 0) -2 "conflict remains terminal")))))
+      (set! (array-ref roots 0) -1)
+      (test.assert-true
+        (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 0)
+        "first root propagates")
+      (test.assert-true
+        (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 1)
+        "conflicting root invalidates")
+      (test.assert-i64-eq (array-ref roots 0) -2 "conflict sentinel")
+      (test.assert-true (array-ref invalid 0) "first root invalidated")
+      (test.assert-true (array-ref invalid 1) "second root invalidated")
+      (test.assert-true
+        (not (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 0))
+        "replay cannot restore first root")
+      (test.assert-true
+        (not (reg.compiler-reg-color-set-root! (&mut roots) (&mut invalid) 0 1))
+        "replay cannot restore second root")
+      (test.assert-i64-eq (array-ref roots 0) -2 "conflict remains terminal"))))
 
 (define (compiler-regalloc-self-test) : i64
-  (begin
-    (compiler-regalloc-core-self-test?)
-    (compiler-regalloc-scalar-self-test?)
-    (compiler-regalloc-storage-self-test?)
-    42))
+  (compiler-regalloc-core-self-test?)
+  (compiler-regalloc-scalar-self-test?)
+  (compiler-regalloc-storage-self-test?)
+  42)
 
 (cfg
   test
@@ -14819,27 +14626,26 @@
           false
           types
           (reg.compiler-reg-assignment-table-make 0))]
-      (begin
-        (test.assert-i64-eq
-          (compiler-reg-liveness-census-baseline-count metrics)
-          1
-          "planning records baseline liveness in the caller's owner")
-        (test.assert-i64-eq
-          (compiler-reg-liveness-census-edge-precise-count metrics)
-          1
-          "planning records edge-precise liveness in the caller's owner")
-        (match plan
-          [(Plan _ _ _ returned-types _)
-            (reg.compiler-reg-liveness-census-reset!
-              (reg.compiler-reg-var-types-metrics returned-types))])
-        (test.assert-i64-eq
-          (compiler-reg-liveness-census-baseline-count metrics)
-          0
-          "reset through the returned plan reaches the original owner")
-        (test.assert-i64-eq
-          (compiler-reg-liveness-census-edge-precise-count metrics)
-          0
-          "returned plan does not carry a cloned metrics owner")))))
+      (test.assert-i64-eq
+        (compiler-reg-liveness-census-baseline-count metrics)
+        1
+        "planning records baseline liveness in the caller's owner")
+      (test.assert-i64-eq
+        (compiler-reg-liveness-census-edge-precise-count metrics)
+        1
+        "planning records edge-precise liveness in the caller's owner")
+      (match plan
+        [(Plan _ _ _ returned-types _)
+          (reg.compiler-reg-liveness-census-reset!
+            (reg.compiler-reg-var-types-metrics returned-types))])
+      (test.assert-i64-eq
+        (compiler-reg-liveness-census-baseline-count metrics)
+        0
+        "reset through the returned plan reaches the original owner")
+      (test.assert-i64-eq
+        (compiler-reg-liveness-census-edge-precise-count metrics)
+        0
+        "returned plan does not carry a cloned metrics owner"))))
 
 (cfg
   test
@@ -14869,34 +14675,33 @@
           (reg.compiler-reg-plan-assignments
             (owned_view.compiler-owned-shared-view first)))]
       [round : i64 0]
-      (begin
-        (test.assert-true
-          (let
-            [plan-assignments
-              (reg.compiler-reg-plan-assignments
-                (owned_view.compiler-owned-shared-view first))]
-            (reg.compiler-reg-assignment-table-prefix-eq?
-              saved
-              plan-assignments
-              9
-              0))
-          "fixture has comparable register/spill homes")
-        (while (< round 32)
-          (let
-            [_later : reg.CompilerRegPlan
-              (reg.compiler-reg-plan-function-scalar-for-abi
-                Windows
-                (compiler-reg-trace-fixture-function))]
-            (set! round (+ round 1))))
-        (test.assert-true
-          (let
-            [plan-assignments (reg.compiler-reg-plan-assignments first)]
-            (reg.compiler-reg-assignment-table-prefix-eq?
-              saved
-              plan-assignments
-              9
-              0))
-          "retained plan keeps its homes after later analysis arenas retire")))))
+      (test.assert-true
+        (let
+          [plan-assignments
+            (reg.compiler-reg-plan-assignments
+              (owned_view.compiler-owned-shared-view first))]
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            saved
+            plan-assignments
+            9
+            0))
+        "fixture has comparable register/spill homes")
+      (while (< round 32)
+        (let
+          [_later : reg.CompilerRegPlan
+            (reg.compiler-reg-plan-function-scalar-for-abi
+              Windows
+              (compiler-reg-trace-fixture-function))]
+          (set! round (+ round 1))))
+      (test.assert-true
+        (let
+          [plan-assignments (reg.compiler-reg-plan-assignments first)]
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            saved
+            plan-assignments
+            9
+            0))
+        "retained plan keeps its homes after later analysis arenas retire"))))
 
 ;; Widen only the unused frame suffix: identical live vregs must keep their
 ;; homes when auxiliary liveness storage crosses its scratch-owner budget.
@@ -14972,21 +14777,20 @@
     (begin
       (match (compiler-reg-trace-fixture-function)
         [(Function _ _ _ _ blocks _)
-          (begin
-            (test.assert-i64-eq
-              (ir.compiler-ir-block-list-instruction-count
-                (owned_view.compiler-owned-shared-view blocks))
-              12
-              "fixture keeps the exact ownership-budget boundary")
-            (test.assert-true
-              (not
-                (reg.compiler-reg-analysis-needs-scratch?
-                  87359
-                  (owned_view.compiler-owned-shared-view blocks)))
-              "lower boundary uses the existing owner")
-            (test.assert-true
-              (reg.compiler-reg-analysis-needs-scratch? 87360 blocks)
-              "upper boundary uses an independent scratch owner"))])
+          (test.assert-i64-eq
+            (ir.compiler-ir-block-list-instruction-count
+              (owned_view.compiler-owned-shared-view blocks))
+            12
+            "fixture keeps the exact ownership-budget boundary")
+          (test.assert-true
+            (not
+              (reg.compiler-reg-analysis-needs-scratch?
+                87359
+                (owned_view.compiler-owned-shared-view blocks)))
+            "lower boundary uses the existing owner")
+          (test.assert-true
+            (reg.compiler-reg-analysis-needs-scratch? 87360 blocks)
+            "upper boundary uses an independent scratch owner")])
       (test.assert-true
         (compiler-reg-analysis-owner-homes-ok? Linux)
         "Linux homes survive both ownership paths and later planning")
@@ -15027,11 +14831,10 @@
 (define (compiler-reg-zero-call-caller-saved-integer-registers) : reg.CompilerRegIdSeq
   (let
     [out : reg.CompilerRegIdSeq (reg.compiler-reg-id-seq-with-capacity 3)]
-    (begin
-      (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-r9))
-      (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-rcx))
-      (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-rdx))
-      out)))
+    (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-r9))
+    (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-rcx))
+    (set! out (reg.compiler-reg-id-seq-push out cabi.compiler-reg-id-rdx))
+    out))
 
 (define (compiler-reg-caller-saved-integer-registers-from-abi
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -15044,16 +14847,14 @@
         (if (< idx count)
           (- count idx)
           0))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (reg.compiler-reg-id-seq-push
-              out
-              (cabi.compiler-abi-caller-saved-gp-register-id target-abi index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (reg.compiler-reg-id-seq-push
+          out
+          (cabi.compiler-abi-caller-saved-gp-register-id target-abi index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : reg.CompilerRegIdSeq
   (compiler-reg-caller-saved-integer-registers-from-abi Linux 0))
@@ -15075,16 +14876,14 @@
         (if (< idx count)
           (- count idx)
           0))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (reg.compiler-reg-id-seq-push
-              out
-              (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (reg.compiler-reg-id-seq-push
+          out
+          (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-reg-callee-saved-xmm-registers-from-abi
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -15097,16 +14896,14 @@
         (if (< idx count)
           (- count idx)
           0))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (reg.compiler-reg-id-seq-push
-              out
-              (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (reg.compiler-reg-id-seq-push
+          out
+          (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : reg.CompilerRegIdSeq
   (compiler-reg-caller-saved-xmm-registers-from-abi Linux 0))
@@ -15141,16 +14938,14 @@
     [index : i64 (- count 1)]
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (pmove.compiler-parallel-move-edge-seq-with-capacity count)]
-    (begin
-      ;; The former loop consed each ascending move onto the head. Walk the
-      ;; dense source backward so decision order remains newest-first.
-      (while (>= index 0)
-        (begin
-          (pmove.compiler-parallel-move-edge-push!
-            (&mut edges)
-            (compiler-reg-move-parallel-edge (array-ref slots index)))
-          (set! index (- index 1))))
-      edges)))
+    ;; The former loop consed each ascending move onto the head. Walk the
+    ;; dense source backward so decision order remains newest-first.
+    (while (>= index 0)
+      (pmove.compiler-parallel-move-edge-push!
+        (&mut edges)
+        (compiler-reg-move-parallel-edge (array-ref slots index)))
+      (set! index (- index 1)))
+    edges))
 
 (define (compiler-reg-move-list-parallel-decision
   [moves : reg.CompilerRegMoveSeq]) : pmove.CompilerParallelMoveDecision
@@ -15190,13 +14985,12 @@
     [(Function _ _ _ vars _ _)
       (let
         [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        (begin
-          (reg.compiler-reg-fill-i64-array (&mut eligible) 1)
-          (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
-            (reg.compiler-reg-global-shared-view func)
-            strict-pairs
-            eligible
-            (reg.compiler-reg-function-alu-prefer-rhs func))))]))
+        (reg.compiler-reg-fill-i64-array (&mut eligible) 1)
+        (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
+          (reg.compiler-reg-global-shared-view func)
+          strict-pairs
+          eligible
+          (reg.compiler-reg-function-alu-prefer-rhs func)))]))
 
 (define (compiler-reg-function-phi-touched-safe
   [func : ir.CompilerIrFunction]
@@ -15215,58 +15009,56 @@
     [index : i64 0]
     [instr-index : i64 start-index]
     [out : live.CompilerLiveI64Set set]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (match (array-ref slots index)
-              [(Call _ _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(CallCAbiStoreResult payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(CallIndirectCAbiStoreResult payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(SpmdCall payload-box)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(TailCall _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [(TailCallIndirect _ _ _)
-                (live.compiler-live-set-union
-                  out
-                  (live.compiler-live-after
-                    (reg.compiler-reg-global-shared-view liveness)
-                    label
-                    instr-index))]
-              [_ out]))
-          (set! instr-index (+ instr-index 1))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (match (array-ref slots index)
+          [(Call _ _ _ _)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [(CallCAbiStoreResult payload-box)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [(CallIndirectCAbiStoreResult payload-box)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [(SpmdCall payload-box)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [(TailCall _ _ _)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [(TailCallIndirect _ _ _)
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-after
+                (reg.compiler-reg-global-shared-view liveness)
+                label
+                instr-index))]
+          [_ out]))
+      (set! instr-index (+ instr-index 1))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-reg-call-live-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -15278,21 +15070,19 @@
         [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref seq i)
-                [(Block label instrs)
-                  (set!
-                    out
-                    (compiler-reg-call-live-instr-seq
-                      instrs
-                      (reg.compiler-reg-global-shared-view liveness)
-                      label
-                      0
-                      out))])
-              (set! i (+ i 1))))
-          out))]))
+        (while (< i count)
+          (match (ir.compiler-ir-block-seq-ref seq i)
+            [(Block label instrs)
+              (set!
+                out
+                (compiler-reg-call-live-instr-seq
+                  instrs
+                  (reg.compiler-reg-global-shared-view liveness)
+                  label
+                  0
+                  out))])
+          (set! i (+ i 1)))
+        out)]))
 
 ;; First register not in conflict with `var` over its live segments
 ;; (CompilerRegMaybeId.No if every register is occupied by an interfering value).
@@ -15306,21 +15096,20 @@
     [at : i64 0]
     [result : reg.CompilerRegMaybeId (No)]
     [done : bool false]
-    (begin
-      (while (and (< at (reg.compiler-reg-id-seq-count regs)) (not done))
-        (let
-          [reg-id : i64 (reg.compiler-reg-id-seq-ref regs at)]
-          (if (reg.compiler-reg-active-register-conflicts?
-            active
-            reg-id
-            index
-            var
-            hole-aware-vars)
-            (set! at (+ at 1))
-            (begin
-              (set! result (Some reg-id))
-              (set! done true)))))
-      result)))
+    (while (and (< at (reg.compiler-reg-id-seq-count regs)) (not done))
+      (let
+        [reg-id : i64 (reg.compiler-reg-id-seq-ref regs at)]
+        (if (reg.compiler-reg-active-register-conflicts?
+          active
+          reg-id
+          index
+          var
+          hole-aware-vars)
+          (set! at (+ at 1))
+          (begin
+            (set! result (Some reg-id))
+            (set! done true)))))
+    result))
 
 (define (compiler-reg-assignment-table-register-free-at-point?
   [starts : (__tl_dyn-array i64)]
@@ -15332,19 +15121,17 @@
   (let
     [v : i64 0]
     [free : bool true]
-    (begin
-      (while (and (< v vars) free)
-        (begin
-          (if (and
-            (reg.compiler-reg-var-live-at-point? starts ends v point)
-            (reg.compiler-reg-assignment-table-var-uses-register?
-              assignment-index
-              v
-              reg-id))
-            (set! free false)
-            unit)
-          (set! v (+ v 1))))
-      free)))
+    (while (and (< v vars) free)
+      (if (and
+        (reg.compiler-reg-var-live-at-point? starts ends v point)
+        (reg.compiler-reg-assignment-table-var-uses-register?
+          assignment-index
+          v
+          reg-id))
+        (set! free false)
+        unit)
+      (set! v (+ v 1)))
+    free))
 
 (define (compiler-reg-assignment-table-register-free-over-range?
   [starts : (& starts (__tl_dyn-array i64))]
@@ -15357,19 +15144,17 @@
   (let
     [v : i64 0]
     [free : bool true]
-    (begin
-      (while (and (< v vars) free)
-        (begin
-          (if (and
-            (reg.compiler-reg-var-live-over-range? starts ends v lo hi)
-            (reg.compiler-reg-assignment-table-var-uses-register?
-              assignment-index
-              v
-              reg-id))
-            (set! free false)
-            unit)
-          (set! v (+ v 1))))
-      free)))
+    (while (and (< v vars) free)
+      (if (and
+        (reg.compiler-reg-var-live-over-range? starts ends v lo hi)
+        (reg.compiler-reg-assignment-table-var-uses-register?
+          assignment-index
+          v
+          reg-id))
+        (set! free false)
+        unit)
+      (set! v (+ v 1)))
+    free))
 
 (define (compiler-reg-interval-lookup
   [intervals : reg.CompilerRegIntervalSeq]
@@ -15378,22 +15163,20 @@
     [index : i64 0]
     [result : reg.CompilerRegMaybeInterval No]
     [done : bool false]
-    (begin
-      (while (and
-        (< index (reg.compiler-reg-interval-seq-count intervals))
-        (not done))
-        (let
-          [interval : reg.CompilerRegInterval
-            (reg.compiler-reg-interval-seq-ref intervals index)]
-          [id : i64 interval.var]
-          (cond
-            [(= id var)
-              (begin
-                (set! result (Some interval))
-                (set! done true))]
-            [(> id var) (set! done true)]
-            [else (set! index (+ index 1))])))
-      result)))
+    (while (and
+      (< index (reg.compiler-reg-interval-seq-count intervals))
+      (not done))
+      (let
+        [interval : reg.CompilerRegInterval
+          (reg.compiler-reg-interval-seq-ref intervals index)]
+        [id : i64 interval.var]
+        (cond
+          [(= id var)
+            (set! result (Some interval))
+            (set! done true)]
+          [(> id var) (set! done true)]
+          [else (set! index (+ index 1))])))
+    result))
 
 (define (compiler-reg-interval-range?
   [intervals : reg.CompilerRegIntervalSeq]
@@ -15554,16 +15337,14 @@
       (reg.compiler-reg-assignment-table-items assignments)]
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index (array-length present))
-        (begin
-          (if (= (array-ref present index) 0)
-            unit
-            (match (array-ref items index)
-              [(Spill _) (set! count (+ count 1))]
-              [_ unit]))
-          (set! index (+ index 1))))
-      count)))
+    (while (< index (array-length present))
+      (if (= (array-ref present index) 0)
+        unit
+        (match (array-ref items index)
+          [(Spill _) (set! count (+ count 1))]
+          [_ unit]))
+      (set! index (+ index 1)))
+    count))
 
 ;; Every instruction except allocation, bounds checks, CPU queries, calls,
 ;; jumps and phis.
@@ -15653,36 +15434,33 @@
   (let
     [k : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< k 12))
-        (let
-          [call? : bool (< k 9)]
-          [returning? : bool (and (< k 9) (not (= k 6)) (not (= k 7)))]
-          [clobber? : bool (or (< k 9) (= k 9) (= k 11))]
-          [seq : ir.CompilerIrInstrSeq
-            (compiler-reg-test-instr-seq-prepend
-              (compiler-reg-call-family-sample k)
-              (ir.compiler-ir-instr-seq-empty))]
-          (begin
-            (set!
-              ok
-              (and
-                (=
-                  (reg.compiler-reg-call-instr?
-                    (compiler-reg-call-family-sample k))
-                  call?)
-                (=
-                  (reg.compiler-reg-backend-caller-clobber-instr?
-                    (compiler-reg-call-family-sample k))
-                  clobber?)
-                (=
-                  (reg.compiler-reg-loop-split-seq-has-call-or-syscall? (& seq))
-                  call?)
-                (=
-                  (reg.compiler-reg-seq-has-returning-call-or-syscall? seq)
-                  returning?)))
-            (set! k (+ k 1)))))
-      ok)))
+    (while (and ok (< k 12))
+      (let
+        [call? : bool (< k 9)]
+        [returning? : bool (and (< k 9) (not (= k 6)) (not (= k 7)))]
+        [clobber? : bool (or (< k 9) (= k 9) (= k 11))]
+        [seq : ir.CompilerIrInstrSeq
+          (compiler-reg-test-instr-seq-prepend
+            (compiler-reg-call-family-sample k)
+            (ir.compiler-ir-instr-seq-empty))]
+        (set!
+          ok
+          (and
+            (=
+              (reg.compiler-reg-call-instr? (compiler-reg-call-family-sample k))
+              call?)
+            (=
+              (reg.compiler-reg-backend-caller-clobber-instr?
+                (compiler-reg-call-family-sample k))
+              clobber?)
+            (=
+              (reg.compiler-reg-loop-split-seq-has-call-or-syscall? (& seq))
+              call?)
+            (=
+              (reg.compiler-reg-seq-has-returning-call-or-syscall? seq)
+              returning?)))
+        (set! k (+ k 1))))
+    ok))
 
 (cfg
   test
@@ -15726,18 +15504,16 @@
     [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (match (array-ref slots index)
-              [(Call _ _ _ _) (live.compiler-live-set-insert out p)]
-              [(SpmdCall payload-box) (live.compiler-live-set-insert out p)]
-              [_ out]))
-          (set! p (+ p 2))
-          (set! index (+ index 1))))
-      (Scan p out))))
+    (while (< index count)
+      (set!
+        out
+        (match (array-ref slots index)
+          [(Call _ _ _ _) (live.compiler-live-set-insert out p)]
+          [(SpmdCall payload-box) (live.compiler-live-set-insert out p)]
+          [_ out]))
+      (set! p (+ p 2))
+      (set! index (+ index 1)))
+    (Scan p out)))
 
 (define (compiler-reg-direct-call-points-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -15750,21 +15526,18 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
         [out-set : live.CompilerLiveI64Set set]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref seq i)
-                [(Block _ instrs)
-                  (match (compiler-reg-direct-call-points-seq
-                    instrs
-                    out-point
-                    (reg.compiler-reg-global-shared-view out-set))
-                    [(Scan p2 s2)
-                      (begin
-                        (set! out-point p2)
-                        (set! out-set s2))])])
-              (set! i (+ i 1))))
-          (Scan out-point out-set)))]))
+        (while (< i count)
+          (match (ir.compiler-ir-block-seq-ref seq i)
+            [(Block _ instrs)
+              (match (compiler-reg-direct-call-points-seq
+                instrs
+                out-point
+                (reg.compiler-reg-global-shared-view out-set))
+                [(Scan p2 s2)
+                  (set! out-point p2)
+                  (set! out-set s2)])])
+          (set! i (+ i 1)))
+        (Scan out-point out-set))]))
 
 (define (compiler-reg-direct-call-points [func : ir.CompilerIrFunction]) : live.CompilerLiveI64Set
   (match func
@@ -15788,11 +15561,10 @@
     [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (compiler-reg-ref-counts-add-instr!
-          counts
-          (reg.compiler-reg-global-array-element-shared-view slots index))
-        (set! index (+ index 1))))))
+      (compiler-reg-ref-counts-add-instr!
+        counts
+        (reg.compiler-reg-global-array-element-shared-view slots index))
+      (set! index (+ index 1)))))
 
 (define (compiler-reg-ref-counts-blocks!
   [counts : (__tl_dyn-array i64)]
@@ -15803,11 +15575,10 @@
         [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         (while (< i count)
-          (begin
-            (match (ir.compiler-ir-block-seq-ref seq i)
-              [(Block _ instrs)
-                (compiler-reg-ref-counts-seq! (&mut counts) instrs)])
-            (set! i (+ i 1)))))]))
+          (match (ir.compiler-ir-block-seq-ref seq i)
+            [(Block _ instrs)
+              (compiler-reg-ref-counts-seq! (&mut counts) instrs)])
+          (set! i (+ i 1))))]))
 
 (define (compiler-reg-foldable-rebate-seq!
   [rebates : (&mut rebates (__tl_dyn-array i64))]
@@ -15818,12 +15589,11 @@
     [count : i64 instrs.len]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (reg.compiler-reg-foldable-rebate-add-instr!
-          rebates
-          (reg.compiler-reg-global-array-element-shared-view slots index)
-          weight)
-        (set! index (+ index 1))))))
+      (reg.compiler-reg-foldable-rebate-add-instr!
+        rebates
+        (reg.compiler-reg-global-array-element-shared-view slots index)
+        weight)
+      (set! index (+ index 1)))))
 
 (define (compiler-reg-foldable-rebate-blocks!
   [rebates : (&mut rebates (__tl_dyn-array i64))]
@@ -15837,15 +15607,14 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [index : i64 block-index]
         (while (< i count)
-          (begin
-            (match (ir.compiler-ir-block-seq-ref seq i)
-              [(Block _ instrs)
-                (compiler-reg-foldable-rebate-seq!
-                  rebates
-                  instrs
-                  (array-ref weights index))])
-            (set! index (+ index 1))
-            (set! i (+ i 1)))))]))
+          (match (ir.compiler-ir-block-seq-ref seq i)
+            [(Block _ instrs)
+              (compiler-reg-foldable-rebate-seq!
+                rebates
+                instrs
+                (array-ref weights index))])
+          (set! index (+ index 1))
+          (set! i (+ i 1))))]))
 
 (define (compiler-reg-function-foldable-rebates
   [blocks : ir.CompilerIrBlockList]
@@ -15853,9 +15622,8 @@
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    (begin
-      (compiler-reg-foldable-rebate-blocks! (&mut rebates) blocks weights 0)
-      rebates)))
+    (compiler-reg-foldable-rebate-blocks! (&mut rebates) blocks weights 0)
+    rebates))
 
 (define (compiler-reg-cold-call-rewrite-function
   [type-segment-bases : i64]
@@ -15913,23 +15681,22 @@
       (and
         (>= n prefix-len)
         (string.eq (string.substring name 0 prefix-len) prefix))]
-    (begin
-      (while (and valid (< i n))
-        (let
-          [digit : i64 (cast (string.string-ref name i) : i64)]
-          (if (and (>= digit 48) (<= digit 57))
+    (while (and valid (< i n))
+      (let
+        [digit : i64 (cast (string.string-ref name i) : i64)]
+        (if (and (>= digit 48) (<= digit 57))
+          (begin
+            (set! digits (+ digits 1))
+            (set! i (+ i 1)))
+          (if (and
+            (= (cast (string.string-ref name i) : i64) 95)
+            (< (+ i 1) n)
+            (= (cast (string.string-ref name (+ i 1)) : i64) 95))
             (begin
-              (set! digits (+ digits 1))
-              (set! i (+ i 1)))
-            (if (and
-              (= (cast (string.string-ref name i) : i64) 95)
-              (< (+ i 1) n)
-              (= (cast (string.string-ref name (+ i 1)) : i64) 95))
-              (begin
-                (set! delimiter? true)
-                (set! i n))
-              (set! valid false)))))
-      (and valid (> digits 0) delimiter?))))
+              (set! delimiter? true)
+              (set! i n))
+            (set! valid false)))))
+    (and valid (> digits 0) delimiter?)))
 
 (define (compiler-reg-private-memory-type?
   [type-segment-bases : i64]
@@ -16061,17 +15828,15 @@
           (let
             [v : i64 temp-start]
             [ok : bool (< temp-start vars)]
-            (begin
-              (while (and ok (< v vars))
-                (begin
-                  (match (reg.compiler-reg-assignment-lookup assignments v)
-                    [(No) unit]
-                    [(Some location)
-                      (match location
-                        [(Spill _) unit]
-                        [_ (set! ok false)])])
-                  (set! v (+ v 1))))
-              ok))]))))
+            (while (and ok (< v vars))
+              (match (reg.compiler-reg-assignment-lookup assignments v)
+                [(No) unit]
+                [(Some location)
+                  (match location
+                    [(Spill _) unit]
+                    [_ (set! ok false)])])
+              (set! v (+ v 1)))
+            ok)]))))
 
 (define (compiler-reg-color-stack-slots
   [type-segment-bases : i64]

@@ -1289,21 +1289,35 @@
       [decoy-installed? : bool (ast.ast-node-pool-context-type-installed? b)]
       (ast.ast-node-pool-context-install! installed)
       (test.assert-true
-        (and (= scalar-a scalar-b) (= region-a region-b)
-          (= var-a var-b) (= root-a root-b)) "colliding type ids")
+        (and
+          (= scalar-a scalar-b)
+          (= region-a region-b)
+          (= var-a var-b)
+          (= root-a root-b))
+        "colliding type ids")
       (test.assert-true
         (= bases (ast.ast-node-pool-context-type-segment-bases a))
         "the owning type table survives growth")
       (test.assert-true equal? "type equality reads the owning pool")
       (test.assert-true different? "type equality preserves array lengths")
-      (test.assert-true (string.eq rendered "(Array i64 3)")
+      (test.assert-true
+        (string.eq rendered "(Array i64 3)")
         "rendering reads the owning scalar")
-      (test.assert-true (string.eq grown "(Array i64 1120)")
+      (test.assert-true
+        (string.eq grown "(Array i64 1120)")
         "rendering reads a grown segment")
-      (test.assert-true substitution? "lifetime substitution reads the owning pool")
-      (test.assert-true resolution? "resolution writes children to the owning pool")
-      (test.assert-true decoy-unchanged? "resolution leaves the decoy pool unchanged")
-      (test.assert-true decoy-installed? "type readers leave the decoy installed"))))
+      (test.assert-true
+        substitution?
+        "lifetime substitution reads the owning pool")
+      (test.assert-true
+        resolution?
+        "resolution writes children to the owning pool")
+      (test.assert-true
+        decoy-unchanged?
+        "resolution leaves the decoy pool unchanged")
+      (test.assert-true
+        decoy-installed?
+        "type readers leave the decoy installed"))))
 
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
@@ -2220,10 +2234,7 @@
         (&mut params)
         (ast.ast-param-id (ci.intern "elided") (I64) false))
       (set! index (+ index 1)))
-    (match (tc_core.tc-elide-function-signature
-      pools
-      params
-      (I64))
+    (match (tc_core.tc-elide-function-signature pools params (I64))
       [(Ok signature)
         (if (= (ast.ast-param-list-len (& signature.params)) count)
           (array-length signature.params.slots)

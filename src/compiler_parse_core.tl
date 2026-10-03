@@ -4786,10 +4786,9 @@
                                   (match (parse-ast-type dispatch pools ty)
                                     [(ResultAstType.Ok parsed-ty)
                                       (ResultAstParam.Ok
-                                        (ast.ast-param-id
+                                        (ast.ast-comptime-param-id
                                           (ci.intern-syntax-id-value name)
-                                          parsed-ty
-                                          true))]
+                                          parsed-ty))]
                                     [(ResultAstType.Err message)
                                       (ResultAstParam.Err message)])
                                   (ResultAstParam.Err

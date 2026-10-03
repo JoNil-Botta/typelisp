@@ -384,15 +384,15 @@
     [(CompilerFloatNoBits) 0]))
 
 (define (compiler-backend-test-scavenge-seed-block-liveins
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [liveness : compiler_liveness.CompilerFunctionLiveness]
   [point : i64]
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) point]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (let
             [live-afters : compiler_liveness.CompilerLiveInstrSetVec
@@ -416,18 +416,11 @@
                   point)
                 unit)
               (compiler-backend-test-scavenge-seed-block-liveins
-                (deref rest)
+                rest
                 liveness
                 (+ point (* 2 count))
                 starts
-                ends)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-backend-test-scavenge-seed-block-liveins
-        (ir.compiler-ir-block-seq-to-list seq)
-        liveness
-        point
-        starts
-        ends)]))
+                ends)))])]))
 
 ;; The emitter scratch a fixture stages around one emit call and puts back
 ;; afterwards: the scavenge context, the instruction post base and the current
@@ -527,7 +520,7 @@
                 starts
                 ends)
               (compiler-backend-test-scavenge-seed-block-liveins
-                emit-blocks
+                (ir.compiler-ir-block-list-view emit-blocks)
                 liveness
                 0
                 starts
@@ -1758,9 +1751,8 @@
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-      ir.CompilerIrBlockList.Nil)
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-object-test-call-category?
@@ -1799,7 +1791,7 @@
           (ir.compiler-ir-param-seq-empty))
         (ast.AstType.I64)
         1
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         ir.CompilerIrFunctionAbi.Ordinary)]
     [bool-result-function : ir.CompilerIrFunction
       (ir.CompilerIrFunction.Function
@@ -1807,7 +1799,7 @@
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.Bool)
         0
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         ir.CompilerIrFunctionAbi.Ordinary)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
@@ -2761,7 +2753,6 @@
 (define (compiler-backend-object-terminal-label-case-ok?
   [case-index : i64]
   [flags : bool]
-  [dense : bool]
   [target : backend.CompilerBackendTarget]) : bool
   (let
     [entry : i64 (ir.compiler-ir-label "entry")]
@@ -2797,9 +2788,7 @@
           tail)
         tail)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block entry instrs)
-        (ir.CompilerIrBlockList.Nil))]
+      (ir.compiler-ir-blocks (ir.CompilerIrBlock.Block entry instrs))]
     [program : ir.CompilerIrProgram
       (ir.CompilerIrProgram.Program
         (ir.compiler-ir-global-seq-empty)
@@ -2809,10 +2798,7 @@
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             1
-            (if dense
-              (ir.CompilerIrBlockList.Array
-                (ir.compiler-ir-block-seq-from-list blocks))
-              blocks)
+            blocks
             (ir.CompilerIrFunctionAbi.Ordinary))
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq-empty))]
@@ -2840,15 +2826,14 @@
     [index : i64 0]
     [ok : bool true]
     (begin
-      (while (and ok (< index 32))
+      (while (and ok (< index 16))
         (begin
           (set!
             ok
             (compiler-backend-object-terminal-label-case-ok?
               (% index 4)
               (= (% (/ index 4) 2) 1)
-              (= (% (/ index 8) 2) 1)
-              (if (< index 16)
+              (if (< index 8)
                 (backend.CompilerBackendTarget.Linux)
                 (backend.CompilerBackendTarget.Windows))))
           (set! index (+ index 1))))
@@ -4327,9 +4312,8 @@
           (ast.AstType.I64))
         (ir.compiler-ir-instr-seq-empty))]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-        ir.CompilerIrBlockList.Nil)]
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -4452,9 +4436,8 @@
           (ir.compiler-ir-global-shared-view slots))
         (ir.compiler-ir-instr-seq-empty))]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-        ir.CompilerIrBlockList.Nil)]
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -4530,9 +4513,8 @@
           (ir.compiler-ir-global-shared-view slots))
         (ir.compiler-ir-instr-seq-empty))]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-        ir.CompilerIrBlockList.Nil)]
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -5372,13 +5354,12 @@
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -5386,11 +5367,10 @@
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           8
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
-              (compiler-backend-call-save-main-instrs))
-            ir.CompilerIrBlockList.Nil)
+              (compiler-backend-call-save-main-instrs)))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
@@ -8034,9 +8014,8 @@
             (owned_view.compiler-owned-shared-view group2))
           (ir.compiler-ir-instr-seq-empty)))]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-        ir.CompilerIrBlockList.Nil)]
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -8176,7 +8155,7 @@
           params
           (owned_view.compiler-owned-shared-view type3)
           4
-          ir.CompilerIrBlockList.Nil
+          (ir.compiler-ir-block-list-empty)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
     [index : backend.CompilerBackendProgramIndex
@@ -8700,7 +8679,7 @@
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           3
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -8712,8 +8691,7 @@
                       (ir.CompilerIrValue.I64 2)
                       (ir.compiler-ir-value-seq-empty)))
                   ty)
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil)
+                (ir.compiler-ir-instr-seq-empty))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))
       (ir.compiler-ir-extern-seq-empty))))
@@ -8732,7 +8710,7 @@
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           3
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -8746,8 +8724,7 @@
                         (compiler-backend-test-f64-bits "2.0"))
                       (ir.compiler-ir-value-seq-empty)))
                   ty)
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil)
+                (ir.compiler-ir-instr-seq-empty))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))
       (ir.compiler-ir-extern-seq-empty))))
@@ -8833,7 +8810,7 @@
       (ir.compiler-ir-param-seq-empty))
     (ast.AstType.I64)
     3
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-backend-test-instr-seq-prepend
@@ -8850,8 +8827,7 @@
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-              (ir.compiler-ir-instr-seq-empty)))))
-      ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-descriptor-pair-main) : ir.CompilerIrFunction
@@ -8863,7 +8839,7 @@
       (ir.compiler-ir-param-seq-empty)
       (ast.AstType.I64)
       18
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-backend-test-instr-seq-prepend
@@ -8948,8 +8924,7 @@
                                                           (ir.CompilerIrMaybeValue.Some
                                                             (ir.CompilerIrValue.Var
                                                               17)))
-                                                        (ir.compiler-ir-instr-seq-empty)))))))))))))))))))))))))
-        ir.CompilerIrBlockList.Nil)
+                                                        (ir.compiler-ir-instr-seq-empty))))))))))))))))))))))))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-descriptor-pair-program) : ir.CompilerIrProgram
@@ -9116,7 +9091,7 @@
       (ir.compiler-ir-param-seq-empty)
       (ast.AstType.I64)
       4
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-backend-test-instr-seq-prepend
@@ -9133,8 +9108,7 @@
                   (ir.ir-instr-descriptor-pair-length
                     3
                     (ir.CompilerIrValue.Var 1))
-                  (irt.instrs "return %3"))))))
-        ir.CompilerIrBlockList.Nil)
+                  (irt.instrs "return %3")))))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-descriptor-pair-object-program) : ir.CompilerIrProgram
@@ -9653,11 +9627,8 @@
                       (ir.CompilerIrValue.Bytes "return-bytes")))
                   (ir.compiler-ir-instr-seq-empty)))))]
         [blocks : ir.CompilerIrBlockList
-          (ir.CompilerIrBlockList.Array
-            (ir.compiler-ir-block-seq-from-list
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-                ir.CompilerIrBlockList.Nil)))]
+          (ir.compiler-ir-blocks
+            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
         [functions : ir.CompilerIrFunctionSeq
           (ir.compiler-ir-function-seq-prepend
             (ir.CompilerIrFunction.Function
@@ -9781,11 +9752,8 @@
                   (owned_view.compiler-owned-shared-view opaque-struct))
                 (ir.compiler-ir-instr-seq-empty))))))]
     [blocks : ir.CompilerIrBlockList
-      (ir.CompilerIrBlockList.Array
-        (ir.compiler-ir-block-seq-from-list
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
-            ir.CompilerIrBlockList.Nil)))]
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -10019,7 +9987,7 @@
         "main"
         "main"
         (ir.compiler-ir-label "entry")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (ir.CompilerIrInstr.Pack
           0
           values
@@ -10034,7 +10002,7 @@
         "main"
         "main"
         (ir.compiler-ir-label "entry")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (ir.CompilerIrInstr.Word
           1
           (ir.CompilerIrValue.Function word-target-id)
@@ -11687,7 +11655,7 @@
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.Unit)
           3
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -11699,8 +11667,7 @@
                       (ir.CompilerIrValue.I64 2)
                       (ir.compiler-ir-value-seq-empty)))
                   (owned_view.compiler-owned-shared-view ty))
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil)
+                (ir.compiler-ir-instr-seq-empty))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-prepend
           (ir.CompilerIrFunction.Function
@@ -11710,7 +11677,7 @@
               (ir.compiler-ir-param-seq-empty))
             (ast.AstType.I64)
             1
-            ir.CompilerIrBlockList.Nil
+            (ir.compiler-ir-block-list-empty)
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq-empty))))
@@ -11730,11 +11697,10 @@
   [program-index : backend.CompilerBackendProgramIndex]) : backend.ResultCompilerBackend
   (let
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [use-counts : (__tl_dyn-array i64)
       (backend.compiler-backend-function-use-counts
         vars
@@ -11877,11 +11843,10 @@
   (let
     [instrs : ir.CompilerIrInstrSeq (compiler-backend-long-normal-block-seq)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (compiler-backend-long-normal-block-seq))
-        ir.CompilerIrBlockList.Nil)]
+          (compiler-backend-long-normal-block-seq)))]
     [use-counts : (__tl_dyn-array i64)
       (backend.compiler-backend-function-use-counts
         compiler-backend-long-block-instr-count
@@ -13541,20 +13506,18 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "done"))
               (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "done")
-              (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "done")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -14079,14 +14042,13 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -14094,7 +14056,7 @@ f:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           1
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -14106,8 +14068,7 @@ f:
                 (compiler-backend-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.compiler-ir-instr-seq-empty)))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
@@ -14147,7 +14108,11 @@ f:
   (reg-homes "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16"))
 
 (define (compiler-backend-phi-xmm-stage-same-home-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "join:
+         %1 = phi [%0, entry] : f64
+         %3 = phi [%2, entry] : f64")
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
       (compiler-backend-test-instr-seq-prepend
@@ -14160,11 +14125,7 @@ f:
             2
             (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "2.0"))
             (ast.AstType.F64))
-          (irt.instrs "jump join"))))
-    (irt.blocks
-      "join:
-         %1 = phi [%0, entry] : f64
-         %3 = phi [%2, entry] : f64")))
+          (irt.instrs "jump join"))))))
 
 ;; An emitted destination variant: the literal Phi places its value in %xmm2
 ;; before the spilled copy stages. This catches protection based only on the
@@ -14173,7 +14134,7 @@ f:
   (reg-homes "%0=%xmm2 %1=spill:-16 %2=spill:-24"))
 
 (define (compiler-backend-phi-xmm-stage-placed-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
       (compiler-backend-test-instr-seq-prepend
@@ -14182,25 +14143,25 @@ f:
           (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "2.0"))
           (ast.AstType.F64))
         (irt.instrs "jump join")))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "join")
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Phi
-            0
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
-              (ir.compiler-ir-label "entry")
-              (ir.compiler-ir-phi-input-seq-empty))
-            (ast.AstType.F64))
-          (irt.instrs "%1 = phi [%2, entry] : f64")))
-      ir.CompilerIrBlockList.Nil)))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "join")
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Phi
+          0
+          (ir.compiler-ir-phi-input-seq-prepend
+            (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-phi-input-seq-empty))
+          (ast.AstType.F64))
+        (irt.instrs "%1 = phi [%2, entry] : f64")))))
 
 (define (compiler-backend-phi-xmm-stage-safe-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-24 %1=spill:-16"))
 
 (define (compiler-backend-phi-xmm-stage-safe-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks "join:
+         %1 = phi [%0, entry] : f64")
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
       (compiler-backend-test-instr-seq-prepend
@@ -14208,9 +14169,7 @@ f:
           0
           (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "2.0"))
           (ast.AstType.F64))
-        (irt.instrs "jump join")))
-    (irt.blocks "join:
-         %1 = phi [%0, entry] : f64")))
+        (irt.instrs "jump join")))))
 
 (define (compiler-backend-phi-xmm-stage-fused-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16 %4=spill:-32"))
@@ -14277,8 +14236,7 @@ f:
     [(backend.ResultCompilerBackend.Ok scalar)
       (match (compiler-backend-phi-xmm-stage-edge-asm
         (compiler-backend-phi-xmm-stage-same-home-assignments)
-        (ir.compiler-ir-block-list-compact
-          (compiler-backend-phi-xmm-stage-same-home-blocks))
+        (compiler-backend-phi-xmm-stage-same-home-blocks)
         4
         (backend.CompilerBackendMode.Avx2))
         [(backend.ResultCompilerBackend.Ok avx2)
@@ -14346,8 +14304,7 @@ f:
 (define (compiler-backend-phi-xmm-fused-stage-preserved-ok?) : bool
   (let
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-list-compact
-        (compiler-backend-phi-xmm-stage-fused-blocks))]
+      (compiler-backend-phi-xmm-stage-fused-blocks)]
     [program-index : backend.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -14381,7 +14338,7 @@ f:
 (define (compiler-backend-phi-group-cycle-blocks) : ir.CompilerIrBlockList
   (let
     [ty : ast.AstType (compiler-backend-register-group-test-type)]
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "join")
         (compiler-backend-test-instr-seq-prepend
@@ -14392,8 +14349,7 @@ f:
               (ir.compiler-ir-label "back")
               (ir.compiler-ir-phi-input-seq-empty))
             (owned_view.compiler-owned-shared-view ty))
-          (irt.instrs "%1 = phi [%0, back] : BackendGroupTest")))
-      ir.CompilerIrBlockList.Nil)))
+          (irt.instrs "%1 = phi [%0, back] : BackendGroupTest"))))))
 
 (define (compiler-backend-phi-f64-cycle-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%xmm2 %1=%xmm3"))
@@ -14423,7 +14379,7 @@ f:
 (define (compiler-backend-phi-group-f64-cycle-blocks) : ir.CompilerIrBlockList
   (let
     [ty : ast.AstType (compiler-backend-register-group-f64-test-type)]
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "join")
         (compiler-backend-test-instr-seq-prepend
@@ -14434,11 +14390,10 @@ f:
               (ir.compiler-ir-label "back")
               (ir.compiler-ir-phi-input-seq-empty))
             (owned_view.compiler-owned-shared-view ty))
-          (irt.instrs "%1 = phi [%0, back] : BackendGroupF64Test")))
-      ir.CompilerIrBlockList.Nil)))
+          (irt.instrs "%1 = phi [%0, back] : BackendGroupF64Test"))))))
 
 (define (compiler-backend-branch-phi-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "body")
       (compiler-backend-test-instr-seq-prepend
@@ -14453,11 +14408,9 @@ f:
               (ir.compiler-ir-phi-input-seq-empty)))
           (ast.AstType.I64))
         (ir.compiler-ir-instr-seq-empty)))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "exit")
-        (ir.compiler-ir-instr-seq-empty))
-      ir.CompilerIrBlockList.Nil)))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "exit")
+      (ir.compiler-ir-instr-seq-empty))))
 
 (define (compiler-backend-branch-phi-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12 %1=%r13 %2=%r14"))
@@ -14655,15 +14608,13 @@ f:
      return %1"))
 
 (define (compiler-backend-multi-phi-return-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
       (compiler-backend-multi-phi-return-entry-instrs))
-    (ir.compiler-ir-block-cons
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "join")
-        (compiler-backend-multi-phi-return-join-instrs))
-      ir.CompilerIrBlockList.Nil)))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "join")
+      (compiler-backend-multi-phi-return-join-instrs))))
 
 (define (compiler-backend-multi-phi-return-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12 %1=%r13 %2=%r14 %3=%r15 %4=%rbx"))
@@ -15964,14 +15915,13 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             0
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -15986,14 +15936,13 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             0
             (compiler-backend-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -16001,14 +15950,13 @@ f:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           0
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               0
               (compiler-backend-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil)
+                (ir.compiler-ir-instr-seq-empty))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
@@ -16609,13 +16557,12 @@ f:
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             4
-            (ir.compiler-ir-block-cons
+            (ir.compiler-ir-blocks
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "entry")
                 (compiler-backend-test-instr-seq-prepend
                   instr
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)
+                  (ir.compiler-ir-instr-seq-empty))))
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq-empty))]
@@ -16687,14 +16634,14 @@ f:
   [label : i64]
   [value : i64]
   [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks-with-tail
+    rest
     (ir.CompilerIrBlock.Block
       label
       (compiler-backend-test-instr-seq-prepend
         (ir.CompilerIrInstr.Return
           (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 value)))
-        (ir.compiler-ir-instr-seq-empty)))
-    rest))
+        (ir.compiler-ir-instr-seq-empty)))))
 
 (define (compiler-backend-total-switch-trap-test-block) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
@@ -16710,21 +16657,7 @@ f:
         (ir.compiler-ir-instr-seq-empty)))))
 
 (define (compiler-backend-total-switch-test-blocks [explicit-total? : bool]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-test-instr-seq-prepend
-        (if explicit-total?
-          (ir.CompilerIrInstr.TotalEnumSwitch
-            (ir.CompilerIrValue.Var 0)
-            0
-            (compiler-backend-total-switch-test-cases)
-            (ir.compiler-ir-label "match_total_trap")
-            (ir.compiler-ir-label "match_total_trap"))
-          ;; The old display spelling must not authorize unchecked dispatch.
-          (irt.instr
-            "switch %0 base 0 [0:zero, 1:one, 2:two, 3:three, 4:four, 5:five] default match_total_trap"))
-        (ir.compiler-ir-instr-seq-empty)))
+  (ir.compiler-ir-blocks-with-tail
     (compiler-backend-total-switch-return-block
       (ir.compiler-ir-label "zero")
       0
@@ -16743,9 +16676,22 @@ f:
               (compiler-backend-total-switch-return-block
                 (ir.compiler-ir-label "five")
                 5
-                (ir.compiler-ir-block-cons
-                  (compiler-backend-total-switch-trap-test-block)
-                  ir.CompilerIrBlockList.Nil)))))))))
+                (ir.compiler-ir-blocks
+                  (compiler-backend-total-switch-trap-test-block))))))))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (if explicit-total?
+          (ir.CompilerIrInstr.TotalEnumSwitch
+            (ir.CompilerIrValue.Var 0)
+            0
+            (compiler-backend-total-switch-test-cases)
+            (ir.compiler-ir-label "match_total_trap")
+            (ir.compiler-ir-label "match_total_trap"))
+          ;; The old display spelling must not authorize unchecked dispatch.
+          (irt.instr
+            "switch %0 base 0 [0:zero, 1:one, 2:two, 3:three, 4:four, 5:five] default match_total_trap"))
+        (ir.compiler-ir-instr-seq-empty)))))
 
 (define (compiler-backend-total-switch-test-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
@@ -16762,17 +16708,7 @@ f:
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-forwarded-total-switch-test-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.TotalEnumSwitch
-          (ir.CompilerIrValue.Var 0)
-          0
-          (compiler-backend-total-switch-test-cases)
-          (ir.compiler-ir-label "plain_preheader")
-          (ir.compiler-ir-label "plain_abort"))
-        (ir.compiler-ir-instr-seq-empty)))
+  (ir.compiler-ir-blocks-with-tail
     (compiler-backend-total-switch-return-block
       (ir.compiler-ir-label "zero")
       0
@@ -16791,27 +16727,35 @@ f:
               (compiler-backend-total-switch-return-block
                 (ir.compiler-ir-label "five")
                 5
-                (ir.compiler-ir-block-cons
+                (ir.compiler-ir-blocks
                   (ir.CompilerIrBlock.Block
                     (ir.compiler-ir-label "plain_preheader")
                     (compiler-backend-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Jump
                         (ir.compiler-ir-label "plain_abort"))
                       (ir.compiler-ir-instr-seq-empty)))
-                  (ir.compiler-ir-block-cons
-                    (ir.CompilerIrBlock.Block
-                      (ir.compiler-ir-label "plain_abort")
+                  (ir.CompilerIrBlock.Block
+                    (ir.compiler-ir-label "plain_abort")
+                    (compiler-backend-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Call
+                        1
+                        cbi.compiler-builtin-id-tl-oob-abort
+                        (ir.CompilerIrCallArgs.Nil)
+                        (ast.AstType.Unit))
                       (compiler-backend-test-instr-seq-prepend
-                        (ir.CompilerIrInstr.Call
-                          1
-                          cbi.compiler-builtin-id-tl-oob-abort
-                          (ir.CompilerIrCallArgs.Nil)
-                          (ast.AstType.Unit))
-                        (compiler-backend-test-instr-seq-prepend
-                          (ir.CompilerIrInstr.Jump
-                            (ir.compiler-ir-label "plain_abort"))
-                          (ir.compiler-ir-instr-seq-empty))))
-                    ir.CompilerIrBlockList.Nil))))))))))
+                        (ir.CompilerIrInstr.Jump
+                          (ir.compiler-ir-label "plain_abort"))
+                        (ir.compiler-ir-instr-seq-empty)))))))))))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.TotalEnumSwitch
+          (ir.CompilerIrValue.Var 0)
+          0
+          (compiler-backend-total-switch-test-cases)
+          (ir.compiler-ir-label "plain_preheader")
+          (ir.compiler-ir-label "plain_abort"))
+        (ir.compiler-ir-instr-seq-empty)))))
 
 (define (compiler-backend-forwarded-total-switch-test-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
@@ -16988,7 +16932,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         1
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
@@ -17000,28 +16944,24 @@ f:
                   (ir.CompilerIrSwitchCase.Case 5 (ir.compiler-ir-label "five")))
                 (ir.compiler-ir-label "other"))
               (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "four")
-              (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 4)))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "five")
-                (compiler-backend-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 5)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "other")
-                  (compiler-backend-test-instr-seq-prepend
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-                    (ir.compiler-ir-instr-seq-empty)))
-                ir.CompilerIrBlockList.Nil))))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "four")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 4)))
+              (ir.compiler-ir-instr-seq-empty)))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "five")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 5)))
+              (ir.compiler-ir-instr-seq-empty)))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "other")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -17051,7 +16991,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         1
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
@@ -17062,8 +17002,7 @@ f:
                   (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "zero"))
                   (ir.CompilerIrSwitchCase.Case 2 (ir.compiler-ir-label "two")))
                 (ir.compiler-ir-label "other"))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -17086,7 +17025,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
@@ -17098,22 +17037,20 @@ f:
                   (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "join")))
                 (ir.compiler-ir-label "join"))
               (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "join")
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "join")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Phi
+                1
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (ir.CompilerIrValue.I64 1)
+                  (ir.compiler-ir-label "entry")
+                  (ir.compiler-ir-phi-input-seq-empty))
+                (ast.AstType.I64))
               (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Phi
-                  1
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.I64 1)
-                    (ir.compiler-ir-label "entry")
-                    (ir.compiler-ir-phi-input-seq-empty))
-                  (ast.AstType.I64))
-                (compiler-backend-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil))
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+                (ir.compiler-ir-instr-seq-empty)))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -17153,7 +17090,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
@@ -17168,22 +17105,20 @@ f:
                   (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "join")))
                 (ir.compiler-ir-label "join"))
               (ir.compiler-ir-instr-seq-empty)))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "join")
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "join")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Phi
+                1
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (ir.CompilerIrValue.I64 1)
+                  (ir.compiler-ir-label "entry")
+                  (ir.compiler-ir-phi-input-seq-empty))
+                (ast.AstType.I64))
               (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Phi
-                  1
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.I64 1)
-                    (ir.compiler-ir-label "entry")
-                    (ir.compiler-ir-phi-input-seq-empty))
-                  (ast.AstType.I64))
-                (compiler-backend-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil))
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+                (ir.compiler-ir-instr-seq-empty)))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -19621,7 +19556,7 @@ f:
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.Unit)
     3
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-backend-test-instr-seq-prepend
@@ -19640,8 +19575,7 @@ f:
                 (ir.CompilerIrValue.Var 0)
                 4
                 (ast.AstType.I64))
-              (irt.instrs "return")))))
-      ir.CompilerIrBlockList.Nil)
+              (irt.instrs "return"))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
@@ -20164,15 +20098,14 @@ f:
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     20
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-backend-avx512-mask-spill-tails
           0
           (compiler-backend-avx512-mask-spill-reduces
             0
-            (compiler-backend-avx512-mask-spill-sums))))
-      ir.CompilerIrBlockList.Nil)
+            (compiler-backend-avx512-mask-spill-sums)))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-maybe-location-mask-stack?
@@ -20351,11 +20284,7 @@ f:
       kind
       lanes)
     (compiler-backend-simd-copy-shape-is?
-      (backend.compiler-backend-simd-copy-shape
-        (ir.CompilerIrBlockList.Array
-          (ir.compiler-ir-block-seq-from-list (irt.blocks text)))
-        dst
-        vars)
+      (backend.compiler-backend-simd-copy-shape (irt.blocks text) dst vars)
       kind
       lanes)))
 
@@ -20582,7 +20511,7 @@ f:
       (ir.compiler-ir-param-seq-empty)
       (ast.AstType.Unit)
       3
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-backend-test-instr-seq-prepend
@@ -20591,8 +20520,7 @@ f:
               (irt.instr "%1 = vector_load 0, 0 lanes 4 : i64")
               (compiler-backend-test-instr-seq-prepend
                 (ir.ir-instr-vector-bin-op 2 op lhs rhs 4 (ast.AstType.I64))
-                (irt.instrs "return")))))
-        ir.CompilerIrBlockList.Nil)
+                (irt.instrs "return"))))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-backend-vector-load-binop-fold-program
@@ -20909,22 +20837,20 @@ f:
 (define (compiler-backend-simd-scratch-census-ok?) : bool
   (let
     [mixed : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
             (compiler-backend-simd-scratch-tail-mask 8)
             (compiler-backend-simd-scratch-shuffle 4 (ast.AstType.I64))
             (compiler-backend-simd-scratch-gather 4 (ast.AstType.I64))))
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "next")
-            (ir.compiler-ir-instr-seq2
-              (compiler-backend-simd-scratch-load 16 (ast.AstType.I16))
-              (compiler-backend-simd-scratch-shuffle 8 (ast.AstType.I32))))
-          ir.CompilerIrBlockList.Nil))]
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "next")
+          (ir.compiler-ir-instr-seq2
+            (compiler-backend-simd-scratch-load 16 (ast.AstType.I16))
+            (compiler-backend-simd-scratch-shuffle 8 (ast.AstType.I32)))))]
     [widest : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq2
@@ -20932,10 +20858,9 @@ f:
             (compiler-backend-simd-scratch-binop
               (ir.CompilerIrBinOp.Shr (ast.AstType.I8))
               64
-              (ast.AstType.I8))))
-        ir.CompilerIrBlockList.Nil)]
+              (ast.AstType.I8)))))]
     [native : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
@@ -20944,8 +20869,7 @@ f:
             (compiler-backend-simd-scratch-binop
               (ir.CompilerIrBinOp.Add)
               32
-              (ast.AstType.I8))))
-        ir.CompilerIrBlockList.Nil)]
+              (ast.AstType.I8)))))]
     (and
       (=
         (backend.compiler-backend-simd-scratch-census
@@ -20964,7 +20888,7 @@ f:
         0)
       (=
         (backend.compiler-backend-simd-scratch-census
-          ir.CompilerIrBlockList.Nil
+          (ir.compiler-ir-block-list-empty)
           (backend.CompilerBackendMode.Avx2))
         0)
       ;; A scalar-mode function is not walked.
@@ -21862,16 +21786,14 @@ f:
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             4
-            (ir.compiler-ir-block-cons
+            (ir.compiler-ir-blocks
               (irt.block "entry:
                    jump join")
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block
-                  (ir.compiler-ir-label "join")
-                  (compiler-backend-test-instr-seq-prepend
-                    (ir.compiler-ir-global-shared-view phi)
-                    (irt.instrs "return %0")))
-                ir.CompilerIrBlockList.Nil))
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "join")
+                (compiler-backend-test-instr-seq-prepend
+                  (ir.compiler-ir-global-shared-view phi)
+                  (irt.instrs "return %0"))))
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq-empty))]
@@ -21976,7 +21898,7 @@ f:
           backend.CompilerBackendTarget.Linux)
         "_tl_test"
         test-id
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (ir.compiler-ir-label "entry")
         (regalloc.compiler-reg-assignment-table-empty)
         vars
@@ -22171,11 +22093,10 @@ f:
       (scratch-emergency-restore-suppressed
         (backend.compiler-backend-state-function-state backend-state))]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [runtime-plan : backend.CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
@@ -22806,7 +22727,7 @@ f:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           1
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -22820,8 +22741,7 @@ f:
                 (compiler-backend-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.compiler-ir-instr-seq-empty)))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
     (match (compiler-backend-runtime-plan-for
@@ -22909,7 +22829,7 @@ f:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.Unit)
           1
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
@@ -22920,8 +22840,7 @@ f:
                   (ast.AstType.Unit))
                 (compiler-backend-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  (ir.compiler-ir-instr-seq-empty))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.compiler-ir-instr-seq-empty)))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
     [externs : ir.CompilerIrExternSeq
@@ -22968,7 +22887,7 @@ f:
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.Unit)
     0
-    ir.CompilerIrBlockList.Nil
+    (ir.compiler-ir-block-list-empty)
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-runtime-prelude-validation-plan-ok?) : bool
@@ -23980,11 +23899,10 @@ f:
          store_ptr %2, %1 : i64
          %6 = mov %5 : i64")]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -24058,11 +23976,10 @@ f:
     [instrs : ir.CompilerIrInstrSeq
       (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -24166,11 +24083,10 @@ f:
       (irt.instrs "copy_bytes %0, %1, 24
          %3 = mov %2 : i64")]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -24226,11 +24142,10 @@ f:
          %7 = gep %0, 6 : u64
          copy_bytes %7, %5, 24")]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -24596,7 +24511,7 @@ f:
   [second-use : bool]
   [op : ir.CompilerIrBinOp]
   [k : i64]) : ir.CompilerIrBlockList
-  (ir.compiler-ir-block-cons
+  (ir.compiler-ir-blocks
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "entry")
       (compiler-backend-test-instr-seq-prepend
@@ -24614,14 +24529,13 @@ f:
               (irt.instr "%5 = mov %4 : i64")
               (if second-use
                 (irt.instrs "%6 = mov %2 : i64")
-                (ir.compiler-ir-instr-seq-empty)))))))
-    ir.CompilerIrBlockList.Nil))
+                (ir.compiler-ir-instr-seq-empty)))))))))
 
 (define (compiler-backend-gep-fold-test-entry-instrs
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrSeq
-  (match blocks
-    [(ir.CompilerIrBlockList.Cons block _)
-      (match block
+  (match (ir.compiler-ir-block-list-view blocks)
+    [(slice block & _)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs) instrs])]
     [_ (ir.compiler-ir-instr-seq-empty)]))
 
@@ -28015,7 +27929,7 @@ f:
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
-      ir.CompilerIrBlockList.Nil
+      (ir.compiler-ir-block-list-empty)
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
           (regalloc.compiler-reg-var-types-empty)
@@ -28072,7 +27986,7 @@ f:
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
-      ir.CompilerIrBlockList.Nil
+      (ir.compiler-ir-block-list-empty)
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
           (regalloc.compiler-reg-var-types-empty)
@@ -28098,7 +28012,7 @@ f:
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
-      ir.CompilerIrBlockList.Nil
+      (ir.compiler-ir-block-list-empty)
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
           (regalloc.compiler-reg-var-types-empty)
@@ -28169,7 +28083,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         name-id
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (regalloc.compiler-reg-var-types-empty)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28199,7 +28113,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28223,7 +28137,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_memory")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28255,7 +28169,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28288,7 +28202,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_global")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28311,7 +28225,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_reuse_lhs")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 1)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28335,7 +28249,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_rax_frame")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28371,7 +28285,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_swapped_memory")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -28408,7 +28322,7 @@ f:
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat_frame")
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         (compiler-backend-scratch-test-types-from 0 2)
         (backend.CompilerBackendGlobalTypeTable.Empty)
         assignments
@@ -29425,11 +29339,10 @@ f:
         immediate)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (backend.compiler-backend-gep-fold-disable!
@@ -29574,11 +29487,10 @@ f:
       (compiler-backend-c22-divmod-store-collision-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (backend.compiler-backend-gep-fold-disable!
@@ -30203,7 +30115,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         1
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-backend-test-instr-seq-prepend
@@ -30219,21 +30131,18 @@ f:
                   (ir.compiler-ir-label "full")
                   (ir.compiler-ir-label "ok"))
                 (ir.compiler-ir-instr-seq-empty))))
-          (ir.compiler-ir-block-cons
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "full")
-              (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
-                (ir.compiler-ir-instr-seq-empty)))
-            (ir.compiler-ir-block-cons
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "ok")
-                (compiler-backend-test-instr-seq-prepend
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "full")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
+              (ir.compiler-ir-instr-seq-empty)))
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "ok")
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
@@ -30766,7 +30675,7 @@ f:
           params
           (ast.AstType.I64)
           2
-          ir.CompilerIrBlockList.Nil
+          (ir.compiler-ir-block-list-empty)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))
       (ir.compiler-ir-extern-seq-empty))))
@@ -31705,7 +31614,7 @@ f:
           (ast.ast-node-pool-reader-type-segment-bases)
           target
           caller-id
-          ir.CompilerIrBlockList.Nil
+          (ir.compiler-ir-block-list-empty)
           name-id
           args
           ret
@@ -31879,7 +31788,7 @@ f:
         (ir.compiler-ir-param-seq-empty))
       (ast.AstType.I64)
       1
-      ir.CompilerIrBlockList.Nil
+      (ir.compiler-ir-block-list-empty)
       ir.CompilerIrFunctionAbi.Ordinary)
     (ir.compiler-ir-function-seq-empty)))
 
@@ -32263,14 +32172,13 @@ f:
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     0
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-backend-test-instr-seq-prepend
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
-          (ir.compiler-ir-instr-seq-empty)))
-      ir.CompilerIrBlockList.Nil)
+          (ir.compiler-ir-instr-seq-empty))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-clean-module-symbol-collision-program) : ir.CompilerIrProgram
@@ -32284,14 +32192,13 @@ f:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           0
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
-                (ir.compiler-ir-instr-seq-empty)))
-            ir.CompilerIrBlockList.Nil)
+                (ir.compiler-ir-instr-seq-empty))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-prepend
           (ir.CompilerIrFunction.Function
@@ -32299,14 +32206,13 @@ f:
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             0
-            (ir.compiler-ir-block-cons
+            (ir.compiler-ir-blocks
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "entry")
                 (compiler-backend-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 2)))
-                  (ir.compiler-ir-instr-seq-empty)))
-              ir.CompilerIrBlockList.Nil)
+                  (ir.compiler-ir-instr-seq-empty))))
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty))))
     (ir.compiler-ir-extern-seq-empty)))
@@ -32473,11 +32379,10 @@ f:
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_position : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -32740,11 +32645,10 @@ f:
       (compiler-backend-inline-fast-alloc-emergency-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (owned_view.compiler-owned-shared-view instrs))
-        ir.CompilerIrBlockList.Nil)]
+          (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
@@ -33124,7 +33028,7 @@ f:
         (ir.compiler-ir-param-seq-empty))
       (ast.AstType.I64)
       1
-      ir.CompilerIrBlockList.Nil
+      (ir.compiler-ir-block-list-empty)
       ir.CompilerIrFunctionAbi.Ordinary)
     (ir.compiler-ir-function-seq-prepend
       (ir.CompilerIrFunction.Function
@@ -33132,7 +33036,7 @@ f:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
-        ir.CompilerIrBlockList.Nil
+        (ir.compiler-ir-block-list-empty)
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))))
 
@@ -33675,7 +33579,7 @@ f:
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             0
-            ir.CompilerIrBlockList.Nil
+            (ir.compiler-ir-block-list-empty)
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq-empty))]
@@ -33796,7 +33700,7 @@ f:
               (ir.compiler-ir-param-seq-empty)
               (ast.AstType.Unit)
               0
-              ir.CompilerIrBlockList.Nil
+              (ir.compiler-ir-block-list-empty)
               ir.CompilerIrFunctionAbi.Ordinary)
             (ir.compiler-ir-function-seq-empty))
           (ir.compiler-ir-extern-seq2
@@ -35298,7 +35202,7 @@ f:
 
 (define (compiler-backend-swb-fix-block-list [labels : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
   (let
-    [out : ir.CompilerIrBlockList ir.CompilerIrBlockList.Nil]
+    [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
     [i : i64 (array-length labels)]
     (begin
       (while (> i 0)
@@ -35306,11 +35210,11 @@ f:
           (set! i (- i 1))
           (set!
             out
-            (ir.compiler-ir-block-cons
+            (ir.compiler-ir-blocks-with-tail
+              out
               (ir.CompilerIrBlock.Block
                 (array-ref labels i)
-                (ir.compiler-ir-instr-seq-empty))
-              out))))
+                (ir.compiler-ir-instr-seq-empty))))))
       out)))
 
 ;; The four-label variant-(ii) shape and the five-label variant-(i) shape share
@@ -37733,60 +37637,53 @@ b_keep:
   [cond-var : i64]
   [step-var : i64]
   [bound-var : i64]) : ir.CompilerIrBlockList
-  (ir.CompilerIrBlockList.Array
-    (ir.compiler-ir-block-seq-from-list
-      (ir.compiler-ir-block-cons
-        (compiler-backend-placement-test-block
-          "entry"
-          (ir.compiler-ir-instr-seq2
-            (ir.CompilerIrInstr.Mov
-              entry-var
-              (ir.CompilerIrValue.I64 0)
-              (ast.AstType.I64))
-            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
-        (ir.compiler-ir-block-cons
-          (compiler-backend-placement-test-block
-            "header"
-            (ir.compiler-ir-instr-seq3
-              (ir.CompilerIrInstr.Phi
-                phi-var
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.CompilerIrValue.Var entry-var)
-                  (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.CompilerIrValue.Var step-var)
-                    (ir.compiler-ir-label "latch")
-                    (ir.compiler-ir-phi-input-seq-empty)))
-                (ast.AstType.I64))
-              (ir.CompilerIrInstr.BinOp
-                cond-var
-                (ir.CompilerIrBinOp.Lt)
-                (ir.CompilerIrValue.Var phi-var)
-                (ir.CompilerIrValue.Var bound-var)
-                (ast.AstType.I64))
-              (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var cond-var)
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-label "exit"))))
-          (ir.compiler-ir-block-cons
-            (compiler-backend-placement-test-block
-              "latch"
-              (ir.compiler-ir-instr-seq2
-                (ir.CompilerIrInstr.BinOp
-                  step-var
-                  (ir.CompilerIrBinOp.Add)
-                  (ir.CompilerIrValue.Var phi-var)
-                  (ir.CompilerIrValue.I64 1)
-                  (ast.AstType.I64))
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
-            (ir.compiler-ir-block-cons
-              (compiler-backend-placement-test-block
-                "exit"
-                (ir.compiler-ir-instr-seq1
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some
-                      (ir.CompilerIrValue.Var phi-var)))))
-              ir.CompilerIrBlockList.Nil)))))))
+  (ir.compiler-ir-blocks
+    (compiler-backend-placement-test-block
+      "entry"
+      (ir.compiler-ir-instr-seq2
+        (ir.CompilerIrInstr.Mov
+          entry-var
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+    (compiler-backend-placement-test-block
+      "header"
+      (ir.compiler-ir-instr-seq3
+        (ir.CompilerIrInstr.Phi
+          phi-var
+          (ir.compiler-ir-phi-input-seq-prepend
+            (ir.CompilerIrValue.Var entry-var)
+            (ir.compiler-ir-label "entry")
+            (ir.compiler-ir-phi-input-seq-prepend
+              (ir.CompilerIrValue.Var step-var)
+              (ir.compiler-ir-label "latch")
+              (ir.compiler-ir-phi-input-seq-empty)))
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.BinOp
+          cond-var
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrValue.Var phi-var)
+          (ir.CompilerIrValue.Var bound-var)
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var cond-var)
+          (ir.compiler-ir-label "latch")
+          (ir.compiler-ir-label "exit"))))
+    (compiler-backend-placement-test-block
+      "latch"
+      (ir.compiler-ir-instr-seq2
+        (ir.CompilerIrInstr.BinOp
+          step-var
+          (ir.CompilerIrBinOp.Add)
+          (ir.CompilerIrValue.Var phi-var)
+          (ir.CompilerIrValue.I64 1)
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
+    (compiler-backend-placement-test-block
+      "exit"
+      (ir.compiler-ir-instr-seq1
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var phi-var)))))))
 
 (define (compiler-backend-placement-high-symbol-slots-ok?) : bool
   (let
@@ -37868,19 +37765,12 @@ b_keep:
 (define (compiler-backend-placement-test-while-blocks
   [counting? : bool]
   [terminated? : bool]) : ir.CompilerIrBlockList
-  (ir.CompilerIrBlockList.Array
-    (ir.compiler-ir-block-seq-from-list
-      (ir.compiler-ir-block-cons
-        (compiler-backend-placement-test-entry-block)
-        (ir.compiler-ir-block-cons
-          (compiler-backend-placement-test-header-block)
-          (ir.compiler-ir-block-cons
-            (compiler-backend-placement-test-body-block terminated?)
-            (ir.compiler-ir-block-cons
-              (compiler-backend-placement-test-latch-block counting?)
-              (ir.compiler-ir-block-cons
-                (compiler-backend-placement-test-exit-block)
-                ir.CompilerIrBlockList.Nil))))))))
+  (ir.compiler-ir-blocks
+    (compiler-backend-placement-test-entry-block)
+    (compiler-backend-placement-test-header-block)
+    (compiler-backend-placement-test-body-block terminated?)
+    (compiler-backend-placement-test-latch-block counting?)
+    (compiler-backend-placement-test-exit-block)))
 
 ;; A top-tested counting loop rotates: the exiting block (the header, the only
 ;; block with one successor inside the loop and one outside) lands last, so the
@@ -37916,25 +37806,19 @@ b_keep:
 ;; exits, which is LLVM's ViableTopFallthrough decline -- the loop is rotated
 ;; already and moving it would only relocate its jumps.
 (define (compiler-backend-placement-bottom-tested-blocks) : ir.CompilerIrBlockList
-  (ir.CompilerIrBlockList.Array
-    (ir.compiler-ir-block-seq-from-list
-      (ir.compiler-ir-block-cons
-        (compiler-backend-placement-test-entry-block)
-        (ir.compiler-ir-block-cons
-          (compiler-backend-placement-test-block
-            "header"
-            (ir.compiler-ir-instr-seq2
-              (compiler-backend-placement-test-carry-phi)
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))))
-          (ir.compiler-ir-block-cons
-            (irt.block
-              "latch:
+  (ir.compiler-ir-blocks
+    (compiler-backend-placement-test-entry-block)
+    (compiler-backend-placement-test-block
+      "header"
+      (ir.compiler-ir-instr-seq2
+        (compiler-backend-placement-test-carry-phi)
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))))
+    (irt.block
+      "latch:
                  %3 = add %1, 1 : i64
                  %2 = lt %3, %9 : i64
                  branch %2, header, exit")
-            (ir.compiler-ir-block-cons
-              (compiler-backend-placement-test-exit-block)
-              ir.CompilerIrBlockList.Nil)))))))
+    (compiler-backend-placement-test-exit-block)))
 
 (define (compiler-backend-placement-viable-top-declines-ok?) : bool
   (let
@@ -37952,22 +37836,17 @@ b_keep:
 ;; directives that describe it and the shrink-wrap splice all anchor on the
 ;; first block of the function.
 (define (compiler-backend-placement-entry-loop-blocks) : ir.CompilerIrBlockList
-  (ir.CompilerIrBlockList.Array
-    (ir.compiler-ir-block-seq-from-list
-      (ir.compiler-ir-block-cons
-        (irt.block
-          "entry:
+  (ir.compiler-ir-blocks
+    (irt.block
+      "entry:
              %1 = phi [0, entry], [%3, body] : i64
              %2 = lt %1, %9 : i64
              branch %2, body, exit")
-        (ir.compiler-ir-block-cons
-          (irt.block
-            "body:
+    (irt.block
+      "body:
                %3 = add %1, 1 : i64
                jump entry")
-          (ir.compiler-ir-block-cons
-            (compiler-backend-placement-test-exit-block)
-            ir.CompilerIrBlockList.Nil))))))
+    (compiler-backend-placement-test-exit-block)))
 
 (define (compiler-backend-placement-entry-stays-first-ok?) : bool
   (let
@@ -37996,10 +37875,8 @@ b_keep:
     (irt.params "n=%0:i64")
     (ast.AstType.I64)
     6
-    (ir.CompilerIrBlockList.Array
-      (ir.compiler-ir-block-seq-from-list
-        (irt.blocks
-          "entry:
+    (irt.blocks
+      "entry:
              %1 = mov 0 : i64
              jump header
            header:
@@ -38013,7 +37890,7 @@ b_keep:
              %4 = add %2, 1 : i64
              jump header
            exit:
-             return %2")))
+             return %2")
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-placement-seh-main) : ir.CompilerIrFunction
@@ -38022,20 +37899,17 @@ b_keep:
     (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    (ir.CompilerIrBlockList.Array
-      (ir.compiler-ir-block-seq-from-list
-        (ir.compiler-ir-block-cons
-          (compiler-backend-placement-test-block
-            "entry"
-            (ir.compiler-ir-instr-seq2
-              (ir.CompilerIrInstr.Call
-                0
-                (ci.intern "placement_loop")
-                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 4))
-                (ast.AstType.I64))
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))
-          ir.CompilerIrBlockList.Nil)))
+    (ir.compiler-ir-blocks
+      (compiler-backend-placement-test-block
+        "entry"
+        (ir.compiler-ir-instr-seq2
+          (ir.CompilerIrInstr.Call
+            0
+            (ci.intern "placement_loop")
+            (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 4))
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 ;; This fixture reaches emission without lowering a source first, so nothing
@@ -39155,24 +39029,22 @@ b_keep:
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (if (= backend.compiler-backend-placement-mode 0)
     (__tl_make-array i64 0)
-    (match (ir.compiler-ir-block-list-compact blocks)
+    (match blocks
       [(ir.CompilerIrBlockList.Array seq)
         (match (backend.compiler-backend-placement-plan-for-seq seq)
           [(backend.CompilerBackendMaybePlacement.Some st) st.order]
-          [(backend.CompilerBackendMaybePlacement.No) (__tl_make-array i64 0)])]
-      [_ (__tl_make-array i64 0)])))
+          [(backend.CompilerBackendMaybePlacement.No) (__tl_make-array i64 0)])])))
 
 ;; Test observation: storage cardinality for the placement pass is the number
 ;; of destinations in the function, independent of their raw symbol values.
 (define (compiler-backend-placement-variable-slot-count-for-blocks
   [blocks : ir.CompilerIrBlockList]) : i64
-  (match (ir.compiler-ir-block-list-compact blocks)
+  (match blocks
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [vars : backend.CompilerBackendPlacementVars
           (backend.compiler-backend-placement-vars seq)]
-        vars.count)]
-    [_ 0]))
+        vars.count)]))
 
 (define (compiler-backend-runtime-plan [program : ir.CompilerIrProgram]) : backend.ResultBackendRuntimePlan
   (backend.compiler-backend-runtime-plan-with-backend-state
@@ -39891,13 +39763,12 @@ b_keep:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           0
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq1
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42))))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq1
@@ -39926,13 +39797,12 @@ b_keep:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           0
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq1
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42))))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))
       (ir.compiler-ir-extern-seq1
@@ -39975,13 +39845,12 @@ b_keep:
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             0
-            (ir.compiler-ir-block-cons
+            (ir.compiler-ir-blocks
               (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "entry")
                 (ir.compiler-ir-instr-seq1
                   (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))))
-              ir.CompilerIrBlockList.Nil)
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42))))))
             ir.CompilerIrFunctionAbi.Ordinary)
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq1
@@ -40075,13 +39944,12 @@ b_keep:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (ir.compiler-ir-instr-seq1
               (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
-          ir.CompilerIrBlockList.Nil)
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7))))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -40089,7 +39957,7 @@ b_keep:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           1
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq2
@@ -40099,8 +39967,7 @@ b_keep:
                   (ir.CompilerIrCallArgs.Nil)
                   (ast.AstType.I64))
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
@@ -40132,7 +39999,7 @@ b_keep:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           2
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq3
@@ -40151,8 +40018,7 @@ b_keep:
                       (ir.CompilerIrValue.I64 0)))
                   (ast.AstType.I64))
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq1
@@ -40188,13 +40054,12 @@ b_keep:
         (ir.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         0
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (ir.compiler-ir-instr-seq1
               (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
-          ir.CompilerIrBlockList.Nil)
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7))))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
@@ -40202,7 +40067,7 @@ b_keep:
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           1
-          (ir.compiler-ir-block-cons
+          (ir.compiler-ir-blocks
             (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "entry")
               (ir.compiler-ir-instr-seq2
@@ -40212,8 +40077,7 @@ b_keep:
                   (ir.CompilerIrCallArgs.Nil)
                   (ast.AstType.I64))
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))))
-            ir.CompilerIrBlockList.Nil)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))

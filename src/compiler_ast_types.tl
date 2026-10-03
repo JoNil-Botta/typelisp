@@ -1034,7 +1034,8 @@
   (BracketClause AstExprList)
   ;; Narrow Result-like propagation form `(try expr)`. The
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
-  ;; variant, each carrying exactly one payload.
+  ;; variant; the `Err*` variant carries exactly one payload and an operand's
+  ;; `Ok*` variant at most one.
   (Try i64)
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.
@@ -5426,8 +5427,19 @@
       (ast-lifetime-list-append-from (&mut out) (& rest) 0)
       out)))
 
+;; How many comptime parameters this process has built (#8578). Every one
+;; starts at `ast-comptime-param-id`; the rest are copies. While it is zero no
+;; call can pass a comptime argument, so the checker skips that work.
+(define ast-comptime-param-count : i64
+  0)
+
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param name ty is-comptime))
+
+(define (ast-comptime-param-id [name : i64] [ty : AstType]) : AstParam
+  (begin
+    (set! ast-comptime-param-count (+ ast-comptime-param-count 1))
+    (AstParam.Param name ty true)))
 
 (define (ast-param-fallback) : AstParam
   (AstParam.Param 0 (AstType.Unit) false))

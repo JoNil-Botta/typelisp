@@ -2923,10 +2923,15 @@
     ;; exact final name while retaining separate module-component records.
     ;; Nominal constructors use their final component because their public
     ;; type/member facts are explicitly componentized.
+    ;; A hygienic global has no written qualifier of its own: either a macro
+    ;; template produced it, or typecheck qualified a bare variant name that
+    ;; an expected enum type resolved (SPEC 3.5.1). Its written token is the
+    ;; node's own span, so it consumes no parser origin.
     (if (or
       (< written-id 0)
       (>= written-id (ci.intern-capacity))
-      (< (ci.intern-first-dot written-id) 0))
+      (< (ci.intern-first-dot written-id) 0)
+      (tc.macro-hygiene-global-id? session source-name-id))
       fallback
       (match (compiler-semantic-origin-take!
         state

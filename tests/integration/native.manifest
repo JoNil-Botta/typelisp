@@ -344,8 +344,10 @@ generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
 clone_imported_nominal_direct|all|-|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
 comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl|-
 clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+entry_names_like_imported_variants|all|-|tests/integration/entry_names_like_imported_variants.tl|42|-|-|entry_names_like_imported_variants_dep.tl stdlib/iterator.tl|-
 comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
 comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
+comptime_type_macro_operand|all|-,0,2|tests/integration/comptime_type_macro_operand.tl|42|-|-|-|-
 generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-
 generated_string_vector_private_intrinsics|all|-|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
 cond|all|-|tests/integration/cond.tl|42|-|-|-|-
@@ -457,6 +459,8 @@ min_div_neg1_trap|all|-|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expecte
 modules_main|all|-|tests/integration/modules_main.tl|30|-|-|modules_helper.tl|-
 dotted_nested_variant|all|-|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl|-
 legacy_dotted_enum|all|-|tests/integration/legacy_dotted_enum_main.tl|42|-|-|legacy_dotted_enum_bridge.tl legacy_dotted_enum_provider.tl|-
+variant_expected_resolution|all|-|tests/integration/variant_expected_resolution.tl|42|-|-|variant_expected_resolution_lib.tl stdlib/option.tl|-
+variant_root_clash|all|-,0|tests/integration/variant_root_clash.tl|42|-|-|variant_root_clash_mid.tl variant_root_clash_lib.tl|-
 mixed_global_annotation|all|-|tests/integration/mixed_global_annotation_main.tl|42|-|-|mixed_global_annotation_bridge.tl mixed_global_annotation_provider.tl|-
 narrow_div_mod|all|-|tests/integration/narrow_div_mod.tl|30|-|-|-|-
 nested_eval|all|-|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl|-
@@ -467,6 +471,7 @@ integer_literal_default_i32|all|-|tests/integration/integer_literal_default_i32.
 integer_literal_default_i32_and_wide_cast|all|-|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-|-
 integer_literal_boundary_matrix|all|-,0,2|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl|-
 integer_literal_u64_full_range|all|-|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|-
+if_literal_branch_join|all|-,0,2|tests/integration/if_literal_branch_join.tl|42|-|-|-|-
 inline_alloc_scavenge_live_through|all|-,2|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl|-
 parser|all|-|tests/integration/parser.tl|14|-|-|-|-
 process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
@@ -693,6 +698,9 @@ float_phi_swap_cycle|all|-|tests/integration/float_phi_swap_cycle.tl|42|-|-|-|-
 register_group_borrowed_match|all|-|tests/integration/register_group_borrowed_match.tl|42|-|-|-|-
 borrowed_enum_inline_struct_payload|all|-|tests/integration/borrowed_enum_inline_struct_payload.tl|42|-|-|-|-
 register_group_try|all|-|tests/integration/register_group_try.tl|42|-|-|-|-
+try_propagation|all|-,0,1,2|tests/integration/try_propagation.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_err_payloads|all|-,0,1,2|tests/integration/try_err_payloads.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_sret_forward|all|-,0,1,2|tests/integration/try_sret_forward.tl|42|-|-|stdlib/io.tl|-
 register_resident_enum16|all|-|tests/integration/register_resident_enum16.tl|42|-|-|-|-
 selfloop_redef_writeback|all|-|tests/integration/selfloop_redef_writeback.tl|42|-|-|-|-
 loopcarried_phi_home|all|-|tests/integration/loopcarried_phi_home.tl|42|-|-|-|-

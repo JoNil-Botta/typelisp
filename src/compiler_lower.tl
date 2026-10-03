@@ -4803,10 +4803,18 @@
             source-id
             true)
             [(tc_core.TcNameLookup.Ok lookup-name lookup-id)
-              (lower-type-cache-lookup-id
+              ;; `Enum.Variant` resolves to a registry key the type cache
+              ;; never binds; its type is the variant's constructor type.
+              (match (lower-type-cache-lookup-id
                 type-cache
                 (tc_core.tc-env-name-key-id session lookup-id)
-                lookup-name)]
+                lookup-name)
+                [(tc_core.ResultTcType.Ok ty) (tc_core.ResultTcType.Ok ty)]
+                [(tc_core.ResultTcType.Err message)
+                  (tc_core.tc-variant-constructor-type-for-lookup-or-id
+                    definition-ctx
+                    lookup-id
+                    message)])]
             [(tc_core.TcNameLookup.Err message)
               (tc_core.ResultTcType.Err message)])
           (lower-type-cache-lookup-id
@@ -8180,23 +8188,26 @@
         (tc_core.tc-bind-id local-env name-id ty))]
     [(tc_core.ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
 
+;; A module's first enum declaring a variant name owns the module's bare
+;; spelling of it, as in typecheck's module overlay. Only this module's own
+;; bindings decide that: `env` starts from the program environment, where the
+;; entry module binds its variants bare, and an entry-module variant of the same
+;; spelling must not shadow this module's.
 (define (lower-module-local-type-envs-bind-qualified-id-if-free
   [top-env : tc_core.TcTypeEnv]
   [env : tc_core.TcTypeEnv]
   [local-env : tc_core.TcTypeEnv]
   [module : i64]
   [name-id : i64]) : ResultLowerModuleTypeEnvs
-  (match (tc_core.tc-lookup-id
-    top-env
-    (csym.compiler-symbol-module-key-id-by-id module name-id))
-    [(tc_core.ResultTcType.Ok ty)
-      (ResultLowerModuleTypeEnvs.Ok
-        (tc_core.tc-bind-alias-id-if-free
-          env
-          name-id
-          (lower-global-shared-view ty))
-        (tc_core.tc-bind-alias-id-if-free local-env name-id ty))]
-    [(tc_core.ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
+  (match (tc_core.tc-lookup-id local-env name-id)
+    [(tc_core.ResultTcType.Ok _) (ResultLowerModuleTypeEnvs.Ok env local-env)]
+    [(tc_core.ResultTcType.Err _)
+      (lower-module-local-type-envs-bind-qualified
+        top-env
+        env
+        local-env
+        module
+        name-id)]))
 
 (define (lower-module-local-type-envs-add-variants
   [top-env : tc_core.TcTypeEnv]
@@ -24707,83 +24718,128 @@
             variant-id))
         fallback))))
 
+;; Run the active exits, then return the already-built result value.
+(define (lower-return-after-exits
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [value : ir.CompilerIrValue]
+  [ret-ty : ast.AstType]) : ResultLowerState
+  (let
+    [exit-state : LowerState
+      (try (lower-emit-active-exits ctx state env type-env))]
+    (ResultLowerState.Ok
+      (lower-state-emit
+        exit-state
+        (ir.CompilerIrInstr.Return (lower-return-maybe value ret-ty))))))
+
+;; The error exit of `try` returns the enclosing function's Err variant the way
+;; a returned constructor does: written straight into the hidden sret slot when
+;; the enum is returned in memory, otherwise built as the value the return ABI
+;; carries (the register group of a 16-byte enum). As with `return`, the value
+;; is complete before the active exits run, so no scope reset can clobber the
+;; payload it is copied from.
 (define (lower-return-result-err
   [ctx : tc_core.TcContext]
   [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [return-info : tc_core.TcResultInfo]
   [payload : ir.CompilerIrValue]) : ResultLowerState
   (let
-    [enum-name-id : i64
+    [enum-id : i64
       (tc_core.tc-result-info-enum-id (lower-global-shared-view return-info))]
-    [enum-name : String (tc_core.tc-nominal-name-id-display enum-name-id)]
+    [enum-name : String (tc_core.tc-nominal-name-id-display enum-id)]
     [err-id : i64
       (tc_core.tc-result-info-err-id (lower-global-shared-view return-info))]
     [err-name : String
       (tc_core.tc-qualified-variant-name
         (lower-global-shared-view enum-name)
         (tc_core.tc-env-key-name-text err-id))]
-    [err-ty : ast.AstType
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-result-info-err-type (lower-global-shared-view return-info)))]
     [handle : i64
       (lower-result-info-variant-handle-or
         ctx
         return-info
         err-id
         (csym.compiler-symbols-missing-handle))]
+    [ret-ty : ast.AstType (ast.AstType.Enum enum-id)]
+    [sret-var : i64 (lower-current-sret-var state env)]
     (if (csym.compiler-symbols-handle-found? handle)
-      (match (let
-        [size (lower-enum-storage-size ctx enum-name-id enum-name)]
-        [ty (ast.AstType.Enum enum-name-id)]
-        (lower-reserve-heap-storage state size ty))
-        [(LowerExpr.Expr base-state base _)
+      (match (csym.compiler-registries-variant-fields-indexed
+        (tc_core.tc-context-symbols ctx)
+        handle)
+        [(parser.ResultAstTypeList.Ok fields)
           (let
-            [tag-state : LowerState
-              (lower-store-at-offset
-                base-state
-                base
-                0
-                (ir.CompilerIrValue.I64
-                  (csym.compiler-registry-handle-child-index handle))
-                (ast.AstType.I64))]
-            [payload-state : LowerState
-              (match (lower-global-shared-view err-ty)
-                [(ast.AstType.Unit) tag-state]
-                ;; An inline struct/enum err payload must be
-                ;; byte-copied into the err slot, not scalar-stored.
-                [_
-                  (lower-store-inline-value-at-offset
-                    ctx
-                    tag-state
-                    base
-                    8
-                    payload
-                    (lower-global-shared-view err-ty)
-                    (lower-type-size ctx err-ty))])]
-            [ret-ty : ast.AstType (ast.AstType.Enum enum-name-id)]
-            ;; When the function's result enum is register-resident
-            ;; the caller reads the return value from registers, so load
-            ;; the constructed enum back out of the buffer (word or
-            ;; 2-word group) instead of returning the buffer pointer.
-            (if (lower-type-register-resident?
-              ctx
-              (lower-global-shared-view ret-ty))
-              (match (lower-load-inline-value-at-offset
+            [field-types : ast.AstTypeList
+              (lower-variant-payload-fields-for-handle
                 ctx
-                payload-state
-                base
-                0
+                handle
+                (lower-global-shared-view ret-ty)
+                fields)]
+            ;; An option family's absence variant carries no payload.
+            [values : ir.CompilerIrValueSeq
+              (if (ast.ast-type-list-empty? (& field-types))
+                (ir.compiler-ir-value-seq-empty)
+                (ir.compiler-ir-value-seq1 payload))]
+            (if (and
+              (>= sret-var 0)
+              (lower-inline-aggregate-abi-copy-needed?
+                ctx
+                (lower-global-shared-view ret-ty)))
+              (let
+                [built : LowerState
+                  (try
+                    (lower-construct-enum-inline-into-from-values
+                      ctx
+                      state
+                      (ir.CompilerIrValue.Var sret-var)
+                      err-name
+                      handle
+                      values
+                      field-types
+                      enum-id
+                      enum-name))]
+                (lower-return-after-exits
+                  ctx
+                  built
+                  env
+                  type-env
+                  (ir.CompilerIrValue.Var sret-var)
+                  ret-ty))
+              (match (lower-construct-enum-inline-from-values
+                ctx
+                state
+                err-name
+                handle
+                values
+                field-types
+                enum-name
                 (lower-global-shared-view ret-ty))
-                [(LowerExpr.Expr loaded-state loaded _)
-                  (ResultLowerState.Ok
-                    (lower-state-emit
-                      loaded-state
-                      (ir.CompilerIrInstr.Return
-                        (lower-return-maybe loaded ret-ty))))])
-              (ResultLowerState.Ok
-                (lower-state-emit
-                  payload-state
-                  (ir.CompilerIrInstr.Return (lower-return-maybe base ret-ty))))))])
+                [(ResultLowerExpr.Ok built)
+                  (match built
+                    [(LowerExpr.Expr built-state value _)
+                      (match (lower-prepare-internal-return-value
+                        ctx
+                        built-state
+                        env
+                        value
+                        (lower-global-shared-view ret-ty))
+                        [(ResultLowerExpr.Ok prepared)
+                          (match prepared
+                            [(LowerExpr.Expr ret-state ret-value _)
+                              (lower-return-after-exits
+                                ctx
+                                ret-state
+                                env
+                                type-env
+                                ret-value
+                                ret-ty)])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerState.Err message)])])]
+                [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))]
+        [(parser.ResultAstTypeList.Err message)
+          (ResultLowerState.Err (box (lower-diagnostic message)))])
       (ResultLowerState.Err
         (box
           (lower-diagnostic
@@ -24832,13 +24888,13 @@
       (tc_core.tc-result-info-err-type (lower-global-shared-view operand-info)))
       [(LowerExpr.Expr err-payload-state err-payload _)
         (let
-          [cleanup-state : LowerState
-            (try (lower-emit-active-exits ctx err-payload-state env type-env))]
           [returned-state : LowerState
             (try
               (lower-return-result-err
                 ctx
-                cleanup-state
+                err-payload-state
+                env
+                type-env
                 return-info
                 err-payload))]
           [ok-start : LowerState
@@ -29901,6 +29957,7 @@
         [name-text : String (tc_core.tc-env-key-name-text name)]
         (if (tc_core.tc-dotted-local-field-name-id? type-env name)
           (match (tc_core.tc-dotted-local-field-set-expr-id
+            (tc_core.tc-context-expr-bases ctx)
             type-env
             name
             value-box)
@@ -37370,8 +37427,8 @@
             result-ty)
           (if (and
             (or
-              (tc_core.tc-constructor-name-id? ctx raw-name-id)
-              (tc_core.tc-constructor-name-id? ctx callable-lookup-id))
+              (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+              (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
             (csym.compiler-symbols-handle-found? struct-handle)
             (=
               (csym.compiler-symbol-handle-kind struct-handle)
@@ -37500,8 +37557,8 @@
             result-ty))
         (if (and
           (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx callable-lookup-id))
+            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+            (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)
@@ -66953,14 +67010,14 @@
   `(lower-rvo-node-has-early-return? (lower-global-shared-view ,ctx) ,id))
 
 (define (lower-rvo-node-has-early-return? [ctx : tc_core.TcContext] [id : i64]) : bool
-  ;; `return` and `try` exit early. The arms below also answer for quoted
-  ;; syntax (no), for the forms this scan does not descend into (yes, to stay
-  ;; conservative) and for TupleRef, whose index it reads as a node; every
-  ;; other variant asks its expression children through the AstExpr child
-  ;; list.
+  ;; `return` exits early. A `try` does not count: its error exit builds the
+  ;; Err in the forwarded sret slot (`lower-return-result-err`). The arms
+  ;; below also answer for quoted syntax (no), for the forms this scan does not
+  ;; descend into (yes, to stay conservative) and for TupleRef, whose index it
+  ;; reads as a node; every other variant asks its expression children through
+  ;; the AstExpr child list.
   (match (lower-context-expr-get ctx id)
     [(ast.AstExpr.Return _) true]
-    [(ast.AstExpr.Try _) true]
     [(ast.AstExpr.TupleRef tuple-box index-box)
       (or
         (lower-rvo-node-has-early-return? ctx tuple-box)
@@ -67299,8 +67356,8 @@
             (csym.compiler-symbols-missing-handle))]
         (if (and
           (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx lookup-name-id))
+            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+            (tc_core.tc-constructor-source-name-id? ctx lookup-name-id))
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)

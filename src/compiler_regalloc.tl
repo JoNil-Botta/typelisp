@@ -343,13 +343,6 @@
 
 (define (compiler-reg-blocks-have-phi? [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (if (compiler-reg-instr-seq-has-phi? instrs 0)
-            true
-            (compiler-reg-blocks-have-phi? (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq) (compiler-reg-block-seq-has-phi? seq 0)]))
 
 (define (compiler-reg-liveness-handle-make
@@ -1516,13 +1509,6 @@
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-instr-seq-types-array! instrs present types)
-            (compiler-reg-block-list-types-array! (deref rest) present types))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -1729,14 +1715,6 @@
   [moves : CompilerRegMoveSeq]
   [strict-pairs : bool]) : CompilerRegMoveSeq
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) moves]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-block-list-moves
-            (deref rest)
-            (compiler-reg-instr-seq-moves instrs moves strict-pairs)
-            strict-pairs)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -1964,15 +1942,6 @@
   [use-counts : (__tl_dyn-array i64)]
   [found : i64]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) found]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (compiler-reg-alu-prefer-rhs-blocks
-        (deref rest)
-        flags
-        (compiler-reg-global-shared-view use-counts)
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-alu-prefer-rhs-seq instrs flags use-counts found)]))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2031,13 +2000,6 @@
   [blocks : ir.CompilerIrBlockList]
   [counts : (&mut counts (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-alu-use-counts-seq! counts instrs)])
-        (compiler-reg-alu-use-counts-blocks! (deref rest) counts))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2126,13 +2088,6 @@
   [blocks : ir.CompilerIrBlockList]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) moves]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-cast-moves-blocks
-            (deref rest)
-            (compiler-reg-cast-moves-seq instrs moves))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2226,13 +2181,6 @@
   [defs : (&mut defs (__tl_dyn-array i64))]
   [uses : (&mut uses (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-destructive-shape-seq! instrs defs uses)])
-        (compiler-reg-destructive-shape-blocks! (deref rest) defs uses))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2443,25 +2391,6 @@
   [eligible : (__tl_dyn-array i64)]
   [prefer-rhs : (__tl_dyn-array i64)]) : CompilerRegMoveSeq
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) moves]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-destructive-tie-moves-blocks
-            (deref rest)
-            (compiler-reg-destructive-tie-moves-seq
-              instrs
-              moves
-              anchors
-              defs
-              uses
-              eligible
-              prefer-rhs)
-            anchors
-            defs
-            uses
-            eligible
-            prefer-rhs)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2608,13 +2537,6 @@
   [blocks : ir.CompilerIrBlockList]
   [preferences : (&mut preferences (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-select-false-preference-seq! instrs preferences)])
-        (compiler-reg-select-false-preference-blocks! (deref rest) preferences))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -3682,26 +3604,6 @@
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-intervals-find-afters
-                (compiler-reg-global-shared-view liveness)
-                label)]
-            (compiler-reg-live-intervals-blocks-with-live
-              (deref rest)
-              liveness
-              (compiler-reg-live-intervals-instr-seq
-                instrs
-                live-afters
-                point
-                starts
-                ends)
-              starts
-              ends))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -3837,47 +3739,6 @@
   [segment-ends : (__tl_dyn-array i64)]
   [seed-live-in? : bool]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [live-block : live.CompilerLiveMaybeBlock
-              (live.compiler-live-function-find-block
-                (compiler-reg-global-shared-view liveness)
-                label)]
-            [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-maybe-block-afters
-                (compiler-reg-global-shared-view live-block))]
-            [_live-in : unit
-              (if seed-live-in?
-                (compiler-reg-segment-live-in!
-                  (&mut starts)
-                  (&mut ends)
-                  (compiler-reg-global-shared-view segments)
-                  (&mut segment-starts)
-                  (&mut segment-ends)
-                  (compiler-reg-live-maybe-block-live-in live-block)
-                  (compiler-reg-live-in-block-point point))
-                unit)]
-            (compiler-reg-live-interval-selection-blocks
-              (deref rest)
-              liveness
-              (compiler-reg-live-interval-selection-instr-seq
-                instrs
-                live-afters
-                point
-                (compiler-reg-global-shared-view starts)
-                (compiler-reg-global-shared-view ends)
-                (compiler-reg-global-shared-view segments)
-                (compiler-reg-global-shared-view segment-starts)
-                (compiler-reg-global-shared-view segment-ends))
-              starts
-              ends
-              segments
-              segment-starts
-              segment-ends
-              seed-live-in?))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4486,49 +4347,6 @@
   [mask-limit : i64]
   [seed-live-in? : bool]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (let
-            [live-block : live.CompilerLiveMaybeBlock
-              (live.compiler-live-function-find-block
-                (compiler-reg-global-shared-view liveness)
-                label)]
-            [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-maybe-block-afters
-                (compiler-reg-global-shared-view live-block))]
-            [_live-in : unit
-              (if seed-live-in?
-                (compiler-reg-ep-segment-live-in!
-                  (compiler-reg-global-shared-view segments)
-                  (&mut segment-starts)
-                  (&mut segment-ends)
-                  (compiler-reg-live-maybe-block-live-in live-block)
-                  mask-words
-                  mask-limit
-                  (compiler-reg-live-in-block-point point))
-                unit)]
-            (compiler-reg-live-interval-selection-ep-blocks
-              (deref rest)
-              liveness
-              (compiler-reg-live-interval-selection-ep-instr-seq
-                instrs
-                live-afters
-                point
-                (compiler-reg-global-shared-view segments)
-                (compiler-reg-global-shared-view segment-starts)
-                (compiler-reg-global-shared-view segment-ends)
-                mask
-                (compiler-reg-global-shared-view mask-words)
-                mask-limit)
-              segments
-              segment-starts
-              segment-ends
-              mask
-              mask-words
-              mask-limit
-              seed-live-in?))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4947,28 +4765,6 @@
   [allow-exit-live-self-loop : bool]
   [mask : (__tl_dyn-array i64)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-reg-global-shared-view block)
-        [(ir.CompilerIrBlock.Block label instrs)
-          (begin
-            (compiler-reg-phi-touched-safe-seq!
-              instrs
-              (compiler-reg-block-live-out-by-label
-                (compiler-reg-global-shared-view liveness)
-                label)
-              (and
-                allow-exit-live-self-loop
-                (live.compiler-live-label-set-contains?
-                  (live.compiler-live-block-successors block)
-                  label))
-              label
-              (compiler-reg-global-shared-view mask))
-            (compiler-reg-phi-touched-safe-blocks!
-              (deref rest)
-              liveness
-              allow-exit-live-self-loop
-              mask))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -5590,19 +5386,6 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
       (match (compiler-reg-global-shared-view blocks)
-        [(ir.CompilerIrBlockList.Cons block rest)
-          (match (deref rest)
-            [(ir.CompilerIrBlockList.Nil)
-              (if (=
-                (live.compiler-live-label-set-count
-                  (live.compiler-live-block-successors
-                    (compiler-reg-global-shared-view block)))
-                0)
-                (match block
-                  [(ir.CompilerIrBlock.Block _ instrs)
-                    (compiler-reg-linear-block-intervals vars instrs)])
-                (compiler-reg-block-intervals-full vars blocks))]
-            [_ (compiler-reg-block-intervals-full vars blocks)])]
         [(ir.CompilerIrBlockList.Array seq)
           (if (= (ir.compiler-ir-block-seq-count seq) 1)
             (let
@@ -5616,8 +5399,7 @@
                   [(ir.CompilerIrBlock.Block _ instrs)
                     (compiler-reg-linear-block-intervals vars instrs)])
                 (compiler-reg-block-intervals-full vars blocks)))
-            (compiler-reg-block-intervals-full vars blocks))]
-        [(ir.CompilerIrBlockList.Nil) (compiler-reg-interval-seq-empty)])]))
+            (compiler-reg-block-intervals-full vars blocks))])]))
 
 (define (compiler-reg-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
   (match func
@@ -6386,13 +6168,6 @@
   [blocks : ir.CompilerIrBlockList]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-ineligible-memory
-            (deref rest)
-            (compiler-reg-ineligible-instr-seq instrs set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -6474,13 +6249,6 @@
   [blocks : ir.CompilerIrBlockList]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-call-arg-vars-blocks
-            (deref rest)
-            (compiler-reg-call-arg-vars-instr-seq instrs set))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -7016,21 +6784,6 @@
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-call-arg-vars-blocks-scalar
-            type-segment-bases
-            (deref rest)
-            (compiler-reg-call-arg-vars-instr-seq-scalar
-              type-segment-bases
-              instrs
-              set
-              types
-              target-abi)
-            types
-            target-abi)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -7405,20 +7158,6 @@
   [vector-set : live.CompilerLiveI64Set]
   [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (live.CompilerLiveUseDef vector-set mask-set)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (let
-            [defs : live.CompilerLiveUseDef
-              (compiler-reg-vector-mask-defs-instr-seq
-                instrs
-                vector-set
-                mask-set)]
-            (compiler-reg-vector-mask-defs-blocks
-              (deref rest)
-              defs.uses
-              defs.defs))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -7499,13 +7238,13 @@
       (live.CompilerLiveUseDef out-vector out-mask))))
 
 (define (compiler-reg-vector-mask-defs-propagate-blocks
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [vector-set : live.CompilerLiveI64Set]
   [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (live.CompilerLiveUseDef vector-set mask-set)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) (live.CompilerLiveUseDef vector-set mask-set)]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [next : live.CompilerLiveUseDef
@@ -7514,14 +7253,9 @@
                 vector-set
                 mask-set)]
             (compiler-reg-vector-mask-defs-propagate-blocks
-              (deref rest)
+              rest
               next.uses
-              next.defs))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-vector-mask-defs-propagate-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        vector-set
-        mask-set)]))
+              next.defs))])]))
 
 (define (compiler-reg-vector-mask-defs-fixpoint
   [blocks : ir.CompilerIrBlockList]
@@ -7530,7 +7264,7 @@
   (let
     [next : live.CompilerLiveUseDef
       (compiler-reg-vector-mask-defs-propagate-blocks
-        (compiler-reg-global-shared-view blocks)
+        (ir.compiler-ir-block-list-view blocks)
         (compiler-reg-global-shared-view vector-set)
         (compiler-reg-global-shared-view mask-set))]
     (if (and
@@ -8153,13 +7887,6 @@
   [blocks : ir.CompilerIrBlockList]
   [counts : (&mut counts (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-count-seq-defs! instrs counts)
-            (compiler-reg-count-block-defs! (deref rest) counts))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8199,13 +7926,6 @@
   [blocks : ir.CompilerIrBlockList]
   [phi-defs : (&mut phi-defs (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-mark-phi-defs-seq! instrs phi-defs)
-            (compiler-reg-mark-phi-defs-blocks! (deref rest) phi-defs))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8358,18 +8078,6 @@
   [eligible : (__tl_dyn-array i64)]
   [parents : (&mut parents (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)
-            (compiler-reg-sv-blocks!
-              (deref rest)
-              counts
-              phi-defs
-              eligible
-              parents))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8548,15 +8256,6 @@
   [cursor : (__tl_dyn-array i64)]
   [pts : (&mut pts (__tl_dyn-array i64))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-sv-def-points-fill-blocks
-            (deref rest)
-            (compiler-reg-sv-def-points-fill-seq instrs point (&mut cursor) pts)
-            cursor
-            pts)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -8859,13 +8558,6 @@
   [blocks : ir.CompilerIrBlockList]
   [ctx : CompilerRegSvMultiCtx]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-sv-multi-seq! instrs ctx)])
-        (compiler-reg-sv-multi-blocks! (deref rest) ctx))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -9603,21 +9295,6 @@
   [parents : (& parents (__tl_dyn-array i64))]
   [prefer-rhs : (__tl_dyn-array i64)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-copy-hints-from-binops-seq!
-              instrs
-              hints
-              parents
-              prefer-rhs)])
-        (compiler-reg-copy-hints-from-binops-blocks!
-          (deref rest)
-          hints
-          parents
-          prefer-rhs))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -9935,13 +9612,6 @@
   [point : i64]
   [set : live.CompilerLiveI64Set]) : CompilerRegCallScan
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-call-points-seq instrs point set)
-            [(CompilerRegCallScan.Scan p2 s2)
-              (compiler-reg-call-points-blocks (deref rest) p2 s2)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10266,23 +9936,6 @@
   [set : live.CompilerLiveI64Set]
   [kind : i64]) : CompilerRegCallScan
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (CompilerRegCallScan.Scan point set)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-clobber-kind-points-seq
-            type-segment-bases
-            instrs
-            point
-            set
-            kind)
-            [(CompilerRegCallScan.Scan p2 s2)
-              (compiler-reg-clobber-kind-points-blocks
-                type-segment-bases
-                (deref rest)
-                p2
-                s2
-                kind)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -10540,15 +10193,6 @@
   [ids : reg_label_i64_map.Map]
   [index : i64]) : reg_label_i64_map.Map
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) ids]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label _)
-          (let
-            [out : reg_label_i64_map.Map ids]
-            (begin
-              (reg_label_i64_map.insert-ref! (&mut out) label index)
-              (compiler-reg-loop-depth-block-ids (deref rest) out (+ index 1))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
 
@@ -12007,13 +11651,6 @@
   [marks : (&mut marks (__tl_dyn-array bool))]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-ref-mark-seq! marks instrs)])
-        (compiler-reg-ref-marks-blocks! marks (deref rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -12031,20 +11668,6 @@
   [weights : (__tl_dyn-array i64)]
   [block-index : i64]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-ref-counts-seq-weighted!
-              counts
-              instrs
-              (array-ref weights block-index))])
-        (compiler-reg-ref-counts-blocks-weighted!
-          counts
-          (deref rest)
-          weights
-          (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -12306,39 +11929,6 @@
           [_ unit])
         (set! index (+ index 1))))))
 
-(define (compiler-reg-collect-remat-blocks!
-  [blocks : ir.CompilerIrBlockList]
-  [def-counts : (__tl_dyn-array i64)]
-  [flags : (&mut flags (__tl_dyn-array i64))]
-  [vals : (&mut vals (__tl_dyn-array ir.CompilerIrValue))]
-  [cells-clean : bool]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-collect-remat-seq!
-              instrs
-              def-counts
-              flags
-              vals
-              cells-clean)])
-        (compiler-reg-collect-remat-blocks!
-          (deref rest)
-          def-counts
-          flags
-          vals
-          cells-clean))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-collect-remat-seq-from!
-        seq
-        0
-        def-counts
-        flags
-        vals
-        cells-clean)]))
-
 (define (compiler-reg-collect-remat-seq-from!
   [blocks : ir.CompilerIrBlockSeq]
   [index : i64]
@@ -12396,13 +11986,6 @@
               (compiler-reg-collect-remat-seq-from!
                 seq
                 0
-                def-counts
-                (&mut flags)
-                (&mut vals)
-                cells-clean)]
-            [_
-              (compiler-reg-collect-remat-blocks!
-                blocks
                 def-counts
                 (&mut flags)
                 (&mut vals)
@@ -12512,13 +12095,6 @@
 (define (compiler-reg-remat-blocks-mutates-memory?
   [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (or
-            (compiler-reg-remat-instrs-mutates-memory? instrs)
-            (compiler-reg-remat-blocks-mutates-memory? (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -12975,26 +12551,6 @@
   [block-index : i64]
   [allow-invariant-loads : bool]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-ref-counts-seq-weighted-remat!
-              counts
-              def-status
-              rebates
-              instrs
-              (array-ref weights block-index)
-              allow-invariant-loads)])
-        (compiler-reg-ref-counts-blocks-weighted-remat!
-          counts
-          def-status
-          rebates
-          (deref rest)
-          weights
-          (+ block-index 1)
-          allow-invariant-loads))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -23177,13 +22733,6 @@
   [set : live.CompilerLiveI64Set]
   [blocks : ir.CompilerIrBlockList]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-group-vars-blocks
-            (compiler-reg-group-vars-instr-seq set instrs)
-            (deref rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -23297,13 +22846,6 @@
   [set : live.CompilerLiveI64Set]
   [blocks : ir.CompilerIrBlockList]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-group-vars-propagate-blocks
-            (compiler-reg-group-vars-propagate-seq set instrs 0)
-            (deref rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -26278,13 +25820,6 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])
-        (compiler-reg-result-pref-blocks! (deref rest) rax-idx prefs parents))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -26325,23 +25860,6 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-arg-pref-seq!
-              target-abi
-              (compiler-reg-global-shared-view pool)
-              instrs
-              prefs
-              parents)])
-        (compiler-reg-arg-pref-blocks!
-          target-abi
-          pool
-          (deref rest)
-          prefs
-          parents))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -26656,25 +26174,6 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-float-arg-pref-seq!
-              target-abi
-              (compiler-reg-global-shared-view pool)
-              instrs
-              types
-              prefs
-              parents)])
-        (compiler-reg-float-arg-pref-blocks!
-          target-abi
-          pool
-          (deref rest)
-          types
-          prefs
-          parents))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -26953,23 +26452,6 @@
   [parents : (& parents (__tl_dyn-array i64))]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-float-arg-demote-seq!
-              target-abi
-              instrs
-              types
-              parents
-              assignments)])
-        (compiler-reg-float-arg-demote-blocks!
-          target-abi
-          (deref rest)
-          types
-          parents
-          assignments))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -27244,13 +26726,6 @@
   [set : live.CompilerLiveI64Set]
   [blocks : ir.CompilerIrBlockList]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-group-pair-caller-unsafe-blocks
-            (compiler-reg-group-pair-caller-unsafe-instr-seq set instrs)
-            (deref rest))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -27315,14 +26790,6 @@
   [blocks : ir.CompilerIrBlockList]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]) : live.CompilerLiveI64Set
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-group-pair-excluded-blocks
-            (compiler-reg-group-pair-excluded-instr-seq set instrs group-vars)
-            (deref rest)
-            group-vars)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -27774,27 +27241,6 @@
   [parents : (&mut parents (__tl_dyn-array i64))]
   [poisoned : (&mut poisoned (__tl_dyn-array bool))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-group-pair-mov-edges-instr-seq
-              instrs
-              group-vars
-              excluded
-              starts
-              def-counts
-              parents
-              poisoned)
-            (compiler-reg-group-pair-mov-edges-blocks
-              (deref rest)
-              group-vars
-              excluded
-              starts
-              def-counts
-              parents
-              poisoned))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -30447,13 +29893,6 @@
   [blocks : ir.CompilerIrBlockList]
   [words : (&mut words (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-vector-stack-words-seq! instrs words)])
-        (compiler-reg-vector-stack-words-blocks! (deref rest) words))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -30514,31 +29953,25 @@
       changed)))
 
 (define (compiler-reg-vector-stack-words-propagate-blocks!
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [words : (&mut words (__tl_dyn-array i64))]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) false]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [here : bool
               (compiler-reg-vector-stack-words-propagate-seq! instrs words)]
             [later : bool
-              (compiler-reg-vector-stack-words-propagate-blocks!
-                (deref rest)
-                words)]
-            (or here later))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-vector-stack-words-propagate-blocks!
-        (ir.compiler-ir-block-seq-to-list seq)
-        words)]))
+              (compiler-reg-vector-stack-words-propagate-blocks! rest words)]
+            (or here later))])]))
 
 (define (compiler-reg-vector-stack-words-fixpoint!
   [blocks : ir.CompilerIrBlockList]
   [words : (&mut words (__tl_dyn-array i64))]) : unit
   (if (compiler-reg-vector-stack-words-propagate-blocks!
-    (compiler-reg-global-shared-view blocks)
+    (ir.compiler-ir-block-list-view blocks)
     words)
     (compiler-reg-vector-stack-words-fixpoint! blocks words)
     unit))
@@ -30904,21 +30337,6 @@
   [range-size : (__tl_dyn-array i64)]
   [range-count : i64]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) range-count]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-color-detect-storage-blocks
-            (deref rest)
-            (compiler-reg-global-shared-view range-of-var)
-            (compiler-reg-global-shared-view range-base)
-            (compiler-reg-global-shared-view range-size)
-            (compiler-reg-color-detect-storage-seq
-              instrs
-              range-of-var
-              range-base
-              range-size
-              range-count))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -31195,28 +30613,6 @@
   [candidates : (&mut candidates (__tl_dyn-array i64))]
   [cursor : (__tl_dyn-array i64)]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (let
-            [head : bool
-              (compiler-reg-color-propagate-root-seq
-                instrs
-                range-of-var
-                roots
-                invalid
-                candidates
-                (compiler-reg-global-shared-view cursor))]
-            [tail : bool
-              (compiler-reg-color-propagate-root-blocks
-                (deref rest)
-                range-of-var
-                roots
-                invalid
-                candidates
-                cursor)]
-            (or head tail))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -31285,39 +30681,6 @@
     (begin
       (while (not done)
         (match cur
-          [(ir.CompilerIrBlockList.Nil) (set! done true)]
-          [(ir.CompilerIrBlockList.Cons block rest)
-            (begin
-              (match block
-                [(ir.CompilerIrBlock.Block _ instrs)
-                  (let
-                    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-                    [limit : i64
-                      (+ base (ir.compiler-ir-instr-seq-count instrs))]
-                    (begin
-                      (while (< ord limit)
-                        (begin
-                          (set!
-                            changed-bits
-                            (bit-or
-                              changed-bits
-                              (compiler-reg-color-propagate-root-instr
-                                (compiler-reg-global-array-element-shared-view
-                                  slots
-                                  (- ord base))
-                                range-of-var
-                                roots
-                                invalid)))
-                          (set! at (+ at 1))
-                          (set!
-                            ord
-                            (if (< at count)
-                              (compiler-reg-global-array-element-shared-view
-                                candidates
-                                at)
-                              max-ordinal))))
-                      (set! base limit)))])
-              (set! cur (deref rest)))]
           [(ir.CompilerIrBlockList.Array seq)
             (let
               [i : i64 0]
@@ -31365,13 +30728,6 @@
   [blocks : ir.CompilerIrBlockList]
   [total : i64]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) total]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-color-instr-total
-            (deref rest)
-            (+ total (ir.compiler-ir-instr-seq-count instrs)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -31656,16 +31012,6 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-color-invalidate-seq!
-              instrs
-              (compiler-reg-global-shared-view roots)
-              (compiler-reg-global-shared-view invalid))])
-        (compiler-reg-color-invalidate-blocks! (deref rest) roots invalid))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -32218,33 +31564,6 @@
   [hull-starts : (__tl_dyn-array i64)]
   [hull-ends : (__tl_dyn-array i64)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-color-group-mov-alias-seq!
-              type-segment-bases
-              instrs
-              alias
-              group-vars
-              ineligible
-              assignment-index
-              (compiler-reg-global-shared-view var-tys)
-              (compiler-reg-global-shared-view remap)
-              (compiler-reg-global-shared-view hull-starts)
-              (compiler-reg-global-shared-view hull-ends))])
-        (compiler-reg-color-group-mov-alias-blocks!
-          type-segment-bases
-          (deref rest)
-          alias
-          group-vars
-          ineligible
-          assignment-index
-          var-tys
-          remap
-          hull-starts
-          hull-ends))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -32432,21 +31751,6 @@
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (compiler-reg-color-ep-hull-blocks!
-            (deref rest)
-            (compiler-reg-global-shared-view liveness)
-            (compiler-reg-color-ep-hull-seq!
-              instrs
-              (compiler-reg-live-intervals-find-afters liveness label)
-              point
-              starts
-              ends)
-            starts
-            ends)])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -32725,13 +32029,6 @@
   [wit-a : (&mut wit-a (__tl_dyn-array i64))]
   [wit-b : (&mut wit-b (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-color-scalar-witness-seq! instrs wit-a wit-b)])
-        (compiler-reg-color-scalar-witness-blocks! (deref rest) wit-a wit-b))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -33258,41 +32555,6 @@
   [wit-b : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-color-scalar-alias-seq!
-              type-segment-bases
-              instrs
-              (compiler-reg-global-shared-view alias)
-              (compiler-reg-global-shared-view web-root)
-              (compiler-reg-global-shared-view web-end)
-              (&mut web-next)
-              (compiler-reg-global-shared-view web-size)
-              (compiler-reg-global-shared-view eligible)
-              (compiler-reg-global-shared-view var-tys)
-              (compiler-reg-global-shared-view ep-starts)
-              (compiler-reg-global-shared-view ep-ends)
-              wit-a
-              wit-b
-              phi-def)])
-        (compiler-reg-color-scalar-alias-blocks!
-          type-segment-bases
-          (deref rest)
-          alias
-          web-root
-          web-end
-          web-next
-          web-size
-          eligible
-          var-tys
-          ep-starts
-          ep-ends
-          wit-a
-          wit-b
-          phi-def))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -33343,13 +32605,6 @@
   [blocks : ir.CompilerIrBlockList]
   [phi-def : (&mut phi-def (__tl_dyn-array bool))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)])
-        (compiler-reg-color-scalar-phi-def-blocks! (deref rest) phi-def))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -33439,15 +32694,6 @@
   [blocks : ir.CompilerIrBlockList]
   [eligible : (& eligible (__tl_dyn-array bool))]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (if (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-color-scalar-alias-candidate-seq? instrs eligible)])
-        true
-        (compiler-reg-color-scalar-alias-candidate-blocks?
-          (deref rest)
-          eligible))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -34163,17 +33409,6 @@
   [remap : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block label instrs)
-          (ir.CompilerIrBlockList.Cons
-            (ir.CompilerIrBlock.Block
-              label
-              (compiler-reg-remap-instr-seq
-                (compiler-reg-global-shared-view remap)
-                instrs))
-            (box (compiler-reg-remap-blocks remap (deref rest))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -34619,13 +33854,6 @@
 (define (compiler-reg-early-scratch-count-blocks
   [blocks : ir.CompilerIrBlockList]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (compiler-reg-early-scratch-count-seq instrs)
-            (compiler-reg-early-scratch-count-blocks (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -34796,43 +34024,6 @@
   [scratch-weights : (&mut scratch-weights (__tl_dyn-array i64))]
   [scratch-excluded : (&mut scratch-excluded (__tl_dyn-array CompilerRegIdSeq))]) : CompilerRegScratchFillState
   (match blocks
-    [(ir.CompilerIrBlockList.Nil)
-      (CompilerRegScratchFillState.State instruction-start scratch-start)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-early-scratch-fill-seq!
-            assignment-view
-            assignment-table
-            instrs
-            (compiler-reg-loop-depth-weight (array-ref depths block-index))
-            instruction-start
-            scratch-start
-            scratch-base
-            starts
-            ends
-            segments
-            present
-            types
-            scratch-weights
-            scratch-excluded)
-            [(CompilerRegScratchFillState.State next-instruction next-scratch)
-              (compiler-reg-early-scratch-fill-blocks!
-                assignment-view
-                assignment-table
-                (deref rest)
-                depths
-                (+ block-index 1)
-                next-instruction
-                next-scratch
-                scratch-base
-                starts
-                ends
-                segments
-                present
-                types
-                scratch-weights
-                scratch-excluded)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -35713,7 +34904,8 @@
           (live.compiler-live-ir-block-list-to-seq blocks)]
         [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [nblocks : i64 seq.len]
-        [out-rev : ir.CompilerIrBlockList ir.CompilerIrBlockList.Nil]
+        [out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity nblocks)]
         [b : i64 0]
         (begin
           (compiler-reg-call-region-fill-arrays!
@@ -35797,11 +34989,9 @@
                       ;; nothing active from an earlier block and no region
                       ;; starts here -> keep the block untouched
                       (begin
-                        (set!
-                          out-rev
-                          (ir.compiler-ir-block-cons
-                            (ir.CompilerIrBlock.Block label instrs)
-                            out-rev))
+                        (ir.compiler-ir-block-builder-push!
+                          (&mut out)
+                          (ir.CompilerIrBlock.Block label instrs))
                         (set! point (+ point span)))
                       (let
                         [islots : (__tl_dyn-array ir.CompilerIrInstr)
@@ -36018,18 +35208,14 @@
                                       (array-ref active j)
                                       (array-ref active active-n)))
                                   (set! j (+ j 1))))))
-                          (set!
-                            out-rev
-                            (ir.compiler-ir-block-cons
-                              (ir.CompilerIrBlock.Block
-                                label
-                                (ir.compiler-ir-instr-builder-to-seq builder))
-                              out-rev))))))])
+                          (ir.compiler-ir-block-builder-push!
+                            (&mut out)
+                            (ir.CompilerIrBlock.Block
+                              label
+                              (ir.compiler-ir-instr-builder-to-seq builder)))))))])
               (set! b (+ b 1))))
           (CompilerRegCallSaveRewrite.Rewrite
-            (ir.compiler-ir-block-list-reverse-onto
-              out-rev
-              ir.CompilerIrBlockList.Nil)
+            (ir.compiler-ir-block-builder-to-list out)
             vars
             next-var
             extra-assignments
@@ -36111,21 +35297,6 @@
   [facts : CompilerRegInvariantFacts]
   [narrow-allow : bool]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-remat-table-record-instrs!
-              table
-              instrs
-              (compiler-reg-global-shared-view facts)
-              narrow-allow)])
-        (compiler-reg-remat-table-record-blocks!
-          table
-          (deref rest)
-          facts
-          narrow-allow))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]

@@ -3826,7 +3826,10 @@
 (define (probe-other [c : OtherChoice]) : i64
   (match c
     [OtherEmpty 0]
-    [(SemanticFull item) 1]))"]
+    [(SemanticFull item) 1]))
+(define (make-other) : OtherChoice
+  (let [first : OtherChoice (SemanticFull \"first\")]
+    (OtherChoice.SemanticFull \"second\")))"]
     [imported-path : String "src/tests/semantic/index/nominal_dep.tl"]
     [build-start : i64 (compiler-semantic-index-smoke-timing-start)]
     (match (compiler-check-source-index-with-roots
@@ -3904,6 +3907,22 @@
               "SemanticFull"
               sem.CompilerSemanticRecordRole.Use
               2)]
+          ;; The expected OtherChoice resolves the second enum's variant; the
+          ;; qualified use after it keeps its own written span.
+          [other-full-ctor-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "SemanticFull"
+              sem.CompilerSemanticRecordRole.Use
+              3)]
+          [other-full-qualified-i : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "SemanticFull"
+              sem.CompilerSemanticRecordRole.Use
+              4)]
           [pair-use-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
@@ -4038,6 +4057,8 @@
             (< right-use-i 0)
             (< full-use-i 0)
             (< other-full-use-i 0)
+            (< other-full-ctor-i 0)
+            (< other-full-qualified-i 0)
             (< pair-use-i 0)
             (< left-write-i 0)
             (< dispatch-def-i 0)
@@ -4093,6 +4114,14 @@
                 (sem.compiler-semantic-source-index-get
                   (& index)
                   other-full-use-i)]
+              [other-full-ctor : sem.CompilerSemanticRecord
+                (sem.compiler-semantic-source-index-get
+                  (& index)
+                  other-full-ctor-i)]
+              [other-full-qualified : sem.CompilerSemanticRecord
+                (sem.compiler-semantic-source-index-get
+                  (& index)
+                  other-full-qualified-i)]
               [pair-use : sem.CompilerSemanticRecord
                 (sem.compiler-semantic-source-index-get (& index) pair-use-i)]
               [left-write : sem.CompilerSemanticRecord
@@ -4240,6 +4269,23 @@
                   (sem.compiler-semantic-symbol-id-eq?
                     other-full-def.symbol
                     other-full-use.symbol)
+                  (sem.compiler-semantic-symbol-id-eq?
+                    other-full-def.symbol
+                    other-full-ctor.symbol)
+                  (sem.compiler-semantic-symbol-id-eq?
+                    other-full-def.symbol
+                    other-full-qualified.symbol)
+                  (compiler-semantic-record-span-text-eq?
+                    source
+                    other-full-ctor
+                    "SemanticFull")
+                  (compiler-semantic-record-span-text-eq?
+                    source
+                    other-full-qualified
+                    "SemanticFull")
+                  (<
+                    other-full-ctor.span.start-byte
+                    other-full-qualified.span.start-byte)
                   (sem.compiler-semantic-symbol-id-eq?
                     left-def.symbol
                     left-write.symbol)

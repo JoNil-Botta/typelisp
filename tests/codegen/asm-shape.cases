@@ -1256,3 +1256,29 @@ match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
 match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$
+
+# A `try` error exit returns the enclosing family's Err like a returned
+# constructor: the 32-byte family is written straight into the caller's sret
+# slot (one tag store per exit) and the 16-byte family travels in the register
+# group, with no arena allocation on either path.
+case try-err-return-slot
+source tests/integration/try_propagation.tl
+opt 0 2
+in fn _tl_try_propagation_validate
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+count = 2 ^[[:space:]]+movq \$1, \(%r[a-z0-9]+\)$
+in fn _tl_try_propagation_word_sum
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+
+# A function that uses `try` still takes its caller's sret slot: the try error
+# exit builds its Err in that slot (#8563), so `forward` tail-jumps into
+# `checked` instead of calling into a temporary and copying the 32-byte result.
+case try-sret-forward
+source tests/integration/try_sret_forward.tl
+opt 0 1
+in fn _tl_try_sret_forward_forward
+match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
+not-contains movups
+not-match ^[[:space:]]+call[[:space:]]

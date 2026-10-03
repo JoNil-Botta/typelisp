@@ -168,17 +168,13 @@
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [index : i64]
   [want : i64]) : bool
-  (let
-    [blocks : compiler_ir_types.CompilerIrBlockList
-      (owned_view.compiler-owned-reference-shared-view blocks)]
-    (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
-      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-        (if (= index 0)
-          (match block
-            [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-          (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
-      [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-      [(compiler_ir_types.CompilerIrBlockList.Array _) false])))
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (and
+        (>= index 0)
+        (< index (compiler_ir_types.compiler-ir-block-seq-count seq))
+        (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+          [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)]))]))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
   [seq : compiler_ir_types.CompilerIrParamSeq]
@@ -230,7 +226,7 @@
         params
         (ast.AstType.Unit)
         6
-        compiler_ir_types.CompilerIrBlockList.Nil
+        (compiler_ir_types.compiler-ir-block-list-empty)
         compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [cloned : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.compiler-ir-clone-function
@@ -395,12 +391,10 @@
               (compiler_ir_types.CompilerIrValue.Var 1)))
           (compiler_ir_types.compiler-ir-instr-seq-empty)))]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "entry")
-            entry-instrs)
-          compiler_ir_types.CompilerIrBlockList.Nil))]
+      (compiler_ir_types.compiler-ir-blocks
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          entry-instrs))]
     [first : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first")
@@ -463,19 +457,11 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "third")
         (compiler_ir_types.compiler-ir-instr-seq-empty))]
-    [reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-cons
-        third-block
-        (compiler_ir_types.compiler-ir-block-cons
-          second-block
-          (compiler_ir_types.compiler-ir-block-cons
-            first-block
-            compiler_ir_types.CompilerIrBlockList.Nil)))]
     [compact-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed reversed-blocks)]
-    [array-reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
+      (compiler_ir_types.compiler-ir-blocks
+        first-block
+        second-block
+        third-block)]
     [first-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first-func")
@@ -532,14 +518,6 @@
         compact-blocks
         2
         (compiler_ir_types.compiler-ir-label "third"))
-      (compiler-ir-smoke-block-list-label-at?
-        array-reversed-blocks
-        0
-        (compiler_ir_types.compiler-ir-label "third"))
-      (compiler-ir-smoke-block-list-label-at?
-        array-reversed-blocks
-        2
-        (compiler_ir_types.compiler-ir-label "first"))
       (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
       (compiler-ir-smoke-function-seq-name-at? compact-functions 0 "first-func")
       (compiler-ir-smoke-function-seq-name-at?
@@ -1918,11 +1896,10 @@
             params
             (ast.ast-global-shared-view one-ty)
             8
-            (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-blocks
               (compiler_ir_types.CompilerIrBlock.Block
                 (compiler_ir_types.compiler-ir-label "entry")
-                instrs)
-              compiler_ir_types.CompilerIrBlockList.Nil)
+                instrs))
             compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
           (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
@@ -2348,14 +2325,13 @@
     (pabi-signature-params 0)
     (ast.AstType.I64)
     4
-    (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-blocks
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-seq1
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
-              (compiler_ir_types.CompilerIrValue.Var 1)))))
-      compiler_ir_types.CompilerIrBlockList.Nil)
+              (compiler_ir_types.CompilerIrValue.Var 1))))))
     function-abi))
 
 (define (pabi-caller-function
@@ -2365,14 +2341,13 @@
     (compiler_ir_types.compiler-ir-param-seq-empty)
     (ast.AstType.Unit)
     30
-    (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-blocks
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-seq2
           (compiler_ir_types.CompilerIrInstr.SpmdCall (box payload))
           (compiler_ir_types.CompilerIrInstr.Return
-            compiler_ir_types.CompilerIrMaybeValue.No)))
-      compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrMaybeValue.No))))
     compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (pabi-program-error
@@ -2874,7 +2849,7 @@
                   (compiler_ir_types.compiler-ir-param-builder-to-seq builder)))
               (ast.AstType.I64)
               4
-              compiler_ir_types.CompilerIrBlockList.Nil
+              (compiler_ir_types.compiler-ir-block-list-empty)
               (compiler_ir_types.compiler-ir-function-abi-private
                 (pabi-with-params 11)))
             (pabi-base-payload 0 0)
@@ -2925,9 +2900,7 @@
       [(not
           (compiler_ir_types.compiler-ir-spmd-private-abi-eq?
             bases
-            (pabi-function-private-abi
-              (compiler_ir_types.compiler-ir-function-compact-blocks
-                (pabi-private-helper)))
+            (pabi-function-private-abi (pabi-private-helper))
             (pabi-base)))
         53]
       [(compiler_ir_types.compiler-ir-spmd-private-abi-eq?
@@ -3663,11 +3636,6 @@
   (match (& (array-ref instrs.slots index))
     [(compiler_ir_types.CompilerIrInstr.Return _) true]
     [_ false]))
-
-(define (compiler-ir-block-list-compact-reversed
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.CompilerIrBlockList.Array
-    (compiler_ir_types.compiler-ir-block-seq-from-reversed-list blocks)))
 
 (define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
   (match func
@@ -4766,36 +4734,34 @@
         (compiler-ir-instr-seq-return-var? seq 2 2)))))
 
 (define (compiler-ir-block-list-first-label?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]
   [want : String]) : bool
-  (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
-      (match block
+  (match blocks
+    [(slice block & _)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(compiler_ir_types.CompilerIrBlock.Block label _)
           (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])]
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+    [(slice) false]))
 
-(define (compiler-ir-block-list-label-at-cons?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
+(define (compiler-ir-block-slice-label-at?
+  [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]
   [index : i64]
   [want : String]) : bool
   (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+    [(slice) false]
+    [(slice block & rest)
       (if (= index 0)
-        (match block
+        (match (owned_view.compiler-owned-reference-shared-view block)
           [(compiler_ir_types.CompilerIrBlock.Block label _)
             (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])
-        (compiler-ir-block-list-label-at-cons? (deref rest) (- index 1) want))]
-    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+        (compiler-ir-block-slice-label-at? rest (- index 1) want))]))
 
 (define (compiler-ir-block-list-label-at?
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [index : i64]
   [want : String]) : bool
-  (compiler-ir-block-list-label-at-cons?
-    (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+  (compiler-ir-block-slice-label-at?
+    (compiler_ir_types.compiler-ir-block-list-view blocks)
     index
     want))
 
@@ -4815,7 +4781,7 @@
     (compiler_ir_types.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     1
-    compiler_ir_types.CompilerIrBlockList.Nil
+    (compiler_ir_types.compiler-ir-block-list-empty)
     compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-ir-dense-builders-order-ok?) : bool
@@ -4829,7 +4795,7 @@
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-empty)]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      compiler_ir_types.CompilerIrBlockList.Nil]
+      (compiler_ir_types.compiler-ir-block-list-empty)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-empty)]
     (begin
@@ -4952,7 +4918,7 @@
         params
         (ast.AstType.Unit)
         8
-        compiler_ir_types.CompilerIrBlockList.Nil
+        (compiler_ir_types.compiler-ir-block-list-empty)
         compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
     [cloned-func : compiler_ir_types.CompilerIrFunction func]
     (begin
@@ -4978,7 +4944,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view params)
           (ast.AstType.Unit)
           8
-          compiler_ir_types.CompilerIrBlockList.Nil
+          (compiler_ir_types.compiler-ir-block-list-empty)
           compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
       (set!
         cloned-func
@@ -5372,14 +5338,12 @@
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 2))))]
     [block-list : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-blocks
         (compiler_ir_types.compiler-ir-block
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-global-shared-view seq))
-        compiler_ir_types.CompilerIrBlockList.Nil)]
+          (compiler_ir_types.compiler-ir-global-shared-view seq)))]
     [compact-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact
-        (compiler_ir_types.compiler-ir-global-shared-view block-list))]
+      (compiler_ir_types.compiler-ir-global-shared-view block-list)]
     (and
       (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
       (not (compiler_ir_types.compiler-ir-instr-seq-empty? seq))
@@ -5390,7 +5354,9 @@
         (compiler_ir_types.compiler-ir-block-list-instruction-count block-list)
         3)
       (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 1)
-      (compiler-ir-block-list-first-label? compact-blocks "entry")
+      (compiler-ir-block-list-first-label?
+        (compiler_ir_types.compiler-ir-block-list-view compact-blocks)
+        "entry")
       (compiler-ir-instr-seq-mov-dst? seq 0 1))))
 
 (define (compiler-ir-effect-self-test) : i64

@@ -522,18 +522,13 @@
     [_ false]))
 
 (define (lower-test-product-shape-blocks
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-index : i64]
   [shape : LowerTestProductShape]) : LowerTestProductShape
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) shape]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-product-shape-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        block-index
-        shape)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) shape]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -550,7 +545,7 @@
                     unit)
                   (set! index (+ index 1))))
               (lower-test-product-shape-blocks
-                (deref rest)
+                rest
                 (+ block-index 1)
                 (LowerTestProductShape
                   (+ shape.blocks 1)
@@ -571,7 +566,7 @@
               (match func
                 [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
                   (lower-test-product-shape-blocks
-                    blocks
+                    (ir.compiler-ir-block-list-view blocks)
                     0
                     (LowerTestProductShape 0 0 -1))])]
             [(LowerTestMaybeFunction.No) (LowerTestProductShape -1 -1 -2)])])]
@@ -3368,13 +3363,6 @@
 
 (define (lower-test-blocks-spmd-call-count [blocks : ir.CompilerIrBlockList]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-spmd-call-count instrs)
-            (lower-test-blocks-spmd-call-count (deref rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (lower-test-block-seq-spmd-call-count seq)]))
 
@@ -3784,18 +3772,16 @@
       acc)))
 
 (define (lower-test-blocks-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [kind : LowerTestInstr]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-count instrs kind)
-            (lower-test-blocks-count (deref rest) kind))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-count (ir.compiler-ir-block-seq-to-list seq) kind)]))
+            (lower-test-blocks-count rest kind))])]))
 
 ;; How many KIND instructions the function NAME holds; -1 when it is missing.
 (define (lower-test-count
@@ -3807,7 +3793,7 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-count blocks kind)])]))
+          (lower-test-blocks-count (ir.compiler-ir-block-list-view blocks) kind)])]))
 
 (define (lower-test-instr-seq-pack-shape-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -4073,149 +4059,120 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-blocks-phi-count [blocks : ir.CompilerIrBlockList]) : i64
+(define (lower-test-blocks-phi-count
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-phi-count instrs)
-            (lower-test-blocks-phi-count (deref rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-phi-count (ir.compiler-ir-block-seq-to-list seq))]))
+            (lower-test-blocks-phi-count rest))])]))
 
 (define (lower-test-blocks-splat-shape-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [lanes : i64]
   [elem-ty : ast.AstType]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-splat-shape-count
               instrs
               lanes
               (owned_view.compiler-owned-shared-view elem-ty))
-            (lower-test-blocks-splat-shape-count (deref rest) lanes elem-ty))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-splat-shape-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        lanes
-        elem-ty)]))
+            (lower-test-blocks-splat-shape-count rest lanes elem-ty))])]))
 
 (define (lower-test-blocks-label-load-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [want-label : String]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (- 0 1)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) (- 0 1)]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (if (string.eq (ir.compiler-ir-label-text label) want-label)
             (lower-test-instr-seq-count instrs (LowerTestInstr.Load))
-            (lower-test-blocks-label-load-count (deref rest) want-label))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-label-load-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        want-label)]))
+            (lower-test-blocks-label-load-count rest want-label))])]))
 
 (define (lower-test-blocks-pack-shape-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [pools : (& pools ast.AstNodePoolContext)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-pack-shape-count instrs pools)
-            (lower-test-blocks-pack-shape-count (deref rest) pools))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-pack-shape-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        pools)]))
+            (lower-test-blocks-pack-shape-count rest pools))])]))
 
 (define (lower-test-blocks-call-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [name : String]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-call-count
               instrs
               (ir.compiler-ir-global-shared-view name))
-            (lower-test-blocks-call-count (deref rest) name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-call-count (ir.compiler-ir-block-seq-to-list seq) name)]))
+            (lower-test-blocks-call-count rest name))])]))
 
 (define (lower-test-blocks-call-before?
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [first : (& first str)]
   [second : (& second str)]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) false]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (if (lower-test-instr-seq-call-before? instrs first second)
             true
-            (lower-test-blocks-call-before? (deref rest) first second))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-call-before?
-        (ir.compiler-ir-block-seq-to-list seq)
-        first
-        second)]))
+            (lower-test-blocks-call-before? rest first second))])]))
 
 (define (lower-test-blocks-return-function-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [function-name : (& function-name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-return-function-count instrs function-name)
-            (lower-test-blocks-return-function-count (deref rest) function-name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-return-function-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        function-name)]))
+            (lower-test-blocks-return-function-count rest function-name))])]))
 
 (define (lower-test-blocks-indirect-callee-function-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [function-name : (& function-name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-callee-function-count
               instrs
               function-name)
             (lower-test-blocks-indirect-callee-function-count
-              (deref rest)
-              function-name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-indirect-callee-function-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        function-name)]))
+              rest
+              function-name))])]))
 
 (define (lower-test-blocks-call-arg-function-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [call-name : (& call-name str)]
   [function-name : (& function-name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-call-arg-function-count
@@ -4223,121 +4180,91 @@
               call-name
               function-name)
             (lower-test-blocks-call-arg-function-count
-              (deref rest)
+              rest
               call-name
-              function-name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-call-arg-function-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        call-name
-        function-name)]))
+              function-name))])]))
 
 (define (lower-test-blocks-tail-call-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [name : (& name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-tail-call-count instrs name)
-            (lower-test-blocks-tail-call-count (deref rest) name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-tail-call-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        name)]))
+            (lower-test-blocks-tail-call-count rest name))])]))
 
 (define (lower-test-blocks-vector-binop-op-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [want : ir.CompilerIrBinOp]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-binop-op-count
               instrs
               (owned_view.compiler-owned-shared-view want))
-            (lower-test-blocks-vector-binop-op-count (deref rest) want))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-binop-op-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        want)]))
+            (lower-test-blocks-vector-binop-op-count rest want))])]))
 
 (define (lower-test-blocks-vector-shape-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [lanes : i64]
   [elem-ty : ast.AstType]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-shape-count
               instrs
               lanes
               (ast.ast-global-shared-view elem-ty))
-            (lower-test-blocks-vector-shape-count (deref rest) lanes elem-ty))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-vector-shape-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        lanes
-        elem-ty)]))
+            (lower-test-blocks-vector-shape-count rest lanes elem-ty))])]))
 
 (define (lower-test-blocks-binop-op-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [op : ir.CompilerIrBinOp]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-binop-op-count
               instrs
               (ir.compiler-ir-global-shared-view op))
-            (lower-test-blocks-binop-op-count (deref rest) op))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-binop-op-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        op)]))
+            (lower-test-blocks-binop-op-count rest op))])]))
 
 (define (lower-test-blocks-i64-binop-op-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [op : ir.CompilerIrBinOp]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-i64-binop-op-count
               instrs
               (ir.compiler-ir-global-shared-view op))
-            (lower-test-blocks-i64-binop-op-count (deref rest) op))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-i64-binop-op-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        op)]))
+            (lower-test-blocks-i64-binop-op-count rest op))])]))
 
 (define (lower-test-blocks-store-global-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [name : (& name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-store-global-count instrs name)
-            (lower-test-blocks-store-global-count (deref rest) name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-store-global-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        name)]))
+            (lower-test-blocks-store-global-count rest name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
@@ -4409,7 +4336,7 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-phi-count blocks)])]))
+          (lower-test-blocks-phi-count (ir.compiler-ir-block-list-view blocks))])]))
 
 (define (lower-test-function-splat-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4421,7 +4348,10 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-splat-shape-count blocks lanes elem-ty)])]))
+          (lower-test-blocks-splat-shape-count
+            (ir.compiler-ir-block-list-view blocks)
+            lanes
+            elem-ty)])]))
 
 (define (lower-test-function-label-load-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4432,7 +4362,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-label-load-count blocks want-label)])]))
+          (lower-test-blocks-label-load-count
+            (ir.compiler-ir-block-list-view blocks)
+            want-label)])]))
 
 (define (lower-test-function-pack-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4443,7 +4375,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-pack-shape-count blocks pools)])]))
+          (lower-test-blocks-pack-shape-count
+            (ir.compiler-ir-block-list-view blocks)
+            pools)])]))
 
 (define (lower-test-functions-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4461,7 +4395,7 @@
                 (+
                   count
                   (lower-test-blocks-call-count
-                    blocks
+                    (ir.compiler-ir-block-list-view blocks)
                     (ir.compiler-ir-global-shared-view name))))])
           (set! index (+ index 1))))
       count)))
@@ -4480,7 +4414,9 @@
                 count
                 (+
                   count
-                  (lower-test-blocks-count blocks (LowerTestInstr.Branch))))])
+                  (lower-test-blocks-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    (LowerTestInstr.Branch))))])
           (set! index (+ index 1))))
       count)))
 
@@ -4498,7 +4434,9 @@
                 count
                 (+
                   count
-                  (lower-test-blocks-count blocks (LowerTestInstr.Return))))])
+                  (lower-test-blocks-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    (LowerTestInstr.Return))))])
           (set! index (+ index 1))))
       count)))
 
@@ -4515,7 +4453,11 @@
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
-                (+ count (lower-test-blocks-tail-call-count blocks name)))])
+                (+
+                  count
+                  (lower-test-blocks-tail-call-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    name)))])
           (set! index (+ index 1))))
       count)))
 
@@ -4542,7 +4484,9 @@
                 count
                 (+
                   count
-                  (lower-test-blocks-count blocks (LowerTestInstr.Cpuid))))])
+                  (lower-test-blocks-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    (LowerTestInstr.Cpuid))))])
           (set! index (+ index 1))))
       count)))
 
@@ -4560,7 +4504,9 @@
                 count
                 (+
                   count
-                  (lower-test-blocks-count blocks (LowerTestInstr.Xgetbv))))])
+                  (lower-test-blocks-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    (LowerTestInstr.Xgetbv))))])
           (set! index (+ index 1))))
       count)))
 
@@ -4573,7 +4519,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-call-count blocks call-name)])]))
+          (lower-test-blocks-call-count
+            (ir.compiler-ir-block-list-view blocks)
+            call-name)])]))
 
 (define (lower-test-function-call-before?
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4585,7 +4533,10 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-call-before? blocks first second)])]))
+          (lower-test-blocks-call-before?
+            (ir.compiler-ir-block-list-view blocks)
+            first
+            second)])]))
 
 (define (lower-test-function-return-function-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4596,7 +4547,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-return-function-count blocks function-name)])]))
+          (lower-test-blocks-return-function-count
+            (ir.compiler-ir-block-list-view blocks)
+            function-name)])]))
 
 (define (lower-test-function-indirect-callee-function-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4608,7 +4561,7 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-indirect-callee-function-count
-            blocks
+            (ir.compiler-ir-block-list-view blocks)
             function-name)])]))
 
 (define (lower-test-function-call-arg-function-count
@@ -4622,7 +4575,7 @@
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
           (lower-test-blocks-call-arg-function-count
-            blocks
+            (ir.compiler-ir-block-list-view blocks)
             call-name
             function-name)])]))
 
@@ -4635,7 +4588,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-tail-call-count blocks call-name)])]))
+          (lower-test-blocks-tail-call-count
+            (ir.compiler-ir-block-list-view blocks)
+            call-name)])]))
 
 (define (lower-test-function-direct-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4700,20 +4655,16 @@
       acc)))
 
 (define (lower-test-blocks-distinct-arg-call-count
-  [blocks : ir.CompilerIrBlockList]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [call-name : (& call-name str)]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) 0]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-distinct-arg-call-count instrs call-name)
-            (lower-test-blocks-distinct-arg-call-count (deref rest) call-name))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (lower-test-blocks-distinct-arg-call-count
-        (ir.compiler-ir-block-seq-to-list seq)
-        call-name)]))
+            (lower-test-blocks-distinct-arg-call-count rest call-name))])]))
 
 ;; How many `call-name` calls in `name` pass two different variables as their
 ;; first two arguments.
@@ -4726,7 +4677,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-distinct-arg-call-count blocks call-name)])]))
+          (lower-test-blocks-distinct-arg-call-count
+            (ir.compiler-ir-block-list-view blocks)
+            call-name)])]))
 
 (define (lower-test-function-vector-binop-op-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4737,7 +4690,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-binop-op-count blocks want)])]))
+          (lower-test-blocks-vector-binop-op-count
+            (ir.compiler-ir-block-list-view blocks)
+            want)])]))
 
 (define (lower-test-function-vector-shape-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4749,7 +4704,10 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-vector-shape-count blocks lanes elem-ty)])]))
+          (lower-test-blocks-vector-shape-count
+            (ir.compiler-ir-block-list-view blocks)
+            lanes
+            elem-ty)])]))
 
 (define (lower-test-function-binop-op-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4760,7 +4718,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-binop-op-count blocks op)])]))
+          (lower-test-blocks-binop-op-count
+            (ir.compiler-ir-block-list-view blocks)
+            op)])]))
 
 (define (lower-test-function-i64-binop-op-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4771,7 +4731,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-i64-binop-op-count blocks op)])]))
+          (lower-test-blocks-i64-binop-op-count
+            (ir.compiler-ir-block-list-view blocks)
+            op)])]))
 
 (define (lower-test-functions-bitcast-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
@@ -4787,7 +4749,9 @@
                 count
                 (+
                   count
-                  (lower-test-blocks-count blocks (LowerTestInstr.Bitcast))))])
+                  (lower-test-blocks-count
+                    (ir.compiler-ir-block-list-view blocks)
+                    (LowerTestInstr.Bitcast))))])
           (set! index (+ index 1))))
       count)))
 
@@ -4800,7 +4764,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-store-global-count blocks global-name)])]))
+          (lower-test-blocks-store-global-count
+            (ir.compiler-ir-block-list-view blocks)
+            global-name)])]))
 
 (define (lower-test-global-seq-has-name-at?
   [globals : ir.CompilerIrGlobalSeq]
@@ -6275,7 +6241,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-count blocks (LowerTestInstr.I64Mov want))])]))
+          (lower-test-blocks-count
+            (ir.compiler-ir-block-list-view blocks)
+            (LowerTestInstr.I64Mov want))])]))
 
 (define (lower-test-function-f64-mov-count-bits
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -6286,7 +6254,9 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (lower-test-blocks-count blocks (LowerTestInstr.F64Mov want))])]))
+          (lower-test-blocks-count
+            (ir.compiler-ir-block-list-view blocks)
+            (LowerTestInstr.F64Mov want))])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))

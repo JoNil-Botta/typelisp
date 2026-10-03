@@ -271,7 +271,10 @@ contextual literals are compile-time errors; explicit
 truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
-default. Floating-point literals are always `f64` unless a contextual `f32`
+default. An `if` branch or `match` arm likewise adopts the type of another
+branch or arm when that type does not merge with its own (see §5.6), so an
+unconstrained literal branch takes the other branch's integer type when the
+literal fits it. Floating-point literals are always `f64` unless a contextual `f32`
 expected type is present. Exponent-only forms such as `1e10` are `Float`
 tokens, and exponent/fraction spellings retain their source bytes through
 formatting. An exponent marker must have an optional sign and at least one
@@ -603,8 +606,40 @@ Examples:
 - Variant constructors and patterns may be written as unqualified names
   (`Red`, `(Some x)`) or as enum-qualified names (`Color.Red`,
   `(Option.Some x)`). Duplicate variant base names are allowed across
-  different enums when uses are enum-qualified; duplicate variant names
-  within the same enum are rejected.
+  different enums; duplicate variant names within the same enum are rejected.
+- An unqualified variant name `V` resolves as follows:
+  1. A local binding named `V` (a `let`, parameter or lambda parameter,
+     hygiene-scoped) always means that binding.
+  2. A pattern resolves `V` against the scrutinee's enum (§5.13). A
+     constructor `V` or `(V args...)` in a position with an expected enum type
+     that declares `V` means that enum's variant, ahead of other enums'
+     variants, imports and module-level values. The expected-type positions
+     are the ones where contextual `(init)` works (§5.12.1); the expected enum
+     need not be imported by the current module. If a module-level function,
+     value or struct constructor named `V` is also visible unqualified there,
+     the reference is ambiguous and must be qualified.
+  3. Otherwise `V` is looked up among the enums the current module declares
+     or imports with `.*` (§4.4.3). Exactly one of them may declare it: two
+     make the name ambiguous (`qualify as A.V or B.V`), and the enums of
+     other loaded modules are never searched.
+- In a variant payload position of a pattern, a bare binder whose name spells
+  a variant of the payload's enum is rejected, because it would match every
+  payload. Write `(V)` to match that variant, or choose another binder name.
+
+```lisp test=run name=enum-expected-variant exit=42 stdout=""
+(defenum Reply (Ok i64) (Err i64))
+(defenum Probe (Err i64) (Ok i64))
+
+(define (reply [x : i64]) : Reply
+  (if (> x 0) (Ok x) (Err x)))      ; Reply.Ok and Reply.Err
+
+(define (probe) : Probe (Err 0))    ; Probe.Err
+
+(define (main) : i64
+  (match (reply 42)
+    [(Ok value) (+ value (match (probe) [(Err n) n] [(Ok n) n]))]
+    [(Err _) 0]))
+```
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Returning an enum value never allocates. It is an ordinary by-value result,
   transported in registers or written into caller-owned result storage
@@ -3213,7 +3248,11 @@ Qualified source names use `.`: `alias.name` for one alias segment and
 `module.path.name` for a full canonical module path. Full canonical paths are
 accepted only when that module identity has been imported in the current module
 or when the use appears inside the same module. Unqualified lookup searches only
-local declarations and local bindings. It does not search imported modules.
+local declarations and local bindings. It does not search imported modules,
+except the items of `.*` and `.item` imports (§4.4). An unqualified enum variant
+name therefore sees the current module's enums and those imported with `.*`;
+it reaches any other enum only through an expected enum type (§3.5.1), never by
+searching the loaded modules.
 Slash-qualified source names such as `alias/name` are rejected; `/` is the
 ordinary division operator.
 
@@ -4694,6 +4733,12 @@ All operators are prefix functions (or special forms):
 
 - `cond` must be `bool`.
 - Both branches must have the same type.
+  - When no expected type applies and the two types do not merge, each branch
+    in turn is checked again with the other branch's type as its expected
+    type.
+  - So `(if c 0 n)` with `n : i64` has type `i64`, and a literal that does not
+    fit the other branch's type still fails.
+  - `match` arms join the same way.
 - Returns the value of the taken branch.
 
 `(cond [test expr] ... [else fallback])` is the conditional macro surface
@@ -4852,6 +4897,11 @@ There are two source forms:
   Ambiguous `(init)`
   is rejected with a diagnostic asking for `(init : T)` or an annotation.
 
+An expected type reaches through the tails of `if`, `match`, `let`, `begin`
+and `unsafe`, and a `set!` of a typed place supplies its place's type. The same
+expected-type positions resolve bare enum variant constructors such as `(Ok x)`
+and `None` against the expected enum (§3.5.1).
+
 `init` is compatible with ordinary functions named `init`: `(init)` and
 `(init : T)` are parser-owned special forms, while `(init arg...)` is parsed
 as an ordinary call unless the first argument is `:`.
@@ -4995,7 +5045,8 @@ explicit constructors.
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type: the type of each arm's last body
-  expression.
+  expression. An arm whose type does not merge with the others is checked again
+  with their type as its expected type, as `if` branches are (§5.6).
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
 
@@ -8916,20 +8967,29 @@ checker.
 Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
 `?` or Zig `try`, but it operates on concrete option/result families rather
 than generic traits or implicit conversions. A convention-compatible concrete
-family is a concrete enum with exactly one `Ok*` payload variant and one
-`Err*` payload variant (result-like), or exactly one `Some*` payload variant
-and one `None*` absence variant (option-like).
+family is a concrete enum with exactly two variants: an `Ok*` variant and an
+`Err*` variant with exactly one payload (result-like), or a `Some*` variant
+with one payload and a `None*` variant with none (option-like). The `Ok*`
+variant of a `try` operand has at most one payload, since that payload is the
+value `try` yields.
 
 - For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
-  success variant it unwraps and yields the success payload. On the error
-  variant it returns from the enclosing function with the compatible error
-  variant carrying the same error payload.
+  success variant it unwraps and yields the success payload, or `unit` when
+  the `Ok*` variant has no payload. On the error variant it returns from the
+  enclosing function with that function's `Err*` variant carrying the same
+  error payload. Like `return`, the early exit runs the active `with`
+  cleanups and `with-arena` resets first.
 - For an absence-only option, `(try expr)` unwraps `Some`/`Some*` and returns
   the enclosing compatible `None`/`None*` on absence.
-- Compatibility is exact-family compatibility. There is no trait-like `From`
-  conversion, no cross-family conversion, and no implicit option-to-result
-  conversion; conversions between families are written as explicit helper
-  functions.
+- Two result-like families are compatible when their `Err*` payload types are
+  equal; the families themselves may differ. A function returning a
+  `ResultBool` with an `ErrBool String` variant can `(try ...)` a
+  `ResultI64` with an `ErrI64 String` variant. The enclosing family is only
+  built through its `Err*` variant, so its `Ok*` variant may carry any
+  payloads or none. Any two option-like families are compatible. The error
+  payload is passed on unchanged: there is no trait-like `From` conversion of
+  the payload and no implicit option-to-result conversion; those are written
+  as explicit helper functions or matches.
 - `(try expr)` is valid only inside an enclosing function whose return type
   is a compatible generated family or convention-compatible concrete family.
 - `(try expr)` is rejected inside `foreach`/SPMD bodies because its
@@ -8954,6 +9014,51 @@ and one `None*` absence variant (option-like).
 (define (read-plus-one [text : String]) : ResultI64
   (let [value : i64 (try (read-small text))]
     (OkI64 (+ value 1))))
+```
+
+The three families below share the `String` error payload, so each `try`
+propagates into `RangeResult`. `CheckResult` has a payload-free `Ok*`
+variant, so its `try` yields `unit`.
+
+```lisp test=compile name=result-try-cross-family
+(import stdlib.string)
+
+(defenum ParseResult
+  (OkParse i64)
+  (ErrParse String))
+
+(defenum CheckResult
+  (OkCheck)
+  (ErrCheck String))
+
+(defenum RangeResult
+  (OkRange bool)
+  (ErrRange String))
+
+(define (parse [text : String]) : ParseResult
+  (if (string.eq text "7")
+    (OkParse 7)
+    (ErrParse "not a number")))
+
+(define (check-small [n : i64]) : CheckResult
+  (if (< n 10)
+    OkCheck
+    (ErrCheck "too large")))
+
+(define (positive-small [text : String]) : RangeResult
+  (let
+    [n : i64 (try (parse text))]
+    (begin
+      (try (check-small n))
+      (OkRange (> n 0)))))
+
+(define (main) : i64
+  (match (positive-small "7")
+    [(OkRange positive)
+      (if positive
+        1
+        0)]
+    [(ErrRange message) (string.string-length message)]))
 ```
 
 Propagation into an incompatible family is rejected: a function returning a

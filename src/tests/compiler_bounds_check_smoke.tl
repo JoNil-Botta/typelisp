@@ -40,7 +40,7 @@
             (ir.compiler-ir-param-seq-empty)))
         (ast.AstType.I64)
         4
-        (ir.compiler-ir-block-cons
+        (ir.compiler-ir-blocks
           (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
             (compiler-bounds-check-smoke-instr-seq-prepend
@@ -56,8 +56,7 @@
                 (compiler-bounds-check-smoke-instr-seq-prepend
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
-                  (ir.compiler-ir-instr-seq-empty)))))
-          (ir.CompilerIrBlockList.Nil))
+                  (ir.compiler-ir-instr-seq-empty))))))
         ir.CompilerIrFunctionAbi.Ordinary)
       (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))

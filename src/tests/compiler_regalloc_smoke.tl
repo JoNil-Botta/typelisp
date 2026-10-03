@@ -42,7 +42,7 @@
       (ir.compiler-ir-param-seq-empty)
       (reg_tests.compiler-reg-i64-ty)
       5
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-regalloc-smoke-instr-seq-prepend
@@ -64,8 +64,7 @@
                       (reg_tests.compiler-reg-i64-ty)))
                   (irt.instrs
                     "%4 = mov %3 : i64
-                     return %4"))))))
-        ir.CompilerIrBlockList.Nil)
+                     return %4")))))))
       ir.CompilerIrFunctionAbi.Ordinary)))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
@@ -107,7 +106,7 @@
     (irt.params "handle=%0:String")
     (ast.AstType.I64)
     8
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-regalloc-smoke-instr-seq-prepend
@@ -128,8 +127,7 @@
                       (ir.ir-instr-descriptor-pair-length
                         7
                         (ir.CompilerIrValue.Var 5))
-                      (irt.instrs "return %7")))))))))
-      ir.CompilerIrBlockList.Nil)
+                      (irt.instrs "return %7"))))))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool

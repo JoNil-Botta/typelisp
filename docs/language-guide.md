@@ -159,7 +159,8 @@ pure safe TypeLisp — no `unsafe`, `extern`, or host I/O — bounded by
 deterministic fuel. Write hand-authored monomorphic declarations (such as a
 domain-specific `Result*` enum) when a generated family has not been
 requested; `(try expr)` is the propagation form over compatible concrete
-Result-like enums.
+Result-like enums, which may be different families as long as their `Err*`
+payload types are equal (SPEC.md section 9).
 
 ### Top-level forms
 
@@ -219,6 +220,21 @@ variables, externs, struct constructors, and enum variant constructors share
 the value namespace. An enum type may share a name with one of its own
 variants. Module identity then qualifies both namespaces, so two modules can
 define the same local name without colliding.
+
+Enum variants can be written bare (`None`, `(Ok x)`) or enum-qualified
+(`Option.None`, `(json.Result.Ok x)`). A pattern resolves a bare variant
+against the scrutinee's enum. A constructor resolves it against the expected
+enum type wherever one is known: a declared return type (through `if`,
+`match`, `let` and `begin` tails), a typed `let`, a typed argument, a struct
+field or variant payload, and a `set!` of a typed place. So
+`(define (parse) : json.Result (Ok 1))` builds `json.Result.Ok` even when a
+local enum also declares `Ok`, and the imported enum's variants never need
+importing by name. A local binding of the same name wins; a module function,
+value or struct constructor of that name makes the reference ambiguous.
+Without an expected type, exactly one enum that the module declares or
+imports with `.*` must declare the bare name; otherwise qualify it. In a
+payload pattern, a bare name that spells a variant of the payload enum is
+rejected: write `(I64)` to match that variant, or pick another binder name.
 
 ### Conditional compilation
 

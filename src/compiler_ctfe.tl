@@ -12311,6 +12311,51 @@
                           body-fuel)]
                       [(Err diag) (Err diag)])]
                   [(Err diag) (Err diag)])]
+              [(Err diag) (Err diag)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (let
+            [outer-start : ast.AstExpr (ctfe-ast-get env outer-start-box)]
+            [outer-end : ast.AstExpr (ctfe-ast-get env outer-end-box)]
+            [inner-start : ast.AstExpr (ctfe-ast-get env inner-start-box)]
+            [inner-end : ast.AstExpr (ctfe-ast-get env inner-end-box)]
+            [body : ast.AstExpr (ctfe-ast-get env body-box)]
+            (match (ctfe-quote-expr outer-start env fuel quasiquote)
+              [(Ok quoted-outer-start _ fuel0)
+                (match (ctfe-quote-expr outer-end env fuel0 quasiquote)
+                  [(Ok quoted-outer-end _ fuel1)
+                    (match (ctfe-quote-expr inner-start env fuel1 quasiquote)
+                      [(Ok quoted-inner-start _ fuel2)
+                        (match (ctfe-quote-expr inner-end env fuel2 quasiquote)
+                          [(Ok quoted-inner-end _ fuel3)
+                            (match (ctfe-quote-expr body env fuel3 quasiquote)
+                              [(Ok quoted-body _ body-fuel)
+                                (Ok
+                                  (ast.ast-expr-foreach2-id-with-pools
+                                    (ctfe-env-pools env)
+                                    (ctfe-quote-name-id env outer)
+                                    outer-ty
+                                    quoted-outer-start
+                                    quoted-outer-end
+                                    (ctfe-quote-name-id env inner)
+                                    inner-ty
+                                    quoted-inner-start
+                                    quoted-inner-end
+                                    quoted-body)
+                                  (Expr)
+                                  body-fuel)]
+                              [(Err diag) (Err diag)])]
+                          [(Err diag) (Err diag)])]
+                      [(Err diag) (Err diag)])]
+                  [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)

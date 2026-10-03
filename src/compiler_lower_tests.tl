@@ -12140,7 +12140,7 @@
       [session-b : cis.InternStructuralSessionHandle
         (cis.intern-structural-session-handle-from-source-names
           (ci.intern-source-name-session-handle-from-state intern-b))]
-      [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+      [identities : (__tl_dyn-array i64) (__tl_make-array i64 20)]
       [ok : bool true]
       (begin
         (set!
@@ -12197,13 +12197,19 @@
         (set!
           (array-ref identities 17)
           (compiler-lower-private-identity-raw session-a (WhileHeader 1)))
+        (set!
+          (array-ref identities 18)
+          (compiler-lower-private-identity-raw session-a (SpmdDomainBound 1)))
+        (set!
+          (array-ref identities 19)
+          (compiler-lower-private-identity-raw session-a (SpmdDomainBound 3)))
         (let
           [left : i64 0]
-          (while (< left 18)
+          (while (< left 20)
             (let
               [right : i64 (+ left 1)]
               (begin
-                (while (< right 18)
+                (while (< right 20)
                   (begin
                     (when
                       (=
@@ -12294,6 +12300,12 @@
               [(Some (WhileExit ordinal))
                 (unless (= ordinal 1) (set! ok false))]
               [_ (set! ok false)])
+            (match (cis.intern-structural-session-lower-private-record-for-raw
+              session-a
+              (array-ref identities 19))
+              [(Some (SpmdDomainBound ordinal))
+                (unless (= ordinal 3) (set! ok false))]
+              [_ (set! ok false)])
             (while (< index 700)
               (begin
                 (compiler-lower-private-identity-raw
@@ -12314,10 +12326,10 @@
                 (cis.intern-structural-session-kind-count
                   session-a
                   (ci.intern-structural-kind-lower-private))
-                723)
+                725)
               (set! ok false))
             (unless
-              (= (ci.intern-compat-state-structural-count intern-a) 724)
+              (= (ci.intern-compat-state-structural-count intern-a) 726)
               (set! ok false))
             (unless
               (= (ci.intern-structural-record-slot-bytes) 37)

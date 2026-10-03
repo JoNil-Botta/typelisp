@@ -179,6 +179,20 @@ alignment, member offsets looked up by name, tuple offsets from the
 typechecker's sizes) and fails the compile on the first disagreement. Without
 debug info nothing is recorded.
 
+A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
+tag 89): the outer coordinate's name, type and bounds, then the inner one's,
+then the body, so binding order and ordinal survive every AST walker. The
+SPMD checker binds both coordinates varying and read-only with role
+`ForeachCoordinate ordinal begin end`; the inner role carries the header's
+inner bounds when each is a literal or a variable the body never assigns.
+While a rank-2 coordinate is local, destination and masked-branch indexes go
+through the row-major proof (`tc-spmd-row-major-index?`) instead of the
+rank-1 rule; a nested domain marks the coordinates outer and a helper argument
+drops the role, so neither can prove a row-major write. `lower-foreach2`
+desugars the domain to private bound locals, emptiness tests, checked span and
+product traps, and nested `while` loops in every backend mode (#7190); native
+row-local gangs are #7191.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

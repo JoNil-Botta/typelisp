@@ -143,7 +143,10 @@
   (SpmdScanEnd)
   (SpmdScanValue)
   (WhileExit i64)
-  (WhileHeader i64))
+  (WhileHeader i64)
+  ;; A rank-2 foreach bound held across the domain, by binding-order ordinal:
+  ;; 0 outer begin, 1 outer end, 2 inner begin, 3 inner end.
+  (SpmdDomainBound i64))
 
 (defstruct InternLowerPrivateIdentity
   (value i64))
@@ -1082,6 +1085,11 @@
       (intern-structural-session-lower-private-component-identity
         handle
         17
+        ordinal)]
+    [(SpmdDomainBound ordinal)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        18
         ordinal)]))
 
 (define (intern-structural-session-lower-private-record
@@ -1155,6 +1163,7 @@
                 No)]
             [(= role 16) (Some (WhileExit component))]
             [(= role 17) (Some (WhileHeader component))]
+            [(= role 18) (Some (SpmdDomainBound component))]
             [else No])))]))
 
 (define (intern-structural-session-lower-private-record-for-raw

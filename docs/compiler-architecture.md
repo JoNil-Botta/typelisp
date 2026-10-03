@@ -179,6 +179,11 @@ alignment, member offsets looked up by name, tuple offsets from the
 typechecker's sizes) and fails the compile on the first disagreement. Without
 debug info nothing is recorded.
 
+Borrowed aggregate patterns share `lower-bind-element-access`: a String name
+binding loads the stored handle to expose a `str` view, while nested aggregate
+patterns retain the address of inline storage. Struct fields follow the same
+access rule as tuple slots and array elements, preserving the borrow lifetime.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

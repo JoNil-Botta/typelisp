@@ -198,28 +198,26 @@
         (ast.ast-node-pool-context-expr-segment-bases (& pools))]
       [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
         (__tl_make-array SpecGeneratedSymbolRecords 1)]
-      (begin
-        (set!
-          (array-ref records 0)
-          (SpecGeneratedSymbolRecords
-            (__tl_make-array SpecGeneratedSymbolRecord 0)
-            0))
-        (SpecOwnerContext
-          (__tl_make-array pools)
-          expr-segment-bases
-          (__tl_make-array intern-state)
-          records)))))
+      (set!
+        (array-ref records 0)
+        (SpecGeneratedSymbolRecords
+          (__tl_make-array SpecGeneratedSymbolRecord 0)
+          0))
+      (SpecOwnerContext
+        (__tl_make-array pools)
+        expr-segment-bases
+        (__tl_make-array intern-state)
+        records))))
 
 (define (spec-generated-symbol-records-copy-range
   [dst : (&mut dst (__tl_dyn-array SpecGeneratedSymbolRecord))]
   [src : (& src (__tl_dyn-array SpecGeneratedSymbolRecord))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (spec-generated-symbol-records-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (spec-generated-symbol-records-copy-range dst src (+ index 1) count)))
 
 (define (spec-generated-symbol-records-grow!
   [records : (&mut records SpecGeneratedSymbolRecords)]) : unit
@@ -227,26 +225,23 @@
     [count : i64 records.len]
     [bigger : (__tl_dyn-array SpecGeneratedSymbolRecord)
       (__tl_make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
-    (begin
-      (spec-generated-symbol-records-copy-range
-        (&mut bigger)
-        (& records.slots)
-        0
-        count)
-      (set! records.slots bigger))))
+    (spec-generated-symbol-records-copy-range
+      (&mut bigger)
+      (& records.slots)
+      0
+      count)
+    (set! records.slots bigger)))
 
 (define (spec-generated-symbol-records-push!
   [records : (&mut records SpecGeneratedSymbolRecords)]
   [item : SpecGeneratedSymbolRecord]) : unit
-  (begin
-    (if (< records.len (array-length records.slots))
-      unit
-      (spec-generated-symbol-records-grow! records))
-    (let
-      [count : i64 records.len]
-      (begin
-        (set! (array-ref records.slots count) item)
-        (set! records.len (+ count 1))))))
+  (if (< records.len (array-length records.slots))
+    unit
+    (spec-generated-symbol-records-grow! records))
+  (let
+    [count : i64 records.len]
+    (set! (array-ref records.slots count) item)
+    (set! records.len (+ count 1))))
 
 (define (spec-generated-symbol-records-clear!
   [records : (&mut records SpecGeneratedSymbolRecords)]) : unit
@@ -435,11 +430,10 @@
   [src : (& src (__tl_dyn-array SpecTemplate))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (spec-template-list-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (spec-template-list-copy-range dst src (+ index 1) count)))
 
 (define (spec-template-list-grow
   [templates : (&mut templates SpecTemplateList)]) : unit
@@ -447,22 +441,19 @@
     [count : i64 templates.len]
     [bigger : (__tl_dyn-array SpecTemplate)
       (__tl_make-array SpecTemplate (+ (* count 2) 8))]
-    (begin
-      (spec-template-list-copy-range (&mut bigger) (& templates.slots) 0 count)
-      (set! templates.slots bigger))))
+    (spec-template-list-copy-range (&mut bigger) (& templates.slots) 0 count)
+    (set! templates.slots bigger)))
 
 (define (spec-template-list-push
   [templates : (&mut templates SpecTemplateList)]
   [item : SpecTemplate]) : unit
-  (begin
-    (if (< templates.len (array-length templates.slots))
-      unit
-      (spec-template-list-grow templates))
-    (let
-      [count : i64 templates.len]
-      (begin
-        (set! (array-ref templates.slots count) item)
-        (set! templates.len (+ count 1))))))
+  (if (< templates.len (array-length templates.slots))
+    unit
+    (spec-template-list-grow templates))
+  (let
+    [count : i64 templates.len]
+    (set! (array-ref templates.slots count) item)
+    (set! templates.len (+ count 1))))
 
 (define (spec-value-list-new) : SpecValueList
   (SpecValueList (__tl_make-array ctfe.CompilerCtfeValue 0) 0))
@@ -473,13 +464,11 @@
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
     [at : i64 0]
-    (begin
-      (set! (array-ref slots 0) head)
-      (while (< at count)
-        (begin
-          (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
-          (set! at (+ at 1))))
-      (SpecValueList slots (+ count 1)))))
+    (set! (array-ref slots 0) head)
+    (while (< at count)
+      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
+      (set! at (+ at 1)))
+    (SpecValueList slots (+ count 1))))
 
 (define (spec-value-subst-new) : SpecValueSubst
   (spec-value-subst-from-slots (__tl_make-array SpecValueBinding 0) 0))
@@ -493,13 +482,11 @@
     [slots : (__tl_dyn-array SpecValueBinding)
       (__tl_make-array SpecValueBinding (+ count 1))]
     [at : i64 0]
-    (begin
-      (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
-      (while (< at count)
-        (begin
-          (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at))
-          (set! at (+ at 1))))
-      (spec-value-subst-from-slots slots (+ count 1)))))
+    (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
+    (while (< at count)
+      (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at))
+      (set! at (+ at 1)))
+    (spec-value-subst-from-slots slots (+ count 1))))
 
 (define (spec-type-subst-new) : SpecTypeSubst
   (spec-type-subst-from-slots (__tl_make-array SpecTypeBinding 0) 0))
@@ -519,13 +506,11 @@
     [slots : (__tl_dyn-array SpecTypeBinding)
       (__tl_make-array SpecTypeBinding (+ count 1))]
     [at : i64 0]
-    (begin
-      (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
-      (while (< at count)
-        (begin
-          (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at))
-          (set! at (+ at 1))))
-      (spec-type-subst-from-slots slots (+ count 1)))))
+    (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
+    (while (< at count)
+      (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at))
+      (set! at (+ at 1)))
+    (spec-type-subst-from-slots slots (+ count 1))))
 
 (defenum SpecMaybeString
   (None)
@@ -781,11 +766,10 @@
     (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (match ty
-      [(Var name) (= name cbi.compiler-builtin-id-fix-type)]
-      [_ false])))
+  (cbi.compiler-builtin-refresh!)
+  (match ty
+    [(Var name) (= name cbi.compiler-builtin-id-fix-type)]
+    [_ false]))
 
 (define (spec-param-list-has-comptime? [params : (& params ast.AstParamList)]) : bool
   (spec-param-list-has-comptime-at? params 0))
@@ -805,20 +789,18 @@
   [src : (& src (__tl_dyn-array i64))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (spec-template-shadow-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (spec-template-shadow-copy-range dst src (+ index 1) count)))
 
 (define (spec-template-shadow-fill-zero
   [slots : (&mut slots (__tl_dyn-array i64))]
   [index : i64]) : unit
-  (if (>= index (array-length slots))
-    unit
-    (begin
-      (set! (array-ref slots index) 0)
-      (spec-template-shadow-fill-zero slots (+ index 1)))))
+  (unless
+    (>= index (array-length slots))
+    (set! (array-ref slots index) 0)
+    (spec-template-shadow-fill-zero slots (+ index 1))))
 
 (define (spec-template-shadow-state-view [state : SpecTemplateShadowState]) : (Ptr
     SpecTemplateShadowStateData)
@@ -845,26 +827,25 @@
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 template-count)]
     [cell : (__tl_dyn-array SpecTemplateShadowStateData)
       (__tl_make-array SpecTemplateShadowStateData 1)]
-    (begin
-      (spec-template-shadow-fill-zero (&mut counts) 0)
-      (set!
-        (array-ref cell 0)
-        (SpecTemplateShadowStateData
-          (__tl_make-array i64 8)
-          (__tl_make-array i64 8)
-          (__tl_make-array i64 8)
-          counts
-          (__tl_make-array i64 8)
-          0
-          -1))
-      (SpecTemplateShadowState
-        (cast
-          (unsafe
-            (ptr->int
-              (ptr-cast
-                (__tl_array-data cell)
-                : (Ptr SpecTemplateShadowStateData))))
-          : i64)))))
+    (spec-template-shadow-fill-zero (&mut counts) 0)
+    (set!
+      (array-ref cell 0)
+      (SpecTemplateShadowStateData
+        (__tl_make-array i64 8)
+        (__tl_make-array i64 8)
+        (__tl_make-array i64 8)
+        counts
+        (__tl_make-array i64 8)
+        0
+        -1))
+    (SpecTemplateShadowState
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr SpecTemplateShadowStateData))))
+        : i64))))
 
 (define (spec-template-shadow-state-grow-records
   [data : SpecTemplateShadowStateData]) : SpecTemplateShadowStateData
@@ -874,26 +855,21 @@
     [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
     [next-parents : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
     [next-depths : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
-    (begin
-      (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
-      (spec-template-shadow-copy-range
-        (&mut next-parents)
-        (& data.parents)
-        0
-        count)
-      (spec-template-shadow-copy-range
-        (&mut next-depths)
-        (& data.depths)
-        0
-        count)
-      (SpecTemplateShadowStateData
-        next-slots
-        next-parents
-        next-depths
-        data.counts
-        data.scratch
-        data.len
-        data.active-head))))
+    (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
+    (spec-template-shadow-copy-range
+      (&mut next-parents)
+      (& data.parents)
+      0
+      count)
+    (spec-template-shadow-copy-range (&mut next-depths) (& data.depths) 0 count)
+    (SpecTemplateShadowStateData
+      next-slots
+      next-parents
+      next-depths
+      data.counts
+      data.scratch
+      data.len
+      data.active-head)))
 
 (define (spec-template-shadow-state-grow-scratch
   [data : SpecTemplateShadowStateData]
@@ -901,16 +877,15 @@
   (let
     [next : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ (* (array-length data.scratch) 2) 8))]
-    (begin
-      (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
-      (SpecTemplateShadowStateData
-        data.slots
-        data.parents
-        data.depths
-        data.counts
-        next
-        data.len
-        data.active-head))))
+    (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
+    (SpecTemplateShadowStateData
+      data.slots
+      data.parents
+      data.depths
+      data.counts
+      next
+      data.len
+      data.active-head)))
 
 (define (spec-template-shadow-state-depth
   [data : (& data SpecTemplateShadowStateData)]
@@ -925,21 +900,19 @@
   [slot : i64]) : i64
   (let
     [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
-    (begin
-      (if (< data.len (array-length data.slots))
-        unit
-        (set! data (spec-template-shadow-state-grow-records data)))
-      (let
-        [index : i64 data.len]
-        (begin
-          (set! (array-ref data.slots index) slot)
-          (set! (array-ref data.parents index) parent)
-          (set!
-            (array-ref data.depths index)
-            (+ (spec-template-shadow-state-depth (& data) parent) 1))
-          (set! data.len (+ index 1))
-          (spec-template-shadow-state-data-set! state data)
-          index)))))
+    (if (< data.len (array-length data.slots))
+      unit
+      (set! data (spec-template-shadow-state-grow-records data)))
+    (let
+      [index : i64 data.len]
+      (set! (array-ref data.slots index) slot)
+      (set! (array-ref data.parents index) parent)
+      (set!
+        (array-ref data.depths index)
+        (+ (spec-template-shadow-state-depth (& data) parent) 1))
+      (set! data.len (+ index 1))
+      (spec-template-shadow-state-data-set! state data)
+      index)))
 
 (define (spec-template-shadow-state-activate!
   [state : SpecTemplateShadowState]
@@ -949,72 +922,62 @@
     [current : i64 data.active-head]
     [wanted : i64 wanted-head]
     [scratch-len : i64 0]
-    (begin
-      ;; Walk both retained snapshots to their common parent. Remove the old
-      ;; path immediately and record the new path leaf-first in reusable dense
-      ;; scratch storage, then apply it parent-first.
-      (while (not (= current wanted))
-        (let
-          [current-depth : i64
-            (spec-template-shadow-state-depth (& data) current)]
-          [wanted-depth : i64
-            (spec-template-shadow-state-depth (& data) wanted)]
-          (begin
-            (if (and (>= current-depth wanted-depth) (>= current 0))
-              (let
-                [slot : i64 (array-ref data.slots current)]
-                (begin
-                  (set!
-                    (array-ref data.counts slot)
-                    (- (array-ref data.counts slot) 1))
-                  (set! current (array-ref data.parents current))))
-              unit)
-            (if (and (>= wanted-depth current-depth) (>= wanted 0))
-              (begin
-                (if (< scratch-len (array-length data.scratch))
-                  unit
-                  (set!
-                    data
-                    (spec-template-shadow-state-grow-scratch data scratch-len)))
-                (set! (array-ref data.scratch scratch-len) wanted)
-                (set! scratch-len (+ scratch-len 1))
-                (set! wanted (array-ref data.parents wanted)))
-              unit))))
-      (while (> scratch-len 0)
-        (let
-          [next-index : i64 (- scratch-len 1)]
-          [node : i64 (array-ref data.scratch next-index)]
-          [slot : i64 (array-ref data.slots node)]
-          (begin
+    ;; Walk both retained snapshots to their common parent. Remove the old
+    ;; path immediately and record the new path leaf-first in reusable dense
+    ;; scratch storage, then apply it parent-first.
+    (while (not (= current wanted))
+      (let
+        [current-depth : i64
+          (spec-template-shadow-state-depth (& data) current)]
+        [wanted-depth : i64 (spec-template-shadow-state-depth (& data) wanted)]
+        (if (and (>= current-depth wanted-depth) (>= current 0))
+          (let
+            [slot : i64 (array-ref data.slots current)]
             (set!
               (array-ref data.counts slot)
-              (+ (array-ref data.counts slot) 1))
-            (set! scratch-len next-index))))
-      (set! data.active-head wanted-head)
-      (spec-template-shadow-state-data-set! state data))))
+              (- (array-ref data.counts slot) 1))
+            (set! current (array-ref data.parents current)))
+          unit)
+        (when
+          (and (>= wanted-depth current-depth) (>= wanted 0))
+          (if (< scratch-len (array-length data.scratch))
+            unit
+            (set!
+              data
+              (spec-template-shadow-state-grow-scratch data scratch-len)))
+          (set! (array-ref data.scratch scratch-len) wanted)
+          (set! scratch-len (+ scratch-len 1))
+          (set! wanted (array-ref data.parents wanted)))))
+    (while (> scratch-len 0)
+      (let
+        [next-index : i64 (- scratch-len 1)]
+        [node : i64 (array-ref data.scratch next-index)]
+        [slot : i64 (array-ref data.slots node)]
+        (set! (array-ref data.counts slot) (+ (array-ref data.counts slot) 1))
+        (set! scratch-len next-index)))
+    (set! data.active-head wanted-head)
+    (spec-template-shadow-state-data-set! state data)))
 
 (define (spec-template-shadow-state-slot-shadowed?
   [state : SpecTemplateShadowState]
   [head : i64]
   [slot : i64]) : bool
-  (begin
-    (spec-template-shadow-state-activate! state head)
-    (>
-      (array-ref
-        (unsafe
-          (deref (spec-template-shadow-state-view state)).counts)
-        slot)
-      0)))
+  (spec-template-shadow-state-activate! state head)
+  (>
+    (array-ref
+      (unsafe
+        (deref (spec-template-shadow-state-view state)).counts)
+      slot)
+    0))
 
 (define (spec-template-values-fill-empty
   [values : (&mut values (__tl_dyn-array SpecMaybeTemplate))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref values index) (SpecMaybeTemplate.None))
-      (spec-template-values-fill-empty values (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref values index) (SpecMaybeTemplate.None))
+    (spec-template-values-fill-empty values (+ index 1) count)))
 
 (define (spec-template-index-build
   [templates : SpecTemplateList]
@@ -1034,32 +997,30 @@
               (set! (array-ref values slot) (SpecMaybeTemplate.Some template))
               (let
                 [next-index : spec_id_i64_map.Map index]
-                (begin
-                  (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
-                  (spec-template-index-build
-                    templates
-                    next-index
-                    values
-                    (+ at 1)
-                    (+ slot 1))))))]))))
+                (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
+                (spec-template-index-build
+                  templates
+                  next-index
+                  values
+                  (+ at 1)
+                  (+ slot 1)))))]))))
 
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
     [count : i64 templates.len]
     [values : (__tl_dyn-array SpecMaybeTemplate)
       (__tl_make-array SpecMaybeTemplate count)]
-    (begin
-      (spec-template-values-fill-empty (&mut values) 0 count)
-      (spec-template-env-new
-        (spec-template-index-build
-          templates
-          (spec_id_i64_map.with-capacity (+ (* count 2) 16))
-          (&mut values)
-          0
-          0)
-        values
-        (spec-template-shadow-state-new count)
-        -1))))
+    (spec-template-values-fill-empty (&mut values) 0 count)
+    (spec-template-env-new
+      (spec-template-index-build
+        templates
+        (spec_id_i64_map.with-capacity (+ (* count 2) 16))
+        (&mut values)
+        0
+        0)
+      values
+      (spec-template-shadow-state-new count)
+      -1)))
 
 (define (spec-template-env-shared-view
   [templates : (& templates SpecTemplateEnv)]) : SpecTemplateEnv
@@ -1203,26 +1164,13 @@
     [cursor : ast.AstDeclList decls]
     [out : SpecTemplateList (spec-template-list-new)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (begin
-              (match decl
-                [(Unsafe inner-box)
-                  (match (ast.ast-decl-box-shared-view inner-box)
-                    [(DefFn decl-meta name params ret body-box _)
-                      (if (spec-param-list-has-comptime? params)
-                        (spec-template-list-push
-                          (&mut out)
-                          (Item
-                            name
-                            params
-                            ret
-                            (ast.ast-node-pool-context-expr-get pools body-box)))
-                        unit)]
-                    [_ unit])]
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (match decl
+            [(Unsafe inner-box)
+              (match (ast.ast-decl-box-shared-view inner-box)
                 [(DefFn decl-meta name params ret body-box _)
                   (if (spec-param-list-has-comptime? params)
                     (spec-template-list-push
@@ -1233,9 +1181,20 @@
                         ret
                         (ast.ast-node-pool-context-expr-get pools body-box)))
                     unit)]
-                [_ unit])
-              (set! cursor rest))]))
-      out)))
+                [_ unit])]
+            [(DefFn decl-meta name params ret body-box _)
+              (if (spec-param-list-has-comptime? params)
+                (spec-template-list-push
+                  (&mut out)
+                  (Item
+                    name
+                    params
+                    ret
+                    (ast.ast-node-pool-context-expr-get pools body-box)))
+                unit)]
+            [_ unit])
+          (set! cursor rest)]))
+    out))
 
 (define (spec-decl-list-append-one
   [decls : ast.AstDeclList]
@@ -1243,10 +1202,9 @@
   (let
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity (+ (ast.ast-decl-list-len (& decls)) 1))]
-    (begin
-      (ast.ast-decl-list-append-from (&mut out) (& decls) 0)
-      (ast.ast-decl-list-push (&mut out) decl)
-      out)))
+    (ast.ast-decl-list-append-from (&mut out) (& decls) 0)
+    (ast.ast-decl-list-push (&mut out) decl)
+    out))
 
 (define (spec-decl-list-append
   [front : ast.AstDeclList]
@@ -1255,10 +1213,9 @@
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity
         (+ (ast.ast-decl-list-len (& front)) (ast.ast-decl-list-len back)))]
-    (begin
-      (ast.ast-decl-list-append-from (&mut out) (& front) 0)
-      (ast.ast-decl-list-append-from (&mut out) back 0)
-      out)))
+    (ast.ast-decl-list-append-from (&mut out) (& front) 0)
+    (ast.ast-decl-list-append-from (&mut out) back 0)
+    out))
 
 (define (spec-decl-path-list-append
   [front : ast.AstDeclPathList]
@@ -1269,10 +1226,9 @@
         (+
           (ast.ast-decl-path-list-len (& front))
           (ast.ast-decl-path-list-len (& back))))]
-    (begin
-      (ast.ast-decl-path-list-append-from (&mut out) (& front) 0)
-      (ast.ast-decl-path-list-append-from (&mut out) (& back) 0)
-      out)))
+    (ast.ast-decl-path-list-append-from (&mut out) (& front) 0)
+    (ast.ast-decl-path-list-append-from (&mut out) (& back) 0)
+    out))
 
 (define (gen-single-decl-list [decl : ast.AstDecl]) : ast.AstDeclList
   (ast.ast-decl-cons decl (ast.ast-decl-list-new)))
@@ -1609,16 +1565,15 @@
   [text : String]) : i64
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
-    (begin
-      (match (spec_ci.intern-compat-state-lookup intern-state text)
-        [(InternLookupFound _) unit]
-        [(InternLookupMissing)
-          (cfg
-            (any compile-profile test)
-            (spec-profile-note-generated-text-materialized
-              (spec-owner-profile-metrics owner))
-            unit)])
-      (spec_ci.intern-compat-state-intern (&mut intern-state) text))))
+    (match (spec_ci.intern-compat-state-lookup intern-state text)
+      [(InternLookupFound _) unit]
+      [(InternLookupMissing)
+        (cfg
+          (any compile-profile test)
+          (spec-profile-note-generated-text-materialized
+            (spec-owner-profile-metrics owner))
+          unit)])
+    (spec_ci.intern-compat-state-intern (&mut intern-state) text)))
 
 (define (spec-type-list-structural-key-at-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2120,15 +2075,14 @@
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
     [handle : i64
       (spec_ci.intern-compat-state-generated-symbol-handle (&mut intern-state))]
-    (begin
-      (spec-generated-symbol-records-push!
-        (&mut (array-ref owner.generated-symbol-records 0))
-        (SpecGeneratedSymbolRecord
-          (spec-structural-key-raw key)
-          handle
-          template-name
-          values))
-      handle)))
+    (spec-generated-symbol-records-push!
+      (&mut (array-ref owner.generated-symbol-records 0))
+      (SpecGeneratedSymbolRecord
+        (spec-structural-key-raw key)
+        handle
+        template-name
+        values))
+    handle))
 
 (define (spec-materialize-generated-symbol-records-with-owner!
   [owner : (& owner SpecOwnerContext)]
@@ -2140,25 +2094,23 @@
       (let
         [record : SpecGeneratedSymbolRecord
           (spec-array-shared-view records.slots index)]
-        (begin
-          (spec_ci.intern-compat-state-generated-symbol-materialize!
-            (&mut intern-state)
-            record.handle
-            (spec-render-specialized-name-with-owner
-              owner
-              (SpecStructuralKey record.structural-key)
-              record.template-name
-              record.values))
-          (set! index (+ index 1)))))))
+        (spec_ci.intern-compat-state-generated-symbol-materialize!
+          (&mut intern-state)
+          record.handle
+          (spec-render-specialized-name-with-owner
+            owner
+            (SpecStructuralKey record.structural-key)
+            record.template-name
+            record.values))
+        (set! index (+ index 1))))))
 
 (define (spec-materialize-owner-generated-symbols!
   [owner : (& owner SpecOwnerContext)]) : unit
-  (begin
-    (spec-materialize-generated-symbol-records-with-owner!
-      owner
-      (& (array-ref owner.generated-symbol-records 0)))
-    (spec-generated-symbol-records-clear!
-      (&mut (array-ref owner.generated-symbol-records 0)))))
+  (spec-materialize-generated-symbol-records-with-owner!
+    owner
+    (& (array-ref owner.generated-symbol-records 0)))
+  (spec-generated-symbol-records-clear!
+    (&mut (array-ref owner.generated-symbol-records 0))))
 
 (define (gen-registry-empty) : GenRegistry
   (let
@@ -2217,19 +2169,18 @@
   [dst : (&mut dst (__tl_dyn-array ast.AstDecl))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (unsafe
-          (ptr-read
-            (ptr-offset
-              (int->ptr
-                (ptr-read (int->ptr src-address : (Ptr u64)))
-                : (Ptr ast.AstDecl))
-              index))))
-      (gen-registry-copy-decls src-address dst (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set!
+      (array-ref dst index)
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr
+              (ptr-read (int->ptr src-address : (Ptr u64)))
+              : (Ptr ast.AstDecl))
+            index))))
+    (gen-registry-copy-decls src-address dst (+ index 1) count)))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
@@ -2243,13 +2194,12 @@
         (* old-capacity 2))]
     [new-decls : (__tl_dyn-array ast.AstDecl)
       (__tl_make-array ast.AstDecl new-capacity)]
-    (begin
-      (gen-registry-copy-decls
-        (spec-array-address old-decls)
-        (&mut new-decls)
-        0
-        old-len)
-      (GenRegistry old-index new-decls old-len))))
+    (gen-registry-copy-decls
+      (spec-array-address old-decls)
+      (&mut new-decls)
+      0
+      old-len)
+    (GenRegistry old-index new-decls old-len)))
 
 (define (gen-registry-insert-with-owner
   [registry : GenRegistry]
@@ -2263,13 +2213,12 @@
     [slot : i64 ready.len]
     [decls : (__tl_dyn-array ast.AstDecl) ready.decls]
     [index : spec_id_i64_map.Map ready.index]
-    (begin
-      (set! (array-ref decls slot) decl)
-      (spec_id_i64_map.insert-ref!
-        (&mut index)
-        (spec-structural-key-raw key)
-        slot)
-      (GenRegistry index decls (+ slot 1)))))
+    (set! (array-ref decls slot) decl)
+    (spec_id_i64_map.insert-ref!
+      (&mut index)
+      (spec-structural-key-raw key)
+      slot)
+    (GenRegistry index decls (+ slot 1))))
 
 (define (gen-decl-visible-name-id [decl : ast.AstDecl]) : SpecMaybeId
   (match decl
@@ -3598,17 +3547,15 @@
           (ast.ast-decl-path-list-len (& rest-paths))))]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    (begin
-      (while (< index count)
-        (begin
-          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-            (&mut out)
-            (spec-place-shared-view path)
-            owner-id
-            provenance-id)
-          (set! index (+ index 1))))
-      (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
-      out)))
+    (while (< index count)
+      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+        (&mut out)
+        (spec-place-shared-view path)
+        owner-id
+        provenance-id)
+      (set! index (+ index 1)))
+    (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
+    out))
 
 (define (gen-path-list-push-for-decls
   [out : (&mut out ast.AstDeclPathList)]
@@ -3617,21 +3564,20 @@
   [owner-id : i64]
   [provenance-id : i64]
   [index : i64]) : unit
-  (if (>= index (ast.ast-decl-list-len (& decls)))
-    unit
-    (begin
-      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-        out
-        (spec-place-shared-view path)
-        owner-id
-        provenance-id)
-      (gen-path-list-push-for-decls
-        out
-        decls
-        path
-        owner-id
-        provenance-id
-        (+ index 1)))))
+  (unless
+    (>= index (ast.ast-decl-list-len (& decls)))
+    (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+      out
+      (spec-place-shared-view path)
+      owner-id
+      provenance-id)
+    (gen-path-list-push-for-decls
+      out
+      decls
+      path
+      owner-id
+      provenance-id
+      (+ index 1))))
 
 (define (gen-rewrite-decls-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3656,54 +3602,47 @@
             1
             "generated-decl normalization did not finish")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil)
-            (begin
-              (parser.compiler-parse-decl-origin-alias-vec-register!
-                (& out)
-                (& out-origins))
-              (set!
-                result
-                (Ok
-                  (ast.ast-place-shared-view out)
-                  (spec-place-shared-view cur-registry)
-                  cur-module-id))
-              (set! done true))]
-          [(Cons decl rest)
-            (match (gen-rewrite-decl-with-owner
-              owner
-              (ast.ast-place-shared-view decl)
-              cur-module-id
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil)
+          (parser.compiler-parse-decl-origin-alias-vec-register!
+            (& out)
+            (& out-origins))
+          (set!
+            result
+            (Ok
+              (ast.ast-place-shared-view out)
               (spec-place-shared-view cur-registry)
-              env)
-              [(Ok rewritten-decls decl-registry decl-module)
-                (let
-                  [out-start : i64 (ast.ast-decl-list-len (& out))]
-                  [rewritten-count : i64
-                    (ast.ast-decl-list-len (& rewritten-decls))]
-                  (begin
-                    (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                      (&mut out-origins)
-                      out-start
-                      rewritten-count
-                      (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- rest.offset 1)
-                      decl
-                      (!= rewritten-count 1))
-                    (ast.ast-decl-list-append-from
-                      (&mut out)
-                      (& rewritten-decls)
-                      0)
-                    (set! cur-registry decl-registry)
-                    (set! cur-module-id decl-module)
-                    (set! cursor rest)))]
-              [(Err diag)
-                (begin
-                  (set! result (Err diag))
-                  (set! done true))])]))
-      result)))
+              cur-module-id))
+          (set! done true)]
+        [(Cons decl rest)
+          (match (gen-rewrite-decl-with-owner
+            owner
+            (ast.ast-place-shared-view decl)
+            cur-module-id
+            (spec-place-shared-view cur-registry)
+            env)
+            [(Ok rewritten-decls decl-registry decl-module)
+              (let
+                [out-start : i64 (ast.ast-decl-list-len (& out))]
+                [rewritten-count : i64
+                  (ast.ast-decl-list-len (& rewritten-decls))]
+                (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                  (&mut out-origins)
+                  out-start
+                  rewritten-count
+                  (parser.compiler-parse-decl-list-storage-key (& rest))
+                  (- rest.offset 1)
+                  decl
+                  (!= rewritten-count 1))
+                (ast.ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
+                (set! cur-registry decl-registry)
+                (set! cur-module-id decl-module)
+                (set! cursor rest))]
+            [(Err diag)
+              (set! result (Err diag))
+              (set! done true)])]))
+    result))
 
 (define (gen-rewrite-decls-with-paths-and-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3733,84 +3672,80 @@
             1
             "generated-decl normalization with paths did not finish")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step decl-cursor)
-          [(Nil)
-            (begin
-              (parser.compiler-parse-decl-origin-alias-vec-register!
-                (& out)
-                (& out-origins))
-              (set!
-                result
-                (Ok
-                  (ast.ast-place-shared-view out)
-                  (spec-place-shared-view out-paths)
-                  (spec-place-shared-view cur-registry)
-                  cur-module-id))
-              (set! done true))]
-          [(Cons decl rest)
-            (let
-              [decl-path : String
-                (gen-path-list-head-or
-                  (spec-place-shared-view path-cursor)
-                  (spec-place-shared-view fallback-path))]
-              [owner-id : i64
-                (ast.ast-decl-path-list-owner-id
-                  (& path-cursor)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              [provenance-id : i64
-                (ast.ast-decl-path-list-provenance-id
-                  (& path-cursor)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              (match (gen-rewrite-decl-with-owner
-                owner
-                (ast.ast-place-shared-view decl)
-                cur-module-id
-                (spec-place-shared-view cur-registry)
-                env)
-                [(Ok rewritten-decls decl-registry decl-module)
-                  (let
-                    [out-start : i64 (ast.ast-decl-list-len (& out))]
-                    [rewritten-count : i64
-                      (ast.ast-decl-list-len (& rewritten-decls))]
-                    (begin
-                      (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                        (&mut out-origins)
-                        out-start
-                        rewritten-count
-                        (parser.compiler-parse-decl-list-storage-key (& rest))
-                        (- rest.offset 1)
-                        decl
-                        (!= rewritten-count 1))
-                      (ast.ast-decl-list-append-from
-                        (&mut out)
-                        (& rewritten-decls)
-                        0)
-                      (gen-path-list-push-for-decls
-                        (&mut out-paths)
-                        rewritten-decls
-                        decl-path
-                        owner-id
-                        provenance-id
-                        0)
-                      (set! cur-registry decl-registry)
-                      (set! cur-module-id decl-module)
-                      (set! decl-cursor rest)
-                      (set! path-cursor (gen-path-list-tail path-cursor))))]
-                [(Err diag)
-                  (begin
-                    (set!
-                      result
-                      (Err
-                        (box
-                          (cdiag.compiler-diagnostic-with-fallback-path
-                            (cdiag.compiler-diagnostic-box-shared-view diag)
-                            decl-path))))
-                    (set! done true))]))]))
-      result)))
+    (while (not done)
+      (match (ast.ast-decl-list-step decl-cursor)
+        [(Nil)
+          (parser.compiler-parse-decl-origin-alias-vec-register!
+            (& out)
+            (& out-origins))
+          (set!
+            result
+            (Ok
+              (ast.ast-place-shared-view out)
+              (spec-place-shared-view out-paths)
+              (spec-place-shared-view cur-registry)
+              cur-module-id))
+          (set! done true)]
+        [(Cons decl rest)
+          (let
+            [decl-path : String
+              (gen-path-list-head-or
+                (spec-place-shared-view path-cursor)
+                (spec-place-shared-view fallback-path))]
+            [owner-id : i64
+              (ast.ast-decl-path-list-owner-id
+                (& path-cursor)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            [provenance-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& path-cursor)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            (match (gen-rewrite-decl-with-owner
+              owner
+              (ast.ast-place-shared-view decl)
+              cur-module-id
+              (spec-place-shared-view cur-registry)
+              env)
+              [(Ok rewritten-decls decl-registry decl-module)
+                (let
+                  [out-start : i64 (ast.ast-decl-list-len (& out))]
+                  [rewritten-count : i64
+                    (ast.ast-decl-list-len (& rewritten-decls))]
+                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                    (&mut out-origins)
+                    out-start
+                    rewritten-count
+                    (parser.compiler-parse-decl-list-storage-key (& rest))
+                    (- rest.offset 1)
+                    decl
+                    (!= rewritten-count 1))
+                  (ast.ast-decl-list-append-from
+                    (&mut out)
+                    (& rewritten-decls)
+                    0)
+                  (gen-path-list-push-for-decls
+                    (&mut out-paths)
+                    rewritten-decls
+                    decl-path
+                    owner-id
+                    provenance-id
+                    0)
+                  (set! cur-registry decl-registry)
+                  (set! cur-module-id decl-module)
+                  (set! decl-cursor rest)
+                  (set! path-cursor (gen-path-list-tail path-cursor)))]
+              [(Err diag)
+                (set!
+                  result
+                  (Err
+                    (box
+                      (cdiag.compiler-diagnostic-with-fallback-path
+                        (cdiag.compiler-diagnostic-box-shared-view diag)
+                        decl-path))))
+                (set! done true)]))]))
+    result))
 
 (define (gen-normalize-program-with-pools-and-intern-state
   [program : ast.AstProgram]
@@ -3869,25 +3804,22 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
+      [result : ResultGenProgram
+        (gen-normalize-program-with-pools-and-intern-state program owner)]
+      (ast.ast-node-pool-context-install! previous-pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
-        [result : ResultGenProgram
-          (gen-normalize-program-with-pools-and-intern-state program owner)]
-        (begin
-          (ast.ast-node-pool-context-install! previous-pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 (define (gen-normalize-program [program : ast.AstProgram]) : ResultGenProgram
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (gen-decl-needs-normalize? [decl : ast.AstDecl]) : bool
   (match (ast.ast-decl-generated-meta decl)
@@ -3899,115 +3831,111 @@
     [cursor : ast.AstDeclList decls]
     [needed : bool false]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (if (gen-decl-needs-normalize? decl)
-              (begin
-                (set! needed true)
-                (set! done true))
-              (set! cursor rest))]))
-      needed)))
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (if (gen-decl-needs-normalize? decl)
+            (begin
+              (set! needed true)
+              (set! done true))
+            (set! cursor rest))]))
+    needed))
 
 (define (spec-value-runtime-type-matches?
   [state : SpecState]
   [value : ctfe.CompilerCtfeValue]
   [ty : ast.AstType]) : bool
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (match value
-      [(I64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (I64))]
-      [(F64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F64))]
-      [(F32 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F32))]
-      [(Bool _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Bool))]
-      [(Char _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Char))]
-      [(String _ _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-      [(Name _ _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-      [(Unit) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Unit))]
-      [(Type _) false]
-      [(Expr _ _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-      [(CapturedExpr _ _ _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-      [(ExprList _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-      [(CapturedExprList _ _)
-        (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-      [(ExprClause _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(CapturedExprClause _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(ExprClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(CapturedExprClauseList _ _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(ExprBindingClause _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
-      [(ExprBindingClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
-      [(Pattern _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-Pattern))]
-      [(PatternList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-PatternList))]
-      [(MatchArm _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-MatchArm))]
-      [(MatchArmList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-MatchArmList))]
-      [(LetBinding _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-LetBinding))]
-      [(LetBindingList _)
-        (ctfe.ctfe-type-eq-in-env
-          (spec-state-ctfe-env state)
-          ty
-          (Var cbi.compiler-builtin-id-fix-LetBindingList))]
-      [(TypeInfo _) false]
-      [(TypeInfoBox _) false]
-      [(TypeInfoList _) false]
-      [(TypeField _ _) false]
-      [(TypeFieldList _) false]
-      [(TypeVariantPayload _) false]
-      [(TypeVariantPayloadList _) false]
-      [(TypeVariant _ _) false]
-      [(TypeVariantList _) false])))
+  (cbi.compiler-builtin-refresh!)
+  (match value
+    [(I64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (I64))]
+    [(F64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F64))]
+    [(F32 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F32))]
+    [(Bool _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Bool))]
+    [(Char _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Char))]
+    [(String _ _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
+    [(Name _ _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
+    [(Unit) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Unit))]
+    [(Type _) false]
+    [(Expr _ _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
+    [(CapturedExpr _ _ _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
+    [(ExprList _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
+    [(CapturedExprList _ _)
+      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
+    [(ExprClause _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprClause))]
+    [(CapturedExprClause _ _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprClause))]
+    [(ExprClauseList _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+    [(CapturedExprClauseList _ _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+    [(ExprBindingClause _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
+    [(ExprBindingClauseList _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
+    [(Pattern _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-Pattern))]
+    [(PatternList _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-PatternList))]
+    [(MatchArm _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-MatchArm))]
+    [(MatchArmList _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-MatchArmList))]
+    [(LetBinding _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-LetBinding))]
+    [(LetBindingList _)
+      (ctfe.ctfe-type-eq-in-env
+        (spec-state-ctfe-env state)
+        ty
+        (Var cbi.compiler-builtin-id-fix-LetBindingList))]
+    [(TypeInfo _) false]
+    [(TypeInfoBox _) false]
+    [(TypeInfoList _) false]
+    [(TypeField _ _) false]
+    [(TypeFieldList _) false]
+    [(TypeVariantPayload _) false]
+    [(TypeVariantPayloadList _) false]
+    [(TypeVariant _ _) false]
+    [(TypeVariantList _) false]))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value
@@ -4114,18 +4042,15 @@
         (__tl_make-array SpecValueBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
-      (begin
-        (while (< at subs.len)
-          (begin
-            (match (spec-value-subst-at subs at)
-              [(Bind key-id _)
-                (if (= key-id name-id)
-                  unit
-                  (begin
-                    (set! (array-ref slots kept) (spec-value-subst-at subs at))
-                    (set! kept (+ kept 1))))])
-            (set! at (+ at 1))))
-        (spec-value-subst-from-slots slots kept)))))
+      (while (< at subs.len)
+        (match (spec-value-subst-at subs at)
+          [(Bind key-id _)
+            (unless
+              (= key-id name-id)
+              (set! (array-ref slots kept) (spec-value-subst-at subs at))
+              (set! kept (+ kept 1)))])
+        (set! at (+ at 1)))
+      (spec-value-subst-from-slots slots kept))))
 
 (define (spec-value-subst-remove-params
   [subs : (& subs SpecValueSubst)]
@@ -4233,18 +4158,15 @@
         (__tl_make-array SpecTypeBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
-      (begin
-        (while (< at subs.len)
-          (begin
-            (match (spec-type-subst-at subs at)
-              [(Bind key-id _)
-                (if (= key-id name-id)
-                  unit
-                  (begin
-                    (set! (array-ref slots kept) (spec-type-subst-at subs at))
-                    (set! kept (+ kept 1))))])
-            (set! at (+ at 1))))
-        (spec-type-subst-from-slots slots kept)))))
+      (while (< at subs.len)
+        (match (spec-type-subst-at subs at)
+          [(Bind key-id _)
+            (unless
+              (= key-id name-id)
+              (set! (array-ref slots kept) (spec-type-subst-at subs at))
+              (set! kept (+ kept 1)))])
+        (set! at (+ at 1)))
+      (spec-type-subst-from-slots slots kept))))
 
 (define (spec-type-subst-remove-params
   [subs : (& subs SpecTypeSubst)]
@@ -4464,25 +4386,19 @@
   [subs : (& subs SpecTypeSubst)]
   [out : (&mut out ast.AstTypeList)]
   [index : i64]) : unit
-  (if (>= index (ast.ast-type-list-len types))
-    unit
-    (begin
-      (ast.ast-type-list-push
-        out
-        (spec-owner-type-push
-          owner
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get
-              owner
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-            subs)))
-      (spec-substitute-type-list-into-with-owner
+  (unless
+    (>= index (ast.ast-type-list-len types))
+    (ast.ast-type-list-push
+      out
+      (spec-owner-type-push
         owner
-        types
-        subs
-        out
-        (+ index 1)))))
+        (spec-substitute-type-with-owner
+          owner
+          (spec-owner-type-get
+            owner
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          subs)))
+    (spec-substitute-type-list-into-with-owner owner types subs out (+ index 1))))
 
 (define (spec-substitute-type-list-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4491,14 +4407,13 @@
   (let
     [out : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-type-list-len (& types)))]
-    (begin
-      (spec-substitute-type-list-into-with-owner
-        owner
-        (& types)
-        subs
-        (&mut out)
-        0)
-      out)))
+    (spec-substitute-type-list-into-with-owner
+      owner
+      (& types)
+      subs
+      (&mut out)
+      0)
+    out))
 
 (define (spec-substitute-maybe-type-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4515,14 +4430,13 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (begin
-      (spec-substitute-param-types-into-with-owner
-        owner
-        (& params)
-        subs
-        0
-        (&mut out))
-      out)))
+    (spec-substitute-param-types-into-with-owner
+      owner
+      (& params)
+      subs
+      0
+      (&mut out))
+    out))
 
 (define (spec-substitute-param-types-into-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4530,23 +4444,22 @@
   [subs : (& subs SpecTypeSubst)]
   [index : i64]
   [out : (&mut out ast.AstParamList)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
-    (begin
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name ty _)
-          (ast.ast-param-list-push
-            out
-            (ast.AstParam.Param
-              name
-              (spec-substitute-type-with-owner owner ty subs)
-              false))])
-      (spec-substitute-param-types-into-with-owner
-        owner
-        params
-        subs
-        (+ index 1)
-        out))))
+  (unless
+    (>= index (ast.ast-param-list-len params))
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(Param name ty _)
+        (ast.ast-param-list-push
+          out
+          (ast.AstParam.Param
+            name
+            (spec-substitute-type-with-owner owner ty subs)
+            false))])
+    (spec-substitute-param-types-into-with-owner
+      owner
+      params
+      subs
+      (+ index 1)
+      out)))
 
 (define (spec-ctfe-value-to-expr-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4777,14 +4690,8 @@
         (spec-state-expr-get state (ast.ast-expr-list-get exprs index 0))]
       (match (spec-rewrite-expr head templates state)
         [(Ok rewritten-head head-state)
-          (begin
-            (ast.ast-expr-list-push out rewritten-head)
-            (spec-rewrite-expr-list-at
-              exprs
-              (+ index 1)
-              templates
-              head-state
-              out))]
+          (ast.ast-expr-list-push out rewritten-head)
+          (spec-rewrite-expr-list-at exprs (+ index 1) templates head-state out)]
         [(Err diag) (Err diag)]))))
 
 (define (spec-rewrite-let-bindings
@@ -4823,16 +4730,15 @@
             (spec-template-env-shadow-name templates name)]
           (match (spec-rewrite-expr value templates state)
             [(Ok rewritten-value value-state)
-              (begin
-                (ast.ast-let-binding-list-push
-                  out
-                  (ast.ast-let-binding-id name ty rewritten-value))
-                (spec-rewrite-let-bindings-at
-                  bindings
-                  (+ index 1)
-                  next-templates
-                  value-state
-                  out))]
+              (ast.ast-let-binding-list-push
+                out
+                (ast.ast-let-binding-id name ty rewritten-value))
+              (spec-rewrite-let-bindings-at
+                bindings
+                (+ index 1)
+                next-templates
+                value-state
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-rewrite-match-arms
@@ -4863,16 +4769,15 @@
               (ast.ast-place-shared-view pattern))]
           (match (spec-rewrite-expr body body-templates state)
             [(Ok rewritten-body body-state)
-              (begin
-                (ast.ast-match-arm-list-push
-                  out
-                  (ast.ast-match-arm pattern rewritten-body))
-                (spec-rewrite-match-arms-at
-                  arms
-                  (+ index 1)
-                  templates
-                  body-state
-                  out))]
+              (ast.ast-match-arm-list-push
+                out
+                (ast.ast-match-arm pattern rewritten-body))
+              (spec-rewrite-match-arms-at
+                arms
+                (+ index 1)
+                templates
+                body-state
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-rewrite-specialized-call
@@ -5141,56 +5046,55 @@
                             [(Ok valued-body)
                               (let
                                 [next-cache : spec_id_i64_map.Map cache]
-                                (begin
-                                  (spec_id_i64_map.insert-ref!
-                                    (&mut next-cache)
-                                    cache-key-id
-                                    generated-name-id)
-                                  (let
-                                    [cached-state : SpecState
-                                      (SpecState.State
-                                        generated
-                                        next-cache
-                                        ctfe-env
-                                        pools)]
-                                    [body-templates : SpecTemplateEnv
-                                      (spec-template-env-shadow-params
-                                        templates
-                                        runtime-params)]
-                                    (match (spec-rewrite-expr
-                                      (spec-state-expr-get state valued-body)
-                                      body-templates
-                                      cached-state)
-                                      [(Ok rewritten-body rewritten-state)
-                                        (match (spec-place-shared-view
-                                          rewritten-state)
-                                          [(State
-                                              rewritten-generated
+                                (spec_id_i64_map.insert-ref!
+                                  (&mut next-cache)
+                                  cache-key-id
+                                  generated-name-id)
+                                (let
+                                  [cached-state : SpecState
+                                    (SpecState.State
+                                      generated
+                                      next-cache
+                                      ctfe-env
+                                      pools)]
+                                  [body-templates : SpecTemplateEnv
+                                    (spec-template-env-shadow-params
+                                      templates
+                                      runtime-params)]
+                                  (match (spec-rewrite-expr
+                                    (spec-state-expr-get state valued-body)
+                                    body-templates
+                                    cached-state)
+                                    [(Ok rewritten-body rewritten-state)
+                                      (match (spec-place-shared-view
+                                        rewritten-state)
+                                        [(State
+                                            rewritten-generated
+                                            rewritten-cache
+                                            rewritten-ctfe-env
+                                            rewritten-pools)
+                                          (Ok
+                                            generated-name-id
+                                            (SpecState.State
+                                              (spec-decl-list-append-one
+                                                rewritten-generated
+                                                (ast.ast-decl-def-fn-id
+                                                  generated-name-id
+                                                  (spec-substitute-param-types-with-owner
+                                                    (spec-state-owner
+                                                      rewritten-state)
+                                                    runtime-params
+                                                    type-subs)
+                                                  (spec-substitute-type-with-owner
+                                                    (spec-state-owner
+                                                      rewritten-state)
+                                                    ret
+                                                    type-subs)
+                                                  rewritten-body))
                                               rewritten-cache
                                               rewritten-ctfe-env
-                                              rewritten-pools)
-                                            (Ok
-                                              generated-name-id
-                                              (SpecState.State
-                                                (spec-decl-list-append-one
-                                                  rewritten-generated
-                                                  (ast.ast-decl-def-fn-id
-                                                    generated-name-id
-                                                    (spec-substitute-param-types-with-owner
-                                                      (spec-state-owner
-                                                        rewritten-state)
-                                                      runtime-params
-                                                      type-subs)
-                                                    (spec-substitute-type-with-owner
-                                                      (spec-state-owner
-                                                        rewritten-state)
-                                                      ret
-                                                      type-subs)
-                                                    rewritten-body))
-                                                rewritten-cache
-                                                rewritten-ctfe-env
-                                                rewritten-pools))])]
-                                      [(Err diag) (Err diag)]))))]
+                                              rewritten-pools))])]
+                                    [(Err diag) (Err diag)])))]
                             [(Err diag) (Err diag)])]
                         [(Err diag) (Err diag)])]
                     [(Err diag) (Err diag)]))]))])]))
@@ -5202,12 +5106,11 @@
   [body : i64]) : ast.AstExprList
   (let
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity 4)]
-    (begin
-      (ast.ast-expr-list-push (&mut out) source-name)
-      (ast.ast-expr-list-push (&mut out) index-name)
-      (ast.ast-expr-list-push (&mut out) source)
-      (ast.ast-expr-list-push (&mut out) body)
-      out)))
+    (ast.ast-expr-list-push (&mut out) source-name)
+    (ast.ast-expr-list-push (&mut out) index-name)
+    (ast.ast-expr-list-push (&mut out) source)
+    (ast.ast-expr-list-push (&mut out) body)
+    out))
 
 (define (spec-for-owned-step-exprs
   [source-name : i64]
@@ -5218,16 +5121,15 @@
   [body : i64]) : ast.AstExprList
   (let
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity 6)]
-    (begin
-      (ast.ast-expr-list-push (&mut out) source-name)
-      (ast.ast-expr-list-push (&mut out) index-name)
-      (ast.ast-expr-list-push (&mut out) binding-name)
-      (if (>= expected-type 0)
-        (ast.ast-expr-list-push (&mut out) expected-type)
-        unit)
-      (ast.ast-expr-list-push (&mut out) done-name)
-      (ast.ast-expr-list-push (&mut out) body)
-      out)))
+    (ast.ast-expr-list-push (&mut out) source-name)
+    (ast.ast-expr-list-push (&mut out) index-name)
+    (ast.ast-expr-list-push (&mut out) binding-name)
+    (if (>= expected-type 0)
+      (ast.ast-expr-list-push (&mut out) expected-type)
+      unit)
+    (ast.ast-expr-list-push (&mut out) done-name)
+    (ast.ast-expr-list-push (&mut out) body)
+    out))
 
 (define (spec-rewrite-expr
   [expr : ast.AstExpr]
@@ -5656,45 +5558,43 @@
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecTemplateEnv (spec-template-env-shared-view templates)]
     [index : i64 0]
-    (begin
-      (while (< index bindings.len)
-        (match (ast.ast-resource-binding-list-get
-          (& bindings)
-          index
-          (ast.ast-resource-binding-fallback))
-          [(Binding name init cleanup move-aware?)
-            (match (spec-rewrite-expr
-              (spec-state-expr-get (& state) init)
-              (& scope)
-              (spec-place-shared-view state))
-              [(Err diag) (return (Err diag))]
-              [(Ok next-init init-state)
-                (match (spec-rewrite-expr
-                  (spec-state-expr-get (& init-state) cleanup)
-                  (& scope)
-                  init-state)
-                  [(Err diag) (return (Err diag))]
-                  [(Ok next-cleanup cleanup-state)
-                    (begin
-                      (ast.ast-resource-binding-list-push
-                        (&mut out)
-                        (ast.AstResourceBinding.Binding
-                          name
-                          next-init
-                          next-cleanup
-                          move-aware?))
-                      (set! state cleanup-state)
-                      (set! scope (spec-template-env-shadow-name scope name))
-                      (set! index (+ index 1)))])])]))
-      (match (spec-rewrite-expr-list body (& scope) state)
-        [(Err diag) (Err diag)]
-        [(Ok next-body body-state)
-          (Ok
-            (spec-owner-expr-push
-              (spec-state-owner (& body-state))
-              (WithResource
-                (box (ast.AstWithResource.WithResource out next-body))))
-            body-state)]))))
+    (while (< index bindings.len)
+      (match (ast.ast-resource-binding-list-get
+        (& bindings)
+        index
+        (ast.ast-resource-binding-fallback))
+        [(Binding name init cleanup move-aware?)
+          (match (spec-rewrite-expr
+            (spec-state-expr-get (& state) init)
+            (& scope)
+            (spec-place-shared-view state))
+            [(Err diag) (return (Err diag))]
+            [(Ok next-init init-state)
+              (match (spec-rewrite-expr
+                (spec-state-expr-get (& init-state) cleanup)
+                (& scope)
+                init-state)
+                [(Err diag) (return (Err diag))]
+                [(Ok next-cleanup cleanup-state)
+                  (ast.ast-resource-binding-list-push
+                    (&mut out)
+                    (ast.AstResourceBinding.Binding
+                      name
+                      next-init
+                      next-cleanup
+                      move-aware?))
+                  (set! state cleanup-state)
+                  (set! scope (spec-template-env-shadow-name scope name))
+                  (set! index (+ index 1))])])]))
+    (match (spec-rewrite-expr-list body (& scope) state)
+      [(Err diag) (Err diag)]
+      [(Ok next-body body-state)
+        (Ok
+          (spec-owner-expr-push
+            (spec-state-owner (& body-state))
+            (WithResource
+              (box (ast.AstWithResource.WithResource out next-body))))
+          body-state)])))
 
 (define (spec-substitute-values-resource-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5706,44 +5606,40 @@
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecValueSubst (spec-value-subst-shared-view subs)]
     [index : i64 0]
-    (begin
-      (while (< index bindings.len)
-        (match (ast.ast-resource-binding-list-get
-          (& bindings)
-          index
-          (ast.ast-resource-binding-fallback))
-          [(Binding name init cleanup move-aware?)
-            (match (spec-substitute-values-expr-with-owner
-              owner
-              (spec-owner-expr-get owner init)
-              (& scope))
-              [(Err diag) (return (Err diag))]
-              [(Ok next-init)
-                (match (spec-substitute-values-expr-with-owner
-                  owner
-                  (spec-owner-expr-get owner cleanup)
-                  (& scope))
-                  [(Err diag) (return (Err diag))]
-                  [(Ok next-cleanup)
-                    (begin
-                      (ast.ast-resource-binding-list-push
-                        (&mut out)
-                        (ast.AstResourceBinding.Binding
-                          name
-                          next-init
-                          next-cleanup
-                          move-aware?))
-                      (set! scope (spec-value-subst-remove-name (& scope) name))
-                      (set! index (+ index 1)))])])]))
-      (let
-        [next-body : ast.AstExprList
-          (try
-            (spec-substitute-values-expr-list-with-owner owner body (& scope)))]
-        (Ok
-          (spec-owner-expr-push
+    (while (< index bindings.len)
+      (match (ast.ast-resource-binding-list-get
+        (& bindings)
+        index
+        (ast.ast-resource-binding-fallback))
+        [(Binding name init cleanup move-aware?)
+          (match (spec-substitute-values-expr-with-owner
             owner
-            (WithResource
-              (box (ast.AstWithResource.WithResource out next-body)))))))))
+            (spec-owner-expr-get owner init)
+            (& scope))
+            [(Err diag) (return (Err diag))]
+            [(Ok next-init)
+              (match (spec-substitute-values-expr-with-owner
+                owner
+                (spec-owner-expr-get owner cleanup)
+                (& scope))
+                [(Err diag) (return (Err diag))]
+                [(Ok next-cleanup)
+                  (ast.ast-resource-binding-list-push
+                    (&mut out)
+                    (ast.AstResourceBinding.Binding
+                      name
+                      next-init
+                      next-cleanup
+                      move-aware?))
+                  (set! scope (spec-value-subst-remove-name (& scope) name))
+                  (set! index (+ index 1))])])]))
+    (let
+      [next-body : ast.AstExprList
+        (try (spec-substitute-values-expr-list-with-owner owner body (& scope)))]
+      (Ok
+        (spec-owner-expr-push
+          owner
+          (WithResource (box (ast.AstWithResource.WithResource out next-body))))))))
 
 (define (spec-substitute-types-resource-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5755,44 +5651,40 @@
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecTypeSubst (spec-type-subst-shared-view subs)]
     [index : i64 0]
-    (begin
-      (while (< index bindings.len)
-        (match (ast.ast-resource-binding-list-get
-          (& bindings)
-          index
-          (ast.ast-resource-binding-fallback))
-          [(Binding name init cleanup move-aware?)
-            (match (spec-substitute-types-expr-with-owner
-              owner
-              (spec-owner-expr-get owner init)
-              (& scope))
-              [(Err diag) (return (Err diag))]
-              [(Ok next-init)
-                (match (spec-substitute-types-expr-with-owner
-                  owner
-                  (spec-owner-expr-get owner cleanup)
-                  (& scope))
-                  [(Err diag) (return (Err diag))]
-                  [(Ok next-cleanup)
-                    (begin
-                      (ast.ast-resource-binding-list-push
-                        (&mut out)
-                        (ast.AstResourceBinding.Binding
-                          name
-                          next-init
-                          next-cleanup
-                          move-aware?))
-                      (set! scope (spec-type-subst-remove-name (& scope) name))
-                      (set! index (+ index 1)))])])]))
-      (let
-        [next-body : ast.AstExprList
-          (try
-            (spec-substitute-types-expr-list-with-owner owner body (& scope)))]
-        (Ok
-          (spec-owner-expr-push
+    (while (< index bindings.len)
+      (match (ast.ast-resource-binding-list-get
+        (& bindings)
+        index
+        (ast.ast-resource-binding-fallback))
+        [(Binding name init cleanup move-aware?)
+          (match (spec-substitute-types-expr-with-owner
             owner
-            (WithResource
-              (box (ast.AstWithResource.WithResource out next-body)))))))))
+            (spec-owner-expr-get owner init)
+            (& scope))
+            [(Err diag) (return (Err diag))]
+            [(Ok next-init)
+              (match (spec-substitute-types-expr-with-owner
+                owner
+                (spec-owner-expr-get owner cleanup)
+                (& scope))
+                [(Err diag) (return (Err diag))]
+                [(Ok next-cleanup)
+                  (ast.ast-resource-binding-list-push
+                    (&mut out)
+                    (ast.AstResourceBinding.Binding
+                      name
+                      next-init
+                      next-cleanup
+                      move-aware?))
+                  (set! scope (spec-type-subst-remove-name (& scope) name))
+                  (set! index (+ index 1))])])]))
+    (let
+      [next-body : ast.AstExprList
+        (try (spec-substitute-types-expr-list-with-owner owner body (& scope)))]
+      (Ok
+        (spec-owner-expr-push
+          owner
+          (WithResource (box (ast.AstWithResource.WithResource out next-body))))))))
 
 (define (spec-substitute-values-expr-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -6171,14 +6063,13 @@
         (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0))]
       (match (spec-substitute-values-expr-with-owner owner head subs)
         [(Ok rewritten-head)
-          (begin
-            (ast.ast-expr-list-push out rewritten-head)
-            (spec-substitute-values-expr-list-at-with-owner
-              owner
-              exprs
-              (+ index 1)
-              subs
-              out))]
+          (ast.ast-expr-list-push out rewritten-head)
+          (spec-substitute-values-expr-list-at-with-owner
+            owner
+            exprs
+            (+ index 1)
+            subs
+            out)]
         [(Err diag) (Err diag)]))))
 
 (define (spec-substitute-values-let-bindings-with-owner
@@ -6216,16 +6107,15 @@
           [next-subs : SpecValueSubst (spec-value-subst-remove-name subs name)]
           (match (spec-substitute-values-expr-with-owner owner value subs)
             [(Ok rewritten-value)
-              (begin
-                (ast.ast-let-binding-list-push
-                  out
-                  (ast.ast-let-binding-id name ty rewritten-value))
-                (spec-substitute-values-let-bindings-at-with-owner
-                  owner
-                  bindings
-                  (+ index 1)
-                  next-subs
-                  out))]
+              (ast.ast-let-binding-list-push
+                out
+                (ast.ast-let-binding-id name ty rewritten-value))
+              (spec-substitute-values-let-bindings-at-with-owner
+                owner
+                bindings
+                (+ index 1)
+                next-subs
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-substitute-values-match-arms-with-owner
@@ -6261,16 +6151,15 @@
               (ast.ast-place-shared-view pattern))]
           (match (spec-substitute-values-expr-with-owner owner body body-subs)
             [(Ok rewritten-body)
-              (begin
-                (ast.ast-match-arm-list-push
-                  out
-                  (ast.ast-match-arm pattern rewritten-body))
-                (spec-substitute-values-match-arms-at-with-owner
-                  owner
-                  arms
-                  (+ index 1)
-                  subs
-                  out))]
+              (ast.ast-match-arm-list-push
+                out
+                (ast.ast-match-arm pattern rewritten-body))
+              (spec-substitute-values-match-arms-at-with-owner
+                owner
+                arms
+                (+ index 1)
+                subs
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-substitute-types-expr-with-owner
@@ -6713,14 +6602,13 @@
         (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0))]
       (match (spec-substitute-types-expr-with-owner owner head subs)
         [(Ok rewritten-head)
-          (begin
-            (ast.ast-expr-list-push out rewritten-head)
-            (spec-substitute-types-expr-list-at-with-owner
-              owner
-              exprs
-              (+ index 1)
-              subs
-              out))]
+          (ast.ast-expr-list-push out rewritten-head)
+          (spec-substitute-types-expr-list-at-with-owner
+            owner
+            exprs
+            (+ index 1)
+            subs
+            out)]
         [(Err diag) (Err diag)]))))
 
 (define (spec-substitute-types-let-bindings-with-owner
@@ -6758,19 +6646,18 @@
           [next-subs : SpecTypeSubst (spec-type-subst-remove-name subs name)]
           (match (spec-substitute-types-expr-with-owner owner value subs)
             [(Ok rewritten-value)
-              (begin
-                (ast.ast-let-binding-list-push
-                  out
-                  (ast.ast-let-binding-id
-                    name
-                    (spec-substitute-maybe-type-with-owner owner ty subs)
-                    rewritten-value))
-                (spec-substitute-types-let-bindings-at-with-owner
-                  owner
-                  bindings
-                  (+ index 1)
-                  next-subs
-                  out))]
+              (ast.ast-let-binding-list-push
+                out
+                (ast.ast-let-binding-id
+                  name
+                  (spec-substitute-maybe-type-with-owner owner ty subs)
+                  rewritten-value))
+              (spec-substitute-types-let-bindings-at-with-owner
+                owner
+                bindings
+                (+ index 1)
+                next-subs
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-substitute-types-match-arms-with-owner
@@ -6806,16 +6693,15 @@
               (ast.ast-place-shared-view pattern))]
           (match (spec-substitute-types-expr-with-owner owner body body-subs)
             [(Ok rewritten-body)
-              (begin
-                (ast.ast-match-arm-list-push
-                  out
-                  (ast.ast-match-arm pattern rewritten-body))
-                (spec-substitute-types-match-arms-at-with-owner
-                  owner
-                  arms
-                  (+ index 1)
-                  subs
-                  out))]
+              (ast.ast-match-arm-list-push
+                out
+                (ast.ast-match-arm pattern rewritten-body))
+              (spec-substitute-types-match-arms-at-with-owner
+                owner
+                arms
+                (+ index 1)
+                subs
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (spec-rewrite-decl-with-owner
@@ -6892,48 +6778,43 @@
             1
             "specialization rewrite did not finish")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil)
-            (begin
-              (parser.compiler-parse-decl-origin-alias-vec-register!
-                (& out)
-                (& out-origins))
-              (set!
-                result
-                (Ok
-                  (ast.ast-place-shared-view out)
-                  (spec-place-shared-view cur-state)))
-              (set! done true))]
-          [(Cons decl rest)
-            (match (spec-rewrite-decl-with-owner
-              owner
-              (ast.ast-place-shared-view decl)
-              templates
-              (spec-place-shared-view cur-state))
-              [(Ok maybe-decl decl-state)
-                (begin
-                  (set! cur-state decl-state)
-                  (match maybe-decl
-                    [(None) unit]
-                    [(Some rewritten-decl)
-                      (begin
-                        (ast.ast-decl-list-push (&mut out) rewritten-decl)
-                        (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                          (&mut out-origins)
-                          (- (ast.ast-decl-list-len (& out)) 1)
-                          1
-                          (parser.compiler-parse-decl-list-storage-key (& rest))
-                          (- rest.offset 1)
-                          decl
-                          false))])
-                  (set! cursor rest))]
-              [(Err diag)
-                (begin
-                  (set! result (Err diag))
-                  (set! done true))])]))
-      result)))
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil)
+          (parser.compiler-parse-decl-origin-alias-vec-register!
+            (& out)
+            (& out-origins))
+          (set!
+            result
+            (Ok
+              (ast.ast-place-shared-view out)
+              (spec-place-shared-view cur-state)))
+          (set! done true)]
+        [(Cons decl rest)
+          (match (spec-rewrite-decl-with-owner
+            owner
+            (ast.ast-place-shared-view decl)
+            templates
+            (spec-place-shared-view cur-state))
+            [(Ok maybe-decl decl-state)
+              (set! cur-state decl-state)
+              (match maybe-decl
+                [(None) unit]
+                [(Some rewritten-decl)
+                  (ast.ast-decl-list-push (&mut out) rewritten-decl)
+                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                    (&mut out-origins)
+                    (- (ast.ast-decl-list-len (& out)) 1)
+                    1
+                    (parser.compiler-parse-decl-list-storage-key (& rest))
+                    (- rest.offset 1)
+                    decl
+                    false)])
+              (set! cursor rest)]
+            [(Err diag)
+              (set! result (Err diag))
+              (set! done true)])]))
+    result))
 
 (define (spec-rewrite-decls-with-paths-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -6961,71 +6842,65 @@
             1
             "specialization rewrite with paths did not finish")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step decl-cursor)
-          [(Nil)
-            (begin
-              (parser.compiler-parse-decl-origin-alias-vec-register!
-                (& out)
-                (& out-origins))
-              (set!
-                result
-                (Ok
-                  (ast.ast-place-shared-view out)
-                  (spec-place-shared-view out-paths)
-                  (spec-place-shared-view cur-state)))
-              (set! done true))]
-          [(Cons decl rest)
-            (let
-              [decl-path : String
-                (gen-path-list-head-or
-                  (spec-place-shared-view path-cursor)
-                  (spec-place-shared-view fallback-path))]
-              [owner-id : i64
-                (ast.ast-decl-path-list-owner-id
-                  (& path-cursor)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              [provenance-id : i64
-                (ast.ast-decl-path-list-provenance-id
-                  (& path-cursor)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              (match (spec-rewrite-decl-with-owner
-                owner
-                (ast.ast-place-shared-view decl)
-                templates
-                (spec-place-shared-view cur-state))
-                [(Ok maybe-decl decl-state)
-                  (begin
-                    (set! cur-state decl-state)
-                    (match maybe-decl
-                      [(None) unit]
-                      [(Some rewritten-decl)
-                        (begin
-                          (ast.ast-decl-list-push (&mut out) rewritten-decl)
-                          (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                            (&mut out-origins)
-                            (- (ast.ast-decl-list-len (& out)) 1)
-                            1
-                            (parser.compiler-parse-decl-list-storage-key
-                              (& rest))
-                            (- rest.offset 1)
-                            decl
-                            false)
-                          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-                            (&mut out-paths)
-                            decl-path
-                            owner-id
-                            provenance-id))])
-                    (set! decl-cursor rest)
-                    (set! path-cursor (gen-path-list-tail path-cursor)))]
-                [(Err diag)
-                  (begin
-                    (set! result (Err diag))
-                    (set! done true))]))]))
-      result)))
+    (while (not done)
+      (match (ast.ast-decl-list-step decl-cursor)
+        [(Nil)
+          (parser.compiler-parse-decl-origin-alias-vec-register!
+            (& out)
+            (& out-origins))
+          (set!
+            result
+            (Ok
+              (ast.ast-place-shared-view out)
+              (spec-place-shared-view out-paths)
+              (spec-place-shared-view cur-state)))
+          (set! done true)]
+        [(Cons decl rest)
+          (let
+            [decl-path : String
+              (gen-path-list-head-or
+                (spec-place-shared-view path-cursor)
+                (spec-place-shared-view fallback-path))]
+            [owner-id : i64
+              (ast.ast-decl-path-list-owner-id
+                (& path-cursor)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            [provenance-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& path-cursor)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            (match (spec-rewrite-decl-with-owner
+              owner
+              (ast.ast-place-shared-view decl)
+              templates
+              (spec-place-shared-view cur-state))
+              [(Ok maybe-decl decl-state)
+                (set! cur-state decl-state)
+                (match maybe-decl
+                  [(None) unit]
+                  [(Some rewritten-decl)
+                    (ast.ast-decl-list-push (&mut out) rewritten-decl)
+                    (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      (&mut out-origins)
+                      (- (ast.ast-decl-list-len (& out)) 1)
+                      1
+                      (parser.compiler-parse-decl-list-storage-key (& rest))
+                      (- rest.offset 1)
+                      decl
+                      false)
+                    (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                      (&mut out-paths)
+                      decl-path
+                      owner-id
+                      provenance-id)])
+                (set! decl-cursor rest)
+                (set! path-cursor (gen-path-list-tail path-cursor))]
+              [(Err diag)
+                (set! result (Err diag))
+                (set! done true)]))]))
+    result))
 
 (define (spec-generated-paths
   [decls : ast.AstDeclList]
@@ -7080,11 +6955,10 @@
               [(Ok rewritten state)
                 (match state
                   [(State generated _ _ _)
-                    (begin
-                      (spec-materialize-owner-generated-symbols! owner)
-                      (Ok
-                        (ast.ast-program
-                          (spec-decl-list-append rewritten generated))))])]
+                    (spec-materialize-owner-generated-symbols! owner)
+                    (Ok
+                      (ast.ast-program
+                        (spec-decl-list-append rewritten generated)))])]
               [(Err diag) (Err diag)])))])))
 
 (define (compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
@@ -7138,14 +7012,13 @@
                   [(Ok rewritten rewritten-paths state)
                     (match state
                       [(State generated _ _ _)
-                        (begin
-                          (spec-materialize-owner-generated-symbols! owner)
-                          (Ok
-                            (ast.ast-program
-                              (spec-decl-list-append rewritten generated))
-                            (spec-decl-path-list-append
-                              rewritten-paths
-                              (spec-generated-paths generated fallback-path))))])]
+                        (spec-materialize-owner-generated-symbols! owner)
+                        (Ok
+                          (ast.ast-program
+                            (spec-decl-list-append rewritten generated))
+                          (spec-decl-path-list-append
+                            rewritten-paths
+                            (spec-generated-paths generated fallback-path)))])]
                   [(Err diag) (Err diag)])))])]
       [(Err diag) (Err diag)])))
 
@@ -7175,19 +7048,17 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : ResultSpecProgram
+        (compiler-specialize-program-with-pools-and-intern-state
+          program
+          pools
+          (spec_ci.intern-global-shared-view intern-state))]
+      (ast.ast-node-pool-context-install! previous-pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : ResultSpecProgram
-          (compiler-specialize-program-with-pools-and-intern-state
-            program
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
-        (begin
-          (ast.ast-node-pool-context-install! previous-pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 (define (compiler-specialize-program-with-paths-and-pools
   [program : ast.AstProgram]
@@ -7199,30 +7070,27 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : ResultSpecProgramWithPaths
+        (compiler-specialize-program-with-paths-and-pools-and-intern-state
+          program
+          paths
+          fallback-path
+          pools
+          (spec_ci.intern-global-shared-view intern-state))]
+      (ast.ast-node-pool-context-install! previous-pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : ResultSpecProgramWithPaths
-          (compiler-specialize-program-with-paths-and-pools-and-intern-state
-            program
-            paths
-            fallback-path
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
-        (begin
-          (ast.ast-node-pool-context-install! previous-pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 (define (compiler-specialize-program [program : ast.AstProgram]) : ResultSpecProgram
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultSpecProgram
       (compiler-specialize-program-with-pools program pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (compiler-specialize-needed-with-pools
   [program : ast.AstProgram]

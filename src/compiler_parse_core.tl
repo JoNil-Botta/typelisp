@@ -135,25 +135,23 @@
         (if (< old-cap 1)
           1
           (* old-cap 2)))]
-    (begin
-      (if (> items.len 0)
-        (unsafe
-          (compiler-parse-runtime-copy-bytes!
-            (ptr-cast (__tl_array-data next) : (MutPtr u8))
-            (ptr-cast (__tl_array-data old) : (Ptr u8))
-            (* items.len 56)))
-        unit)
-      (set! items.items next))))
+    (if (> items.len 0)
+      (unsafe
+        (compiler-parse-runtime-copy-bytes!
+          (ptr-cast (__tl_array-data next) : (MutPtr u8))
+          (ptr-cast (__tl_array-data old) : (Ptr u8))
+          (* items.len 56)))
+      unit)
+    (set! items.items next)))
 
 (define (parse-semantic-origin-vec-push!
   [items : (&mut items ParseSemanticOriginVec)]
   [origin : ParseSemanticOriginRecord]) : unit
-  (begin
-    (if (>= items.len (array-length items.items))
-      (parse-semantic-origin-vec-grow! items)
-      unit)
-    (set! (array-ref items.items items.len) origin)
-    (set! items.len (+ items.len 1))))
+  (if (>= items.len (array-length items.items))
+    (parse-semantic-origin-vec-grow! items)
+    unit)
+  (set! (array-ref items.items items.len) origin)
+  (set! items.len (+ items.len 1)))
 
 (defstruct CompilerParseSemanticOriginCaptureState
   (active bool)
@@ -194,15 +192,14 @@
         : (Ptr ci.InternSemanticNameView)))))
 
 (define (compiler-parse-decl-origin-cache-reset!) : unit
-  (begin
-    (set! compiler-parse-semantic-origin-capture-active false)
-    (set! compiler-parse-semantic-binding-origin-capture-active false)
-    (set! compiler-parse-semantic-origin-capture-vec-addr 0)
-    (set! compiler-parse-semantic-origin-capture-decl-slot 0)
-    (set!
-      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
-      (compiler-parse-semantic-origin-empty-name-view-shared))
-    (set! compiler-parse-semantic-quote-depth 0)))
+  (set! compiler-parse-semantic-origin-capture-active false)
+  (set! compiler-parse-semantic-binding-origin-capture-active false)
+  (set! compiler-parse-semantic-origin-capture-vec-addr 0)
+  (set! compiler-parse-semantic-origin-capture-decl-slot 0)
+  (set!
+    (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+    (compiler-parse-semantic-origin-empty-name-view-shared))
+  (set! compiler-parse-semantic-quote-depth 0))
 
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
@@ -289,48 +286,44 @@
 (define (compiler-parse-semantic-origin-capture-select!
   [items : (MutPtr ParseSemanticOriginVec)]
   [decl-slot : i64]) : unit
-  (begin
-    (set!
-      compiler-parse-semantic-origin-capture-vec-addr
-      (unsafe
-        (cast (ptr->int (ptr-cast items : (Ptr u8))) : i64)))
-    (set! compiler-parse-semantic-origin-capture-decl-slot decl-slot)))
+  (set!
+    compiler-parse-semantic-origin-capture-vec-addr
+    (unsafe
+      (cast (ptr->int (ptr-cast items : (Ptr u8))) : i64)))
+  (set! compiler-parse-semantic-origin-capture-decl-slot decl-slot))
 
 (define (compiler-parse-semantic-origin-capture-begin!
   [name-view : ci.InternSemanticNameView]
   [items : (MutPtr ParseSemanticOriginVec)]
   [decl-slot : i64]
   [binding-origins : bool]) : unit
-  (begin
-    (set! compiler-parse-semantic-origin-capture-active true)
-    (set! compiler-parse-semantic-binding-origin-capture-active binding-origins)
-    (set!
-      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
-      name-view)
-    (compiler-parse-semantic-origin-capture-select! items decl-slot)))
+  (set! compiler-parse-semantic-origin-capture-active true)
+  (set! compiler-parse-semantic-binding-origin-capture-active binding-origins)
+  (set!
+    (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+    name-view)
+  (compiler-parse-semantic-origin-capture-select! items decl-slot))
 
 (define (compiler-parse-semantic-origin-capture-restore!
   [state : CompilerParseSemanticOriginCaptureState]) : unit
-  (begin
-    (set! compiler-parse-semantic-origin-capture-active state.active)
-    (set!
-      compiler-parse-semantic-binding-origin-capture-active
-      state.binding-origins)
-    (set! compiler-parse-semantic-origin-capture-vec-addr state.vec-addr)
-    (set! compiler-parse-semantic-origin-capture-decl-slot state.decl-slot)
-    (set!
-      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
-      state.name-view)))
+  (set! compiler-parse-semantic-origin-capture-active state.active)
+  (set!
+    compiler-parse-semantic-binding-origin-capture-active
+    state.binding-origins)
+  (set! compiler-parse-semantic-origin-capture-vec-addr state.vec-addr)
+  (set! compiler-parse-semantic-origin-capture-decl-slot state.decl-slot)
+  (set!
+    (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+    state.name-view))
 
 (define (compiler-parse-semantic-origin-capture-end!) : unit
-  (begin
-    (set! compiler-parse-semantic-origin-capture-active false)
-    (set! compiler-parse-semantic-binding-origin-capture-active false)
-    (set! compiler-parse-semantic-origin-capture-vec-addr 0)
-    (set! compiler-parse-semantic-origin-capture-decl-slot 0)
-    (set!
-      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
-      (compiler-parse-semantic-origin-empty-name-view-shared))))
+  (set! compiler-parse-semantic-origin-capture-active false)
+  (set! compiler-parse-semantic-binding-origin-capture-active false)
+  (set! compiler-parse-semantic-origin-capture-vec-addr 0)
+  (set! compiler-parse-semantic-origin-capture-decl-slot 0)
+  (set!
+    (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+    (compiler-parse-semantic-origin-empty-name-view-shared)))
 
 (define (compiler-parse-semantic-origin-push-active!
   [kind : CompilerParseSemanticOriginKind]
@@ -345,18 +338,17 @@
             (cast compiler-parse-semantic-origin-capture-vec-addr : u64)
             : (MutPtr ParseSemanticOriginVec))]
         [items : ParseSemanticOriginVec (ptr-read items-ptr)]
-        (begin
-          (parse-semantic-origin-vec-push!
-            (&mut items)
-            (ParseSemanticOriginRecord
-              compiler-parse-semantic-origin-capture-decl-slot
-              (compiler-parse-semantic-origin-kind-tag kind)
-              written-name
-              (token.span-start-line span)
-              (token.span-start-col span)
-              (token.span-end-line span)
-              (token.span-end-col span)))
-          (ptr-write! items-ptr items))))))
+        (parse-semantic-origin-vec-push!
+          (&mut items)
+          (ParseSemanticOriginRecord
+            compiler-parse-semantic-origin-capture-decl-slot
+            (compiler-parse-semantic-origin-kind-tag kind)
+            written-name
+            (token.span-start-line span)
+            (token.span-start-col span)
+            (token.span-end-line span)
+            (token.span-end-col span)))
+        (ptr-write! items-ptr items)))))
 
 (define (compiler-parse-semantic-origin-push!
   [kind : CompilerParseSemanticOriginKind]
@@ -436,16 +428,15 @@
                     [text : String
                       (ci.intern-semantic-name-view-str name-view current)]
                     [n : i64 (string.string-length text)]
-                    (begin
-                      (compiler-parse-semantic-origin-push-active!
-                        final-kind
-                        current
-                        (token.SourceSpan
-                          (token.span-start-line span)
-                          start-col
-                          (token.span-end-line span)
-                          (+ start-col n)))
-                      (set! done true))))))))))))
+                    (compiler-parse-semantic-origin-push-active!
+                      final-kind
+                      current
+                      (token.SourceSpan
+                        (token.span-start-line span)
+                        start-col
+                        (token.span-end-line span)
+                        (+ start-col n)))
+                    (set! done true)))))))))))
 
 (define (compiler-parse-semantic-origin-push-components!
   [name : ci.InternSyntaxId]
@@ -499,21 +490,20 @@
               [fields-text : String
                 (ci.intern-semantic-name-view-str (& name-view) fields-id)]
               [start-col : i64 (+ (token.span-start-col span) first-dot 1)]
-              (begin
-                (compiler-parse-semantic-origin-push-components!
-                  name
-                  span
-                  (ValueQualifier)
-                  (ValueName))
-                (compiler-parse-semantic-origin-push-components!
-                  (ci.intern-syntax-id-from-raw fields-id)
-                  (token.SourceSpan
-                    (token.span-start-line span)
-                    start-col
-                    (token.span-start-line span)
-                    (+ start-col (string.string-length fields-text)))
-                  (StructFieldUse)
-                  (StructFieldUse))))))))
+              (compiler-parse-semantic-origin-push-components!
+                name
+                span
+                (ValueQualifier)
+                (ValueName))
+              (compiler-parse-semantic-origin-push-components!
+                (ci.intern-syntax-id-from-raw fields-id)
+                (token.SourceSpan
+                  (token.span-start-line span)
+                  start-col
+                  (token.span-start-line span)
+                  (+ start-col (string.string-length fields-text)))
+                (StructFieldUse)
+                (StructFieldUse)))))))
     unit))
 
 (define (compiler-parse-decl-list-storage-key
@@ -549,32 +539,29 @@
     (+ cursor 1)))
 
 (define (compiler-parse-semantic-origin-lookup-cache-reset!) : unit
-  (begin
-    (set!
-      compiler-parse-semantic-origin-lookup-generation
-      (+ compiler-parse-semantic-origin-lookup-generation 1))
-    (set! compiler-parse-semantic-origin-lookup-len 0)
-    (set! compiler-parse-semantic-origin-lookup-indexed-len 0)))
+  (set!
+    compiler-parse-semantic-origin-lookup-generation
+    (+ compiler-parse-semantic-origin-lookup-generation 1))
+  (set! compiler-parse-semantic-origin-lookup-len 0)
+  (set! compiler-parse-semantic-origin-lookup-indexed-len 0))
 
 (define (compiler-parse-semantic-origin-lookup-prepare!) : unit
   (let
     [reader-generation : i64 (reader.sp-node-pool-reset-generation-value)]
     [pool-len : i64 (reader.sp-node-pool-len)]
-    (begin
-      (if (or
+    (when
+      (or
         (!=
           reader-generation
           compiler-parse-semantic-origin-lookup-reader-reset-generation)
         (< pool-len compiler-parse-semantic-origin-lookup-indexed-len))
-        (begin
-          (compiler-parse-semantic-origin-lookup-cache-reset!)
-          (set!
-            compiler-parse-semantic-origin-lookup-reader-reset-generation
-            reader-generation))
-        unit)
-      (if (< compiler-parse-semantic-origin-lookup-indexed-len pool-len)
-        (compiler-parse-semantic-origin-lookup-build!)
-        unit))))
+      (compiler-parse-semantic-origin-lookup-cache-reset!)
+      (set!
+        compiler-parse-semantic-origin-lookup-reader-reset-generation
+        reader-generation))
+    (if (< compiler-parse-semantic-origin-lookup-indexed-len pool-len)
+      (compiler-parse-semantic-origin-lookup-build!)
+      unit)))
 
 (define (compiler-parse-semantic-origin-lookup-hash
   [domain : i64]
@@ -663,28 +650,26 @@
         (arena.Arena compiler-parse-semantic-origin-lookup-arena)
         (__tl_make-array CompilerParseSemanticOriginLookupSlot next-capacity))]
     [old-index : i64 0]
-    (begin
-      (set! compiler-parse-semantic-origin-lookup-slots next)
-      (set! compiler-parse-semantic-origin-lookup-len 0)
-      (while (< old-index old-capacity)
-        (let
-          [entry : CompilerParseSemanticOriginLookupSlot
-            (array-ref old old-index)]
-          (begin
-            (if (=
-              entry.generation
-              compiler-parse-semantic-origin-lookup-generation)
-              (compiler-parse-semantic-origin-lookup-insert-no-grow!
-                entry.domain
-                entry.key
-                entry.slot
-                entry.kind
-                entry.run-start
-                entry.run-count
-                entry.source-key
-                entry.source-slot)
-              unit)
-            (set! old-index (+ old-index 1))))))))
+    (set! compiler-parse-semantic-origin-lookup-slots next)
+    (set! compiler-parse-semantic-origin-lookup-len 0)
+    (while (< old-index old-capacity)
+      (let
+        [entry : CompilerParseSemanticOriginLookupSlot
+          (array-ref old old-index)]
+        (if (=
+          entry.generation
+          compiler-parse-semantic-origin-lookup-generation)
+          (compiler-parse-semantic-origin-lookup-insert-no-grow!
+            entry.domain
+            entry.key
+            entry.slot
+            entry.kind
+            entry.run-start
+            entry.run-count
+            entry.source-key
+            entry.source-slot)
+          unit)
+        (set! old-index (+ old-index 1))))))
 
 (define (compiler-parse-semantic-origin-lookup-insert!
   [domain : i64]
@@ -695,121 +680,113 @@
   [run-count : i64]
   [source-key : i64]
   [source-slot : i64]) : unit
-  (begin
-    (if (or
-      (< (array-length compiler-parse-semantic-origin-lookup-slots) 1)
-      (>=
-        (* (+ compiler-parse-semantic-origin-lookup-len 1) 10)
-        (* (array-length compiler-parse-semantic-origin-lookup-slots) 7)))
-      (compiler-parse-semantic-origin-lookup-grow!)
-      unit)
-    (compiler-parse-semantic-origin-lookup-insert-no-grow!
-      domain
-      key
-      slot
-      kind
-      run-start
-      run-count
-      source-key
-      source-slot)))
+  (if (or
+    (< (array-length compiler-parse-semantic-origin-lookup-slots) 1)
+    (>=
+      (* (+ compiler-parse-semantic-origin-lookup-len 1) 10)
+      (* (array-length compiler-parse-semantic-origin-lookup-slots) 7)))
+    (compiler-parse-semantic-origin-lookup-grow!)
+    unit)
+  (compiler-parse-semantic-origin-lookup-insert-no-grow!
+    domain
+    key
+    slot
+    kind
+    run-start
+    run-count
+    source-key
+    source-slot))
 
 (define (compiler-parse-semantic-origin-lookup-build!) : unit
   (let
     [cursor : i64 compiler-parse-semantic-origin-lookup-indexed-len]
     [limit : i64 (reader.sp-node-pool-len)]
-    (begin
-      (while (< cursor limit)
-        (begin
-          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
-            [(Int record-key marker marker-span)
-              (cond
-                [(and
-                    (string.eq marker "__tl_semantic_origin")
-                    (< (+ cursor 1) limit))
-                  (match (reader.spanned-sexpr-view
-                    (reader.sp-node-get (+ cursor 1)))
-                    [(Int run-slot run-marker run-span)
-                      (let
-                        [count : i64 (token.span-start-line run-span)]
-                        (if (and
-                          (string.eq run-marker "__tl_semantic_origin_start")
-                          (>= count 0)
-                          (<= (+ (+ cursor 2) count) limit))
-                          (compiler-parse-semantic-origin-lookup-insert!
-                            1
-                            record-key
-                            run-slot
-                            1
-                            (+ cursor 2)
-                            count
-                            0
-                            0)
-                          unit))]
-                    [_ unit])]
-                [(and
-                    (string.eq marker "__tl_decl_origin")
-                    (< (+ cursor 2) limit))
-                  (match (reader.spanned-sexpr-view
-                    (reader.sp-node-get (+ cursor 1)))
-                    [(Int run-slot run-marker _)
-                      (if (string.eq run-marker "__tl_decl_origin_start")
-                        (match (reader.spanned-sexpr-view
-                          (reader.sp-node-get (+ cursor 2)))
-                          [(Nil span)
-                            (compiler-parse-semantic-origin-lookup-insert!
-                              2
-                              record-key
-                              run-slot
-                              3
-                              (token.span-start-line span)
-                              (token.span-start-col span)
-                              (token.span-end-line span)
-                              (token.span-end-col span))]
-                          [_ unit])
-                        unit)]
-                    [_ unit])]
-                [(or
-                    (string.eq marker "__tl_decl_origin_alias")
-                    (string.eq marker "__tl_decl_origin_alias_repeat"))
+    (while (< cursor limit)
+      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+        [(Int record-key marker marker-span)
+          (cond
+            [(and
+                (string.eq marker "__tl_semantic_origin")
+                (< (+ cursor 1) limit))
+              (match (reader.spanned-sexpr-view
+                (reader.sp-node-get (+ cursor 1)))
+                [(Int run-slot run-marker run-span)
                   (let
-                    [target-start : i64 (token.span-start-line marker-span)]
-                    [count : i64 (token.span-start-col marker-span)]
-                    [source-key : i64 (token.span-end-line marker-span)]
-                    [source-start : i64 (token.span-end-col marker-span)]
-                    [repeat : bool
-                      (string.eq marker "__tl_decl_origin_alias_repeat")]
-                    [offset : i64 0]
-                    (while (< offset count)
-                      (begin
-                        (if repeat
-                          unit
-                          (compiler-parse-semantic-origin-lookup-insert!
-                            1
-                            record-key
-                            (+ target-start offset)
-                            2
-                            0
-                            0
-                            source-key
-                            (+ source-start offset)))
+                    [count : i64 (token.span-start-line run-span)]
+                    (if (and
+                      (string.eq run-marker "__tl_semantic_origin_start")
+                      (>= count 0)
+                      (<= (+ (+ cursor 2) count) limit))
+                      (compiler-parse-semantic-origin-lookup-insert!
+                        1
+                        record-key
+                        run-slot
+                        1
+                        (+ cursor 2)
+                        count
+                        0
+                        0)
+                      unit))]
+                [_ unit])]
+            [(and (string.eq marker "__tl_decl_origin") (< (+ cursor 2) limit))
+              (match (reader.spanned-sexpr-view
+                (reader.sp-node-get (+ cursor 1)))
+                [(Int run-slot run-marker _)
+                  (if (string.eq run-marker "__tl_decl_origin_start")
+                    (match (reader.spanned-sexpr-view
+                      (reader.sp-node-get (+ cursor 2)))
+                      [(Nil span)
                         (compiler-parse-semantic-origin-lookup-insert!
                           2
                           record-key
-                          (+ target-start offset)
-                          2
-                          0
-                          0
-                          source-key
-                          (if repeat
-                            source-start
-                            (+ source-start offset)))
-                        (set! offset (+ offset 1)))))]
-                [else unit])]
-            [_ unit])
-          (set!
-            cursor
-            (compiler-parse-semantic-origin-next-record cursor limit))))
-      (set! compiler-parse-semantic-origin-lookup-indexed-len limit))))
+                          run-slot
+                          3
+                          (token.span-start-line span)
+                          (token.span-start-col span)
+                          (token.span-end-line span)
+                          (token.span-end-col span))]
+                      [_ unit])
+                    unit)]
+                [_ unit])]
+            [(or
+                (string.eq marker "__tl_decl_origin_alias")
+                (string.eq marker "__tl_decl_origin_alias_repeat"))
+              (let
+                [target-start : i64 (token.span-start-line marker-span)]
+                [count : i64 (token.span-start-col marker-span)]
+                [source-key : i64 (token.span-end-line marker-span)]
+                [source-start : i64 (token.span-end-col marker-span)]
+                [repeat : bool
+                  (string.eq marker "__tl_decl_origin_alias_repeat")]
+                [offset : i64 0]
+                (while (< offset count)
+                  (if repeat
+                    unit
+                    (compiler-parse-semantic-origin-lookup-insert!
+                      1
+                      record-key
+                      (+ target-start offset)
+                      2
+                      0
+                      0
+                      source-key
+                      (+ source-start offset)))
+                  (compiler-parse-semantic-origin-lookup-insert!
+                    2
+                    record-key
+                    (+ target-start offset)
+                    2
+                    0
+                    0
+                    source-key
+                    (if repeat
+                      source-start
+                      (+ source-start offset)))
+                  (set! offset (+ offset 1))))]
+            [else unit])]
+        [_ unit])
+      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
+    (set! compiler-parse-semantic-origin-lookup-indexed-len limit)))
 
 (define (compiler-parse-semantic-origin-lookup
   [domain : i64]
@@ -893,11 +870,10 @@
       (let
         [marker-span : token.SourceSpan
           (compiler-parse-token-span-from-ast-span span)]
-        (begin
-          (reader.sp-node-push (Int key "__tl_decl_origin" marker-span))
-          (reader.sp-node-push (Int slot "__tl_decl_origin_start" marker-span))
-          (reader.sp-node-push (reader.spanned-sexpr-empty marker-span))
-          unit))]
+        (reader.sp-node-push (Int key "__tl_decl_origin" marker-span))
+        (reader.sp-node-push (Int slot "__tl_decl_origin_start" marker-span))
+        (reader.sp-node-push (reader.spanned-sexpr-empty marker-span))
+        unit)]
     [(None) unit]))
 
 (define (compiler-parse-decl-origin-register-maybe!
@@ -947,70 +923,65 @@
     [cursor : i64 scan-start]
     [limit : i64 scan-end]
     (while (< cursor limit)
-      (begin
-        (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
-          [(Int record-key marker _)
-            (if (= record-key source-key)
-              (cond
-                [(and
-                    (string.eq marker "__tl_decl_origin")
-                    (< (+ cursor 2) limit))
-                  (match (reader.spanned-sexpr-view
-                    (reader.sp-node-get (+ cursor 1)))
-                    [(Int record-slot run-marker marker-span)
+      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+        [(Int record-key marker _)
+          (if (= record-key source-key)
+            (cond
+              [(and
+                  (string.eq marker "__tl_decl_origin")
+                  (< (+ cursor 2) limit))
+                (match (reader.spanned-sexpr-view
+                  (reader.sp-node-get (+ cursor 1)))
+                  [(Int record-slot run-marker marker-span)
+                    (if (and
+                      (string.eq run-marker "__tl_decl_origin_start")
+                      (>= record-slot source-start)
+                      (< record-slot source-end))
+                      (begin
+                        (reader.sp-node-push
+                          (Int dest-key "__tl_decl_origin" marker-span))
+                        (reader.sp-node-push
+                          (Int
+                            (+ dest-start (- record-slot source-start))
+                            "__tl_decl_origin_start"
+                            marker-span))
+                        (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
+                        unit)
+                      unit)]
+                  [_ unit])]
+              [(and
+                  (string.eq marker "__tl_semantic_origin")
+                  (< (+ cursor 1) limit))
+                (match (reader.spanned-sexpr-view
+                  (reader.sp-node-get (+ cursor 1)))
+                  [(Int record-slot run-marker run-span)
+                    (let
+                      [count : i64 (token.span-start-line run-span)]
                       (if (and
-                        (string.eq run-marker "__tl_decl_origin_start")
+                        (string.eq run-marker "__tl_semantic_origin_start")
                         (>= record-slot source-start)
-                        (< record-slot source-end))
-                        (begin
+                        (< record-slot source-end)
+                        (>= count 0)
+                        (<= (+ (+ cursor 2) count) limit))
+                        (let
+                          [record-index : i64 0]
                           (reader.sp-node-push
-                            (Int dest-key "__tl_decl_origin" marker-span))
+                            (Int dest-key "__tl_semantic_origin" run-span))
                           (reader.sp-node-push
                             (Int
                               (+ dest-start (- record-slot source-start))
-                              "__tl_decl_origin_start"
-                              marker-span))
-                          (reader.sp-node-push
-                            (reader.sp-node-get (+ cursor 2)))
-                          unit)
-                        unit)]
-                    [_ unit])]
-                [(and
-                    (string.eq marker "__tl_semantic_origin")
-                    (< (+ cursor 1) limit))
-                  (match (reader.spanned-sexpr-view
-                    (reader.sp-node-get (+ cursor 1)))
-                    [(Int record-slot run-marker run-span)
-                      (let
-                        [count : i64 (token.span-start-line run-span)]
-                        (if (and
-                          (string.eq run-marker "__tl_semantic_origin_start")
-                          (>= record-slot source-start)
-                          (< record-slot source-end)
-                          (>= count 0)
-                          (<= (+ (+ cursor 2) count) limit))
-                          (let
-                            [record-index : i64 0]
-                            (begin
-                              (reader.sp-node-push
-                                (Int dest-key "__tl_semantic_origin" run-span))
-                              (reader.sp-node-push
-                                (Int
-                                  (+ dest-start (- record-slot source-start))
-                                  "__tl_semantic_origin_start"
-                                  run-span))
-                              (while (< record-index count)
-                                (begin
-                                  (reader.sp-node-push
-                                    (reader.sp-node-get
-                                      (+ (+ cursor 2) record-index)))
-                                  (set! record-index (+ record-index 1))))))
-                          unit))]
-                    [_ unit])]
-                [else unit])
-              unit)]
-          [_ unit])
-        (set! cursor (compiler-parse-semantic-origin-next-record cursor limit))))))
+                              "__tl_semantic_origin_start"
+                              run-span))
+                          (while (< record-index count)
+                            (reader.sp-node-push
+                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
+                            (set! record-index (+ record-index 1))))
+                        unit))]
+                  [_ unit])]
+              [else unit])
+            unit)]
+        [_ unit])
+      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))))
 
 (define (compiler-parse-decl-origin-register-list-aliases!
   [decls : (& decls ast.AstDeclList)]
@@ -1054,20 +1025,18 @@
         CompilerParseDeclOriginAlias
         (* (array-length old-items) 2))]
     [index : i64 0]
-    (begin
-      (while (< index len)
-        (let
-          [item : CompilerParseDeclOriginAlias (array-ref old-items index)]
-          (begin
-            (set!
-              (array-ref next-items index)
-              (CompilerParseDeclOriginAlias
-                item.target-start
-                item.count
-                item.source-key
-                item.source-slot))
-            (set! index (+ index 1)))))
-      (set! aliases.items next-items))))
+    (while (< index len)
+      (let
+        [item : CompilerParseDeclOriginAlias (array-ref old-items index)]
+        (set!
+          (array-ref next-items index)
+          (CompilerParseDeclOriginAlias
+            item.target-start
+            item.count
+            item.source-key
+            item.source-slot))
+        (set! index (+ index 1))))
+    (set! aliases.items next-items)))
 
 (define (compiler-parse-decl-origin-alias-vec-extend-last?
   [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
@@ -1114,31 +1083,29 @@
       ;; are queried lazily, contiguous aliases coalesce below, and this avoids
       ;; an O(declarations^2) pool scan while constructing compiler programs.
       (not repeat)))
-    (if (compiler-parse-decl-origin-alias-vec-extend-last?
-      aliases
-      target-start
-      count
-      source-key
-      source-slot
-      repeat)
-      unit
-      (begin
-        (if (>= aliases.len (array-length aliases.items))
-          (compiler-parse-decl-origin-alias-vec-grow! aliases)
-          unit)
-        (let
-          [index : i64 aliases.len]
-          (begin
-            (set!
-              (array-ref aliases.items index)
-              (CompilerParseDeclOriginAlias
-                target-start
-                count
-                source-key
-                (if repeat
-                  (- (- 0 source-slot) 1)
-                  source-slot)))
-            (set! aliases.len (+ index 1))))))
+    (unless
+      (compiler-parse-decl-origin-alias-vec-extend-last?
+        aliases
+        target-start
+        count
+        source-key
+        source-slot
+        repeat)
+      (if (>= aliases.len (array-length aliases.items))
+        (compiler-parse-decl-origin-alias-vec-grow! aliases)
+        unit)
+      (let
+        [index : i64 aliases.len]
+        (set!
+          (array-ref aliases.items index)
+          (CompilerParseDeclOriginAlias
+            target-start
+            count
+            source-key
+            (if repeat
+              (- (- 0 source-slot) 1)
+              source-slot)))
+        (set! aliases.len (+ index 1))))
     unit))
 
 (define (compiler-parse-decl-origin-alias-vec-register!
@@ -1149,17 +1116,16 @@
     (while (< index aliases.len)
       (let
         [alias : CompilerParseDeclOriginAlias (array-ref aliases.items index)]
-        (begin
-          (compiler-parse-decl-origin-register-alias-record!
-            decls
-            alias.target-start
-            alias.count
-            alias.source-key
-            (if (< alias.source-slot 0)
-              (- (- 0 alias.source-slot) 1)
-              alias.source-slot)
-            (< alias.source-slot 0))
-          (set! index (+ index 1)))))))
+        (compiler-parse-decl-origin-register-alias-record!
+          decls
+          alias.target-start
+          alias.count
+          alias.source-key
+          (if (< alias.source-slot 0)
+            (- (- 0 alias.source-slot) 1)
+            alias.source-slot)
+          (< alias.source-slot 0))
+        (set! index (+ index 1))))))
 
 ;; Semantic occurrence runs are direct records keyed by declaration storage and
 ;; slot. A normal declaration-origin alias preserves the run; a repeat alias is
@@ -1239,42 +1205,33 @@
     [cursor : i64 0]
     [limit : i64 (reader.sp-node-pool-len)]
     [result : ast.AstSourceSpan fallback]
-    (begin
-      (while (< cursor limit)
-        (begin
-          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
-            [(Int record-key marker marker-span)
-              (if (and
-                (= record-key key)
-                (string.eq marker "__tl_member_origin"))
-                (let
-                  [record-index : i64 (+ cursor 1)]
-                  [record-offset : i64 0]
-                  [done : bool false]
-                  (begin
-                    ;; The marker span is the aggregate name and remains a
-                    ;; useful fallback if a later transform appends a member.
-                    (set! result (ast-source-span-from-source-span marker-span))
-                    (while (and (not done) (< record-index limit))
-                      (match (reader.spanned-sexpr-view
-                        (reader.sp-node-get record-index))
-                        [(Nil span)
-                          (if (= record-offset member-index)
-                            (begin
-                              (set!
-                                result
-                                (ast-source-span-from-source-span span))
-                              (set! done true))
-                            (begin
-                              (set! record-index (+ record-index 1))
-                              (set! record-offset (+ record-offset 1))))]
-                        [_ (set! done true)]))))
-                unit)]
-            [_ unit])
-          (set!
-            cursor
-            (compiler-parse-semantic-origin-next-record cursor limit))))
-      result)))
+    (while (< cursor limit)
+      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+        [(Int record-key marker marker-span)
+          (if (and (= record-key key) (string.eq marker "__tl_member_origin"))
+            (let
+              [record-index : i64 (+ cursor 1)]
+              [record-offset : i64 0]
+              [done : bool false]
+              ;; The marker span is the aggregate name and remains a
+              ;; useful fallback if a later transform appends a member.
+              (set! result (ast-source-span-from-source-span marker-span))
+              (while (and (not done) (< record-index limit))
+                (match (reader.spanned-sexpr-view
+                  (reader.sp-node-get record-index))
+                  [(Nil span)
+                    (if (= record-offset member-index)
+                      (begin
+                        (set! result (ast-source-span-from-source-span span))
+                        (set! done true))
+                      (begin
+                        (set! record-index (+ record-index 1))
+                        (set! record-offset (+ record-offset 1))))]
+                  [_ (set! done true)])))
+            unit)]
+        [_ unit])
+      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
+    result))
 
 (define (compiler-parse-field-def-list-span-get
   [fields : (& fields ast.AstFieldDefList)]
@@ -1307,15 +1264,11 @@
     [read-index : i64 records-start]
     [write-index : i64 mark]
     [end : i64 (reader.sp-node-pool-len)]
-    (begin
-      (while (< read-index end)
-        (begin
-          (reader.sp-node-pool-fill!
-            write-index
-            (reader.sp-node-get read-index))
-          (set! write-index (+ write-index 1))
-          (set! read-index (+ read-index 1))))
-      (reader.sp-node-pool-truncate! write-index))))
+    (while (< read-index end)
+      (reader.sp-node-pool-fill! write-index (reader.sp-node-get read-index))
+      (set! write-index (+ write-index 1))
+      (set! read-index (+ read-index 1)))
+    (reader.sp-node-pool-truncate! write-index)))
 
 (defenum ResultAstType
   (Ok ast.AstType)
@@ -1734,30 +1687,27 @@
     [tags : (__tl_dyn-array i64) (__tl_make-array i64 512)]
     [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
       (__tl_make-array sym_i64_env.SymI64Env 1)]
-    (begin
-      (set! (array-ref cache 0) (sym_i64_env.sym-i64-empty))
-      (set!
-        (array-ref control compiler-parse-state-control-keys-addr)
-        (compiler-parse-array-data-addr keys))
-      (set!
-        (array-ref control compiler-parse-state-control-tags-addr)
-        (compiler-parse-array-data-addr tags))
-      (set!
-        (array-ref control compiler-parse-state-control-cache-addr)
-        (compiler-parse-array-data-addr cache))
-      (set!
-        (array-ref control compiler-parse-state-control-owner-addr)
-        (if (= (array-length owner) 0)
-          0
-          (compiler-parse-array-data-addr owner)))
-      (set!
-        (array-ref control compiler-parse-state-control-cache-generation)
-        -1)
-      (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
-      (set! (array-ref control compiler-parse-state-control-marker-id) -1)
-      (set! (array-ref control compiler-parse-state-control-ready) 0)
-      (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
-      (CompilerParseState control keys tags cache owner))))
+    (set! (array-ref cache 0) (sym_i64_env.sym-i64-empty))
+    (set!
+      (array-ref control compiler-parse-state-control-keys-addr)
+      (compiler-parse-array-data-addr keys))
+    (set!
+      (array-ref control compiler-parse-state-control-tags-addr)
+      (compiler-parse-array-data-addr tags))
+    (set!
+      (array-ref control compiler-parse-state-control-cache-addr)
+      (compiler-parse-array-data-addr cache))
+    (set!
+      (array-ref control compiler-parse-state-control-owner-addr)
+      (if (= (array-length owner) 0)
+        0
+        (compiler-parse-array-data-addr owner)))
+    (set! (array-ref control compiler-parse-state-control-cache-generation) -1)
+    (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
+    (set! (array-ref control compiler-parse-state-control-marker-id) -1)
+    (set! (array-ref control compiler-parse-state-control-ready) 0)
+    (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
+    (CompilerParseState control keys tags cache owner)))
 
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
@@ -1816,9 +1766,8 @@
   (let
     [owner : (__tl_dyn-array ci.InternCompatState)
       (__tl_make-array ci.InternCompatState 1)]
-    (begin
-      (set! (array-ref owner 0) intern-state)
-      (compiler-parse-state-new-from-owner owner))))
+    (set! (array-ref owner 0) intern-state)
+    (compiler-parse-state-new-from-owner owner)))
 
 (define (compiler-parse-state-control-addr [state : CompilerParseState]) : i64
   (compiler-parse-array-data-addr state.control))
@@ -1875,15 +1824,14 @@
   [marker-id : i64]) : i64
   (let
     [cursor : sym_i64_env.SymI64Env dispatch]
-    (begin
-      (while true
-        (match (sym_i64_env.sym-i64-view cursor)
-          [(SymI64ViewNil) (return 0)]
-          [(SymI64ViewBind name-id value rest)
-            (if (= name-id marker-id)
-              (return value)
-              (set! cursor rest))]))
-      0)))
+    (while true
+      (match (sym_i64_env.sym-i64-view cursor)
+        [(SymI64ViewNil) (return 0)]
+        [(SymI64ViewBind name-id value rest)
+          (if (= name-id marker-id)
+            (return value)
+            (set! cursor rest))]))
+    0))
 
 (define (compiler-parse-dispatch-invocation-control
   [dispatch : sym_i64_env.SymI64Env]) : i64
@@ -1971,11 +1919,10 @@
             (compiler-parse-state-owner control)]
           [result : lexer.ResultSpannedTokens
             (lexer.spanned-result-with-intern-state src (&mut intern-state))]
-          (begin
-            ;; Keep that same temporary installed view monotone across files;
-            ;; inactive owners do not match and are never published.
-            (compiler-parse-state-owner-sync-active! control)
-            result))))))
+          ;; Keep that same temporary installed view monotone across files;
+          ;; inactive owners do not match and are never published.
+          (compiler-parse-state-owner-sync-active! control)
+          result)))))
 
 (define (compiler-parse-source-builtins-prepare!) : unit
   ;; The builtin-ID globals still follow the installed intern owner. Driver
@@ -2227,16 +2174,15 @@
       (compiler-parse-env-marker-value
         dispatch
         compiler-parse-invocation-marker-id)]
-    (if (or
-      (= invocation 0)
-      (not (= (compiler-parse-raw-i64-ref invocation 0) 0)))
-      unit
-      (begin
-        (compiler-parse-raw-i64-set! invocation 0 1)
-        (compiler-parse-raw-i64-set! invocation 1 (token.span-start-line span))
-        (compiler-parse-raw-i64-set! invocation 2 (token.span-start-col span))
-        (compiler-parse-raw-i64-set! invocation 3 (token.span-end-line span))
-        (compiler-parse-raw-i64-set! invocation 4 (token.span-end-col span))))))
+    (unless
+      (or
+        (= invocation 0)
+        (not (= (compiler-parse-raw-i64-ref invocation 0) 0)))
+      (compiler-parse-raw-i64-set! invocation 0 1)
+      (compiler-parse-raw-i64-set! invocation 1 (token.span-start-line span))
+      (compiler-parse-raw-i64-set! invocation 2 (token.span-start-col span))
+      (compiler-parse-raw-i64-set! invocation 3 (token.span-end-line span))
+      (compiler-parse-raw-i64-set! invocation 4 (token.span-end-col span)))))
 
 (define (parse-ast-error-span-current
   [dispatch : sym_i64_env.SymI64Env]
@@ -2262,9 +2208,8 @@
   [result : ResultAstExpr]) : ResultAstExpr
   (match (& result)
     [(Err _)
-      (begin
-        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
-        result)]
+      (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
+      result]
     [_ result]))
 
 (define (parse-ast-error-span-note-let-binding
@@ -2273,9 +2218,8 @@
   [result : ResultAstLetBinding]) : ResultAstLetBinding
   (match (& result)
     [(Err _)
-      (begin
-        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
-        result)]
+      (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
+      result]
     [_ result]))
 
 (define (parse-ast-error-span-note-decl
@@ -2284,9 +2228,8 @@
   [result : ResultAstDecl]) : ResultAstDecl
   (match (& result)
     [(Err _)
-      (begin
-        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
-        result)]
+      (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
+      result]
     [_ result]))
 
 (define (parse-ast-error-span-note-maybe-decl
@@ -2295,9 +2238,8 @@
   [result : ResultAstMaybeDecl]) : ResultAstMaybeDecl
   (match (& result)
     [(Err _)
-      (begin
-        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
-        result)]
+      (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
+      result]
     [_ result]))
 
 (define (ast-expr-wrap-span
@@ -2796,9 +2738,8 @@
         compiler-parse-state-control-keys-addr)]
     [i : i64 0]
     (while (< i compiler-parse-dispatch-index-capacity)
-      (begin
-        (compiler-parse-raw-i64-set! keys i 0)
-        (set! i (+ i 1))))))
+      (compiler-parse-raw-i64-set! keys i 0)
+      (set! i (+ i 1)))))
 
 (define (compiler-parse-dispatch-index-insert!
   [control : i64]
@@ -2816,23 +2757,20 @@
     [encoded : i64 (+ name-id 1)]
     [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
     [steps : i64 0]
-    (begin
-      (while (< steps compiler-parse-dispatch-index-capacity)
-        (let
-          [present : i64 (compiler-parse-raw-i64-ref keys slot)]
-          (if (or (= present 0) (= present encoded))
-            (begin
-              (compiler-parse-raw-i64-set! keys slot encoded)
-              (compiler-parse-raw-i64-set! tags slot tag)
-              (return true))
-            (begin
-              (set!
-                slot
-                (bit-and
-                  (+ slot 1)
-                  (- compiler-parse-dispatch-index-capacity 1)))
-              (set! steps (+ steps 1))))))
-      false)))
+    (while (< steps compiler-parse-dispatch-index-capacity)
+      (let
+        [present : i64 (compiler-parse-raw-i64-ref keys slot)]
+        (if (or (= present 0) (= present encoded))
+          (begin
+            (compiler-parse-raw-i64-set! keys slot encoded)
+            (compiler-parse-raw-i64-set! tags slot tag)
+            (return true))
+          (begin
+            (set!
+              slot
+              (bit-and (+ slot 1) (- compiler-parse-dispatch-index-capacity 1)))
+            (set! steps (+ steps 1))))))
+    false))
 
 (define (compiler-parse-dispatch-index-populate!
   [control : i64]
@@ -2842,59 +2780,52 @@
     [table-id : i64 (compiler-parse-state-owner-table-id control)]
     [cursor : sym_i64_env.SymI64Env dispatch]
     [done : bool false]
-    (begin
-      (compiler-parse-dispatch-index-clear! control)
-      (compiler-parse-raw-i64-set!
-        control
-        compiler-parse-state-control-marker-id
-        -1)
-      (compiler-parse-raw-i64-set! control compiler-parse-state-control-ready 1)
-      (while (and
-        (not done)
-        (not
-          (=
-            (compiler-parse-raw-i64-ref
+    (compiler-parse-dispatch-index-clear! control)
+    (compiler-parse-raw-i64-set!
+      control
+      compiler-parse-state-control-marker-id
+      -1)
+    (compiler-parse-raw-i64-set! control compiler-parse-state-control-ready 1)
+    (while (and
+      (not done)
+      (not
+        (=
+          (compiler-parse-raw-i64-ref
+            control
+            compiler-parse-state-control-ready)
+          0)))
+      (match (sym_i64_env.sym-i64-view cursor)
+        [(SymI64ViewNil) (set! done true)]
+        [(SymI64ViewBind name-id tag rest)
+          (if (and (>= name-id 0) (= tag (compiler-parse-tag-decl-defdispatch)))
+            (compiler-parse-raw-i64-set!
               control
-              compiler-parse-state-control-ready)
-            0)))
-        (match (sym_i64_env.sym-i64-view cursor)
-          [(SymI64ViewNil) (set! done true)]
-          [(SymI64ViewBind name-id tag rest)
-            (begin
-              (if (and
-                (>= name-id 0)
-                (= tag (compiler-parse-tag-decl-defdispatch)))
-                (compiler-parse-raw-i64-set!
-                  control
-                  compiler-parse-state-control-marker-id
-                  name-id)
-                unit)
-              (if (or
-                (< name-id 0)
-                (compiler-parse-dispatch-index-insert! control name-id tag))
-                (set! cursor rest)
-                (compiler-parse-raw-i64-set!
-                  control
-                  compiler-parse-state-control-ready
-                  0)))]))
-      (if (<
-        (compiler-parse-raw-i64-ref
-          control
-          compiler-parse-state-control-marker-id)
-        0)
-        (compiler-parse-raw-i64-set!
-          control
-          compiler-parse-state-control-ready
-          0)
-        unit)
-      (compiler-parse-raw-i64-set!
+              compiler-parse-state-control-marker-id
+              name-id)
+            unit)
+          (if (or
+            (< name-id 0)
+            (compiler-parse-dispatch-index-insert! control name-id tag))
+            (set! cursor rest)
+            (compiler-parse-raw-i64-set!
+              control
+              compiler-parse-state-control-ready
+              0))]))
+    (if (<
+      (compiler-parse-raw-i64-ref
         control
-        compiler-parse-state-control-cache-generation
-        generation)
-      (compiler-parse-raw-i64-set!
-        control
-        compiler-parse-state-control-cache-table-id
-        table-id))))
+        compiler-parse-state-control-marker-id)
+      0)
+      (compiler-parse-raw-i64-set! control compiler-parse-state-control-ready 0)
+      unit)
+    (compiler-parse-raw-i64-set!
+      control
+      compiler-parse-state-control-cache-generation
+      generation)
+    (compiler-parse-raw-i64-set!
+      control
+      compiler-parse-state-control-cache-table-id
+      table-id)))
 
 ;; Return the owning control address only when the first non-capability binding
 ;; is this state's defdispatch marker. Partial/custom environments retain the
@@ -2906,54 +2837,51 @@
     [control : i64 0]
     [marker-id : i64 -1]
     [marker-tag : i64 -1]
-    (begin
-      ;; Invocation frames are created only after the complete base dispatch
-      ;; has validated this control. Intern reset cannot occur during a parse,
-      ;; so the frame is the constant-time production path; the scan below is
-      ;; retained for derived and custom test environments.
-      (match (sym_i64_env.sym-i64-view dispatch)
-        [(SymI64ViewBind name-id value _)
-          (cond
-            [(= name-id compiler-parse-invocation-control-marker-id)
-              (return value)]
-            [(= name-id compiler-parse-invocation-marker-id)
-              (return
-                (compiler-parse-raw-i64-ref
-                  value
-                  compiler-parse-invocation-control-slot))]
-            [else unit])]
-        [(SymI64ViewNil) unit])
-      (while (or (= control 0) (< marker-id 0))
-        (match (sym_i64_env.sym-i64-view cursor)
-          [(SymI64ViewNil) (return 0)]
-          [(SymI64ViewBind name-id tag rest)
-            (begin
-              (if (= name-id compiler-parse-state-marker-id)
-                (set! control tag)
-                unit)
-              (if (and (>= name-id 0) (< marker-id 0))
-                (begin
-                  (set! marker-id name-id)
-                  (set! marker-tag tag))
-                unit)
-              (set! cursor rest))]))
-      (if (and
-        (not (= control 0))
-        (= marker-tag (compiler-parse-tag-decl-defdispatch))
-        (not
-          (=
-            (compiler-parse-raw-i64-ref
-              control
-              compiler-parse-state-control-ready)
-            0))
-        (compiler-parse-dispatch-index-current-control? control)
+    ;; Invocation frames are created only after the complete base dispatch
+    ;; has validated this control. Intern reset cannot occur during a parse,
+    ;; so the frame is the constant-time production path; the scan below is
+    ;; retained for derived and custom test environments.
+    (match (sym_i64_env.sym-i64-view dispatch)
+      [(SymI64ViewBind name-id value _)
+        (cond
+          [(= name-id compiler-parse-invocation-control-marker-id)
+            (return value)]
+          [(= name-id compiler-parse-invocation-marker-id)
+            (return
+              (compiler-parse-raw-i64-ref
+                value
+                compiler-parse-invocation-control-slot))]
+          [else unit])]
+      [(SymI64ViewNil) unit])
+    (while (or (= control 0) (< marker-id 0))
+      (match (sym_i64_env.sym-i64-view cursor)
+        [(SymI64ViewNil) (return 0)]
+        [(SymI64ViewBind name-id tag rest)
+          (if (= name-id compiler-parse-state-marker-id)
+            (set! control tag)
+            unit)
+          (when
+            (and (>= name-id 0) (< marker-id 0))
+            (set! marker-id name-id)
+            (set! marker-tag tag))
+          (set! cursor rest)]))
+    (if (and
+      (not (= control 0))
+      (= marker-tag (compiler-parse-tag-decl-defdispatch))
+      (not
         (=
-          marker-id
           (compiler-parse-raw-i64-ref
             control
-            compiler-parse-state-control-marker-id)))
-        control
-        0))))
+            compiler-parse-state-control-ready)
+          0))
+      (compiler-parse-dispatch-index-current-control? control)
+      (=
+        marker-id
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-marker-id)))
+      control
+      0)))
 
 (define (compiler-parse-dispatch-index-mark [dispatch : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -2991,23 +2919,18 @@
     [encoded : i64 (+ name-id 1)]
     [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
     [steps : i64 0]
-    (begin
-      (while (< steps compiler-parse-dispatch-index-capacity)
-        (let
-          [present : i64 (compiler-parse-raw-i64-ref keys slot)]
-          (cond
-            [(= present 0) (return (compiler-parse-tag-unknown))]
-            [(= present encoded)
-              (return (compiler-parse-raw-i64-ref tags slot))]
-            [else
-              (begin
-                (set!
-                  slot
-                  (bit-and
-                    (+ slot 1)
-                    (- compiler-parse-dispatch-index-capacity 1)))
-                (set! steps (+ steps 1)))])))
-      (compiler-parse-tag-unknown))))
+    (while (< steps compiler-parse-dispatch-index-capacity)
+      (let
+        [present : i64 (compiler-parse-raw-i64-ref keys slot)]
+        (cond
+          [(= present 0) (return (compiler-parse-tag-unknown))]
+          [(= present encoded) (return (compiler-parse-raw-i64-ref tags slot))]
+          [else
+            (set!
+              slot
+              (bit-and (+ slot 1) (- compiler-parse-dispatch-index-capacity 1)))
+            (set! steps (+ steps 1))])))
+    (compiler-parse-tag-unknown)))
 
 (define (compiler-parse-dispatch-bind
   [env : sym_i64_env.SymI64Env]
@@ -3084,603 +3007,568 @@
 (define (compiler-parse-dispatch-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
     [out : sym_i64_env.SymI64Env e]
-    (begin
-      (set!
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "i64" (compiler-parse-tag-ty-i64)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "i32" (compiler-parse-tag-ty-i32)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "i16" (compiler-parse-tag-ty-i16)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "i8" (compiler-parse-tag-ty-i8)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "u64" (compiler-parse-tag-ty-u64)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "u32" (compiler-parse-tag-ty-u32)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "u16" (compiler-parse-tag-ty-u16)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "u8" (compiler-parse-tag-ty-u8)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "f64" (compiler-parse-tag-ty-f64)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "f32" (compiler-parse-tag-ty-f32)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "bool" (compiler-parse-tag-ty-bool)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "char" (compiler-parse-tag-ty-char)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "String" (compiler-parse-tag-ty-string)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "str" (compiler-parse-tag-ty-str)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "bytes" (compiler-parse-tag-ty-bytes)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "unit" (compiler-parse-tag-unit)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "never" (compiler-parse-tag-ty-never)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "->" (compiler-parse-tag-ty-func)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "CFunc" (compiler-parse-tag-ty-c-func)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "Array" (compiler-parse-tag-ty-array)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "in" (compiler-parse-tag-ty-region)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
         out
-        (compiler-parse-dispatch-bind out "i64" (compiler-parse-tag-ty-i64)))
-      (set!
+        "MutPtr"
+        (compiler-parse-tag-ty-mut-ptr)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "&" (compiler-parse-tag-ty-ref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "Box" (compiler-parse-tag-ty-box)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
         out
-        (compiler-parse-dispatch-bind out "i32" (compiler-parse-tag-ty-i32)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "i16" (compiler-parse-tag-ty-i16)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "i8" (compiler-parse-tag-ty-i8)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "u64" (compiler-parse-tag-ty-u64)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "u32" (compiler-parse-tag-ty-u32)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "u16" (compiler-parse-tag-ty-u16)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "u8" (compiler-parse-tag-ty-u8)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "f64" (compiler-parse-tag-ty-f64)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "f32" (compiler-parse-tag-ty-f32)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "bool" (compiler-parse-tag-ty-bool)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "char" (compiler-parse-tag-ty-char)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "String"
-          (compiler-parse-tag-ty-string)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "str" (compiler-parse-tag-ty-str)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "bytes" (compiler-parse-tag-ty-bytes)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "unit" (compiler-parse-tag-unit)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "never" (compiler-parse-tag-ty-never)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "->" (compiler-parse-tag-ty-func)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "CFunc"
-          (compiler-parse-tag-ty-c-func)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "Array" (compiler-parse-tag-ty-array)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "in" (compiler-parse-tag-ty-region)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "MutPtr"
-          (compiler-parse-tag-ty-mut-ptr)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "&" (compiler-parse-tag-ty-ref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "&mut"
-          (compiler-parse-tag-ty-mut-ref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "Box" (compiler-parse-tag-ty-box)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_dyn-array"
-          (compiler-parse-tag-ty-dyn-array)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "Slice" (compiler-parse-tag-ty-slice)))
-      out)))
+        "__tl_dyn-array"
+        (compiler-parse-tag-ty-dyn-array)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "Slice" (compiler-parse-tag-ty-slice)))
+    out))
 
 (define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
     [out : sym_i64_env.SymI64Env e]
-    (begin
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "if" (compiler-parse-tag-expr-if)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "let" (compiler-parse-tag-expr-let)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "lambda"
-          (compiler-parse-tag-expr-lambda)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "while"
-          (compiler-parse-tag-expr-while)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "begin"
-          (compiler-parse-tag-expr-begin)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "unsafe"
-          (compiler-parse-tag-expr-unsafe)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "set!" (compiler-parse-tag-expr-set)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "replace!"
-          (compiler-parse-tag-expr-replace)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "ann" (compiler-parse-tag-expr-ann)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "cast" (compiler-parse-tag-expr-cast)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "tuple"
-          (compiler-parse-tag-expr-tuple)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "tuple-ref"
-          (compiler-parse-tag-expr-tuple-ref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array"
-          (compiler-parse-tag-expr-array)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "make-array"
-          (compiler-parse-tag-expr-fixed-make-array)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_make-array"
-          (compiler-parse-tag-expr-make-array)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array-ref"
-          (compiler-parse-tag-expr-array-ref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_array-ref"
-          (compiler-parse-tag-expr-array-ref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array-set!"
-          (compiler-parse-tag-expr-retired-array-set)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_array-set!"
-          (compiler-parse-tag-expr-array-set)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array-push!"
-          (compiler-parse-tag-expr-retired-array-push)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_array-push!"
-          (compiler-parse-tag-expr-array-push)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array-take!"
-          (compiler-parse-tag-expr-retired-array-take)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_array-take!"
-          (compiler-parse-tag-expr-array-take)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_for-owned-state"
-          (compiler-parse-tag-expr-for-owned-state)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_for-owned-step"
-          (compiler-parse-tag-expr-for-owned-step)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_for-owned-step-typed"
-          (compiler-parse-tag-expr-for-owned-step-typed)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "match"
-          (compiler-parse-tag-expr-match)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "foreach"
-          (compiler-parse-tag-expr-foreach)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "spmd-reduce"
-          (compiler-parse-tag-expr-spmd-reduce)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "spmd-scan"
-          (compiler-parse-tag-expr-spmd-scan)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "spmd-compact"
-          (compiler-parse-tag-expr-spmd-compact)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "spmd-broadcast"
-          (compiler-parse-tag-expr-spmd-broadcast)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "spmd-shuffle"
-          (compiler-parse-tag-expr-spmd-shuffle)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "program-index"
-          (compiler-parse-tag-expr-spmd-program-index)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "program-count"
-          (compiler-parse-tag-expr-spmd-program-count)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "foreach-active"
-          (compiler-parse-tag-expr-foreach-active)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "lane-value"
-          (compiler-parse-tag-expr-lane-value)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "struct-get"
-          (compiler-parse-tag-expr-retired-struct-get)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_struct-get"
-          (compiler-parse-tag-expr-struct-get)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "struct-set"
-          (compiler-parse-tag-expr-retired-struct-set)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "struct-set!"
-          (compiler-parse-tag-expr-retired-struct-set)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "comptime"
-          (compiler-parse-tag-expr-comptime)))
-      ;; `with-arena` is the canonical scoped-arena spelling.
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "with-arena"
-          (compiler-parse-tag-expr-with-region)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "with-escape"
-          (compiler-parse-tag-expr-with-escape)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "with-scratch"
-          (compiler-parse-tag-expr-with-scratch)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "in-arena"
-          (compiler-parse-tag-expr-in-arena)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "type"
-          (compiler-parse-tag-expr-type-literal)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "init" (compiler-parse-tag-expr-init)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "try" (compiler-parse-tag-expr-try)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "return"
-          (compiler-parse-tag-expr-return)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "break"
-          (compiler-parse-tag-expr-break)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "continue"
-          (compiler-parse-tag-expr-continue)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-null"
-          (compiler-parse-tag-expr-ptr-null)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-null?"
-          (compiler-parse-tag-expr-ptr-null-check)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-read"
-          (compiler-parse-tag-expr-ptr-read)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-write!"
-          (compiler-parse-tag-expr-ptr-write)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-offset"
-          (compiler-parse-tag-expr-ptr-offset)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-cast"
-          (compiler-parse-tag-expr-ptr-cast)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr->int"
-          (compiler-parse-tag-expr-ptr-to-int)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "int->ptr"
-          (compiler-parse-tag-expr-int-to-ptr)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "ptr-addr-of"
-          (compiler-parse-tag-expr-ptr-addr-of)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind out "box" (compiler-parse-tag-expr-box)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "box-get"
-          (compiler-parse-tag-expr-retired-box-get)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_box-get"
-          (compiler-parse-tag-expr-box-get)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "box-take"
-          (compiler-parse-tag-expr-retired-box-take)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_box-take"
-          (compiler-parse-tag-expr-box-take)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "deref"
-          (compiler-parse-tag-expr-deref)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "string-data"
-          (compiler-parse-tag-expr-string-data)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "string-from-bytes"
-          (compiler-parse-tag-expr-string-from-bytes)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "array-data"
-          (compiler-parse-tag-expr-retired-array-data)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "__tl_array-data"
-          (compiler-parse-tag-expr-array-data)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "program-argc"
-          (compiler-parse-tag-expr-program-argc)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "program-argv"
-          (compiler-parse-tag-expr-program-argv)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "program-envp"
-          (compiler-parse-tag-expr-program-envp)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "cpuid-eax"
-          (compiler-parse-tag-expr-cpuid-eax)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "cpuid-ebx"
-          (compiler-parse-tag-expr-cpuid-ebx)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "cpuid-ecx"
-          (compiler-parse-tag-expr-cpuid-ecx)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "cpuid-edx"
-          (compiler-parse-tag-expr-cpuid-edx)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "xgetbv"
-          (compiler-parse-tag-expr-xgetbv)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "syscall"
-          (compiler-parse-tag-expr-syscall)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "with"
-          (compiler-parse-tag-expr-with-resource)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "quote"
-          (compiler-parse-tag-expr-quote)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "quasiquote"
-          (compiler-parse-tag-expr-quasiquote)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "unquote"
-          (compiler-parse-tag-expr-unquote)))
-      (set!
-        out
-        (compiler-parse-dispatch-bind
-          out
-          "unquote-splicing"
-          (compiler-parse-tag-expr-unquote-splicing)))
-      out)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "if" (compiler-parse-tag-expr-if)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "let" (compiler-parse-tag-expr-let)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "lambda"
+        (compiler-parse-tag-expr-lambda)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "while" (compiler-parse-tag-expr-while)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "begin" (compiler-parse-tag-expr-begin)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "unsafe"
+        (compiler-parse-tag-expr-unsafe)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "set!" (compiler-parse-tag-expr-set)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "replace!"
+        (compiler-parse-tag-expr-replace)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "ann" (compiler-parse-tag-expr-ann)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "cast" (compiler-parse-tag-expr-cast)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "tuple" (compiler-parse-tag-expr-tuple)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "tuple-ref"
+        (compiler-parse-tag-expr-tuple-ref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "array" (compiler-parse-tag-expr-array)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "make-array"
+        (compiler-parse-tag-expr-fixed-make-array)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_make-array"
+        (compiler-parse-tag-expr-make-array)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "array-ref"
+        (compiler-parse-tag-expr-array-ref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_array-ref"
+        (compiler-parse-tag-expr-array-ref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "array-set!"
+        (compiler-parse-tag-expr-retired-array-set)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_array-set!"
+        (compiler-parse-tag-expr-array-set)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "array-push!"
+        (compiler-parse-tag-expr-retired-array-push)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_array-push!"
+        (compiler-parse-tag-expr-array-push)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "array-take!"
+        (compiler-parse-tag-expr-retired-array-take)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_array-take!"
+        (compiler-parse-tag-expr-array-take)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_for-owned-state"
+        (compiler-parse-tag-expr-for-owned-state)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_for-owned-step"
+        (compiler-parse-tag-expr-for-owned-step)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_for-owned-step-typed"
+        (compiler-parse-tag-expr-for-owned-step-typed)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "match" (compiler-parse-tag-expr-match)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "foreach"
+        (compiler-parse-tag-expr-foreach)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "spmd-reduce"
+        (compiler-parse-tag-expr-spmd-reduce)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "spmd-scan"
+        (compiler-parse-tag-expr-spmd-scan)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "spmd-compact"
+        (compiler-parse-tag-expr-spmd-compact)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "spmd-broadcast"
+        (compiler-parse-tag-expr-spmd-broadcast)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "spmd-shuffle"
+        (compiler-parse-tag-expr-spmd-shuffle)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "program-index"
+        (compiler-parse-tag-expr-spmd-program-index)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "program-count"
+        (compiler-parse-tag-expr-spmd-program-count)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "foreach-active"
+        (compiler-parse-tag-expr-foreach-active)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "lane-value"
+        (compiler-parse-tag-expr-lane-value)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "struct-get"
+        (compiler-parse-tag-expr-retired-struct-get)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_struct-get"
+        (compiler-parse-tag-expr-struct-get)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "struct-set"
+        (compiler-parse-tag-expr-retired-struct-set)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "struct-set!"
+        (compiler-parse-tag-expr-retired-struct-set)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "comptime"
+        (compiler-parse-tag-expr-comptime)))
+    ;; `with-arena` is the canonical scoped-arena spelling.
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "with-arena"
+        (compiler-parse-tag-expr-with-region)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "with-escape"
+        (compiler-parse-tag-expr-with-escape)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "with-scratch"
+        (compiler-parse-tag-expr-with-scratch)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "in-arena"
+        (compiler-parse-tag-expr-in-arena)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "type"
+        (compiler-parse-tag-expr-type-literal)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "init" (compiler-parse-tag-expr-init)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "try" (compiler-parse-tag-expr-try)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "return"
+        (compiler-parse-tag-expr-return)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "break" (compiler-parse-tag-expr-break)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "continue"
+        (compiler-parse-tag-expr-continue)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-null"
+        (compiler-parse-tag-expr-ptr-null)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-null?"
+        (compiler-parse-tag-expr-ptr-null-check)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-read"
+        (compiler-parse-tag-expr-ptr-read)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-write!"
+        (compiler-parse-tag-expr-ptr-write)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-offset"
+        (compiler-parse-tag-expr-ptr-offset)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-cast"
+        (compiler-parse-tag-expr-ptr-cast)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr->int"
+        (compiler-parse-tag-expr-ptr-to-int)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "int->ptr"
+        (compiler-parse-tag-expr-int-to-ptr)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "ptr-addr-of"
+        (compiler-parse-tag-expr-ptr-addr-of)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "box" (compiler-parse-tag-expr-box)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "box-get"
+        (compiler-parse-tag-expr-retired-box-get)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_box-get"
+        (compiler-parse-tag-expr-box-get)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "box-take"
+        (compiler-parse-tag-expr-retired-box-take)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_box-take"
+        (compiler-parse-tag-expr-box-take)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "deref" (compiler-parse-tag-expr-deref)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "string-data"
+        (compiler-parse-tag-expr-string-data)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "string-from-bytes"
+        (compiler-parse-tag-expr-string-from-bytes)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "array-data"
+        (compiler-parse-tag-expr-retired-array-data)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "__tl_array-data"
+        (compiler-parse-tag-expr-array-data)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "program-argc"
+        (compiler-parse-tag-expr-program-argc)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "program-argv"
+        (compiler-parse-tag-expr-program-argv)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "program-envp"
+        (compiler-parse-tag-expr-program-envp)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "cpuid-eax"
+        (compiler-parse-tag-expr-cpuid-eax)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "cpuid-ebx"
+        (compiler-parse-tag-expr-cpuid-ebx)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "cpuid-ecx"
+        (compiler-parse-tag-expr-cpuid-ecx)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "cpuid-edx"
+        (compiler-parse-tag-expr-cpuid-edx)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "xgetbv"
+        (compiler-parse-tag-expr-xgetbv)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "syscall"
+        (compiler-parse-tag-expr-syscall)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "with"
+        (compiler-parse-tag-expr-with-resource)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind out "quote" (compiler-parse-tag-expr-quote)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "quasiquote"
+        (compiler-parse-tag-expr-quasiquote)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "unquote"
+        (compiler-parse-tag-expr-unquote)))
+    (set!
+      out
+      (compiler-parse-dispatch-bind
+        out
+        "unquote-splicing"
+        (compiler-parse-tag-expr-unquote-splicing)))
+    out))
 
 (define (compiler-parse-dispatch-patterns [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -3821,48 +3709,44 @@
         (ci.intern-compat-state-capture-from-globals! (&mut owner))))))
 
 (define (compiler-parse-dispatch-env-for-control [control : i64]) : sym_i64_env.SymI64Env
-  (begin
-    ;; Builtin seeding may have advanced an already-installed owner's scalar
-    ;; compatibility view. Capture it before direct state-owned interning.
-    (compiler-parse-state-owner-capture-active! control)
-    (if (and
-      (not
-        (=
-          (compiler-parse-raw-i64-ref
-            control
-            compiler-parse-state-control-ready)
-          0))
-      (compiler-parse-dispatch-index-current-control? control))
-      (compiler-parse-dispatch-cache-ref control)
-      (let
-        [persistent-arena : arena.Arena
-          (arena.Arena (compiler-parse-state-owner-persistent-arena control))]
-        (in-arena
-          persistent-arena
-          (let
-            [seed : sym_i64_env.SymI64Env
-              (sym_i64_env.sym-i64-bind-id
-                (sym_i64_env.sym-i64-empty)
-                compiler-parse-state-marker-id
-                control)]
-            [dispatch : sym_i64_env.SymI64Env
-              (compiler-parse-dispatch-decls
-                (compiler-parse-dispatch-patterns
-                  (compiler-parse-dispatch-exprs
-                    (compiler-parse-dispatch-types
-                      (compiler-parse-dispatch-unops
-                        (compiler-parse-dispatch-binops seed))))))]
-            (begin
-              (compiler-parse-dispatch-index-populate! control dispatch)
-              (compiler-parse-dispatch-cache-set! control dispatch)
-              (compiler-parse-state-owner-floor-refresh! control)
-              ;; Direct owner interning advances the state's scalar pool count.
-              ;; When that owner is already installed, publish those scalars once
-              ;; after the immutable dispatch is complete so subsequent source
-              ;; lexing continues after its syntax IDs. Inactive owners remain
-              ;; untouched, preserving A/B state isolation.
-              (compiler-parse-state-owner-sync-active! control)
-              dispatch)))))))
+  ;; Builtin seeding may have advanced an already-installed owner's scalar
+  ;; compatibility view. Capture it before direct state-owned interning.
+  (compiler-parse-state-owner-capture-active! control)
+  (if (and
+    (not
+      (=
+        (compiler-parse-raw-i64-ref control compiler-parse-state-control-ready)
+        0))
+    (compiler-parse-dispatch-index-current-control? control))
+    (compiler-parse-dispatch-cache-ref control)
+    (let
+      [persistent-arena : arena.Arena
+        (arena.Arena (compiler-parse-state-owner-persistent-arena control))]
+      (in-arena
+        persistent-arena
+        (let
+          [seed : sym_i64_env.SymI64Env
+            (sym_i64_env.sym-i64-bind-id
+              (sym_i64_env.sym-i64-empty)
+              compiler-parse-state-marker-id
+              control)]
+          [dispatch : sym_i64_env.SymI64Env
+            (compiler-parse-dispatch-decls
+              (compiler-parse-dispatch-patterns
+                (compiler-parse-dispatch-exprs
+                  (compiler-parse-dispatch-types
+                    (compiler-parse-dispatch-unops
+                      (compiler-parse-dispatch-binops seed))))))]
+          (compiler-parse-dispatch-index-populate! control dispatch)
+          (compiler-parse-dispatch-cache-set! control dispatch)
+          (compiler-parse-state-owner-floor-refresh! control)
+          ;; Direct owner interning advances the state's scalar pool count.
+          ;; When that owner is already installed, publish those scalars once
+          ;; after the immutable dispatch is complete so subsequent source
+          ;; lexing continues after its syntax IDs. Inactive owners remain
+          ;; untouched, preserving A/B state isolation.
+          (compiler-parse-state-owner-sync-active! control)
+          dispatch)))))
 
 (define (compiler-parse-dispatch-env-from-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -3972,11 +3856,10 @@
     [(Cons head tail)
       (match (parse-ast-type dispatch pools head)
         [(Ok parsed-head)
-          (begin
-            (ast.ast-type-list-push
-              out
-              (ast.ast-node-pool-context-type-push pools parsed-head))
-            (parse-ast-type-list dispatch pools tail out))]
+          (ast.ast-type-list-push
+            out
+            (ast.ast-node-pool-context-type-push pools parsed-head))
+          (parse-ast-type-list dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed type list")]))
 
@@ -4461,9 +4344,8 @@
   (match (reader.spanned-sexpr-view items)
     [(Nil _) unit]
     [(Cons head tail _)
-      (begin
-        (compiler-parse-semantic-type-origins! dispatch head)
-        (compiler-parse-semantic-type-list-origins! dispatch tail))]
+      (compiler-parse-semantic-type-origins! dispatch head)
+      (compiler-parse-semantic-type-list-origins! dispatch tail)]
     [_ unit]))
 
 (define (compiler-parse-semantic-func-type-item-origins!
@@ -4493,9 +4375,8 @@
   (match (reader.spanned-sexpr-view items)
     [(Nil _) unit]
     [(Cons head tail _)
-      (begin
-        (compiler-parse-semantic-func-type-item-origins! dispatch head)
-        (compiler-parse-semantic-func-type-list-origins! dispatch tail))]
+      (compiler-parse-semantic-func-type-item-origins! dispatch head)
+      (compiler-parse-semantic-func-type-list-origins! dispatch tail)]
     [_ unit]))
 
 (define (compiler-parse-semantic-type-second-origin!
@@ -4606,13 +4487,11 @@
       (parse-ast-type dispatch pools (compiler-parse-place-shared-view s))]
     (match (& result)
       [(Err _)
-        (begin
-          (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
-          result)]
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
+        result]
       [(Ok _)
-        (begin
-          (compiler-parse-semantic-type-origins! dispatch s)
-          result)])))
+        (compiler-parse-semantic-type-origins! dispatch s)
+        result])))
 
 (define (parse-ast-runtime-param-result
   [dispatch : sym_i64_env.SymI64Env]
@@ -4908,12 +4787,11 @@
     [(Cons head tail)
       (match (reader.sexpr-view head)
         [(Sym kind-name)
-          (begin
-            (ast.ast-macro-type-kind-list-set!
-              out
-              index
-              (ci.intern-syntax-id-value kind-name))
-            (parse-ast-macro-type-kind-list-fill! out tail (+ index 1)))]
+          (ast.ast-macro-type-kind-list-set!
+            out
+            index
+            (ci.intern-syntax-id-value kind-name))
+          (parse-ast-macro-type-kind-list-fill! out tail (+ index 1))]
         [_ unit])]
     [_ unit]))
 
@@ -4929,9 +4807,8 @@
       (let
         [out : ast.AstMacroTypeKindList
           (ast.ast-macro-type-kind-list-with-length count)]
-        (begin
-          (parse-ast-macro-type-kind-list-fill! (&mut out) s 0)
-          (Ok out)))]
+        (parse-ast-macro-type-kind-list-fill! (&mut out) s 0)
+        (Ok out))]
     [(Err message) (Err message)]))
 
 (define (parse-ast-macro-type-kind-constraint
@@ -5098,9 +4975,8 @@
             (compiler-parse-place-shared-view parsed-head))
             (match (reader.sexpr-view (compiler-parse-place-shared-view tail))
               [(Nil)
-                (begin
-                  (ast.ast-macro-param-list-push out parsed-head)
-                  Ok)]
+                (ast.ast-macro-param-list-push out parsed-head)
+                Ok]
               [_
                 (if (ast-macro-param-shape-delimited-variadic?
                   dispatch
@@ -5136,9 +5012,8 @@
     [(Cons head tail)
       (match (parse-ast-param dispatch pools head)
         [(Ok parsed-head)
-          (begin
-            (ast.ast-param-list-push out parsed-head)
-            (parse-ast-param-list-into dispatch pools tail out))]
+          (ast.ast-param-list-push out parsed-head)
+          (parse-ast-param-list-into dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed parameter list")]))
 
@@ -5160,32 +5035,31 @@
   [item : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view item)
     [(BracketList items _)
-      (begin
-        (when
-          compiler-parse-semantic-binding-origin-capture-active
-          (match (reader.spanned-sexpr-view
-            (compiler-parse-place-shared-view items))
-            [(Cons name rest _)
-              (if (match (reader.sexpr-view
-                (compiler-parse-place-shared-view name))
-                [(Sym id)
-                  (=
-                    (ci.intern-syntax-id-value id)
-                    cbi.compiler-builtin-id-fix-comptime)]
-                [_ false])
-                (match (reader.spanned-sexpr-view rest)
-                  [(Cons binding _ _)
-                    (compiler-parse-semantic-token-origin!
-                      dispatch
-                      (compiler-parse-place-shared-view binding)
-                      CompilerParseSemanticOriginKind.BindingDefinition)]
-                  [_ unit])
-                (compiler-parse-semantic-token-origin!
-                  dispatch
-                  (compiler-parse-place-shared-view name)
-                  CompilerParseSemanticOriginKind.BindingDefinition))]
-            [_ unit]))
-        (compiler-parse-semantic-param-items-origin! dispatch items))]
+      (when
+        compiler-parse-semantic-binding-origin-capture-active
+        (match (reader.spanned-sexpr-view
+          (compiler-parse-place-shared-view items))
+          [(Cons name rest _)
+            (if (match (reader.sexpr-view
+              (compiler-parse-place-shared-view name))
+              [(Sym id)
+                (=
+                  (ci.intern-syntax-id-value id)
+                  cbi.compiler-builtin-id-fix-comptime)]
+              [_ false])
+              (match (reader.spanned-sexpr-view rest)
+                [(Cons binding _ _)
+                  (compiler-parse-semantic-token-origin!
+                    dispatch
+                    (compiler-parse-place-shared-view binding)
+                    CompilerParseSemanticOriginKind.BindingDefinition)]
+                [_ unit])
+              (compiler-parse-semantic-token-origin!
+                dispatch
+                (compiler-parse-place-shared-view name)
+                CompilerParseSemanticOriginKind.BindingDefinition))]
+          [_ unit]))
+      (compiler-parse-semantic-param-items-origin! dispatch items)]
     [_ unit]))
 
 (define (compiler-parse-semantic-param-list-origins!
@@ -5194,9 +5068,8 @@
   (match (reader.spanned-sexpr-view items)
     [(Nil _) unit]
     [(Cons head tail _)
-      (begin
-        (compiler-parse-semantic-param-origin! dispatch head)
-        (compiler-parse-semantic-param-list-origins! dispatch tail))]
+      (compiler-parse-semantic-param-origin! dispatch head)
+      (compiler-parse-semantic-param-list-origins! dispatch tail)]
     [_ unit]))
 
 (define (parse-ast-field-cleanup
@@ -5374,9 +5247,8 @@
   [dispatch : sym_i64_env.SymI64Env]
   [form : reader.SpannedSexpr]
   [message : String]) : ResultAstFieldParts
-  (begin
-    (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
-    (Err message)))
+  (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
+  (Err message))
 
 ;; Whether `meta` is an `(:align ...)` form.
 (define (parse-ast-align-metadata? [meta : reader.SpannedSexpr]) : bool
@@ -5484,19 +5356,18 @@
   [items : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view items)
     [(Cons name-node tail-items _)
-      (begin
-        (match (reader.spanned-sexpr-view name-node)
-          [(Sym name span)
-            (compiler-parse-semantic-origin-push-components!
-              name
-              span
-              (ModulePath)
-              (StructFieldDefinition))]
-          [_ unit])
-        (match (reader.spanned-sexpr-view tail-items)
-          [(Cons ty-node _ _)
-            (compiler-parse-semantic-type-origins! dispatch ty-node)]
-          [_ unit]))]
+      (match (reader.spanned-sexpr-view name-node)
+        [(Sym name span)
+          (compiler-parse-semantic-origin-push-components!
+            name
+            span
+            (ModulePath)
+            (StructFieldDefinition))]
+        [_ unit])
+      (match (reader.spanned-sexpr-view tail-items)
+        [(Cons ty-node _ _)
+          (compiler-parse-semantic-type-origins! dispatch ty-node)]
+        [_ unit])]
     [_ unit]))
 
 ;; A struct-level `(:align N)` error is located at the offending form.
@@ -5504,9 +5375,8 @@
   [dispatch : sym_i64_env.SymI64Env]
   [form : reader.SpannedSexpr]
   [message : String]) : ResultAstStructDefParts
-  (begin
-    (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
-    (Err message)))
+  (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
+  (Err message))
 
 (define (parse-ast-defstruct-field-item
   [dispatch : sym_i64_env.SymI64Env]
@@ -5534,38 +5404,37 @@
           (let
             [field-index : i64 fields.len]
             [next-fields : ast.AstFieldDefList fields]
-            (begin
-              (match (reader.spanned-sexpr-view
-                (compiler-parse-place-shared-view head))
-                [(BracketList items _)
-                  (compiler-parse-semantic-field-definition-origins!
-                    dispatch
-                    items)]
-                [(Cons _ _ _)
-                  (compiler-parse-semantic-field-definition-origins!
-                    dispatch
-                    (compiler-parse-place-shared-view head))]
-                [_ unit])
-              (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
-              (reader.sp-node-push
-                (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
-              (parse-ast-defstruct-items
-                dispatch
-                pools
-                tail
-                lifetimes
-                (ast.ast-struct-repr-with-field-align
-                  field-repr
-                  field-index
-                  field-align)
-                cleanup
-                markers
-                0
-                next-fields
-                seen-lifetimes
-                seen-repr
-                seen-cleanup
-                true)))]
+            (match (reader.spanned-sexpr-view
+              (compiler-parse-place-shared-view head))
+              [(BracketList items _)
+                (compiler-parse-semantic-field-definition-origins!
+                  dispatch
+                  items)]
+              [(Cons _ _ _)
+                (compiler-parse-semantic-field-definition-origins!
+                  dispatch
+                  (compiler-parse-place-shared-view head))]
+              [_ unit])
+            (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
+            (reader.sp-node-push
+              (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
+            (parse-ast-defstruct-items
+              dispatch
+              pools
+              tail
+              lifetimes
+              (ast.ast-struct-repr-with-field-align
+                field-repr
+                field-index
+                field-align)
+              cleanup
+              markers
+              0
+              next-fields
+              seen-lifetimes
+              seen-repr
+              seen-cleanup
+              true))]
         [(Err message) (Err message)])]
     [(Err message) (Err message)]))
 
@@ -5977,14 +5846,12 @@
                     [(Sym fn-name fn-span)
                       (match (parse-ast-dispatch-isa dispatch isa-name)
                         [(Ok isa)
-                          (begin
-                            (compiler-parse-semantic-origin-push-components!
-                              fn-name
-                              fn-span
-                              (ModulePath)
-                              (DispatchFunction))
-                            (Ok
-                              (Variant isa (ci.intern-syntax-id-value fn-name))))]
+                          (compiler-parse-semantic-origin-push-components!
+                            fn-name
+                            fn-span
+                            (ModulePath)
+                            (DispatchFunction))
+                          (Ok (Variant isa (ci.intern-syntax-id-value fn-name)))]
                         [(Err message) (Err message)])]
                     [_ (Err "parse: malformed defdispatch variant")])]
                 [_ (Err "parse: malformed defdispatch variant")])]
@@ -6001,9 +5868,8 @@
     [(Cons head rest _)
       (match (parse-ast-dispatch-variant dispatch head)
         [(Ok parsed)
-          (begin
-            (ast.ast-dispatch-variant-list-push out parsed)
-            (parse-ast-dispatch-variant-list-into dispatch rest out))]
+          (ast.ast-dispatch-variant-list-push out parsed)
+          (parse-ast-dispatch-variant-list-into dispatch rest out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed defdispatch variant list")]))
 
@@ -6022,13 +5888,12 @@
   (match (reader.spanned-sexpr-view payloads)
     [(Nil _) unit]
     [(Cons head tail _)
-      (begin
-        (if (compiler-parse-metadata-sexpr?
-          dispatch
-          (compiler-parse-place-shared-view head))
-          unit
-          (compiler-parse-semantic-type-origins! dispatch head))
-        (compiler-parse-semantic-variant-payload-origins! dispatch tail))]
+      (if (compiler-parse-metadata-sexpr?
+        dispatch
+        (compiler-parse-place-shared-view head))
+        unit
+        (compiler-parse-semantic-type-origins! dispatch head))
+      (compiler-parse-semantic-variant-payload-origins! dispatch tail)]
     [_ unit]))
 
 (define (parse-ast-defenum-variant-item
@@ -6047,42 +5912,37 @@
     (compiler-parse-place-shared-view head)
     (ast.ast-enum-cleanup? cleanup))
     [(Ok parsed-variant)
-      (begin
-        (match (reader.spanned-sexpr-view
-          (compiler-parse-place-shared-view head))
-          [(Cons name-node payloads _)
-            (begin
-              (match (reader.spanned-sexpr-view name-node)
-                [(Sym name span)
-                  (compiler-parse-semantic-origin-push-components!
-                    name
-                    span
-                    (ModulePath)
-                    (EnumVariantDefinition))]
-                [_ unit])
-              (compiler-parse-semantic-variant-payload-origins!
-                dispatch
-                payloads))]
-          [_ unit])
-        (reader.sp-node-push
-          (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
-        (match (parse-ast-defenum-items
-          dispatch
-          pools
-          tail
-          lifetimes
-          cleanup
-          markers
-          seen-lifetimes
-          seen-cleanup
-          true)
-          [(Ok parsed-lifetimes parsed-cleanup parsed-markers parsed-rest)
-            (Ok
-              parsed-lifetimes
-              parsed-cleanup
-              parsed-markers
-              (ast.ast-variant-def-cons parsed-variant parsed-rest))]
-          [(Err message) (Err message)]))]
+      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
+        [(Cons name-node payloads _)
+          (match (reader.spanned-sexpr-view name-node)
+            [(Sym name span)
+              (compiler-parse-semantic-origin-push-components!
+                name
+                span
+                (ModulePath)
+                (EnumVariantDefinition))]
+            [_ unit])
+          (compiler-parse-semantic-variant-payload-origins! dispatch payloads)]
+        [_ unit])
+      (reader.sp-node-push
+        (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
+      (match (parse-ast-defenum-items
+        dispatch
+        pools
+        tail
+        lifetimes
+        cleanup
+        markers
+        seen-lifetimes
+        seen-cleanup
+        true)
+        [(Ok parsed-lifetimes parsed-cleanup parsed-markers parsed-rest)
+          (Ok
+            parsed-lifetimes
+            parsed-cleanup
+            parsed-markers
+            (ast.ast-variant-def-cons parsed-variant parsed-rest))]
+        [(Err message) (Err message)])]
     [(Err message) (Err message)]))
 
 (define (parse-ast-defenum-items
@@ -6212,9 +6072,8 @@
     [(Cons head tail)
       (match (parse-ast-pattern dispatch pools head)
         [(Ok parsed-head)
-          (begin
-            (ast.ast-pattern-list-push out parsed-head)
-            (parse-ast-pattern-list-into dispatch pools tail out))]
+          (ast.ast-pattern-list-push out parsed-head)
+          (parse-ast-pattern-list-into dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed pattern list")]))
 
@@ -6265,58 +6124,48 @@
     [count : i64 (ast.ast-pattern-list-len (& items))]
     [marker : i64 -1]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (when
-            (parse-ast-slice-rest-marker?
-              (ast.ast-pattern-list-get
-                (& items)
-                index
-                (ast.ast-pattern-fallback)))
-            (if (< marker 0)
-              (set! marker index)
-              (return
-                (Err "parse: slice pattern takes at most one `&` rest binding"))))
-          (when
-            (parse-ast-slice-glued-rest?
-              (& intern-state)
-              (ast.ast-pattern-list-get
-                (& items)
-                index
-                (ast.ast-pattern-fallback)))
-            (return
-              (Err
-                "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))
-          (set! index (+ index 1))))
-      (if (< marker 0)
-        (Ok (ast.ast-pat-slice items false))
-        (if (and
-          (= marker (- count 2))
-          (parse-ast-slice-rest-target?
-            (ast.ast-pattern-list-get
-              (& items)
-              (- count 1)
-              (ast.ast-pattern-fallback))))
-          (let
-            [out : ast.AstPatternList
-              (ast.ast-pattern-list-with-capacity (- count 1))]
-            [copy : i64 0]
-            (begin
-              (while (< copy count)
-                (begin
-                  (unless
-                    (= copy marker)
-                    (ast.ast-pattern-list-push
-                      (&mut out)
-                      (ast.ast-pattern-list-get
-                        (& items)
-                        copy
-                        (ast.ast-pattern-fallback))))
-                  (set! copy (+ copy 1))))
-              (Ok (ast.ast-pat-slice out true))))
+    (while (< index count)
+      (when
+        (parse-ast-slice-rest-marker?
+          (ast.ast-pattern-list-get (& items) index (ast.ast-pattern-fallback)))
+        (if (< marker 0)
+          (set! marker index)
+          (return
+            (Err "parse: slice pattern takes at most one `&` rest binding"))))
+      (when
+        (parse-ast-slice-glued-rest?
+          (& intern-state)
+          (ast.ast-pattern-list-get (& items) index (ast.ast-pattern-fallback)))
+        (return
           (Err
-            "parse: slice pattern `&` must be followed by exactly one rest binding or `_`"))))))
+            "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))
+      (set! index (+ index 1)))
+    (if (< marker 0)
+      (Ok (ast.ast-pat-slice items false))
+      (if (and
+        (= marker (- count 2))
+        (parse-ast-slice-rest-target?
+          (ast.ast-pattern-list-get
+            (& items)
+            (- count 1)
+            (ast.ast-pattern-fallback))))
+        (let
+          [out : ast.AstPatternList
+            (ast.ast-pattern-list-with-capacity (- count 1))]
+          [copy : i64 0]
+          (while (< copy count)
+            (unless
+              (= copy marker)
+              (ast.ast-pattern-list-push
+                (&mut out)
+                (ast.ast-pattern-list-get
+                  (& items)
+                  copy
+                  (ast.ast-pattern-fallback))))
+            (set! copy (+ copy 1)))
+          (Ok (ast.ast-pat-slice out true)))
+        (Err
+          "parse: slice pattern `&` must be followed by exactly one rest binding or `_`")))))
 
 (define (parse-ast-pattern
   [dispatch : sym_i64_env.SymI64Env]
@@ -6336,12 +6185,11 @@
           [(= tag (compiler-parse-tag-lit-true)) (Ok (Literal (Bool true)))]
           [(= tag (compiler-parse-tag-lit-false)) (Ok (Literal (Bool false)))]
           [else
-            (begin
-              (compiler-parse-semantic-token-origin!
-                dispatch
-                (compiler-parse-place-shared-view s)
-                CompilerParseSemanticOriginKind.BindingDefinition)
-              (Ok (ast.ast-pat-binding-id name-id)))]))]
+            (compiler-parse-semantic-token-origin!
+              dispatch
+              (compiler-parse-place-shared-view s)
+              CompilerParseSemanticOriginKind.BindingDefinition)
+            (Ok (ast.ast-pat-binding-id name-id))]))]
     [(Cons name-node args)
       (match (reader.sexpr-view name-node)
         [(Sym name)
@@ -6368,9 +6216,8 @@
   (match (reader.spanned-sexpr-view patterns)
     [(Nil _) unit]
     [(Cons head tail _)
-      (begin
-        (compiler-parse-semantic-pattern-origins! dispatch head)
-        (compiler-parse-semantic-pattern-list-origins! dispatch tail))]
+      (compiler-parse-semantic-pattern-origins! dispatch head)
+      (compiler-parse-semantic-pattern-list-origins! dispatch tail)]
     [_ unit]))
 
 (define (compiler-parse-semantic-pattern-origins!
@@ -6380,28 +6227,27 @@
     [(BracketList items _)
       (compiler-parse-semantic-pattern-origins! dispatch items)]
     [(Cons name-node args _)
-      (begin
-        (match (reader.spanned-sexpr-view name-node)
-          [(Sym name span)
-            (let
-              [tag : i64
-                (compiler-parse-dispatch-tag-id
-                  dispatch
-                  (ci.intern-syntax-id-value name))]
-              (if (or
-                (= tag (compiler-parse-tag-expr-tuple))
-                (= tag (compiler-parse-tag-expr-array))
-                (=
-                  (ci.intern-syntax-id-value name)
-                  (cbi.compiler-builtin-ctfe "slice")))
-                unit
-                (compiler-parse-semantic-origin-push-components!
-                  name
-                  span
-                  (ModulePath)
-                  (EnumVariantPattern))))]
-          [_ unit])
-        (compiler-parse-semantic-pattern-list-origins! dispatch args))]
+      (match (reader.spanned-sexpr-view name-node)
+        [(Sym name span)
+          (let
+            [tag : i64
+              (compiler-parse-dispatch-tag-id
+                dispatch
+                (ci.intern-syntax-id-value name))]
+            (if (or
+              (= tag (compiler-parse-tag-expr-tuple))
+              (= tag (compiler-parse-tag-expr-array))
+              (=
+                (ci.intern-syntax-id-value name)
+                (cbi.compiler-builtin-ctfe "slice")))
+              unit
+              (compiler-parse-semantic-origin-push-components!
+                name
+                span
+                (ModulePath)
+                (EnumVariantPattern))))]
+        [_ unit])
+      (compiler-parse-semantic-pattern-list-origins! dispatch args)]
     [(Sym name span)
       (let
         [tag : i64
@@ -6454,17 +6300,12 @@
                           [(Ok parsed-else)
                             (let
                               [exprs : ast.AstExprList (ast.ast-expr-list-new)]
-                              (begin
-                                (ast.ast-expr-list-push
-                                  (&mut exprs)
-                                  parsed-then)
-                                (ast.ast-expr-list-push
-                                  (&mut exprs)
-                                  parsed-else)
-                                (SomeExpr
-                                  (ast.ast-node-pool-context-expr-push
-                                    pools
-                                    (Begin exprs)))))]
+                              (ast.ast-expr-list-push (&mut exprs) parsed-then)
+                              (ast.ast-expr-list-push (&mut exprs) parsed-else)
+                              (SomeExpr
+                                (ast.ast-node-pool-context-expr-push
+                                  pools
+                                  (Begin exprs))))]
                           [(Err message) (Err message)])]
                       [(Err message) (Err message)])
                     (match (compiler-cfg-eval dispatch pred)
@@ -6527,9 +6368,8 @@
     [(Cons head tail _)
       (match (parse-ast-expr-list-item-maybe dispatch pools head)
         [(SomeExpr parsed-head)
-          (begin
-            (ast.ast-expr-list-push out parsed-head)
-            (parse-ast-expr-list-into dispatch pools tail out))]
+          (ast.ast-expr-list-push out parsed-head)
+          (parse-ast-expr-list-into dispatch pools tail out)]
         [(NoExpr) (parse-ast-expr-list-into dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed expression list")]))
@@ -6615,9 +6455,8 @@
     [(Cons head tail _)
       (match (parse-ast-call-arg-maybe dispatch pools head)
         [(SomeExpr parsed-head)
-          (begin
-            (ast.ast-expr-list-push out parsed-head)
-            (parse-ast-call-arg-list-into dispatch pools tail out))]
+          (ast.ast-expr-list-push out parsed-head)
+          (parse-ast-call-arg-list-into dispatch pools tail out)]
         [(NoExpr) (parse-ast-call-arg-list-into dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed call argument list")]))
@@ -6817,19 +6656,18 @@
                   (match (reader.spanned-sexpr-view
                     (compiler-parse-place-shared-view target-node))
                     [(Sym name target-span)
-                      (begin
-                        (compiler-parse-semantic-dotted-field-origins!
-                          name
-                          target-span)
-                        (Ok
-                          (ast.ast-expr-spanned-with-pools
+                      (compiler-parse-semantic-dotted-field-origins!
+                        name
+                        target-span)
+                      (Ok
+                        (ast.ast-expr-spanned-with-pools
+                          pools
+                          (ast.ast-expr-set-id-with-pools
                             pools
-                            (ast.ast-expr-set-id-with-pools
-                              pools
-                              (ci.intern-syntax-id-value name)
-                              parsed-value)
-                            (ast-source-span-from-source-span
-                              (reader.spanned-sexpr-span target-node)))))]
+                            (ci.intern-syntax-id-value name)
+                            parsed-value)
+                          (ast-source-span-from-source-span
+                            (reader.spanned-sexpr-span target-node))))]
                     [_
                       (match (parse-ast-expr-with-pools
                         dispatch
@@ -7048,9 +6886,8 @@
         [(BracketList _ _)
           (match (parse-ast-let-binding dispatch pools head)
             [(Ok parsed-head)
-              (begin
-                (ast.ast-let-binding-list-push out parsed-head)
-                (parse-ast-let-flat-tail-into dispatch pools tail out))]
+              (ast.ast-let-binding-list-push out parsed-head)
+              (parse-ast-let-flat-tail-into dispatch pools tail out)]
             [(Err message) (Err message)])]
         [_ (parse-ast-body-tail dispatch pools rest "parse: let missing body")])]
     [(Nil _) (Err "parse: let missing body")]
@@ -7106,18 +6943,16 @@
         (compiler-parse-place-shared-view bindings))
         [(BracketList _ _) (parse-ast-let-flat dispatch pools rest)]
         [(Nil _)
-          (begin
-            (parse-ast-error-span-note!
-              dispatch
-              (reader.spanned-sexpr-span bindings))
-            (Err "parse: (let () body...) was removed; write (let [] body...)"))]
+          (parse-ast-error-span-note!
+            dispatch
+            (reader.spanned-sexpr-span bindings))
+          (Err "parse: (let () body...) was removed; write (let [] body...)")]
         [(Cons _ _ _)
-          (begin
-            (parse-ast-error-span-note!
-              dispatch
-              (reader.spanned-sexpr-span bindings))
-            (Err
-              "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses"))]
+          (parse-ast-error-span-note!
+            dispatch
+            (reader.spanned-sexpr-span bindings))
+          (Err
+            "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses")]
         [_ (Err "parse: let requires at least one binding")])]
     [_ (Err "parse: malformed let")]))
 
@@ -7132,48 +6967,47 @@
         pools
         (compiler-parse-place-shared-view params))
         [(Ok parsed-params)
-          (begin
-            (compiler-parse-semantic-param-list-origins! dispatch params)
-            (if (ast-param-list-has-comptime? parsed-params)
-              (Err
-                "comptime parameters are only supported on top-level function definitions")
-              (match (reader.spanned-sexpr-view
-                (compiler-parse-place-shared-view tail))
-                [(Cons first rest-tail _)
-                  (if (sexpr-colon? first)
-                    (match (reader.spanned-sexpr-view rest-tail)
-                      [(Cons ret body-tail _)
-                        (match (parse-ast-type-spanned dispatch pools ret)
-                          [(Ok parsed-ret)
-                            (match (parse-ast-body-tail
-                              dispatch
-                              pools
-                              body-tail
-                              "parse: malformed lambda")
-                              [(Ok parsed-body)
-                                (Ok
-                                  (ast.ast-expr-lambda-with-pools
-                                    pools
-                                    parsed-params
-                                    (Some parsed-ret)
-                                    parsed-body))]
-                              [(Err message) (Err message)])]
-                          [(Err message) (Err message)])]
-                      [_ (Err "parse: malformed lambda")])
-                    (match (parse-ast-body-tail
-                      dispatch
-                      pools
-                      tail
-                      "parse: malformed lambda")
-                      [(Ok parsed-body)
-                        (Ok
-                          (ast.ast-expr-lambda-with-pools
+          (compiler-parse-semantic-param-list-origins! dispatch params)
+          (if (ast-param-list-has-comptime? parsed-params)
+            (Err
+              "comptime parameters are only supported on top-level function definitions")
+            (match (reader.spanned-sexpr-view
+              (compiler-parse-place-shared-view tail))
+              [(Cons first rest-tail _)
+                (if (sexpr-colon? first)
+                  (match (reader.spanned-sexpr-view rest-tail)
+                    [(Cons ret body-tail _)
+                      (match (parse-ast-type-spanned dispatch pools ret)
+                        [(Ok parsed-ret)
+                          (match (parse-ast-body-tail
+                            dispatch
                             pools
-                            parsed-params
-                            No
-                            parsed-body))]
-                      [(Err message) (Err message)]))]
-                [_ (Err "parse: malformed lambda")])))]
+                            body-tail
+                            "parse: malformed lambda")
+                            [(Ok parsed-body)
+                              (Ok
+                                (ast.ast-expr-lambda-with-pools
+                                  pools
+                                  parsed-params
+                                  (Some parsed-ret)
+                                  parsed-body))]
+                            [(Err message) (Err message)])]
+                        [(Err message) (Err message)])]
+                    [_ (Err "parse: malformed lambda")])
+                  (match (parse-ast-body-tail
+                    dispatch
+                    pools
+                    tail
+                    "parse: malformed lambda")
+                    [(Ok parsed-body)
+                      (Ok
+                        (ast.ast-expr-lambda-with-pools
+                          pools
+                          parsed-params
+                          No
+                          parsed-body))]
+                    [(Err message) (Err message)]))]
+              [_ (Err "parse: malformed lambda")]))]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed lambda")]))
 
@@ -7497,17 +7331,16 @@
                 [(Sym field _)
                   (match (parse-ast-expr-with-pools dispatch pools expr)
                     [(Ok parsed-expr)
-                      (begin
-                        (compiler-parse-semantic-origin-push-components!
-                          field
-                          (reader.spanned-sexpr-span field-node)
-                          (ModulePath)
-                          (StructFieldUse))
-                        (Ok
-                          (ast.ast-expr-struct-get-id-with-pools
-                            pools
-                            parsed-expr
-                            (ci.intern-syntax-id-value field))))]
+                      (compiler-parse-semantic-origin-push-components!
+                        field
+                        (reader.spanned-sexpr-span field-node)
+                        (ModulePath)
+                        (StructFieldUse))
+                      (Ok
+                        (ast.ast-expr-struct-get-id-with-pools
+                          pools
+                          parsed-expr
+                          (ci.intern-syntax-id-value field)))]
                     [(Err message) (Err message)])]
                 [_ (Err "parse: malformed struct-get")])]
             [_ (Err "parse: malformed struct-get")])]
@@ -8651,9 +8484,8 @@
     [(Cons head rest _)
       (match (parse-ast-resource-binding dispatch pools head)
         [(Ok parsed-head)
-          (begin
-            (ast.ast-resource-binding-list-push out parsed-head)
-            (parse-ast-resource-binding-list-into dispatch pools rest out))]
+          (ast.ast-resource-binding-list-push out parsed-head)
+          (parse-ast-resource-binding-list-into dispatch pools rest out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed with binding list")]))
 
@@ -8758,21 +8590,20 @@
             pools
             (compiler-parse-place-shared-view pattern))
             [(Ok parsed-pattern)
-              (begin
-                (compiler-parse-semantic-pattern-origins!
-                  dispatch
-                  (compiler-parse-place-shared-view pattern))
-                (match (parse-ast-match-arm-body dispatch pools body-tail)
-                  [(Ok parsed-body)
-                    (Ok
-                      (ast.ast-match-arm
-                        parsed-pattern
-                        (ast.ast-expr-spanned-with-pools
-                          pools
-                          parsed-body
-                          (ast-source-span-from-source-span
-                            (reader.spanned-sexpr-span pattern)))))]
-                  [(Err message) (Err message)]))]
+              (compiler-parse-semantic-pattern-origins!
+                dispatch
+                (compiler-parse-place-shared-view pattern))
+              (match (parse-ast-match-arm-body dispatch pools body-tail)
+                [(Ok parsed-body)
+                  (Ok
+                    (ast.ast-match-arm
+                      parsed-pattern
+                      (ast.ast-expr-spanned-with-pools
+                        pools
+                        parsed-body
+                        (ast-source-span-from-source-span
+                          (reader.spanned-sexpr-span pattern)))))]
+                [(Err message) (Err message)])]
             [(Err message) (Err message)])]
         [_ (Err "parse: malformed match arm")])]
     [_ (Err "parse: malformed match arm")]))
@@ -8787,9 +8618,8 @@
     [(Cons head tail _)
       (match (parse-ast-match-arm dispatch pools head)
         [(Ok parsed-head)
-          (begin
-            (ast.ast-match-arm-list-push out parsed-head)
-            (parse-ast-match-arm-list-into dispatch pools tail out))]
+          (ast.ast-match-arm-list-push out parsed-head)
+          (parse-ast-match-arm-list-into dispatch pools tail out)]
         [(Err message) (Err message)])]
     [_ (Err "parse: malformed match arm list")]))
 
@@ -9004,10 +8834,9 @@
                             pools
                             parsed))])]
                   [(Err message) (Err message)]))]
-            (begin
-              (set! compiler-parse-quote-depth saved-depth)
-              (set! compiler-parse-semantic-quote-depth saved-semantic-depth)
-              result))]
+            (set! compiler-parse-quote-depth saved-depth)
+            (set! compiler-parse-semantic-quote-depth saved-semantic-depth)
+            result)]
         [_ (Err "parse: quote form expects exactly one expression")])]
     [_ (Err "parse: quote form expects exactly one expression")]))
 
@@ -9336,16 +9165,15 @@
                     (ast.ast-node-pool-context-expr-push pools (Literal Unit))
                     (compiler-parse-place-shared-view s)))]
               [else
-                (begin
-                  ;; This is a source candidate, not a claimed field use. The
-                  ;; helper rejects generated syntax identities and plain
-                  ;; names before reading dotted-name metadata.
-                  (compiler-parse-semantic-dotted-field-origins! name span)
-                  (Ok
-                    (ast-expr-wrap-span
-                      pools
-                      (ast.ast-node-pool-context-expr-push pools (Var name-id))
-                      (compiler-parse-place-shared-view s))))]))]
+                ;; This is a source candidate, not a claimed field use. The
+                ;; helper rejects generated syntax identities and plain
+                ;; names before reading dotted-name metadata.
+                (compiler-parse-semantic-dotted-field-origins! name span)
+                (Ok
+                  (ast-expr-wrap-span
+                    pools
+                    (ast.ast-node-pool-context-expr-push pools (Var name-id))
+                    (compiler-parse-place-shared-view s)))]))]
         [(Cons head rest _)
           (match (reader.spanned-sexpr-view
             (compiler-parse-place-shared-view head))
@@ -9387,9 +9215,8 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstExpr (parse-ast-expr-with-pools dispatch pools s)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-define-value
   [dispatch : sym_i64_env.SymI64Env]
@@ -9745,15 +9572,14 @@
                       (Err "parse: duplicate :spmd-callable specialization")
                       (let
                         [next : ast.AstSpmdSpecializationList out]
-                        (begin
-                          (ast.ast-spmd-specialization-list-push
-                            (&mut next)
-                            specialization)
-                          (parse-ast-spmd-specializations
-                            dispatch
-                            rest
-                            param-count
-                            next))))])
+                        (ast.ast-spmd-specialization-list-push
+                          (&mut next)
+                          specialization)
+                        (parse-ast-spmd-specializations
+                          dispatch
+                          rest
+                          param-count
+                          next)))])
                 (Err "parse: :spmd-callable expects specialization forms"))]
             [_ (Err "parse: malformed :spmd-callable specialization")])]
         [_ (Err "parse: malformed :spmd-callable specialization")])]
@@ -9956,18 +9782,17 @@
     pools
     (compiler-parse-place-shared-view params))
     [(Ok parsed-params)
-      (begin
-        (compiler-parse-semantic-param-list-origins! dispatch params)
-        (parse-ast-define-fn-rest
-          dispatch
-          pools
-          name
-          parsed-params
-          No
-          false
-          No
-          false
-          rest))]
+      (compiler-parse-semantic-param-list-origins! dispatch params)
+      (parse-ast-define-fn-rest
+        dispatch
+        pools
+        name
+        parsed-params
+        No
+        false
+        No
+        false
+        rest)]
     [(Err message) (Err message)]))
 
 (define (parse-ast-define
@@ -9978,31 +9803,29 @@
     [(Cons head after-name _)
       (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
         [(Sym name _)
-          (begin
-            (compiler-parse-semantic-token-origin!
-              dispatch
-              (compiler-parse-place-shared-view head)
-              CompilerParseSemanticOriginKind.ValueName)
-            (parse-ast-define-value
-              dispatch
-              pools
-              (ci.intern-syntax-id-value name)
-              after-name))]
+          (compiler-parse-semantic-token-origin!
+            dispatch
+            (compiler-parse-place-shared-view head)
+            CompilerParseSemanticOriginKind.ValueName)
+          (parse-ast-define-value
+            dispatch
+            pools
+            (ci.intern-syntax-id-value name)
+            after-name)]
         [(Cons name-node params _)
           (match (reader.spanned-sexpr-view
             (compiler-parse-place-shared-view name-node))
             [(Sym name _)
-              (begin
-                (compiler-parse-semantic-token-origin!
-                  dispatch
-                  (compiler-parse-place-shared-view name-node)
-                  CompilerParseSemanticOriginKind.ValueName)
-                (parse-ast-define-fn
-                  dispatch
-                  pools
-                  (ci.intern-syntax-id-value name)
-                  params
-                  after-name))]
+              (compiler-parse-semantic-token-origin!
+                dispatch
+                (compiler-parse-place-shared-view name-node)
+                CompilerParseSemanticOriginKind.ValueName)
+              (parse-ast-define-fn
+                dispatch
+                pools
+                (ci.intern-syntax-id-value name)
+                params
+                after-name)]
             [_ (Err "parse: malformed define")])]
         [_ (Err "parse: malformed define")])]
     [_ (Err "parse: malformed define")]))
@@ -10031,29 +9854,27 @@
                                   pools
                                   (compiler-parse-place-shared-view params))
                                   [(Ok parsed-params)
-                                    (begin
-                                      (compiler-parse-semantic-param-list-origins!
-                                        dispatch
-                                        params)
-                                      (match (parse-ast-type-spanned
-                                        dispatch
-                                        pools
-                                        ret)
-                                        [(Ok parsed-ret)
-                                          (match (parse-ast-expr-with-pools
-                                            dispatch
-                                            pools
-                                            body)
-                                            [(Ok parsed-body)
-                                              (Ok
-                                                (ast.ast-decl-def-macro-id
-                                                  (ci.intern-syntax-id-value
-                                                    name)
-                                                  parsed-params
-                                                  parsed-ret
-                                                  parsed-body))]
-                                            [(Err message) (Err message)])]
-                                        [(Err message) (Err message)]))]
+                                    (compiler-parse-semantic-param-list-origins!
+                                      dispatch
+                                      params)
+                                    (match (parse-ast-type-spanned
+                                      dispatch
+                                      pools
+                                      ret)
+                                      [(Ok parsed-ret)
+                                        (match (parse-ast-expr-with-pools
+                                          dispatch
+                                          pools
+                                          body)
+                                          [(Ok parsed-body)
+                                            (Ok
+                                              (ast.ast-decl-def-macro-id
+                                                (ci.intern-syntax-id-value name)
+                                                parsed-params
+                                                parsed-ret
+                                                parsed-body))]
+                                          [(Err message) (Err message)])]
+                                      [(Err message) (Err message)])]
                                   [(Err message) (Err message)])
                                 (Err "parse: expected ':' in macro definition"))]
                             [_ (Err "parse: malformed defmacro")])]
@@ -10116,13 +9937,12 @@
     pools
     (compiler-parse-place-shared-view item))
     [(Ok param)
-      (begin
-        (compiler-parse-semantic-param-origin! dispatch item)
-        (match param
-          [(Param _ ty comptime?)
-            (if comptime?
-              (Err "parse: extern parameters cannot be comptime")
-              (Ok (Param ty)))]))]
+      (compiler-parse-semantic-param-origin! dispatch item)
+      (match param
+        [(Param _ ty comptime?)
+          (if comptime?
+            (Err "parse: extern parameters cannot be comptime")
+            (Ok (Param ty)))])]
     [(Err message) (Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
@@ -10151,20 +9971,19 @@
                               pools
                               ty-name)
                               [(Ok tail-ty)
-                                (begin
-                                  (compiler-parse-semantic-type-origins!
-                                    dispatch
-                                    (Sym
-                                      (ci.intern-syntax-id-from-raw
-                                        (parse-ast-extern-varargs-tail-id
-                                          dispatch
-                                          ty-name))
-                                      (token.SourceSpan
-                                        (token.span-start-line ty-span)
-                                        (+ (token.span-start-col ty-span) 3)
-                                        (token.span-end-line ty-span)
-                                        (token.span-end-col ty-span))))
-                                  (Ok (VarargsTyped tail-ty)))]
+                                (compiler-parse-semantic-type-origins!
+                                  dispatch
+                                  (Sym
+                                    (ci.intern-syntax-id-from-raw
+                                      (parse-ast-extern-varargs-tail-id
+                                        dispatch
+                                        ty-name))
+                                    (token.SourceSpan
+                                      (token.span-start-line ty-span)
+                                      (+ (token.span-start-col ty-span) 3)
+                                      (token.span-end-line ty-span)
+                                      (token.span-end-col ty-span))))
+                                (Ok (VarargsTyped tail-ty))]
                               [(Err message) (Err message)])
                             (parse-ast-extern-head-fixed-param
                               dispatch
@@ -10390,19 +10209,18 @@
                       ":link-lib"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Lib value))
-                          (parse-ast-extern-items
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Lib value))
+                        (parse-ast-extern-items
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol)]
                       [(Err message) (Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
@@ -10412,19 +10230,18 @@
                       ":link-search"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Search value))
-                          (parse-ast-extern-items
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Search value))
+                        (parse-ast-extern-items
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol)]
                       [(Err message) (Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
@@ -10434,19 +10251,18 @@
                       ":link-arg"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Arg value))
-                          (parse-ast-extern-items
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Arg value))
+                        (parse-ast-extern-items
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol)]
                       [(Err message) (Err message)])]
                   [(compiler-parse-metadata-key? dispatch key)
                     (Err
@@ -10542,21 +10358,20 @@
                     ":link-lib"
                     after-key)
                     [(Ok value _)
-                      (begin
-                        (ast.ast-extern-link-input-list-push
-                          link-inputs
-                          (ast.AstExternLinkInput.Lib value))
-                        (parse-ast-extern-head-post-ret
-                          dispatch
-                          pools
-                          tail
-                          abi
-                          symbol-id
-                          link-inputs
-                          seen-abi
-                          seen-symbol
-                          param-types
-                          ret))]
+                      (ast.ast-extern-link-input-list-push
+                        link-inputs
+                        (ast.AstExternLinkInput.Lib value))
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        pools
+                        tail
+                        abi
+                        symbol-id
+                        link-inputs
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
                     [(Err message) (Err message)])]
                 [(=
                     (ci.intern-syntax-id-value key)
@@ -10566,21 +10381,20 @@
                     ":link-search"
                     after-key)
                     [(Ok value _)
-                      (begin
-                        (ast.ast-extern-link-input-list-push
-                          link-inputs
-                          (ast.AstExternLinkInput.Search value))
-                        (parse-ast-extern-head-post-ret
-                          dispatch
-                          pools
-                          tail
-                          abi
-                          symbol-id
-                          link-inputs
-                          seen-abi
-                          seen-symbol
-                          param-types
-                          ret))]
+                      (ast.ast-extern-link-input-list-push
+                        link-inputs
+                        (ast.AstExternLinkInput.Search value))
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        pools
+                        tail
+                        abi
+                        symbol-id
+                        link-inputs
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
                     [(Err message) (Err message)])]
                 [(=
                     (ci.intern-syntax-id-value key)
@@ -10590,21 +10404,20 @@
                     ":link-arg"
                     after-key)
                     [(Ok value _)
-                      (begin
-                        (ast.ast-extern-link-input-list-push
-                          link-inputs
-                          (ast.AstExternLinkInput.Arg value))
-                        (parse-ast-extern-head-post-ret
-                          dispatch
-                          pools
-                          tail
-                          abi
-                          symbol-id
-                          link-inputs
-                          seen-abi
-                          seen-symbol
-                          param-types
-                          ret))]
+                      (ast.ast-extern-link-input-list-push
+                        link-inputs
+                        (ast.AstExternLinkInput.Arg value))
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        pools
+                        tail
+                        abi
+                        symbol-id
+                        link-inputs
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
                     [(Err message) (Err message)])]
                 [(compiler-parse-metadata-key? dispatch key)
                   (Err
@@ -10712,20 +10525,19 @@
                       ":link-lib"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Lib value))
-                          (parse-ast-extern-head-rest
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol
-                            param-types))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Lib value))
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types)]
                       [(Err message) (Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
@@ -10735,20 +10547,19 @@
                       ":link-search"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Search value))
-                          (parse-ast-extern-head-rest
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol
-                            param-types))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Search value))
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types)]
                       [(Err message) (Err message)])]
                   [(=
                       (ci.intern-syntax-id-value key)
@@ -10758,20 +10569,19 @@
                       ":link-arg"
                       after-key)
                       [(Ok value _)
-                        (begin
-                          (ast.ast-extern-link-input-list-push
-                            link-inputs
-                            (ast.AstExternLinkInput.Arg value))
-                          (parse-ast-extern-head-rest
-                            dispatch
-                            pools
-                            tail
-                            abi
-                            symbol-id
-                            link-inputs
-                            seen-abi
-                            seen-symbol
-                            param-types))]
+                        (ast.ast-extern-link-input-list-push
+                          link-inputs
+                          (ast.AstExternLinkInput.Arg value))
+                        (parse-ast-extern-head-rest
+                          dispatch
+                          pools
+                          tail
+                          abi
+                          symbol-id
+                          link-inputs
+                          seen-abi
+                          seen-symbol
+                          param-types)]
                       [(Err message) (Err message)])]
                   [(compiler-parse-metadata-key? dispatch key)
                     (Err
@@ -10875,55 +10685,53 @@
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
-            (begin
-              (compiler-parse-semantic-origin-push-components!
-                name
-                name-span
-                (ModulePath)
-                (TypeDefinition))
-              (match (parse-ast-defenum-items
-                dispatch
-                pools
-                variants
-                (ast.ast-lifetime-list-new)
-                (No)
-                0
-                false
-                false
-                false)
-                [(Ok lifetimes cleanup markers parsed-variants)
-                  (begin
-                    (reader.sp-node-pool-fill!
-                      member-marker
-                      (Int
-                        (unsafe
-                          (cast
-                            (ptr->int
-                              (ptr-cast
-                                (__tl_array-data parsed-variants.slots)
-                                : (Ptr u8)))
-                            : i64))
-                        "__tl_member_origin"
-                        name-span))
-                    (if (ast.ast-variant-def-list-empty? (& parsed-variants))
-                      (Err "parse: defenum needs at least one variant")
-                      (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                        (Ok
-                          (ast.ast-decl-with-aggregate-markers
-                            (ast.ast-decl-def-enum-id
-                              name-id
-                              cleanup
-                              parsed-variants)
-                            markers))
-                        (Ok
-                          (ast.ast-decl-with-aggregate-markers
-                            (ast.ast-decl-def-enum-lifetimes-id
-                              name-id
-                              lifetimes
-                              cleanup
-                              parsed-variants)
-                            markers)))))]
-                [(Err message) (Err message)])))]
+            (compiler-parse-semantic-origin-push-components!
+              name
+              name-span
+              (ModulePath)
+              (TypeDefinition))
+            (match (parse-ast-defenum-items
+              dispatch
+              pools
+              variants
+              (ast.ast-lifetime-list-new)
+              (No)
+              0
+              false
+              false
+              false)
+              [(Ok lifetimes cleanup markers parsed-variants)
+                (reader.sp-node-pool-fill!
+                  member-marker
+                  (Int
+                    (unsafe
+                      (cast
+                        (ptr->int
+                          (ptr-cast
+                            (__tl_array-data parsed-variants.slots)
+                            : (Ptr u8)))
+                        : i64))
+                    "__tl_member_origin"
+                    name-span))
+                (if (ast.ast-variant-def-list-empty? (& parsed-variants))
+                  (Err "parse: defenum needs at least one variant")
+                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                    (Ok
+                      (ast.ast-decl-with-aggregate-markers
+                        (ast.ast-decl-def-enum-id
+                          name-id
+                          cleanup
+                          parsed-variants)
+                        markers))
+                    (Ok
+                      (ast.ast-decl-with-aggregate-markers
+                        (ast.ast-decl-def-enum-lifetimes-id
+                          name-id
+                          lifetimes
+                          cleanup
+                          parsed-variants)
+                        markers))))]
+              [(Err message) (Err message)]))]
         [_ (Err "parse: malformed defenum")])]
     [_ (Err "parse: malformed defenum")]))
 
@@ -10939,70 +10747,65 @@
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
               (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
-            (begin
-              (compiler-parse-semantic-origin-push-components!
-                name
-                name-span
-                (ModulePath)
-                (TypeDefinition))
-              (match (parse-ast-defstruct-items
-                dispatch
-                pools
-                (compiler-parse-place-shared-view fields)
-                (ast.ast-lifetime-list-new)
-                (Default)
-                (No)
-                0
-                0
-                (ast.ast-field-def-list-new)
-                false
-                false
-                false
-                false)
-                [(Ok lifetimes repr cleanup markers parsed-fields)
-                  (begin
-                    (reader.sp-node-pool-fill!
-                      member-marker
-                      (Int
-                        (unsafe
-                          (cast
-                            (ptr->int
-                              (ptr-cast
-                                (__tl_array-data parsed-fields.slots)
-                                : (Ptr u8)))
-                            : i64))
-                        "__tl_member_origin"
-                        name-span))
-                    (if (ast.ast-field-def-list-empty? (& parsed-fields))
-                      (Err "parse: defstruct needs at least one field")
-                      (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                        (Ok
-                          (ast.ast-decl-with-aggregate-markers
-                            (ast.ast-decl-def-struct-id
-                              name-id
-                              repr
-                              cleanup
-                              parsed-fields)
-                            markers))
-                        (Ok
-                          (ast.ast-decl-with-aggregate-markers
-                            (ast.ast-decl-def-struct-lifetimes-id
-                              name-id
-                              lifetimes
-                              repr
-                              cleanup
-                              parsed-fields)
-                            markers)))))]
-                [(Err message)
-                  (begin
-                    ;; Only the walk's end knows a struct `(:align N)` lacks
-                    ;; `(:repr c)`; locate the error at that form.
-                    (when
-                      (string.eq
-                        message
-                        (parse-ast-defstruct-align-needs-repr-c))
-                      (parse-ast-defstruct-note-align-form! dispatch fields))
-                    (Err message))])))]
+            (compiler-parse-semantic-origin-push-components!
+              name
+              name-span
+              (ModulePath)
+              (TypeDefinition))
+            (match (parse-ast-defstruct-items
+              dispatch
+              pools
+              (compiler-parse-place-shared-view fields)
+              (ast.ast-lifetime-list-new)
+              (Default)
+              (No)
+              0
+              0
+              (ast.ast-field-def-list-new)
+              false
+              false
+              false
+              false)
+              [(Ok lifetimes repr cleanup markers parsed-fields)
+                (reader.sp-node-pool-fill!
+                  member-marker
+                  (Int
+                    (unsafe
+                      (cast
+                        (ptr->int
+                          (ptr-cast
+                            (__tl_array-data parsed-fields.slots)
+                            : (Ptr u8)))
+                        : i64))
+                    "__tl_member_origin"
+                    name-span))
+                (if (ast.ast-field-def-list-empty? (& parsed-fields))
+                  (Err "parse: defstruct needs at least one field")
+                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                    (Ok
+                      (ast.ast-decl-with-aggregate-markers
+                        (ast.ast-decl-def-struct-id
+                          name-id
+                          repr
+                          cleanup
+                          parsed-fields)
+                        markers))
+                    (Ok
+                      (ast.ast-decl-with-aggregate-markers
+                        (ast.ast-decl-def-struct-lifetimes-id
+                          name-id
+                          lifetimes
+                          repr
+                          cleanup
+                          parsed-fields)
+                        markers))))]
+              [(Err message)
+                ;; Only the walk's end knows a struct `(:align N)` lacks
+                ;; `(:repr c)`; locate the error at that form.
+                (when
+                  (string.eq message (parse-ast-defstruct-align-needs-repr-c))
+                  (parse-ast-defstruct-note-align-form! dispatch fields))
+                (Err message)]))]
         [_ (Err "parse: malformed defstruct")])]
     [_ (Err "parse: malformed defstruct")]))
 
@@ -11036,49 +10839,44 @@
     [(Cons form rest _)
       (let
         [semantic-start : i64 out.semantic-origins.len]
-        (begin
-          (compiler-parse-semantic-origin-capture-select!
-            semantic-origins
-            out.len)
-          (match (parse-ast-decl-maybe-with-pools
-            dispatch
-            pools
-            (compiler-parse-place-shared-view form))
-            [(SomeDecl decl)
-              (begin
-                (parse-ast-decl-vec-push-with-span
-                  out
-                  decl
-                  (compiler-parse-decl-origin-syntax-span dispatch form))
-                (parse-ast-module-body-forms-into-vec
-                  dispatch
-                  pools
-                  rest
-                  semantic-origins
-                  out))]
-            [(Decls decls)
-              (begin
-                (set! out.semantic-origins.len semantic-start)
-                (parse-ast-decl-vec-push-list! out decls)
-                (parse-ast-module-body-forms-into-vec
-                  dispatch
-                  pools
-                  rest
-                  semantic-origins
-                  out))]
-            [(NoDecl)
-              (begin
-                (set! out.semantic-origins.len semantic-start)
-                (parse-ast-module-body-forms-into-vec
-                  dispatch
-                  pools
-                  rest
-                  semantic-origins
-                  out))]
-            [(Err message)
-              (begin
-                (set! out.semantic-origins.len semantic-start)
-                (Err message))])))]
+        (compiler-parse-semantic-origin-capture-select!
+          semantic-origins
+          out.len)
+        (match (parse-ast-decl-maybe-with-pools
+          dispatch
+          pools
+          (compiler-parse-place-shared-view form))
+          [(SomeDecl decl)
+            (parse-ast-decl-vec-push-with-span
+              out
+              decl
+              (compiler-parse-decl-origin-syntax-span dispatch form))
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              rest
+              semantic-origins
+              out)]
+          [(Decls decls)
+            (set! out.semantic-origins.len semantic-start)
+            (parse-ast-decl-vec-push-list! out decls)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              rest
+              semantic-origins
+              out)]
+          [(NoDecl)
+            (set! out.semantic-origins.len semantic-start)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              rest
+              semantic-origins
+              out)]
+          [(Err message)
+            (set! out.semantic-origins.len semantic-start)
+            (Err message)]))]
     [_ (Err "parse: malformed module")]))
 
 (define (parse-ast-module-body
@@ -11104,9 +10902,8 @@
               name
               (parse-ast-decl-vec-to-list (& out))))]
         [(Err message) (Err message)])]
-    (begin
-      (compiler-parse-semantic-origin-capture-restore! previous-capture)
-      result)))
+    (compiler-parse-semantic-origin-capture-restore! previous-capture)
+    result))
 
 (define (parse-ast-module
   [dispatch : sym_i64_env.SymI64Env]
@@ -11116,22 +10913,21 @@
     [(Cons name-node end _)
       (match (reader.spanned-sexpr-view name-node)
         [(Sym name span)
-          (begin
-            (compiler-parse-semantic-origin-push-components!
-              name
-              span
-              (ModuleDefinition)
-              (ModuleDefinition))
-            (match (reader.spanned-sexpr-view
-              (compiler-parse-place-shared-view end))
-              [(Nil _)
-                (Ok (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
-              [_
-                (parse-ast-module-body
-                  dispatch
-                  pools
-                  (ci.intern-syntax-id-value name)
-                  end)]))]
+          (compiler-parse-semantic-origin-push-components!
+            name
+            span
+            (ModuleDefinition)
+            (ModuleDefinition))
+          (match (reader.spanned-sexpr-view
+            (compiler-parse-place-shared-view end))
+            [(Nil _)
+              (Ok (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
+            [_
+              (parse-ast-module-body
+                dispatch
+                pools
+                (ci.intern-syntax-id-value name)
+                end)])]
         [_ (Err "parse: malformed module")])]
     [_ (Err "parse: malformed module")]))
 
@@ -11222,14 +11018,12 @@
     [n : i64 (string.string-length name)]
     [i : i64 0]
     [start : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '.')
-            (set! start (+ i 1))
-            unit)
-          (set! i (+ i 1))))
-      start)))
+    (while (< i n)
+      (if (string.char-eq (string.string-ref name i) '.')
+        (set! start (+ i 1))
+        unit)
+      (set! i (+ i 1)))
+    start))
 
 (define (parse-ast-dotted-import-default-alias [name : String]) : String
   (let
@@ -11256,26 +11050,25 @@
     [text : String
       (ci.intern-compat-state-syntax-id-text intern-state module-name)]
     [wildcard : bool (parse-ast-dotted-import-wildcard? text)]
-    (begin
-      (if wildcard
-        (compiler-parse-semantic-origin-push-components!
-          (ci.intern-syntax-id-from-raw
-            (ci.intern-compat-state-dotted-prefix-id
-              intern-state
-              (ci.intern-syntax-id-value module-name)))
-          (token.SourceSpan
-            (token.span-start-line span)
-            (token.span-start-col span)
-            (token.span-end-line span)
-            (- (token.span-end-col span) 2))
-          (ModulePath)
-          (ModulePath))
-        (compiler-parse-semantic-origin-push-components!
-          module-name
-          span
-          (ModulePath)
-          (ModulePath)))
-      unit)))
+    (if wildcard
+      (compiler-parse-semantic-origin-push-components!
+        (ci.intern-syntax-id-from-raw
+          (ci.intern-compat-state-dotted-prefix-id
+            intern-state
+            (ci.intern-syntax-id-value module-name)))
+        (token.SourceSpan
+          (token.span-start-line span)
+          (token.span-start-col span)
+          (token.span-end-line span)
+          (- (token.span-end-col span) 2))
+        (ModulePath)
+        (ModulePath))
+      (compiler-parse-semantic-origin-push-components!
+        module-name
+        span
+        (ModulePath)
+        (ModulePath)))
+    unit))
 
 (define (compiler-parse-semantic-default-import-alias-origin!
   [dispatch : sym_i64_env.SymI64Env]
@@ -11386,38 +11179,36 @@
             [module-start-col : i64 module-span.start-col]
             [module-end-line : i64 module-span.end-line]
             [module-end-col : i64 module-span.end-col]
-            (begin
-              (compiler-parse-semantic-import-path-origins!
-                dispatch
-                module-name
-                (token.SourceSpan
-                  module-start-line
-                  module-start-col
-                  module-end-line
-                  module-end-col))
-              (let
-                [result : ResultAstDecl
-                  (parse-ast-dotted-import-tail
-                    dispatch
-                    (ci.intern-syntax-id-value module-name)
-                    (compiler-parse-place-shared-view tail)
-                    span)]
-                (match (& result)
-                  [(Ok _)
-                    (begin
-                      (match (reader.spanned-sexpr-view tail)
-                        [(Nil _)
-                          (compiler-parse-semantic-default-import-alias-origin!
-                            dispatch
-                            module-name
-                            (token.SourceSpan
-                              module-start-line
-                              module-start-col
-                              module-end-line
-                              module-end-col))]
-                        [_ unit])
-                      result)]
-                  [(Err _) result]))))]
+            (compiler-parse-semantic-import-path-origins!
+              dispatch
+              module-name
+              (token.SourceSpan
+                module-start-line
+                module-start-col
+                module-end-line
+                module-end-col))
+            (let
+              [result : ResultAstDecl
+                (parse-ast-dotted-import-tail
+                  dispatch
+                  (ci.intern-syntax-id-value module-name)
+                  (compiler-parse-place-shared-view tail)
+                  span)]
+              (match (& result)
+                [(Ok _)
+                  (match (reader.spanned-sexpr-view tail)
+                    [(Nil _)
+                      (compiler-parse-semantic-default-import-alias-origin!
+                        dispatch
+                        module-name
+                        (token.SourceSpan
+                          module-start-line
+                          module-start-col
+                          module-end-line
+                          module-end-col))]
+                    [_ unit])
+                  result]
+                [(Err _) result])))]
         [(Cons _ _ _)
           (parse-ast-import-macro-tail dispatch pools path-node tail span)]
         [_ (Err "parse: malformed import")])]
@@ -11873,9 +11664,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstMaybeDecl
       (parse-ast-decl-maybe-with-pools dispatch pools s)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (defstruct ParseAstDeclVec
   (slots (__tl_dyn-array ast.AstDecl))
@@ -11917,22 +11707,20 @@
   [src : (& src (__tl_dyn-array ast.AstDecl))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (parse-ast-decl-vec-copy-range dst src (+ index 1) count)))
 
 (define (parse-ast-decl-vec-span-copy-range
   [dst : (&mut dst (__tl_dyn-array ast.AstSourceSpan))]
   [src : (& src (__tl_dyn-array ast.AstSourceSpan))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (parse-ast-decl-vec-span-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (parse-ast-decl-vec-span-copy-range dst src (+ index 1) count)))
 
 (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
   (let
@@ -11946,26 +11734,23 @@
       (__tl_make-array ast.AstDecl new-cap)]
     [bigger-spans : (__tl_dyn-array ast.AstSourceSpan)
       (__tl_make-array ast.AstSourceSpan new-cap)]
-    (begin
-      (parse-ast-decl-vec-copy-range (&mut bigger) (& v.slots) 0 n)
-      (parse-ast-decl-vec-span-copy-range (&mut bigger-spans) (& v.spans) 0 n)
-      (set! v.slots bigger)
-      (set! v.spans bigger-spans))))
+    (parse-ast-decl-vec-copy-range (&mut bigger) (& v.slots) 0 n)
+    (parse-ast-decl-vec-span-copy-range (&mut bigger-spans) (& v.spans) 0 n)
+    (set! v.slots bigger)
+    (set! v.spans bigger-spans)))
 
 (define (parse-ast-decl-vec-push-with-span
   [v : (&mut v ParseAstDeclVec)]
   [value : ast.AstDecl]
   [span : ast.AstSourceSpan]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (parse-ast-decl-vec-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! (array-ref v.spans index) span)
-        (set! v.len (+ index 1))))))
+  (if (< v.len (array-length v.slots))
+    unit
+    (parse-ast-decl-vec-grow v))
+  (let
+    [index : i64 v.len]
+    (set! (array-ref v.slots index) value)
+    (set! (array-ref v.spans index) span)
+    (set! v.len (+ index 1))))
 
 (define (parse-ast-decl-vec-push
   [v : (&mut v ParseAstDeclVec)]
@@ -11978,21 +11763,19 @@
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons head rest)
-      (begin
-        (parse-ast-decl-vec-push out head)
-        (parse-ast-decl-vec-push-list! out rest))]))
+      (parse-ast-decl-vec-push out head)
+      (parse-ast-decl-vec-push-list! out rest)]))
 
 (define (parse-ast-decl-vec-copy-to-list
   [items : (& items ParseAstDeclVec)]
   [index : i64]
   [out : (&mut out ast.AstDeclList)]) : unit
-  (if (>= index (parse-ast-decl-vec-len items))
-    unit
-    (begin
-      (ast.ast-decl-list-push
-        out
-        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
-      (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
+  (unless
+    (>= index (parse-ast-decl-vec-len items))
+    (ast.ast-decl-list-push
+      out
+      (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+    (parse-ast-decl-vec-copy-to-list items (+ index 1) out)))
 
 (define (compiler-parse-decl-origin-needs-record? [decl : ast.AstDecl]) : bool
   (match decl
@@ -12010,22 +11793,21 @@
   (let
     [index : i64 0]
     (while (< index (parse-ast-decl-vec-len items))
-      (begin
-        (if (compiler-parse-decl-origin-needs-record?
-          (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
-          (let
-            [span : ast.AstSourceSpan (array-ref items.spans index)]
-            (compiler-parse-decl-origin-register-maybe!
-              out
-              index
-              (Some
-                (ast.AstSourceSpan
-                  span.start-line
-                  span.start-col
-                  span.end-line
-                  span.end-col))))
-          unit)
-        (set! index (+ index 1))))))
+      (if (compiler-parse-decl-origin-needs-record?
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+        (let
+          [span : ast.AstSourceSpan (array-ref items.spans index)]
+          (compiler-parse-decl-origin-register-maybe!
+            out
+            index
+            (Some
+              (ast.AstSourceSpan
+                span.start-line
+                span.start-col
+                span.end-line
+                span.end-col))))
+        unit)
+      (set! index (+ index 1)))))
 
 (define (compiler-parse-semantic-origin-register-run!
   [decls : (& decls ast.AstDeclList)]
@@ -12045,37 +11827,34 @@
           first.end-col)]
       [run-start : i64 (reader.sp-node-pool-reserve! (+ count 2))]
       [index : i64 0]
-      (begin
-        (reader.sp-node-pool-fill!
-          run-start
-          (Int
-            (compiler-parse-decl-list-storage-key decls)
-            "__tl_semantic_origin"
-            marker-span))
-        (reader.sp-node-pool-fill!
-          (+ run-start 1)
-          (Int
-            (+ decls.offset slot)
-            "__tl_semantic_origin_start"
-            (token.SourceSpan count 0 0 0)))
-        (while (< index count)
-          (let
-            [origin : ParseSemanticOriginRecord
-              (array-ref origins.items (+ start index))]
-            (begin
-              (reader.sp-node-pool-fill!
-                (+ (+ run-start 2) index)
-                (Int
-                  origin.written-name
-                  (compiler-parse-semantic-origin-kind-marker
-                    (compiler-parse-semantic-origin-kind-from-tag
-                      origin.kind-tag))
-                  (token.SourceSpan
-                    origin.start-line
-                    origin.start-col
-                    origin.end-line
-                    origin.end-col)))
-              (set! index (+ index 1)))))))))
+      (reader.sp-node-pool-fill!
+        run-start
+        (Int
+          (compiler-parse-decl-list-storage-key decls)
+          "__tl_semantic_origin"
+          marker-span))
+      (reader.sp-node-pool-fill!
+        (+ run-start 1)
+        (Int
+          (+ decls.offset slot)
+          "__tl_semantic_origin_start"
+          (token.SourceSpan count 0 0 0)))
+      (while (< index count)
+        (let
+          [origin : ParseSemanticOriginRecord
+            (array-ref origins.items (+ start index))]
+          (reader.sp-node-pool-fill!
+            (+ (+ run-start 2) index)
+            (Int
+              origin.written-name
+              (compiler-parse-semantic-origin-kind-marker
+                (compiler-parse-semantic-origin-kind-from-tag origin.kind-tag))
+              (token.SourceSpan
+                origin.start-line
+                origin.start-col
+                origin.end-line
+                origin.end-col)))
+          (set! index (+ index 1)))))))
 
 (define (compiler-parse-semantic-origin-register-selected!
   [items : (& items ParseAstDeclVec)]
@@ -12088,30 +11867,28 @@
         [first : ParseSemanticOriginRecord
           (array-ref items.semantic-origins.items start)]
         [count : i64 1]
-        (begin
-          (while (and
-            (< (+ start count) total)
-            (=
-              (array-ref items.semantic-origins.items (+ start count)).decl-slot
-              first.decl-slot))
-            (set! count (+ count 1)))
-          (compiler-parse-semantic-origin-register-run!
-            out
-            first.decl-slot
-            (& items.semantic-origins)
-            start
-            count)
-          (set! start (+ start count)))))))
+        (while (and
+          (< (+ start count) total)
+          (=
+            (array-ref items.semantic-origins.items (+ start count)).decl-slot
+            first.decl-slot))
+          (set! count (+ count 1)))
+        (compiler-parse-semantic-origin-register-run!
+          out
+          first.decl-slot
+          (& items.semantic-origins)
+          start
+          count)
+        (set! start (+ start count))))))
 
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : ast.AstDeclList
   (let
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity (parse-ast-decl-vec-len items))]
-    (begin
-      (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
-      (compiler-parse-decl-origin-register-selected! items (& out))
-      (compiler-parse-semantic-origin-register-selected! items (& out))
-      out)))
+    (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
+    (compiler-parse-decl-origin-register-selected! items (& out))
+    (compiler-parse-semantic-origin-register-selected! items (& out))
+    out))
 
 ;; Wrappers are declarations semantically, but declaration-shape errors belong
 ;; to the declaration inside them. Keep the innermost source form's bounds.
@@ -12173,67 +11950,61 @@
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
             [semantic-start : i64 out.semantic-origins.len]
-            (begin
-              (compiler-parse-semantic-origin-capture-begin!
-                (ci.intern-compat-state-semantic-name-view
-                  (compiler-parse-dispatch-intern-state dispatch))
-                semantic-origins
-                out.len
-                (compiler-parse-binding-origins-enabled dispatch))
-              (match (parse-ast-decl-maybe-with-pools
-                dispatch
-                pools
-                (compiler-parse-place-shared-view form))
-                [(SomeDecl decl)
-                  (begin
-                    (parse-ast-decl-vec-push-with-span
-                      out
-                      decl
-                      (compiler-parse-decl-origin-syntax-span dispatch form))
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-into-vec
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(Decls decls)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-decl-vec-push-list! out decls)
-                    (parse-ast-program-forms-into-vec
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(NoDecl)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-into-vec
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(Err message)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (reader.sp-node-pool-truncate! mark)
-                    (Err message))])))]
+            (compiler-parse-semantic-origin-capture-begin!
+              (ci.intern-compat-state-semantic-name-view
+                (compiler-parse-dispatch-intern-state dispatch))
+              semantic-origins
+              out.len
+              (compiler-parse-binding-origins-enabled dispatch))
+            (match (parse-ast-decl-maybe-with-pools
+              dispatch
+              pools
+              (compiler-parse-place-shared-view form))
+              [(SomeDecl decl)
+                (parse-ast-decl-vec-push-with-span
+                  out
+                  decl
+                  (compiler-parse-decl-origin-syntax-span dispatch form))
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-into-vec
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(Decls decls)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-into-vec
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(NoDecl)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-into-vec
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(Err message)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (reader.sp-node-pool-truncate! mark)
+                (Err message)]))]
         [(Err err)
-          (begin
-            (reader.sp-node-pool-truncate! mark)
-            (Err (token.source-error-message err)))]))))
+          (reader.sp-node-pool-truncate! mark)
+          (Err (token.source-error-message err))]))))
 
 (define (parse-ast-program-forms
   [dispatch : sym_i64_env.SymI64Env]
@@ -12265,42 +12036,40 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
-  (begin
-    (compiler-parse-semantic-origin-capture-end!)
-    (let
-      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [base-dispatch : sym_i64_env.SymI64Env
-        (parse-ast-program-dispatch-with-cfg cfgs)]
-      [base-control : i64
-        (compiler-parse-env-marker-value
-          base-dispatch
-          compiler-parse-state-marker-id)]
-      [invocation : CompilerParseInvocationFrame
-        (CompilerParseInvocationFrame 0 0 0 0 0 0)]
-      [invocation-address : i64
-        (cast
-          (unsafe
-            (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
-          : i64)]
-      [dispatch-with-invocation : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          base-dispatch
-          compiler-parse-invocation-marker-id
-          invocation-address)]
-      [dispatch : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id
-          dispatch-with-invocation
-          compiler-parse-invocation-control-marker-id
-          base-control)]
-      (begin
-        (set! (array-ref cur 0) 0)
-        (compiler-parse-raw-i64-set!
-          invocation-address
-          compiler-parse-invocation-control-slot
-          base-control)
-        (match (parse-ast-program-forms dispatch pools toks cur)
-          [(Ok decls) (Ok (ast.ast-program decls))]
-          [(Err message) (Err message)])))))
+  (compiler-parse-semantic-origin-capture-end!)
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [base-dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
+    [base-control : i64
+      (compiler-parse-env-marker-value
+        base-dispatch
+        compiler-parse-state-marker-id)]
+    [invocation : CompilerParseInvocationFrame
+      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+    [invocation-address : i64
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (ptr-addr-of invocation) : (Ptr u8))))
+        : i64)]
+    [dispatch-with-invocation : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        invocation-address)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        dispatch-with-invocation
+        compiler-parse-invocation-control-marker-id
+        base-control)]
+    (set! (array-ref cur 0) 0)
+    (compiler-parse-raw-i64-set!
+      invocation-address
+      compiler-parse-invocation-control-slot
+      base-control)
+    (match (parse-ast-program-forms dispatch pools toks cur)
+      [(Ok decls) (Ok (ast.ast-program decls))]
+      [(Err message) (Err message)])))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (parse-ast-source-with-cfg src (compiler-cfg-empty)))
@@ -12309,11 +12078,10 @@
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
-  (begin
-    (compiler-parse-source-builtins-prepare!)
-    (match (compiler-parse-spanned-result-with-cfg src cfgs)
-      [(Ok toks) (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
-      [(Err err) (Err (token.source-error-message err))])))
+  (compiler-parse-source-builtins-prepare!)
+  (match (compiler-parse-spanned-result-with-cfg src cfgs)
+    [(Ok toks) (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
+    [(Err err) (Err (token.source-error-message err))]))
 
 (define (parse-ast-source-with-cfg
   [src : String]
@@ -12322,9 +12090,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
       (parse-ast-source-with-cfg-and-pools src cfgs pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-repl-module-macro-call-decl? [decl : ast.AstDecl]) : bool
   (match decl
@@ -12360,75 +12127,67 @@
 (define (parse-ast-repl-source-with-pools
   [src : String]
   [pools : ast.AstNodePoolContext]) : ResultAstReplItem
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [mark : i64 (reader.sp-node-pool-len)]
-      (match (lexer.spanned-result src)
-        [(Ok toks)
-          (let
-            [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    (match (lexer.spanned-result src)
+      [(Ok toks)
+        (let
+          [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
+          (set! (array-ref cur 0) 0)
+          (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
             (begin
-              (set! (array-ref cur 0) 0)
-              (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
-                (begin
-                  (reader.sp-node-pool-truncate! mark)
-                  (parse-ast-repl-error
-                    (token.SourceSpan 1 1 1 1)
-                    "parse: expected REPL input"))
-                (match (reader.form-spanned-result (& toks) (&mut cur))
-                  [(Ok form)
-                    (let
-                      [records-start : i64 (reader.sp-node-pool-len)]
-                      (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
-                        (match (parse-ast-decl
-                          dispatch
-                          pools
-                          (compiler-parse-place-shared-view form))
-                          [(Ok decl)
-                            (let
-                              [result : ResultAstReplItem
-                                (if (parse-ast-repl-module-macro-call-decl?
-                                  (compiler-parse-place-shared-view decl))
-                                  (parse-ast-repl-expr-item dispatch pools form)
-                                  (Ok (AstReplDecl decl)))]
-                              (begin
-                                (compiler-parse-member-records-compact!
-                                  mark
-                                  records-start)
-                                result))]
-                          [(Err _)
-                            (begin
-                              (reader.sp-node-pool-truncate! records-start)
-                              (let
-                                [result : ResultAstReplItem
-                                  (parse-ast-repl-expr-item dispatch pools form)]
-                                (begin
-                                  (reader.sp-node-pool-truncate! mark)
-                                  result)))])
-                        (begin
+              (reader.sp-node-pool-truncate! mark)
+              (parse-ast-repl-error
+                (token.SourceSpan 1 1 1 1)
+                "parse: expected REPL input"))
+            (match (reader.form-spanned-result (& toks) (&mut cur))
+              [(Ok form)
+                (let
+                  [records-start : i64 (reader.sp-node-pool-len)]
+                  (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
+                    (match (parse-ast-decl
+                      dispatch
+                      pools
+                      (compiler-parse-place-shared-view form))
+                      [(Ok decl)
+                        (let
+                          [result : ResultAstReplItem
+                            (if (parse-ast-repl-module-macro-call-decl?
+                              (compiler-parse-place-shared-view decl))
+                              (parse-ast-repl-expr-item dispatch pools form)
+                              (Ok (AstReplDecl decl)))]
+                          (compiler-parse-member-records-compact!
+                            mark
+                            records-start)
+                          result)]
+                      [(Err _)
+                        (reader.sp-node-pool-truncate! records-start)
+                        (let
+                          [result : ResultAstReplItem
+                            (parse-ast-repl-expr-item dispatch pools form)]
                           (reader.sp-node-pool-truncate! mark)
-                          (parse-ast-repl-error
-                            (token.spanned-token-span
-                              (& (array-ref toks (array-ref cur 0))))
-                            "parse: trailing tokens after REPL input"))))]
-                  [(Err err)
+                          result)])
                     (begin
                       (reader.sp-node-pool-truncate! mark)
-                      (parse-ast-repl-source-error err))]))))]
-        [(Err err)
-          (begin
-            (reader.sp-node-pool-truncate! mark)
-            (parse-ast-repl-source-error err))]))))
+                      (parse-ast-repl-error
+                        (token.spanned-token-span
+                          (& (array-ref toks (array-ref cur 0))))
+                        "parse: trailing tokens after REPL input"))))]
+              [(Err err)
+                (reader.sp-node-pool-truncate! mark)
+                (parse-ast-repl-source-error err)])))]
+      [(Err err)
+        (reader.sp-node-pool-truncate! mark)
+        (parse-ast-repl-source-error err)])))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstReplItem (parse-ast-repl-source-with-pools src pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-canonical-diagnostic [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (let
@@ -12472,34 +12231,22 @@
             (token.spanned-token-token-ref (& (array-ref toks scan))))]
         (cond
           [(= tag (token.tag-end))
-            (begin
-              (set! (array-ref cur 0) scan)
-              (set! done true))]
+            (set! (array-ref cur 0) scan)
+            (set! done true)]
           [(or (= tag (token.tag-lparen)) (= tag (token.tag-lbracket)))
-            (begin
-              (set! depth (+ depth 1))
-              (set! scan (+ scan 1)))]
+            (set! depth (+ depth 1))
+            (set! scan (+ scan 1))]
           [(or (= tag (token.tag-rparen)) (= tag (token.tag-rbracket)))
-            (begin
-              (set! scan (+ scan 1))
-              (if (> depth 0)
-                (set! depth (- depth 1))
-                unit)
-              (if (= depth 0)
-                (begin
-                  (set! (array-ref cur 0) scan)
-                  (set! done true))
-                unit))]
+            (set! scan (+ scan 1))
+            (if (> depth 0)
+              (set! depth (- depth 1))
+              unit)
+            (when (= depth 0) (set! (array-ref cur 0) scan) (set! done true))]
           [(and (= depth 0) (parse-ast-recovery-prefix-tag? tag))
             (set! scan (+ scan 1))]
           [else
-            (begin
-              (set! scan (+ scan 1))
-              (if (= depth 0)
-                (begin
-                  (set! (array-ref cur 0) scan)
-                  (set! done true))
-                unit))])))))
+            (set! scan (+ scan 1))
+            (when (= depth 0) (set! (array-ref cur 0) scan) (set! done true))])))))
 
 (define (parse-ast-program-forms-recovery-into-vec
   [path : String]
@@ -12520,90 +12267,83 @@
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
             [semantic-start : i64 out.semantic-origins.len]
-            (begin
-              (parse-ast-error-span-clear! dispatch)
-              (compiler-parse-semantic-origin-capture-begin!
-                (ci.intern-compat-state-semantic-name-view
-                  (compiler-parse-dispatch-intern-state dispatch))
-                semantic-origins
-                out.len
-                (compiler-parse-binding-origins-enabled dispatch))
-              (match (parse-ast-decl-maybe-with-pools
-                dispatch
-                pools
-                (compiler-parse-place-shared-view spanned-form))
-                [(SomeDecl decl)
-                  (begin
-                    (parse-ast-decl-vec-push-with-span
-                      out
-                      decl
-                      (compiler-parse-decl-origin-syntax-span
-                        dispatch
-                        spanned-form))
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-recovery-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out
-                      diagnostics))]
-                [(Decls decls)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-decl-vec-push-list! out decls)
-                    (parse-ast-program-forms-recovery-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out
-                      diagnostics))]
-                [(NoDecl)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-recovery-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out
-                      diagnostics))]
-                [(Err message)
-                  (let
-                    [diag : cdiag.CompilerDiagnostic
-                      (parse-ast-canonical-diagnostic
-                        (cdiag.compiler-diagnostic-from-span
-                          (compiler-parse-place-shared-view path)
-                          (parse-ast-error-span-current
-                            dispatch
-                            (reader.spanned-sexpr-span spanned-form))
-                          message))]
-                    (begin
-                      (set! out.semantic-origins.len semantic-start)
-                      (compiler-parse-semantic-origin-capture-end!)
-                      (reader.sp-node-pool-truncate! mark)
-                      (cdiag.compiler-diagnostic-list-push! diagnostics diag)
-                      (parse-ast-program-forms-recovery-into-vec
-                        path
-                        dispatch
-                        pools
-                        toks
-                        cur
-                        semantic-origins
-                        out
-                        diagnostics)))])))]
+            (parse-ast-error-span-clear! dispatch)
+            (compiler-parse-semantic-origin-capture-begin!
+              (ci.intern-compat-state-semantic-name-view
+                (compiler-parse-dispatch-intern-state dispatch))
+              semantic-origins
+              out.len
+              (compiler-parse-binding-origins-enabled dispatch))
+            (match (parse-ast-decl-maybe-with-pools
+              dispatch
+              pools
+              (compiler-parse-place-shared-view spanned-form))
+              [(SomeDecl decl)
+                (parse-ast-decl-vec-push-with-span
+                  out
+                  decl
+                  (compiler-parse-decl-origin-syntax-span dispatch spanned-form))
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-recovery-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out
+                  diagnostics)]
+              [(Decls decls)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-recovery-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out
+                  diagnostics)]
+              [(NoDecl)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-recovery-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out
+                  diagnostics)]
+              [(Err message)
+                (let
+                  [diag : cdiag.CompilerDiagnostic
+                    (parse-ast-canonical-diagnostic
+                      (cdiag.compiler-diagnostic-from-span
+                        (compiler-parse-place-shared-view path)
+                        (parse-ast-error-span-current
+                          dispatch
+                          (reader.spanned-sexpr-span spanned-form))
+                        message))]
+                  (set! out.semantic-origins.len semantic-start)
+                  (compiler-parse-semantic-origin-capture-end!)
+                  (reader.sp-node-pool-truncate! mark)
+                  (cdiag.compiler-diagnostic-list-push! diagnostics diag)
+                  (parse-ast-program-forms-recovery-into-vec
+                    path
+                    dispatch
+                    pools
+                    toks
+                    cur
+                    semantic-origins
+                    out
+                    diagnostics))]))]
         [(Err err)
           (let
             [diag : cdiag.CompilerDiagnostic
@@ -12611,22 +12351,18 @@
                 (cdiag.compiler-diagnostic-from-source-error
                   (compiler-parse-place-shared-view path)
                   err))]
-            (begin
-              (reader.sp-node-pool-truncate! mark)
-              (parse-ast-recover-top-level-cursor!
-                (& toks)
-                (&mut cur)
-                form-start)
-              (cdiag.compiler-diagnostic-list-push! diagnostics diag)
-              (parse-ast-program-forms-recovery-into-vec
-                path
-                dispatch
-                pools
-                toks
-                cur
-                semantic-origins
-                out
-                diagnostics)))]))))
+            (reader.sp-node-pool-truncate! mark)
+            (parse-ast-recover-top-level-cursor! (& toks) (&mut cur) form-start)
+            (cdiag.compiler-diagnostic-list-push! diagnostics diag)
+            (parse-ast-program-forms-recovery-into-vec
+              path
+              dispatch
+              pools
+              toks
+              cur
+              semantic-origins
+              out
+              diagnostics))]))))
 
 (define (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
   [path : String]
@@ -12659,50 +12395,47 @@
         compiler-parse-invocation-control-marker-id
         base-control)]
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
-    (begin
-      (set! (array-ref cur 0) 0)
-      (compiler-parse-raw-i64-set!
-        invocation-address
-        compiler-parse-invocation-control-slot
-        base-control)
-      (let
-        [diagnostics : cdiag.CompilerDiagnosticList
-          (cdiag.compiler-diagnostic-list-empty)]
-        (begin
-          (parse-ast-program-forms-recovery-into-vec
-            path
-            dispatch
-            pools
-            toks
-            cur
-            (unsafe
-              (ptr-addr-of out.semantic-origins))
-            (&mut out)
-            (&mut diagnostics))
-          (Parsed
-            (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
-            (box diagnostics)))))))
+    (set! (array-ref cur 0) 0)
+    (compiler-parse-raw-i64-set!
+      invocation-address
+      compiler-parse-invocation-control-slot
+      base-control)
+    (let
+      [diagnostics : cdiag.CompilerDiagnosticList
+        (cdiag.compiler-diagnostic-list-empty)]
+      (parse-ast-program-forms-recovery-into-vec
+        path
+        dispatch
+        pools
+        toks
+        cur
+        (unsafe
+          (ptr-addr-of out.semantic-origins))
+        (&mut out)
+        (&mut diagnostics))
+      (Parsed
+        (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
+        (box diagnostics)))))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
   [path : String]
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
-  (begin
-    (compiler-parse-source-builtins-prepare!)
-    (match (compiler-parse-spanned-result-with-cfg src cfgs)
-      [(Ok toks)
-        (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
-          path
-          toks
-          cfgs
-          pools)]
-      [(Err err)
-        (Fatal
-          (box
-            (cdiag.compiler-diagnostic-list-single
-              (parse-ast-canonical-diagnostic
-                (cdiag.compiler-diagnostic-from-source-error path err)))))])))
+  (compiler-parse-source-builtins-prepare!)
+  (match (compiler-parse-spanned-result-with-cfg src cfgs)
+    [(Ok toks)
+      (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
+        path
+        toks
+        cfgs
+        pools)]
+    [(Err err)
+      (Fatal
+        (box
+          (cdiag.compiler-diagnostic-list-single
+            (parse-ast-canonical-diagnostic
+              (cdiag.compiler-diagnostic-from-source-error path err)))))]))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg
   [path : String]
@@ -12716,9 +12449,8 @@
         src
         cfgs
         pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
@@ -12740,84 +12472,76 @@
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
             [semantic-start : i64 out.semantic-origins.len]
-            (begin
-              (parse-ast-error-span-clear! dispatch)
-              (compiler-parse-semantic-origin-capture-begin!
-                (ci.intern-compat-state-semantic-name-view
-                  (compiler-parse-dispatch-intern-state dispatch))
-                semantic-origins
-                out.len
-                (compiler-parse-binding-origins-enabled dispatch))
-              (match (parse-ast-decl-maybe-with-pools
-                dispatch
-                pools
-                (compiler-parse-place-shared-view spanned-form))
-                [(SomeDecl decl)
-                  (begin
-                    (parse-ast-decl-vec-push-with-span
-                      out
-                      decl
-                      (compiler-parse-decl-origin-syntax-span
-                        dispatch
-                        spanned-form))
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-diagnostic-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(Decls decls)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-decl-vec-push-list! out decls)
-                    (parse-ast-program-forms-diagnostic-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(NoDecl)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (compiler-parse-member-records-compact! mark records-start)
-                    (parse-ast-program-forms-diagnostic-into-vec
-                      path
-                      dispatch
-                      pools
-                      toks
-                      cur
-                      semantic-origins
-                      out))]
-                [(Err message)
-                  (begin
-                    (set! out.semantic-origins.len semantic-start)
-                    (compiler-parse-semantic-origin-capture-end!)
-                    (reader.sp-node-pool-truncate! mark)
-                    (Err
-                      (box
-                        (parse-ast-canonical-diagnostic
-                          (cdiag.compiler-diagnostic-from-span
-                            path
-                            (parse-ast-error-span-current
-                              dispatch
-                              (reader.spanned-sexpr-span spanned-form))
-                            message)))))])))]
+            (parse-ast-error-span-clear! dispatch)
+            (compiler-parse-semantic-origin-capture-begin!
+              (ci.intern-compat-state-semantic-name-view
+                (compiler-parse-dispatch-intern-state dispatch))
+              semantic-origins
+              out.len
+              (compiler-parse-binding-origins-enabled dispatch))
+            (match (parse-ast-decl-maybe-with-pools
+              dispatch
+              pools
+              (compiler-parse-place-shared-view spanned-form))
+              [(SomeDecl decl)
+                (parse-ast-decl-vec-push-with-span
+                  out
+                  decl
+                  (compiler-parse-decl-origin-syntax-span dispatch spanned-form))
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-diagnostic-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(Decls decls)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-diagnostic-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(NoDecl)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-member-records-compact! mark records-start)
+                (parse-ast-program-forms-diagnostic-into-vec
+                  path
+                  dispatch
+                  pools
+                  toks
+                  cur
+                  semantic-origins
+                  out)]
+              [(Err message)
+                (set! out.semantic-origins.len semantic-start)
+                (compiler-parse-semantic-origin-capture-end!)
+                (reader.sp-node-pool-truncate! mark)
+                (Err
+                  (box
+                    (parse-ast-canonical-diagnostic
+                      (cdiag.compiler-diagnostic-from-span
+                        path
+                        (parse-ast-error-span-current
+                          dispatch
+                          (reader.spanned-sexpr-span spanned-form))
+                        message))))]))]
         [(Err err)
-          (begin
-            (reader.sp-node-pool-truncate! mark)
-            (Err
-              (box
-                (parse-ast-canonical-diagnostic
-                  (cdiag.compiler-diagnostic-from-source-error path err)))))]))))
+          (reader.sp-node-pool-truncate! mark)
+          (Err
+            (box
+              (parse-ast-canonical-diagnostic
+                (cdiag.compiler-diagnostic-from-source-error path err))))]))))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
@@ -12871,15 +12595,14 @@
         dispatch-with-invocation
         compiler-parse-invocation-control-marker-id
         base-control)]
-    (begin
-      (set! (array-ref cur 0) 0)
-      (compiler-parse-raw-i64-set!
-        invocation-address
-        compiler-parse-invocation-control-slot
-        base-control)
-      (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
-        [(Ok decls) (Ok (ast.ast-program decls))]
-        [(Err diag) (Err diag)]))))
+    (set! (array-ref cur 0) 0)
+    (compiler-parse-raw-i64-set!
+      invocation-address
+      compiler-parse-invocation-control-slot
+      base-control)
+    (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
+      [(Ok decls) (Ok (ast.ast-program decls))]
+      [(Err diag) (Err diag)])))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))
@@ -12889,16 +12612,15 @@
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (begin
-    (compiler-parse-source-builtins-prepare!)
-    (match (compiler-parse-spanned-result-with-cfg src cfgs)
-      [(Ok toks)
-        (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
-      [(Err err)
-        (Err
-          (box
-            (parse-ast-canonical-diagnostic
-              (cdiag.compiler-diagnostic-from-source-error path err))))])))
+  (compiler-parse-source-builtins-prepare!)
+  (match (compiler-parse-spanned-result-with-cfg src cfgs)
+    [(Ok toks)
+      (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
+    [(Err err)
+      (Err
+        (box
+          (parse-ast-canonical-diagnostic
+            (cdiag.compiler-diagnostic-from-source-error path err))))]))
 
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
@@ -12908,9 +12630,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
       (parse-ast-source-diagnostic-with-cfg-and-pools path src cfgs pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (ast-decl-list-count [decls : ast.AstDeclList]) : i64
   (ast.ast-decl-list-len (& decls)))

@@ -102,48 +102,13 @@
       (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
       ;; Reused init ids and same-spelled bindings remain distinct by enclosing
       ;; body and ordinal. Re-recording the same proof does not grow the store.
-      (tc_core.tc-checked-let-binding-fact-record!
-        a
-        11
-        0
-        13
-        17
-        (ast.AstType.I64)
-        ordinary)
-      (tc_core.tc-checked-let-binding-fact-record!
-        a
-        12
-        0
-        13
-        17
-        (ast.AstType.Bool)
-        special)
-      (tc_core.tc-checked-let-binding-fact-record!
-        a
-        11
-        0
-        13
-        17
-        (ast.AstType.I64)
-        ordinary)
+      (tc_core.tc-checked-let-binding-fact-record! a 11 0 13 17 (I64) ordinary)
+      (tc_core.tc-checked-let-binding-fact-record! a 12 0 13 17 (Bool) special)
+      (tc_core.tc-checked-let-binding-fact-record! a 11 0 13 17 (I64) ordinary)
       (tc_core.tc-checked-let-binding-facts-set-current-declaration! b 7)
-      (tc_core.tc-checked-let-binding-fact-record!
-        b
-        11
-        0
-        13
-        17
-        (ast.AstType.I64)
-        ordinary)
+      (tc_core.tc-checked-let-binding-fact-record! b 11 0 13 17 (I64) ordinary)
       ;; A conflicting contextual proof fails closed without altering job A.
-      (tc_core.tc-checked-let-binding-fact-record!
-        b
-        11
-        0
-        13
-        17
-        (ast.AstType.Bool)
-        ordinary)
+      (tc_core.tc-checked-let-binding-fact-record! b 11 0 13 17 (Bool) ordinary)
       ;; Grow both retained containers while an unrelated scratch arena is
       ;; active, then destroy that scratch. Every fact and hashmap slot must
       ;; remain owned by the fact generation and storage stays one entry per
@@ -164,7 +129,7 @@
                     index
                     (+ 200 index)
                     (+ 300 index)
-                    (ast.AstType.I64)
+                    (I64)
                     ordinary)
                   (set! index (+ index 1))))))
           (unsafe
@@ -175,26 +140,22 @@
             (= (tc-checked-let-binding-fact-count a) 2)
             (= (tc-checked-let-binding-fact-count b) 1)
             (match (tc_core.tc-checked-let-binding-fact-lookup a 7 11 0 13 17)
-              [(tc_core.TcMaybeCheckedLetBindingFact.Hit
-                  (ast.AstType.I64)
-                  transition)
+              [(Hit (I64) transition)
                 (tc_core.tc-checked-let-binding-transition-eq?
                   transition
                   ordinary)]
               [_ false])
             (match (tc_core.tc-checked-let-binding-fact-lookup a 7 12 0 13 17)
-              [(tc_core.TcMaybeCheckedLetBindingFact.Hit
-                  (ast.AstType.Bool)
-                  transition)
+              [(Hit (Bool) transition)
                 (tc_core.tc-checked-let-binding-transition-eq?
                   transition
                   special)]
               [_ false])
             (match (tc_core.tc-checked-let-binding-fact-lookup a 8 11 0 13 17)
-              [(tc_core.TcMaybeCheckedLetBindingFact.Missing) true]
+              [(Missing) true]
               [_ false])
             (match (tc_core.tc-checked-let-binding-fact-lookup b 7 11 0 13 17)
-              [(tc_core.TcMaybeCheckedLetBindingFact.Inconsistent) true]
+              [(Inconsistent) true]
               [_ false])
             (= (tc-checked-let-binding-fact-count c) 257)
             (match (tc_core.tc-checked-let-binding-fact-lookup
@@ -204,9 +165,7 @@
               256
               456
               556)
-              [(tc_core.TcMaybeCheckedLetBindingFact.Hit
-                  (ast.AstType.I64)
-                  transition)
+              [(Hit (I64) transition)
                 (tc_core.tc-checked-let-binding-transition-eq?
                   transition
                   ordinary)]
@@ -227,7 +186,7 @@
                   0
                   13
                   17)
-                  [(tc_core.TcMaybeCheckedLetBindingFact.Missing) true]
+                  [(Missing) true]
                   [_ false]))]
             (begin
               ;; A second generation must not see the first generation's keys.
@@ -241,7 +200,7 @@
                 0
                 13
                 17
-                (ast.AstType.Bool)
+                (Bool)
                 ordinary)
               (let
                 [reused : bool
@@ -253,7 +212,7 @@
                       0
                       13
                       17)
-                      [(tc_core.TcMaybeCheckedLetBindingFact.Missing) true]
+                      [(Missing) true]
                       [_ false])
                     (match (tc_core.tc-checked-let-binding-fact-lookup
                       a
@@ -262,10 +221,7 @@
                       0
                       13
                       17)
-                      [(tc_core.TcMaybeCheckedLetBindingFact.Hit
-                          (ast.AstType.Bool)
-                          _)
-                        true]
+                      [(Hit (Bool) _) true]
                       [_ false]))]
                 (begin
                   (tc_core.tc-checked-let-binding-facts-finish! a)
@@ -353,14 +309,14 @@
   [state : tc_core.TcBodyState]
   [expr-id : i64]) : bool
   (match (tc_core.tc-body-type-fact-lookup state expr-id)
-    [(tc_core.TcBodyTypeFact.Hit (ast.AstType.I64)) true]
+    [(Hit (I64)) true]
     [_ false]))
 
 (define (tc-body-state-type-fact-bool-hit?
   [state : tc_core.TcBodyState]
   [expr-id : i64]) : bool
   (match (tc_core.tc-body-type-fact-lookup state expr-id)
-    [(tc_core.TcBodyTypeFact.Hit (ast.AstType.Bool)) true]
+    [(Hit (Bool)) true]
     [_ false]))
 
 (define (tc-body-state-early-exit-known?
@@ -368,8 +324,8 @@
   [body-id : i64]
   [expected : bool]) : bool
   (match (tc_core.tc-body-early-exit-fact state body-id)
-    [(tc_core.TcBodyEarlyExitFact.Known actual) (= actual expected)]
-    [(tc_core.TcBodyEarlyExitFact.Unknown) false]))
+    [(Known actual) (= actual expected)]
+    [(Unknown) false]))
 
 ;; Exercise the state surface directly so the isolation invariant is covered
 ;; independently from the serial whole-compiler smoke. A and B deliberately
@@ -386,16 +342,16 @@
       (tc_core.tc-body-early-exit-facts-start-with-limit! b 32)
       (tc_core.tc-body-early-exit-function-start! a)
       (tc_core.tc-body-type-facts-start-recording! a)
-      (tc_core.tc-body-type-fact-record! a 70 (ast.AstType.I64))
+      (tc_core.tc-body-type-fact-record! a 70 (I64))
       (tc_core.tc-body-early-exit-function-start! b)
       (tc_core.tc-body-type-facts-start-recording! b)
-      (tc_core.tc-body-type-fact-record! b 7 (ast.AstType.Bool))
+      (tc_core.tc-body-type-fact-record! b 7 (Bool))
       (tc_core.tc-body-type-facts-start-consuming! a)
       (let
         [a-hit : bool (tc-body-state-type-fact-i64-hit? a 70)]
         [a-cross-miss : bool
           (match (tc_core.tc-body-type-fact-lookup a 7)
-            [(tc_core.TcBodyTypeFact.Miss) true]
+            [(Miss) true]
             [_ false])]
         (begin
           (tc_core.tc-body-type-facts-start-consuming! b)
@@ -403,7 +359,7 @@
             [b-hit : bool (tc-body-state-type-fact-bool-hit? b 7)]
             [b-cross-miss : bool
               (match (tc_core.tc-body-type-fact-lookup b 70)
-                [(tc_core.TcBodyTypeFact.Miss) true]
+                [(Miss) true]
                 [_ false])]
             (begin
               (tc_core.tc-body-early-exit-note! a)
@@ -419,18 +375,18 @@
               (tc_core.tc-body-early-exit-facts-start-with-limit! reused 64)
               (tc_core.tc-body-early-exit-function-start! reused)
               (tc_core.tc-body-type-facts-start-recording! reused)
-              (tc_core.tc-body-type-fact-record! reused 31 (ast.AstType.I64))
+              (tc_core.tc-body-type-fact-record! reused 31 (I64))
               (tc_core.tc-body-type-facts-start-consuming! reused)
               (match (tc_core.ResultTcUnit.Err "controlled body diagnostic")
-                [(tc_core.ResultTcUnit.Ok) unit]
-                [(tc_core.ResultTcUnit.Err _)
+                [(Ok) unit]
+                [(Err _)
                   (begin
                     (tc_core.tc-body-type-facts-clear! reused)
                     (tc_core.tc-body-early-exit-facts-abort! reused))])
               (tc_core.tc-body-early-exit-facts-start-with-limit! reused 16)
               (tc_core.tc-body-early-exit-function-start! reused)
               (tc_core.tc-body-type-facts-start-recording! reused)
-              (tc_core.tc-body-type-fact-record! reused 5 (ast.AstType.Bool))
+              (tc_core.tc-body-type-fact-record! reused 5 (Bool))
               (tc_core.tc-body-type-facts-start-consuming! reused)
               (let
                 [reuse-hit : bool (tc-body-state-type-fact-bool-hit? reused 5)]
@@ -475,8 +431,8 @@
     (if (or (< index 0) (>= index (array-length slots)))
       false
       (match (tc_core.tc-global-array-element-shared-view slots index)
-        [(tc_core.TcAggLayoutCacheSlot.Empty) true]
-        [(tc_core.TcAggLayoutCacheSlot.Full _ _) false]))))
+        [(Empty) true]
+        [(Full _ _) false]))))
 
 (define (macro-prepare-test-ctx [pools : ast.AstNodePoolContext]) : tc_core.TcContext
   (tc_core.tc-context-new
@@ -502,19 +458,16 @@
     [owned : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [ctx : tc_core.TcContext (macro-prepare-test-ctx owned)]
-    [_older-root : i64
-      (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 1))]
-    [_owned-root : i64
-      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 2))]
-    [_owned-next : i64
-      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 3))]
+    [_older-root : i64 (ast.ast-node-pool-context-expr-push older (Var 1))]
+    [_owned-root : i64 (ast.ast-node-pool-context-expr-push owned (Var 2))]
+    [_owned-next : i64 (ast.ast-node-pool-context-expr-push owned (Var 3))]
     [_install-older : unit (ast.ast-node-pool-context-install! older)]
     [_prepare-longer : unit (tc_core.macro-prepare-transformer-pools! ctx)]
     [longer-installed? : bool (ast.ast-node-pool-context-expr-installed? owned)]
     [_older-grows : i64
       (begin
-        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 4))
-        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 5)))]
+        (ast.ast-node-pool-context-expr-push older (Var 4))
+        (ast.ast-node-pool-context-expr-push older (Var 5)))]
     [_reinstall-older : unit (ast.ast-node-pool-context-install! older)]
     [_prepare-shorter : unit (tc_core.macro-prepare-transformer-pools! ctx)]
     [shorter-captured? : bool
@@ -528,9 +481,7 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [type-ctx : tc_core.TcContext (macro-prepare-test-ctx type-owned)]
     [_type-owned-node : i64
-      (ast.ast-node-pool-context-type-push
-        type-owned
-        (ast.AstType.Array 0 7937))]
+      (ast.ast-node-pool-context-type-push type-owned (Array 0 7937))]
     [_install-type-older : unit (ast.ast-node-pool-context-install! type-older)]
     [_prepare-type : unit (tc_core.macro-prepare-transformer-pools! type-ctx)]
     [type-longer-installed? : bool
@@ -564,10 +515,8 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
-    [root-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
-    [root-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 202))]
+    [root-a : i64 (ast.ast-node-pool-context-expr-push pools-a (Var 101))]
+    [root-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Var 202))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -584,25 +533,23 @@
         ""
         cbi.compiler-builtin-id-fix-empty
         pools-b)]
-    [next-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 303))]
-    [next-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 404))]
+    [next-a : i64 (ast.ast-node-pool-context-expr-push pools-a (Var 303))]
+    [next-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Var 404))]
     [a-root-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-a root-a)
-        [(ast.AstExpr.Var name) (= name 101)]
+        [(Var name) (= name 101)]
         [_ false])]
     [b-root-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-b root-b)
-        [(ast.AstExpr.Var name) (= name 202)]
+        [(Var name) (= name 202)]
         [_ false])]
     [a-next-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-a next-a)
-        [(ast.AstExpr.Var name) (= name 303)]
+        [(Var name) (= name 303)]
         [_ false])]
     [b-next-ok? : bool
       (match (tc_core.tc-context-expr-get ctx-b next-b)
-        [(ast.AstExpr.Var name) (= name 404)]
+        [(Var name) (= name 404)]
         [_ false])]
     [compat-ok? : bool
       (begin
@@ -614,7 +561,7 @@
             ;; reads, and no typecheck context may be created under one.
             (and
               (match (tc_core.tc-context-expr-get ctx-b root-a)
-                [(ast.AstExpr.Var name) (= name 202)]
+                [(Var name) (= name 202)]
                 [_ false])
               (=
                 (tc_core.tc-context-expr-bases ctx-b)
@@ -639,7 +586,7 @@
           (let
             [ok? : bool
               (match (tc_core.tc-context-expr-get ctx-a root-b)
-                [(ast.AstExpr.Var name) (= name 101)]
+                [(Var name) (= name 101)]
                 [_ false])]
             (begin
               (ast.ast-node-pool-context-install! saved)
@@ -968,10 +915,7 @@
     [decl-diag : cdiag.CompilerDiagnostic
       (tc_core.tc-decl-diag
         expr-bases
-        (ast.ast-decl-def-id
-          (ci.intern "span-isolation/decl")
-          (ast.AstMaybeType.No)
-          root-id)
+        (ast.ast-decl-def-id (ci.intern "span-isolation/decl") (No) root-id)
         "typecheck: span isolation")]
     [escape : String
       (match (tc_core.tc-spanned-escape-error
@@ -980,8 +924,8 @@
         (tc_core.tc-global-shared-view root)
         outer
         "typecheck: reference value would escape lexical scope")
-        [(tc_core.TcMaybeString.Some rich) rich]
-        [(tc_core.TcMaybeString.No) "<no escape diagnostic>"])]
+        [(Some rich) rich]
+        [(No) "<no escape diagnostic>"])]
     [escape-at : String
       (tc_core.tc-rich-escape-at-expr
         expr-bases
@@ -1012,11 +956,11 @@
   (match (tc_core.tc-expect-at-expr
     ctx
     root
-    (ast.AstType.I64)
-    (ast.AstType.Bool)
+    (I64)
+    (Bool)
     "typecheck: span isolation")
-    [(tc_core.ResultTcUnit.Err message) message]
-    [(tc_core.ResultTcUnit.Ok) "<no mismatch>"]))
+    [(Err message) message]
+    [(Ok) "<no mismatch>"]))
 
 ;; Pools A and B hold the same numeric ids with different source spans. With B
 ;; installed as a decoy, every diagnostic built for an A node must carry A's
@@ -1032,26 +976,20 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [name-id : i64 (ci.intern "span-isolation/value")]
-    [leaf-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var name-id))]
-    [leaf-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var name-id))]
+    [leaf-a : i64 (ast.ast-node-pool-context-expr-push pools-a (Var name-id))]
+    [leaf-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Var name-id))]
     [spanned-a : i64
       (ast.ast-node-pool-context-expr-push
         pools-a
-        (ast.AstExpr.Spanned leaf-a (ast.ast-source-span 7 5 7 12)))]
+        (Spanned leaf-a (ast.ast-source-span 7 5 7 12)))]
     [spanned-b : i64
       (ast.ast-node-pool-context-expr-push
         pools-b
-        (ast.AstExpr.Spanned leaf-b (ast.ast-source-span 99 3 99 9)))]
+        (Spanned leaf-b (ast.ast-source-span 99 3 99 9)))]
     [root-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Return spanned-a))]
+      (ast.ast-node-pool-context-expr-push pools-a (Return spanned-a))]
     [root-b : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-b
-        (ast.AstExpr.Return spanned-b))]
+      (ast.ast-node-pool-context-expr-push pools-b (Return spanned-b))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -1084,14 +1022,12 @@
       (tc-diagnostic-span-isolation-transcript bases-b session root-b)]
     [owner-line? : bool
       (match (tc_core.tc-expr-id-maybe-span bases-a root-a)
-        [(tc_core.TcMaybeAstSourceSpan.Some span)
-          (= (ast.ast-source-span-start-line span) 7)]
-        [(tc_core.TcMaybeAstSourceSpan.No) false])]
+        [(Some span) (= (ast.ast-source-span-start-line span) 7)]
+        [(No) false])]
     [decoy-line? : bool
       (match (tc_core.tc-expr-id-maybe-span-installed root-b)
-        [(tc_core.TcMaybeAstSourceSpan.Some span)
-          (= (ast.ast-source-span-start-line span) 99)]
-        [(tc_core.TcMaybeAstSourceSpan.No) false])]
+        [(Some span) (= (ast.ast-source-span-start-line span) 99)]
+        [(No) false])]
     [decoy-still-installed? : bool
       (ast.ast-node-pool-context-expr-installed? pools-b)]
     [ok? : bool
@@ -1120,35 +1056,31 @@
   [head-id : i64]
   [name-id : i64]) : i64
   (let
-    [name : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name-id))]
+    [name : i64 (ast.ast-node-pool-context-expr-push pools (Var name-id))]
     [spanned : i64
       (ast.ast-node-pool-context-expr-push
         pools
-        (ast.AstExpr.Spanned name (ast.ast-source-span 3 1 3 6)))]
+        (Spanned name (ast.ast-source-span 3 1 3 6)))]
     [value : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
-    [head : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var head-id))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Int 1 "1")))]
+    [head : i64 (ast.ast-node-pool-context-expr-push pools (Var head-id))]
     [args : ast.AstExprList (ast.ast-expr-list-new)]
     (begin
       (ast.ast-expr-list-push (&mut args) spanned)
       (ast.ast-expr-list-push (&mut args) value)
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Call head args)))))
+      (ast.ast-node-pool-context-expr-push pools (Call head args)))))
 
 ;; The name id of the single `define` a macro output parses to, or -1.
 (define (macro-read-pool-parsed-name [parsed : tc_core.ResultMacroParsedDecls]) : i64
   (match parsed
-    [(tc_core.ResultMacroParsedDecls.Ok decls)
+    [(Ok decls)
       (match (ast.ast-decl-list-step decls)
-        [(ast.AstDeclListStep.Cons decl _)
+        [(Cons decl _)
           (match decl
-            [(ast.AstDecl.Def _ name _ _) name]
+            [(Def _ name _ _) name]
             [_ -1])]
-        [(ast.AstDeclListStep.Nil) -1])]
-    [(tc_core.ResultMacroParsedDecls.Err _) -1]))
+        [(Nil) -1])]
+    [(Err _) -1]))
 
 ;; With decoy pool B installed, macro call naming, sexpr conversion and output
 ;; declaration parsing of A's nodes read A through its segment bases.
@@ -1188,22 +1120,22 @@
     [_decoy-for-name : unit (ast.ast-node-pool-context-install! pools-b)]
     [callee-name : String
       (match (tc_core.macro-call-callee-name bases-a session spanned-expr)
-        [(tc_core.TcMaybeString.Some name) name]
-        [(tc_core.TcMaybeString.No) ""])]
+        [(Some name) name]
+        [(No) ""])]
     [_decoy-for-sexpr : unit (ast.ast-node-pool-context-install! pools-b)]
     [sexpr-name : i64
       (match (tc_core.macro-expr-to-spanned-sexpr
         (& owner)
         (tc_core.tc-global-shared-view call-expr)
         (tc_core.tc-global-shared-view call-expr))
-        [(tc_core.ResultMacroSexpr.Ok form)
+        [(Ok form)
           (match (parser.parse-ast-decl-maybe dispatch form)
-            [(parser.ResultAstMaybeDecl.SomeDecl decl)
+            [(SomeDecl decl)
               (match decl
-                [(ast.AstDecl.Def _ name _ _) name]
+                [(Def _ name _ _) name]
                 [_ -1])]
             [_ -1])]
-        [(tc_core.ResultMacroSexpr.Err _) -1])]
+        [(Err _) -1])]
     [_decoy-for-parse : unit (ast.ast-node-pool-context-install! pools-b)]
     [parsed-name : i64
       (macro-read-pool-parsed-name
@@ -1240,9 +1172,9 @@
   [pools : ast.AstNodePoolContext]
   [last : ast.AstExpr]) : i64
   (begin
-    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
-    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
-    (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools (ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools (ProgramArgc))
+    (ast.ast-node-pool-context-expr-push pools (ProgramArgc))
     (ast.ast-node-pool-context-expr-push pools last)))
 
 (test
@@ -1258,35 +1190,24 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 2 1 2 9)]
     ;; call classification: a call in A, a literal at the same id in B
     [call-a : i64
-      (owned-read-pool-node
-        pools-a
-        (ast.AstExpr.Call 0 (ast.ast-expr-list-new)))]
-    [call-b : i64
-      (owned-read-pool-node
-        pools-b
-        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
+      (owned-read-pool-node pools-a (Call 0 (ast.ast-expr-list-new)))]
+    [call-b : i64 (owned-read-pool-node pools-b (Literal (Int 1 "1")))]
     ;; borrow check: A's value names `name-id`, B's names another binding
-    [var-a : i64 (owned-read-pool-node pools-a (ast.AstExpr.Var name-id))]
+    [var-a : i64 (owned-read-pool-node pools-a (Var name-id))]
     [var-b : i64
-      (owned-read-pool-node
-        pools-b
-        (ast.AstExpr.Var (ci.intern "owned-read/decoy")))]
+      (owned-read-pool-node pools-b (Var (ci.intern "owned-read/decoy")))]
     ;; CTFE predicate: a type literal in A, a plain literal in B
-    [type-a : i64 (owned-read-pool-node pools-a (ast.AstExpr.TypeLiteral 0))]
-    [type-b : i64
-      (owned-read-pool-node
-        pools-b
-        (ast.AstExpr.Literal (ast.AstLiteral.Int 2 "2")))]
+    [type-a : i64 (owned-read-pool-node pools-a (TypeLiteral 0))]
+    [type-b : i64 (owned-read-pool-node pools-b (Literal (Int 2 "2")))]
     [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
     [_decoy : unit (ast.ast-node-pool-context-install! pools-b)]
-    [call? : bool
-      (tc_core.tc-call-expr? bases-a (ast.AstExpr.Spanned call-a span))]
+    [call? : bool (tc_core.tc-call-expr? bases-a (Spanned call-a span))]
     [uses? : bool
       (tc_core.tc-borrow-check-composite-value-uses-name?
         bases-a
-        (ast.AstExpr.Spanned var-a span)
+        (Spanned var-a span)
         name-id)]
     [typed? : bool
       (tc_core.ctfe-node-has-type-literal? bases-a macro-state type-a)]
@@ -1318,51 +1239,48 @@
   [a : reader.SpannedSexpr]
   [b : reader.SpannedSexpr]) : bool
   (match (reader.spanned-sexpr-view a)
-    [(reader.SpannedSexprView.Int av _ _)
+    [(Int av _ _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Int bv _ _) (= av bv)]
+        [(Int bv _ _) (= av bv)]
         [_ false])]
-    [(reader.SpannedSexprView.Sym as _)
+    [(Sym as _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Sym bs _)
+        [(Sym bs _)
           (= (ci.intern-syntax-id-value as) (ci.intern-syntax-id-value bs))]
         [_ false])]
-    [(reader.SpannedSexprView.Nil _)
+    [(Nil _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Nil _) true]
+        [(Nil _) true]
         [_ false])]
-    [(reader.SpannedSexprView.Cons ahead atail _)
+    [(Cons ahead atail _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Cons bhead btail _)
+        [(Cons bhead btail _)
           (and
             (macro-output-sexpr-eq? ahead bhead)
             (macro-output-sexpr-eq? atail btail))]
         [_ false])]
-    [(reader.SpannedSexprView.Str aid _)
+    [(Str aid _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Str bid _)
-          (= (ci.intern-id-value aid) (ci.intern-id-value bid))]
+        [(Str bid _) (= (ci.intern-id-value aid) (ci.intern-id-value bid))]
         [_ false])]
-    [(reader.SpannedSexprView.Char ac _)
+    [(Char ac _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Char bc _) (= ac bc)]
+        [(Char bc _) (= ac bc)]
         [_ false])]
-    [(reader.SpannedSexprView.Float at _)
+    [(Float at _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.Float bt _) (string.eq at bt)]
+        [(Float bt _) (string.eq at bt)]
         [_ false])]
-    [(reader.SpannedSexprView.BracketList aitems _)
+    [(BracketList aitems _)
       (match (reader.spanned-sexpr-view b)
-        [(reader.SpannedSexprView.BracketList bitems _)
-          (macro-output-sexpr-eq? aitems bitems)]
+        [(BracketList bitems _) (macro-output-sexpr-eq? aitems bitems)]
         [_ false])]))
 
 (define (macro-output-sexpr-head? [form : reader.SpannedSexpr] [head : String]) : bool
   (match (reader.spanned-sexpr-view form)
-    [(reader.SpannedSexprView.Cons first _ _)
+    [(Cons first _ _)
       (match (reader.spanned-sexpr-view first)
-        [(reader.SpannedSexprView.Sym name _)
-          (= (ci.intern-syntax-id-value name) (ci.intern head))]
+        [(Sym name _) (= (ci.intern-syntax-id-value name) (ci.intern head))]
         [_ false])]
     [_ false]))
 
@@ -1370,24 +1288,23 @@
 (define (macro-output-probe-body [form : String]) : i64
   (match (parser.parse-ast-source
     (str_cat.str-cat "(define (probe) : i64 " form ")"))
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefFn _ _ _ _ body-box _) _)
-          body-box]
+        [(Cons (DefFn _ _ _ _ body-box _) _) body-box]
         [_ -1])]
-    [(parser.ResultAstProgram.Err _) -1]))
+    [(Err _) -1]))
 
 ;; FORM as the reader reads it, or an empty list when it does not read.
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
   (match (lexer.spanned-result form)
-    [(lexer.ResultSpannedTokens.Ok toks)
+    [(Ok toks)
       (match (reader.spanned-result toks)
-        [(reader.ResultSpannedSexpr.Ok sexpr) sexpr]
-        [(reader.ResultSpannedSexpr.Err _)
+        [(Ok sexpr) sexpr]
+        [(Err _)
           (reader.spanned-sexpr-list-from-builder
             (reader.spanned-sexpr-builder-new)
             (token.SourceSpan 0 0 0 0))])]
-    [(lexer.ResultSpannedTokens.Err _)
+    [(Err _)
       (reader.spanned-sexpr-list-from-builder
         (reader.spanned-sexpr-builder-new)
         (token.SourceSpan 0 0 0 0))]))
@@ -1414,14 +1331,14 @@
           (& owner)
           (tc_core.tc-global-shared-view first-expr)
           (tc_core.tc-global-shared-view first-expr))
-          [(tc_core.ResultMacroSexpr.Err _) false]
-          [(tc_core.ResultMacroSexpr.Ok first)
+          [(Err _) false]
+          [(Ok first)
             (match (parser.parse-ast-expr-with-pools
               (parser.compiler-parse-dispatch-env)
               pools
               (tc_core.tc-global-shared-view first))
-              [(parser.ResultAstExpr.Err _) false]
-              [(parser.ResultAstExpr.Ok second-id)
+              [(Err _) false]
+              [(Ok second-id)
                 (let
                   [second-pools : ast.AstNodePoolContext
                     (ast.ast-node-pool-context-capture-active)]
@@ -1436,8 +1353,8 @@
                     (& second-owner)
                     (tc_core.tc-global-shared-view second-expr)
                     (tc_core.tc-global-shared-view second-expr))
-                    [(tc_core.ResultMacroSexpr.Err _) false]
-                    [(tc_core.ResultMacroSexpr.Ok second)
+                    [(Err _) false]
+                    [(Ok second)
                       (and
                         (macro-output-sexpr-head?
                           (tc_core.tc-global-shared-view first)
@@ -1544,9 +1461,9 @@
         [owner : tc_core.MacroSexprOwner
           (tc_core.macro-sexpr-owner bases session)]
         (match (ast.ast-expr-unspan-with-segment-bases bases parsed)
-          [(ast.AstExpr.WithResource resource-box)
+          [(WithResource resource-box)
             (match (__tl-box-place resource-box)
-              [(ast.AstWithResource.WithResource bindings body)
+              [(WithResource bindings body)
                 (let
                   [moved : ast.AstResourceBindingList
                     (ast.ast-resource-binding-list-new)]
@@ -1560,7 +1477,7 @@
                           (& bindings)
                           index
                           (ast.ast-resource-binding-fallback))
-                          [(ast.AstResourceBinding.Binding name init cleanup _)
+                          [(Binding name init cleanup _)
                             (ast.ast-resource-binding-list-push
                               (&mut moved)
                               (ast.AstResourceBinding.Binding
@@ -1571,14 +1488,14 @@
                         (set! index (+ index 1))))
                     (let
                       [move-aware : ast.AstExpr
-                        (ast.AstExpr.WithResource
+                        (WithResource
                           (box (ast.AstWithResource.WithResource moved body)))]
                       (match (tc_core.macro-expr-to-spanned-sexpr
                         (& owner)
                         (tc_core.tc-global-shared-view move-aware)
                         (tc_core.tc-global-shared-view move-aware))
-                        [(tc_core.ResultMacroSexpr.Err _) true]
-                        [(tc_core.ResultMacroSexpr.Ok _) false]))))])]
+                        [(Err _) true]
+                        [(Ok _) false]))))])]
           [_ false])))))
 
 (test
@@ -1611,8 +1528,8 @@
 
 (define (tc-type-env-lookup-step [env : tc_core.TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc_core.tc-type-env-view env)
-    [(tc_core.TcTypeEnvView.Nil) (TcTypeEnvLookupStep.Missing)]
-    [(tc_core.TcTypeEnvView.Cache cache-ptr _ partial _ below)
+    [(Nil) (Missing)]
+    [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
           (tc_core.tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
@@ -1622,25 +1539,25 @@
             56
             (__tl_dyn-array ast.AstType))]
         (match (tc_i64_i64_map.get (& ids) name-id)
-          [(tc_i64_i64_map.LookupFound index)
+          [(LookupFound index)
             ;; AstType reads must stay `array-ref` because inline-by-value
             ;; AstType values are multi-word.
-            (TcTypeEnvLookupStep.Found (ast.ast-array-shared-view values index))]
-          [(tc_i64_i64_map.LookupMissing)
+            (Found (ast.ast-array-shared-view values index))]
+          [(LookupMissing)
             (if partial
-              (TcTypeEnvLookupStep.Miss below)
-              (TcTypeEnvLookupStep.Missing))]))]
-    [(tc_core.TcTypeEnvView.Bind key ty rest)
+              (Miss below)
+              (Missing))]))]
+    [(Bind key ty rest)
       (if (= key name-id)
-        (TcTypeEnvLookupStep.Found ty)
-        (TcTypeEnvLookupStep.Miss rest))]))
+        (Found ty)
+        (Miss rest))]))
 
 (define (tc-type-env-unsafe-lookup-step
   [env : tc_core.TcTypeEnv]
   [name-id : i64]) : TcTypeEnvUnsafeLookupStep
   (match (tc_core.tc-type-env-view env)
-    [(tc_core.TcTypeEnvView.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
-    [(tc_core.TcTypeEnvView.Cache cache-ptr _ partial _ below)
+    [(Nil) (Missing)]
+    [(Cache cache-ptr _ partial _ below)
       (let
         [ids : tc_i64_i64_map.Map
           (tc_core.tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
@@ -1652,10 +1569,10 @@
         [unsafe-flags : (__tl_dyn-array i64)
           (tc_core.tc-type-env-cache-field-at cache-ptr 64 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
-          [(tc_i64_i64_map.LookupFound index)
+          [(LookupFound index)
             ;; AstType read must stay `array-ref`; the unsafe flag is a
             ;; scalar i64 and keeps the previous raw read path.
-            (TcTypeEnvUnsafeLookupStep.Found
+            (Found
               (ast.ast-array-shared-view values index)
               (=
                 (unsafe
@@ -1664,16 +1581,14 @@
                       (ptr-cast (__tl_array-data unsafe-flags) : (Ptr i64))
                       index)))
                 1))]
-          [(tc_i64_i64_map.LookupMissing)
+          [(LookupMissing)
             (if partial
-              (TcTypeEnvUnsafeLookupStep.Miss below)
-              (TcTypeEnvUnsafeLookupStep.Missing))]))]
-    [(tc_core.TcTypeEnvView.Bind key ty rest)
+              (Miss below)
+              (Missing))]))]
+    [(Bind key ty rest)
       (if (= key name-id)
-        (TcTypeEnvUnsafeLookupStep.Found
-          ty
-          (tc_core.tc-binding-unsafe-marker-head-id? rest name-id))
-        (TcTypeEnvUnsafeLookupStep.Miss rest))]))
+        (Found ty (tc_core.tc-binding-unsafe-marker-head-id? rest name-id))
+        (Miss rest))]))
 
 (cfg
   test
@@ -1719,12 +1634,9 @@
                 (tc_core.tc-topenv-membership-maybe? state-b structural-base)))]
           [enabled-env : tc_core.TcTypeEnv
             (tc_core.tc-bind-alias-id-if-free
-              (tc_core.tc-bind-alias-id-if-free
-                env-a
-                alias-id
-                (ast.AstType.I64))
+              (tc_core.tc-bind-alias-id-if-free env-a alias-id (I64))
               alias-id
-              (ast.AstType.Bool))]
+              (Bool))]
           [overflow-safe? : bool
             (begin
               ;; A typed ID above the dense prefix remains exact in the
@@ -1747,12 +1659,9 @@
             (let
               [disabled-env : tc_core.TcTypeEnv
                 (tc_core.tc-bind-alias-id-if-free
-                  (tc_core.tc-bind-alias-id-if-free
-                    env-b
-                    alias-id
-                    (ast.AstType.I64))
+                  (tc_core.tc-bind-alias-id-if-free env-b alias-id (I64))
                   alias-id
-                  (ast.AstType.Bool))]
+                  (Bool))]
               (begin
                 (tc_core.tc-topenv-membership-end! state-a)
                 (tc_core.tc-topenv-membership-end! state-b)
@@ -1760,10 +1669,10 @@
                   isolated?
                   overflow-safe?
                   (match (tc_core.tc-lookup-id enabled-env alias-id)
-                    [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                    [(Ok (I64)) true]
                     [_ false])
                   (match (tc_core.tc-lookup-id disabled-env alias-id)
-                    [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                    [(Ok (I64)) true]
                     [_ false]))))))))))
 
 (cfg
@@ -1778,7 +1687,7 @@
   test
   (define (tc-env-cache-explicit-head? [env : tc_core.TcTypeEnv]) : bool
     (match (tc_core.tc-type-env-view env)
-      [(tc_core.TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
+      [(Cache _ scan-through _ _ _) (not scan-through)]
       [_ false])))
 
 (define (tc-type-env-scoped-stack-with-capacity
@@ -1813,12 +1722,7 @@
   [name-id : i64]
   [ty : ast.AstType]
   [flags : i64]) : unit
-  (tc_core.tc-type-env-scoped-stack-push-slot!
-    stack
-    name-id
-    ty
-    flags
-    tc_core.TcTypeEnvScopedMarkerKind.None))
+  (tc_core.tc-type-env-scoped-stack-push-slot! stack name-id ty flags None))
 
 (define (tc-type-env-scoped-stack-save!
   [stack : (&mut stack tc_core.TcTypeEnvScopedStack)]) : tc_core.TcTypeEnvScopedMark
@@ -1842,7 +1746,7 @@
   [marker-kind : tc_core.TcTypeEnvScopedMarkerKind]
   [index : i64]) : TcTypeEnvScopedMarkerLookup
   (if (< index 0)
-    TcTypeEnvScopedMarkerLookup.Missing
+    Missing
     (let
       [slot : tc_core.TcTypeEnvScopedSlot
         (tc_core.tc-global-array-element-shared-view stack.slots index)]
@@ -1853,11 +1757,7 @@
         (=
           slot.marker-kind-tag
           (tc_core.tc-type-env-scoped-marker-kind-tag marker-kind)))
-        (TcTypeEnvScopedMarkerLookup.Found
-          slot.name-id
-          slot.ty
-          slot.scope-depth
-          slot.generation)
+        (Found slot.name-id slot.ty slot.scope-depth slot.generation)
         (tc-type-env-scoped-stack-marker-lookup-from
           stack
           marker-kind
@@ -1884,16 +1784,16 @@
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-unsafe-marker-id)
-    (ast.AstType.Unit)
-    tc_core.TcTypeEnvScopedMarkerKind.UnsafeContext))
+    (Unit)
+    UnsafeContext))
 
 (define (tc-type-env-scoped-sidecar-bind-default-boundary
   [sidecar : tc_core.TcTypeEnvScopedSidecar]) : tc_core.TcTypeEnvScopedSidecar
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-default-boundary-id)
-    (ast.AstType.Unit)
-    tc_core.TcTypeEnvScopedMarkerKind.DefaultBoundary))
+    (Unit)
+    DefaultBoundary))
 
 (define (tc-type-env-scoped-sidecar-push-region
   [sidecar : tc_core.TcTypeEnvScopedSidecar]
@@ -1901,8 +1801,8 @@
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-region-marker-id)
-    (ast.AstType.Var region)
-    tc_core.TcTypeEnvScopedMarkerKind.Region))
+    (Var region)
+    Region))
 
 (define (tc-type-env-scoped-sidecar-bind-cleanup-owner
   [sidecar : tc_core.TcTypeEnvScopedSidecar]
@@ -1910,8 +1810,8 @@
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-cleanup-owner-marker-id)
-    (ast.AstType.Var name-id)
-    tc_core.TcTypeEnvScopedMarkerKind.CleanupOwner))
+    (Var name-id)
+    CleanupOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-ordinary-arena-owner
   [sidecar : tc_core.TcTypeEnvScopedSidecar]
@@ -1919,8 +1819,8 @@
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-ordinary-arena-owner-marker-id)
-    (ast.AstType.Var name-id)
-    tc_core.TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner))
+    (Var name-id)
+    OrdinaryArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
   [sidecar : tc_core.TcTypeEnvScopedSidecar]
@@ -1928,8 +1828,8 @@
   (tc_core.tc-type-env-scoped-sidecar-bind-marker-id
     sidecar
     (tc_core.tc-atomic-arena-owner-marker-id)
-    (ast.AstType.Var name-id)
-    tc_core.TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
+    (Var name-id)
+    AtomicArenaOwner))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-id
   [sidecar : tc_core.TcTypeEnvScopedSidecar]
@@ -1941,8 +1841,8 @@
       (tc_core.tc-type-env-scoped-stack-bind-marker-id!
         (&mut next.stack)
         (tc_core.tc-unsafe-decl-marker-id name-id)
-        (ast.AstType.Unit)
-        tc_core.TcTypeEnvScopedMarkerKind.UnsafeDecl)
+        (Unit)
+        UnsafeDecl)
       (tc-type-env-scoped-stack-bind-flags-id!
         (&mut next.stack)
         name-id
@@ -2021,7 +1921,7 @@
       (let
         [slot : tc_core.TcTypeEnvScopedSlot
           (tc_core.tc-global-array-element-shared-view stack.slots index)]
-        (tc_core.ResultTcType.Ok slot.ty))
+        (Ok slot.ty))
       (tc_core.tc-lookup-persistent-id
         (tc_core.tc-type-env-scoped-sidecar-persistent sidecar)
         name-id))))
@@ -2061,7 +1961,7 @@
       (let
         [slot : tc_core.TcTypeEnvScopedSlot
           (tc_core.tc-global-array-element-shared-view stack.slots index)]
-        (tc_core.ResultTcTypeUnsafe.Ok
+        (Ok
           slot.ty
           (tc_core.tc-type-env-scoped-flag?
             slot.flags
@@ -2074,8 +1974,8 @@
   [carrier : tc_core.TcTypeEnvScopedCarrier]
   [name-id : i64]) : bool
   (match (tc-type-env-scoped-carrier-lookup-unsafe-id carrier name-id)
-    [(tc_core.ResultTcTypeUnsafe.Ok _ unsafe) unsafe]
-    [(tc_core.ResultTcTypeUnsafe.Err _) false]))
+    [(Ok _ unsafe) unsafe]
+    [(Err _) false]))
 
 (define (tc-type-env-scoped-carrier-ordinary-arena-owner-active?
   [carrier : tc_core.TcTypeEnvScopedCarrier]
@@ -2100,15 +2000,15 @@
     [want : ast.AstType]) : bool
     (match (tc_core.tc-stdlib-comptime-syntax-type-id
       (tc_core.tc-stdlib-comptime-type-key-id "" name-id))
-      [(ast.AstMaybeType.Some ty) (tc_core.tc-type-eq ty want)]
-      [(ast.AstMaybeType.No) false])))
+      [(Some ty) (tc_core.tc-type-eq ty want)]
+      [(No) false])))
 
 (cfg
   test
   (define (tc-stdlib-comptime-syntax-test-none? [canonical-id : i64]) : bool
     (match (tc_core.tc-stdlib-comptime-syntax-type-id canonical-id)
-      [(ast.AstMaybeType.Some _) false]
-      [(ast.AstMaybeType.No) true])))
+      [(Some _) false]
+      [(No) true])))
 
 ;; The decomposition must agree with the key constructor for every syntax type
 ;; and reject every other shape that carries one of the same ids.
@@ -2121,10 +2021,10 @@
         true)
       (tc-stdlib-comptime-syntax-test-is?
         cbi.compiler-builtin-id-fix-Expr
-        (ast.AstType.Expr))
+        (Expr))
       (tc-stdlib-comptime-syntax-test-is?
         cbi.compiler-builtin-id-fix-ExprList
-        (ast.AstType.ExprList))
+        (ExprList))
       (tc-stdlib-comptime-syntax-test-is?
         cbi.compiler-builtin-id-fix-ExprClause
         (tc_core.tc-macro-expr-clause-type))
@@ -2206,8 +2106,8 @@
   (tc_core.tc-bind-runtime-marker-id
     env
     (tc_core.tc-cleanup-owner-marker-id)
-    (ast.AstType.Var name-id)
-    tc_core.TcTypeEnvScopedMarkerKind.CleanupOwner))
+    (Var name-id)
+    CleanupOwner))
 
 (test
   tc-type-render-hides-elaborated-lifetimes
@@ -2216,13 +2116,13 @@
     [named : i64 (ci.intern "named")]
     (if (and
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref hidden (ast.AstType.I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref hidden (I64)))
         "(& i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-mut-ref hidden (ast.AstType.I64)))
+        (tc_core.tc-type-render (ast.ast-ty-mut-ref hidden (I64)))
         "(&mut i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref named (ast.AstType.I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref named (I64)))
         "(& named i64)"))
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
@@ -2239,17 +2139,17 @@
         (begin
           (ast.ast-param-list-push
             (&mut params)
-            (ast.ast-param-id (ci.intern "elided") (ast.AstType.I64) false))
+            (ast.ast-param-id (ci.intern "elided") (I64) false))
           (set! index (+ index 1))))
       (match (tc_core.tc-elide-function-signature
         (ast.ast-node-pool-context-type-segment-bases pools)
         params
-        (ast.AstType.I64))
-        [(tc_core.ResultTcElidedSignature.Ok signature)
+        (I64))
+        [(Ok signature)
           (if (= (ast.ast-param-list-len (& signature.params)) count)
             (array-length signature.params.slots)
             -1)]
-        [(tc_core.ResultTcElidedSignature.Err _) -1]))))
+        [(Err _) -1]))))
 
 ;; Elision reserves the elided list at its final length, so it leaves no
 ;; outgrown storage behind (#7943).
@@ -2338,36 +2238,29 @@
   [type-bases : i64]
   [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.Func args ret)
+    [(Func args ret)
       (if (tc-type-list-needs-resolution-with-bases?
         type-bases
         (ast.ast-type-list-box-shared-view args))
         true
         (tc-type-needs-resolution-id-with-bases? type-bases ret))]
-    [(ast.AstType.Tuple elems)
+    [(Tuple elems)
       (tc-type-list-needs-resolution-with-bases?
         type-bases
         (ast.ast-type-list-box-shared-view elems))]
-    [(ast.AstType.Array elem _)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.DynArray elem)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.Slice elem)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.Box elem)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.Ptr elem)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.MutPtr elem)
-      (tc-type-needs-resolution-id-with-bases? type-bases elem)]
-    [(ast.AstType.Ref _ inner)
+    [(Array elem _) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(DynArray elem) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(Slice elem) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(Box elem) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(Ptr elem) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(MutPtr elem) (tc-type-needs-resolution-id-with-bases? type-bases elem)]
+    [(Ref _ inner) (tc-type-needs-resolution-id-with-bases? type-bases inner)]
+    [(MutRef _ inner)
       (tc-type-needs-resolution-id-with-bases? type-bases inner)]
-    [(ast.AstType.MutRef _ inner)
+    [(Region _ inner)
       (tc-type-needs-resolution-id-with-bases? type-bases inner)]
-    [(ast.AstType.Region _ inner)
-      (tc-type-needs-resolution-id-with-bases? type-bases inner)]
-    [(ast.AstType.VarArgs _ _) true]
-    [(ast.AstType.Var _) true]
+    [(VarArgs _ _) true]
+    [(Var _) true]
     [_ false]))
 
 (test
@@ -2492,11 +2385,11 @@
           (unsafe
             (ptr-read (ptr-offset keys slot)))
           key)
-          (TcTypeHandleCacheLookup.Hit
+          (Hit
             (unsafe
               (ptr-read (ptr-offset handles slot))))
-          TcTypeHandleCacheLookup.Miss))
-      TcTypeHandleCacheLookup.Miss)))
+          Miss))
+      Miss)))
 
 (cfg
   test
@@ -2546,8 +2439,8 @@
         (match (tc-type-handle-cache-entry-lookup
           (tc_core.tc-nominal-cache-type-handles state-a)
           cache-key)
-          [(TcTypeHandleCacheLookup.Hit handle) (= handle 101)]
-          [(TcTypeHandleCacheLookup.Miss) false])]
+          [(Hit handle) (= handle 101)]
+          [(Miss) false])]
       [positive-b : i64
         (tc_core.tc-type-handle-lookup-id
           state-b
@@ -2576,8 +2469,8 @@
         (match (tc-type-handle-cache-entry-lookup
           (tc_core.tc-nominal-cache-type-handles state-growth)
           cache-key)
-          [(TcTypeHandleCacheLookup.Hit handle) (= handle -1)]
-          [(TcTypeHandleCacheLookup.Miss) false])]
+          [(Hit handle) (= handle -1)]
+          [(Miss) false])]
       [growth-before : csym.CompilerSymbolsTypeMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-growth))]
       [symbols-growth-next : csym.CompilerSymbols
@@ -2756,7 +2649,7 @@
       type-bases
       (tc_core.tc-global-shared-view ty))
       (match (tc_core.tc-global-shared-view ty)
-        [(ast.AstType.Func args ret)
+        [(Func args ret)
           (ast.ast-ty-func-with-pools
             pools
             (tc-resolve-type-list-with-pools
@@ -2767,14 +2660,14 @@
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools ret)))]
-        [(ast.AstType.Tuple elems)
-          (ast.AstType.Tuple
+        [(Tuple elems)
+          (Tuple
             (box
               (tc-resolve-type-list-with-pools
                 ctx
                 pools
                 (ast.ast-type-list-box-shared-view elems))))]
-        [(ast.AstType.Array elem len)
+        [(Array elem len)
           (ast.ast-ty-array-with-pools
             pools
             (tc-resolve-type-with-pools
@@ -2782,42 +2675,42 @@
               pools
               (ast.ast-node-pool-context-type-get pools elem))
             len)]
-        [(ast.AstType.DynArray elem)
+        [(DynArray elem)
           (ast.ast-ty-dyn-array-with-pools
             pools
             (tc-resolve-type-with-pools
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools elem)))]
-        [(ast.AstType.Slice elem)
+        [(Slice elem)
           (ast.ast-ty-slice-with-pools
             pools
             (tc-resolve-type-with-pools
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools elem)))]
-        [(ast.AstType.Box elem)
+        [(Box elem)
           (ast.ast-ty-box-with-pools
             pools
             (tc-resolve-type-with-pools
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools elem)))]
-        [(ast.AstType.Ptr elem)
+        [(Ptr elem)
           (ast.ast-ty-ptr-with-pools
             pools
             (tc-resolve-type-with-pools
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools elem)))]
-        [(ast.AstType.MutPtr elem)
+        [(MutPtr elem)
           (ast.ast-ty-mut-ptr-with-pools
             pools
             (tc-resolve-type-with-pools
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools elem)))]
-        [(ast.AstType.Ref region inner)
+        [(Ref region inner)
           (ast.ast-ty-ref-with-pools
             pools
             region
@@ -2825,7 +2718,7 @@
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools inner)))]
-        [(ast.AstType.MutRef region inner)
+        [(MutRef region inner)
           (ast.ast-ty-mut-ref-with-pools
             pools
             region
@@ -2833,7 +2726,7 @@
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools inner)))]
-        [(ast.AstType.Region region inner)
+        [(Region region inner)
           (ast.ast-ty-region-with-pools
             pools
             region
@@ -2841,7 +2734,7 @@
               ctx
               pools
               (ast.ast-node-pool-context-type-get pools inner)))]
-        [(ast.AstType.VarArgs name lifetimes)
+        [(VarArgs name lifetimes)
           (tc_core.tc-resolve-type-name-with-args
             ctx
             (tc_core.tc-hygiene-name-text-id-for-session
@@ -2849,7 +2742,7 @@
               name)
             name
             (ast.ast-lifetime-list-box-shared-view lifetimes))]
-        [(ast.AstType.Var name)
+        [(Var name)
           (tc_core.tc-resolve-type-name
             ctx
             (tc_core.tc-hygiene-name-text-id-for-session
@@ -2894,13 +2787,10 @@
         (tc_core.tc-bind-id
           (tc_core.tc-empty-env)
           (ci.intern "raw-cache-base")
-          (ast.AstType.I64)))]
+          (I64)))]
     [layer : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache-layer-over-explicit
-        (tc_core.tc-bind-id
-          base
-          (ci.intern "raw-cache-layer")
-          (ast.AstType.Bool)))]
+        (tc_core.tc-bind-id base (ci.intern "raw-cache-layer") (Bool)))]
     (and
       (tc-type-env-cache-raw-fields-match? base)
       (tc-type-env-cache-raw-fields-match? layer))))
@@ -2944,7 +2834,7 @@
       (unsafe
         (arena.tl_arena_set owner))]
     [base : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (ast.AstType.String))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (String))]
     [first-cache : tc_core.TcTypeEnv (tc_core.tc-env-with-cache base)]
     [grown : tc_core.TcTypeEnv
       (tc_core.TcTypeEnv base.store base.head base.abi-pad)]
@@ -2962,7 +2852,7 @@
       ;; scratch arena before returning.
       (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
         (begin
-          (set! grown (tc_core.tc-bind-id grown filler-id (ast.AstType.I64)))
+          (set! grown (tc_core.tc-bind-id grown filler-id (I64)))
           (set! index (+ index 1))))
       (set! binding-restored? (= (arena.tl_arena_current) scratch))
       ;; Exercise cache-segment rollover through the same owner switch. The
@@ -2975,7 +2865,7 @@
       (set!
         latest-cache-valid?
         (match (tc_core.tc-lookup-id latest-cache base-id)
-          [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+          [(Ok (String)) true]
           [_ false]))
       (let
         [scratch-restored? : bool (= (arena.tl_arena_current) scratch)]
@@ -2989,15 +2879,15 @@
           (let
             [base-alive? : bool
               (match (tc_core.tc-lookup-id base base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])]
             [grown-alive? : bool
               (match (tc_core.tc-lookup-id grown base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])]
             [first-cache-alive? : bool
               (match (tc_core.tc-lookup-id first-cache base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])]
             (begin
               (unsafe
@@ -3041,14 +2931,11 @@
     [parent : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
         (tc_core.tc-bind-id
-          (tc_core.tc-bind-id
-            (tc_core.tc-empty-env)
-            base-id
-            (ast.AstType.String))
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (String))
           kept-id
-          (ast.AstType.I64)))]
+          (I64)))]
     [plain : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (ast.AstType.String))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (String))]
     [parent-store : tc_core.TcTypeEnvStore
       (tc_core.tc-type-env-store-read parent.store)]
     [parent-chain : i64 (tc_core.tc-chain-state-address parent.store)]
@@ -3070,10 +2957,10 @@
         (begin
           ;; Shadow a parent name, then cross two binding segments and several
           ;; cache segments.
-          (set! fork (tc_core.tc-bind-id fork base-id (ast.AstType.Bool)))
+          (set! fork (tc_core.tc-bind-id fork base-id (Bool)))
           (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
             (begin
-              (set! fork (tc_core.tc-bind-id fork local-id (ast.AstType.I64)))
+              (set! fork (tc_core.tc-bind-id fork local-id (I64)))
               (set! index (+ index 1))))
           (set! index 0)
           (while (< index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
@@ -3084,16 +2971,16 @@
             fork-ok
             (and
               (match (tc_core.tc-lookup-id fork base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+                [(Ok (Bool)) true]
                 [_ false])
               (match (tc_core.tc-lookup-id fork kept-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [(Ok (I64)) true]
                 [_ false])
               (match (tc_core.tc-lookup-id fork local-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [(Ok (I64)) true]
                 [_ false])
               (match (tc_core.tc-lookup-id reader base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])
               (= (tc_core.tc-chain-state-address reader.store) parent-chain)
               (= (tc_core.tc-chain-store-owner fork.store) scratch)
@@ -3102,7 +2989,7 @@
               (>= (tc-type-env-chain-index-len fork.store) parent-chain-len)
               (> (tc_core.tc-chain-state-address plain-fork.store) 0)
               (match (tc_core.tc-lookup-id plain-fork base-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])))
           (unsafe
             (arena.tl_region_reset mark))))
@@ -3124,13 +3011,13 @@
             (= (tc-type-env-chain-index-len parent.store) parent-chain-len)
             (= (tc_core.tc-chain-state-address plain.store) 0)
             (match (tc_core.tc-lookup-id parent base-id)
-              [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+              [(Ok (String)) true]
               [_ false])
             (match (tc_core.tc-lookup-id parent kept-id)
-              [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+              [(Ok (I64)) true]
               [_ false])
             (match (tc_core.tc-lookup-id parent local-id)
-              [(tc_core.ResultTcType.Ok _) false]
+              [(Ok _) false]
               [_ true]))]
         (begin
           (unsafe
@@ -3149,22 +3036,14 @@
   (let
     [branch-id : i64 (ci.intern "branch")]
     [base : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-empty-env)
-        (ci.intern "base")
-        (ast.AstType.String))]
-    [left : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id base branch-id (ast.AstType.I64))]
-    [right : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id base branch-id (ast.AstType.Bool))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) (ci.intern "base") (String))]
+    [left : tc_core.TcTypeEnv (tc_core.tc-bind-id base branch-id (I64))]
+    [right : tc_core.TcTypeEnv (tc_core.tc-bind-id base branch-id (Bool))]
     [left-cached : tc_core.TcTypeEnv (tc_core.tc-env-with-cache left)]
     [right-cached : tc_core.TcTypeEnv (tc_core.tc-env-with-cache right)]
     [segment-id : i64 (ci.intern "segment-base")]
     [segment-base : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-empty-env)
-        segment-id
-        (ast.AstType.String))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) segment-id (String))]
     [segment-grown : tc_core.TcTypeEnv
       (tc_core.TcTypeEnv
         segment-base.store
@@ -3173,10 +3052,7 @@
     [segment-index : i64 0]
     [cache-segment-id : i64 (ci.intern "cache-segment-base")]
     [cache-segment-base : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-empty-env)
-        cache-segment-id
-        (ast.AstType.String))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) cache-segment-id (String))]
     [cache-segment-first : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache cache-segment-base)]
     [cache-segment-latest : tc_core.TcTypeEnv
@@ -3193,10 +3069,10 @@
               (tc_core.tc-empty-env)
               (ci.intern "arena"))
             (ci.intern "x")
-            (ast.AstType.I64))
+            (I64))
           (ci.intern "x")
-          (ast.AstType.Bool))
-        (ast.AstType.I64))]
+          (Bool))
+        (I64))]
     [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-cache env)]
     (begin
       ;; Force more than one binding segment, then branch from the retained
@@ -3211,7 +3087,7 @@
               segment-grown
               (ci.intern
                 (str_cat.str-cat "segment-" (string.int->string segment-index)))
-              (ast.AstType.I64)))
+              (I64)))
           (set! segment-index (+ segment-index 1))))
       (while (<
         cache-segment-index
@@ -3226,53 +3102,53 @@
                   (str_cat.str-cat
                     "cache-segment-"
                     (string.int->string cache-segment-index)))
-                (ast.AstType.I64))))
+                (I64))))
           (set! cache-segment-index (+ cache-segment-index 1))))
       (let
         [segment-sibling : tc_core.TcTypeEnv
-          (tc_core.tc-bind-id segment-base segment-id (ast.AstType.Bool))]
+          (tc_core.tc-bind-id segment-base segment-id (Bool))]
         (and
           (tc-type-env-raw-layout-smoke?)
           (tc-type-env-owner-arena-smoke?)
           (match (tc_core.tc-lookup-id base branch-id)
-            [(tc_core.ResultTcType.Err _) true]
+            [(Err _) true]
             [_ false])
           (match (tc_core.tc-lookup-id left branch-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (match (tc_core.tc-lookup-id right branch-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-lookup-id left-cached branch-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (match (tc_core.tc-lookup-id right-cached branch-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-lookup-id segment-base segment-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-lookup-id segment-grown segment-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-lookup-id segment-sibling segment-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-lookup-id cache-segment-first cache-segment-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-lookup-id cache-segment-latest cache-segment-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (= (tc_core.tc-env-cache-count cached) 4)
           (match (tc_core.tc-lookup-id cached (ci.intern "x"))
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-current-return-type env)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (match (tc_core.tc-active-region env)
-            [(tc_core.TcMaybeNameId.Some region) (= region (ci.intern "arena"))]
+            [(Some region) (= region (ci.intern "arena"))]
             [_ false])
           (tc_core.tc-lifetime-visible-id? env (ci.intern "arena")))))))
 
@@ -3284,12 +3160,12 @@
 
 (define (tc-type-env-cache-head? [env : tc_core.TcTypeEnv]) : bool
   (match (tc_core.tc-type-env-view env)
-    [(tc_core.TcTypeEnvView.Cache _ _ _ _ _) true]
+    [(Cache _ _ _ _ _) true]
     [_ false]))
 
 (define (tc-type-env-cache-partial-head? [env : tc_core.TcTypeEnv]) : bool
   (match (tc_core.tc-type-env-view env)
-    [(tc_core.TcTypeEnvView.Cache _ _ partial _ _) partial]
+    [(Cache _ _ partial _ _) partial]
     [_ false]))
 
 (define (tc-type-env-bind-many [env : tc_core.TcTypeEnv] [count : i64]) : tc_core.TcTypeEnv
@@ -3304,7 +3180,7 @@
             (tc_core.tc-bind-id
               out
               (ci.intern (str_cat.str-cat "local" (string.int->string i)))
-              (ast.AstType.I64)))
+              (I64)))
           (set! i (+ i 1))))
       out)))
 
@@ -3331,7 +3207,7 @@
               (set! first-id name-id)
               unit)
             (set! last-id name-id)
-            (set! out (tc_core.tc-bind-id out name-id (ast.AstType.I64)))
+            (set! out (tc_core.tc-bind-id out name-id (I64)))
             (set! i (+ i 1)))))
       (TcTypeEnvBindManyEndpoints out first-id last-id))))
 
@@ -3342,45 +3218,45 @@
         (tc_core.tc-bind-id
           (tc_core.tc-empty-env)
           (ci.intern "global")
-          (ast.AstType.String)))]
+          (String)))]
     [marked : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-unsafe-id
           (tc_core.tc-push-region-id base (ci.intern "arena"))
           (ci.intern "danger")
-          (ast.AstType.I64))
-        (ast.AstType.I64))]
+          (I64))
+        (I64))]
     [shadowed : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
-        (tc_core.tc-bind-id marked (ci.intern "shadow") (ast.AstType.I64))
+        (tc_core.tc-bind-id marked (ci.intern "shadow") (I64))
         (ci.intern "shadow")
-        (ast.AstType.Bool))]
+        (Bool))]
     [cached : tc_core.TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc_core.tc-local-cache-threshold) 6))]
     (and
       (tc-type-env-cache-head? cached)
       (match (tc_core.tc-lookup-id cached (ci.intern "shadow"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+        [(Ok (Bool)) true]
         [_ false])
       (match (tc_core.tc-lookup-id cached (ci.intern "global"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+        [(Ok (String)) true]
         [_ false])
       (match (tc_core.tc-lookup-unsafe-id cached (ci.intern "danger"))
-        [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
+        [(Ok (I64) unsafe) unsafe]
         [_ false])
       (match (tc_core.tc-lookup-id cached (ci.intern "missing"))
-        [(tc_core.ResultTcType.Err message)
+        [(Err message)
           (string.eq
             message
             (cdiag.compiler-diagnostic-typecheck-tagged
-              (cdiag.CompilerTypecheckKind.UnboundName)
+              (UnboundName)
               "typecheck: unbound name missing"))]
         [_ false])
       (match (tc_core.tc-current-return-type cached)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (match (tc_core.tc-active-region cached)
-        [(tc_core.TcMaybeNameId.Some region) (= region (ci.intern "arena"))]
+        [(Some region) (= region (ci.intern "arena"))]
         [_ false])
       (tc_core.tc-lifetime-visible-id? cached (ci.intern "shadow")))))
 
@@ -3392,7 +3268,7 @@
       (tc_core.tc-bind-id
         base
         (ci.intern "__tl_string_length")
-        (tc_core.tc-fn1 (ast.AstType.I64) (ast.AstType.I64)))]
+        (tc_core.tc-fn1 (I64) (I64)))]
     [cached : tc_core.TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc_core.tc-local-cache-threshold) 1))]
     (and
@@ -3409,17 +3285,17 @@
         (tc_core.tc-bind-id
           (tc_core.tc-empty-env)
           (ci.intern "global")
-          (ast.AstType.String)))]
+          (String)))]
     [layer1 : tc_core.TcTypeEnv
       (tc-type-env-bind-many base (tc_core.tc-local-cache-threshold))]
     [older-shadow : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id layer1 (ci.intern "shadow") (ast.AstType.I64))]
+      (tc_core.tc-bind-id layer1 (ci.intern "shadow") (I64))]
     [layer2 : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         older-shadow
         (- (tc_core.tc-local-cache-threshold) 1))]
     [newer-shadow : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id layer2 (ci.intern "shadow") (ast.AstType.Bool))]
+      (tc_core.tc-bind-id layer2 (ci.intern "shadow") (Bool))]
     [layer3 : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         newer-shadow
@@ -3430,13 +3306,13 @@
       (tc-type-env-cache-partial-head? layer3)
       (= (tc_core.tc-env-partial-layer-depth layer3) 3)
       (match (tc_core.tc-lookup-id layer3 (ci.intern "global"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+        [(Ok (String)) true]
         [_ false])
       (match (tc_core.tc-lookup-id layer2 (ci.intern "shadow"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (match (tc_core.tc-lookup-id layer3 (ci.intern "shadow"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+        [(Ok (Bool)) true]
         [_ false]))))
 
 (define (tc-type-env-local-cache-default-shadow-partial-miss-smoke?) : bool
@@ -3447,7 +3323,7 @@
       (tc_core.tc-bind-id
         base
         (ci.intern "__tl_string_length")
-        (tc_core.tc-fn1 (ast.AstType.I64) (ast.AstType.I64)))]
+        (tc_core.tc-fn1 (I64) (I64)))]
     [shadow-layer : tc_core.TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc_core.tc-local-cache-threshold) 1))]
     [miss-layer : tc_core.TcTypeEnv
@@ -3475,10 +3351,7 @@
     [global-id : i64 (ci.intern "global")]
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
-        (tc_core.tc-bind-id
-          (tc_core.tc-empty-env)
-          global-id
-          (ast.AstType.String)))]
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) global-id (String)))]
     [bound : TcTypeEnvBindManyEndpoints
       (tc-type-env-bind-many-endpoints
         base
@@ -3498,31 +3371,31 @@
           (tc_core.tc-local-cache-threshold)
           (+ (tc_core.tc-local-cache-partial-layer-cap) 1)))
       (match (tc_core.tc-type-env-view (tc_core.tc-env-partial-local-base deep))
-        [(tc_core.TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
+        [(Cache _ scan-through _ _ _) (not scan-through)]
         [_ false])
       (match (tc_core.tc-lookup-id deep global-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+        [(Ok (String)) true]
         [_ false])
       (match (tc_core.tc-lookup-id deep bound.first-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (match (tc_core.tc-lookup-id deep bound.last-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       ;; Explicitly layering a module-sized prefix must flatten all partial
       ;; windows without absorbing the global cache below them.
       (match (tc_core.tc-type-env-view layered)
-        [(tc_core.TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
+        [(Cache _ scan-through _ _ _) (not scan-through)]
         [_ false])
       (tc-type-env-cache-partial-head? layered)
       (match (tc_core.tc-lookup-id layered global-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+        [(Ok (String)) true]
         [_ false])
       (match (tc_core.tc-lookup-id layered bound.first-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (match (tc_core.tc-lookup-id layered bound.last-id)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false]))))
 
 ;; Markers buried below MORE THAN ONE compaction window. The behavior
@@ -3541,8 +3414,7 @@
     [base : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
     [outer-markers : tc_core.TcTypeEnv
       (tc_core.tc-bind-arena-phase-token base token-a owner-a)]
-    [outer : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id outer-markers token-a (ast.AstType.I64))]
+    [outer : tc_core.TcTypeEnv (tc_core.tc-bind-id outer-markers token-a (I64))]
     [outer-region : i64 (tc_core.tc-arena-phase-region-id base owner-a token-a)]
     ;; Shadow the same phase token under a different owner, then nest a second
     ;; token under that owner. Persistent snapshots model the rewind boundary:
@@ -3550,13 +3422,12 @@
     [shadow-markers : tc_core.TcTypeEnv
       (tc_core.tc-bind-arena-phase-token outer token-a owner-b)]
     [shadow : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id shadow-markers token-a (ast.AstType.I64))]
+      (tc_core.tc-bind-id shadow-markers token-a (I64))]
     [shadow-region : i64
       (tc_core.tc-arena-phase-region-id base owner-b token-a)]
     [inner-markers : tc_core.TcTypeEnv
       (tc_core.tc-bind-arena-phase-token shadow token-b owner-b)]
-    [inner : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id inner-markers token-b (ast.AstType.I64))]
+    [inner : tc_core.TcTypeEnv (tc_core.tc-bind-id inner-markers token-b (I64))]
     [inner-region : i64 (tc_core.tc-arena-phase-region-id base owner-b token-b)]
     [deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many
@@ -3579,16 +3450,16 @@
       (= (tc_core.tc-current-arena-owner-region shadow owner-b) shadow-region)
       (= (tc_core.tc-current-arena-owner-region deep owner-b) inner-region)
       (match (tc_core.tc-arena-phase-token-owner-active deep token-a)
-        [(tc_core.TcMaybeNameId.Some owner) (= owner owner-b)]
+        [(Some owner) (= owner owner-b)]
         [_ false])
       (match (tc_core.tc-arena-phase-token-region-active deep token-a)
-        [(tc_core.TcMaybeNameId.Some region) (= region shadow-region)]
+        [(Some region) (= region shadow-region)]
         [_ false])
       (match (tc_core.tc-arena-phase-token-owner-active deep token-b)
-        [(tc_core.TcMaybeNameId.Some owner) (= owner owner-b)]
+        [(Some owner) (= owner owner-b)]
         [_ false])
       (match (tc_core.tc-arena-phase-token-region-active deep token-b)
-        [(tc_core.TcMaybeNameId.Some region) (= region inner-region)]
+        [(Some region) (= region inner-region)]
         [_ false]))))
 
 (define (tc-type-env-local-cache-deep-scan-smoke?) : bool
@@ -3600,10 +3471,7 @@
     [resource-id : i64 (ci.intern "resource")]
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
-        (tc_core.tc-bind-id
-          (tc_core.tc-empty-env)
-          global-id
-          (ast.AstType.String)))]
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) global-id (String)))]
     [phase-region-id : i64
       (tc_core.tc-arena-phase-region-id base arena-id phase-id)]
     [marked : tc_core.TcTypeEnv
@@ -3618,26 +3486,26 @@
                       (tc_core.tc-bind-return-type
                         (tc_core.tc-enter-unsafe
                           (tc_core.tc-push-region-id base arena-id))
-                        (ast.AstType.I64))
+                        (I64))
                       arena-id)
                     arena-id
-                    (ast.AstType.I64))
+                    (I64))
                   atomic-arena-id)
                 atomic-arena-id
-                (ast.AstType.I64))
+                (I64))
               phase-id
               arena-id)
             phase-id
-            (ast.AstType.I64))
+            (I64))
           resource-id)
         resource-id
-        (ast.AstType.String))]
+        (String))]
     [deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         marked
         (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
     [resource-shadow : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id deep resource-id (ast.AstType.Bool))]
+      (tc_core.tc-bind-id deep resource-id (Bool))]
     [shadow-layer : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         resource-shadow
@@ -3648,19 +3516,19 @@
         (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
     (and
       (match (tc_core.tc-active-region deep)
-        [(tc_core.TcMaybeNameId.Some region) (= region arena-id)]
+        [(Some region) (= region arena-id)]
         [_ false])
       (match (tc_core.tc-current-return-type deep)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (tc_core.tc-in-unsafe? deep)
       (tc_core.tc-ordinary-arena-owner-active-id? deep arena-id)
       (tc_core.tc-atomic-arena-owner-active-id? deep atomic-arena-id)
       (match (tc_core.tc-arena-phase-token-region-active deep phase-id)
-        [(tc_core.TcMaybeNameId.Some region) (= region phase-region-id)]
+        [(Some region) (= region phase-region-id)]
         [_ false])
       (match (tc_core.tc-arena-phase-token-owner-active deep phase-id)
-        [(tc_core.TcMaybeNameId.Some owner) (= owner arena-id)]
+        [(Some owner) (= owner arena-id)]
         [_ false])
       (tc_core.tc-string-list-contains
         (tc_core.tc-active-cleanup-owners deep)
@@ -3677,26 +3545,23 @@
       (tc_core.tc-atomic-arena-owner-active-id? shadow-layer atomic-arena-id)
       (tc_core.tc-region-outlives-or-matches deep arena-id arena-id)
       (match (tc_core.tc-active-region below-base)
-        [(tc_core.TcMaybeNameId.No) true]
+        [(No) true]
         [_ false])
       (not (tc_core.tc-lifetime-visible-id? below-base (ci.intern "global"))))))
 
 (define (tc-type-env-c-function-value-shape? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.CFunc signature mode)
+    [(CFunc signature mode)
       (and
         (= (ast.ast-c-function-mode-key mode) 1)
-        (tc_core.tc-type-eq
-          (ast.ty-node-get signature)
-          (tc_core.tc-fn0 (ast.AstType.I64))))]
+        (tc_core.tc-type-eq (ast.ty-node-get signature) (tc_core.tc-fn0 (I64))))]
     [_ false]))
 
 (define (tc-type-env-has-c-function-value?
   [env : tc_core.TcTypeEnv]
   [name-id : i64]) : bool
   (match (tc_core.tc-lookup-unsafe-key-id env name-id)
-    [(tc_core.ResultTcTypeUnsafe.Ok ty _)
-      (tc-type-env-c-function-value-shape? ty)]
+    [(Ok ty _) (tc-type-env-c-function-value-shape? ty)]
     [_ false]))
 
 (define (tc-type-env-scoped-has-c-function-value?
@@ -3709,15 +3574,13 @@
       (match (tc_core.tc-type-env-scoped-stack-lookup-id-at
         carrier.sidecar.stack
         index)
-        [(tc_core.TcTypeEnvScopedLookup.Found ty _ _ _ _)
-          (tc-type-env-c-function-value-shape? ty)]
+        [(Found ty _ _ _ _) (tc-type-env-c-function-value-shape? ty)]
         [_ false])
       (match (tc_core.tc-lookup-unsafe-persistent-key-id
         (tc_core.tc-type-env-scoped-sidecar-persistent carrier.sidecar)
         name-id
         name-id)
-        [(tc_core.ResultTcTypeUnsafe.Ok ty _)
-          (tc-type-env-c-function-value-shape? ty)]
+        [(Ok ty _) (tc-type-env-c-function-value-shape? ty)]
         [_ false]))))
 
 (define (tc-type-env-local-cache-c-function-smoke?) : bool
@@ -3725,10 +3588,7 @@
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache (tc_core.tc-empty-env))]
     [callback-ty : ast.AstType
-      (ast_tests.ast-ty-c-func
-        (ast.ast-type-list-new)
-        (ast.AstType.I64)
-        ast.AstCFunctionMode.NonNull)]
+      (ast_tests.ast-ty-c-func (ast.ast-type-list-new) (I64) NonNull)]
     [marked : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         base
@@ -3749,7 +3609,7 @@
       (tc-type-env-has-c-function-value? deep (ci.intern "danger-callback"))
       (tc_core.tc-binding-unsafe-id? deep (ci.intern "danger-callback"))
       (match (tc_core.tc-lookup-unsafe-id deep (ci.intern "danger-callback"))
-        [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe) unsafe]
+        [(Ok (CFunc _ _) unsafe) unsafe]
         [_ false]))))
 
 (cfg
@@ -3791,74 +3651,62 @@
       [layer-id : i64 (ci.intern "dotted-order-layer")]
       [exact-below : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
-          (tc_core.tc-bind-id (tc_core.tc-empty-env) name-id (ast.AstType.I64)))]
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) name-id (I64)))]
       [prefix-above : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-layer-over-explicit
-          (tc_core.tc-bind-id exact-below prefix-id (ast.AstType.Bool)))]
+          (tc_core.tc-bind-id exact-below prefix-id (Bool)))]
       [prefix-below : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
-          (tc_core.tc-bind-id
-            (tc_core.tc-empty-env)
-            prefix-id
-            (ast.AstType.Bool)))]
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) prefix-id (Bool)))]
       [exact-above : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-layer-over-explicit
-          (tc_core.tc-bind-id prefix-below name-id (ast.AstType.I64)))]
+          (tc_core.tc-bind-id prefix-below name-id (I64)))]
       [prefix-wins-tail : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-bind-id
-            (tc_core.tc-bind-id
-              (tc_core.tc-empty-env)
-              name-id
-              (ast.AstType.I64))
+            (tc_core.tc-bind-id (tc_core.tc-empty-env) name-id (I64))
             prefix-id
-            (ast.AstType.Bool)))]
+            (Bool)))]
       [prefix-wins-recursive-layer : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-prefix-layer
-          (tc_core.tc-bind-id prefix-wins-tail layer-id (ast.AstType.Unit))
+          (tc_core.tc-bind-id prefix-wins-tail layer-id (Unit))
           1
           true
           prefix-wins-tail)]
       [exact-wins-tail : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-bind-id
-            (tc_core.tc-bind-id
-              (tc_core.tc-empty-env)
-              prefix-id
-              (ast.AstType.Bool))
+            (tc_core.tc-bind-id (tc_core.tc-empty-env) prefix-id (Bool))
             name-id
-            (ast.AstType.I64)))]
+            (I64)))]
       [exact-wins-recursive-layer : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-prefix-layer
-          (tc_core.tc-bind-id exact-wins-tail layer-id (ast.AstType.Unit))
+          (tc_core.tc-bind-id exact-wins-tail layer-id (Unit))
           1
           true
           exact-wins-tail)]
       [structural-exact-only : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-bind-id
-            (tc_core.tc-bind-id
-              (tc_core.tc-empty-env)
-              prefix-id
-              (ast.AstType.Bool))
+            (tc_core.tc-bind-id (tc_core.tc-empty-env) prefix-id (Bool))
             structural-name-id
-            (ast.AstType.I64)))]
+            (I64)))]
       [scoped-prefix-wins : tc_core.TcTypeEnvScopedCarrier
         (tc_core.tc-type-env-scoped-carrier-bind-id
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc-type-env-scoped-carrier-new)
             name-id
-            (ast.AstType.I64))
+            (I64))
           prefix-id
-          (ast.AstType.Bool))]
+          (Bool))]
       [scoped-exact-wins : tc_core.TcTypeEnvScopedCarrier
         (tc_core.tc-type-env-scoped-carrier-bind-id
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc-type-env-scoped-carrier-new)
             prefix-id
-            (ast.AstType.Bool))
+            (Bool))
           name-id
-          (ast.AstType.I64))]
+          (I64))]
       (and
         (ci.intern-qualified? name-id)
         (= (ci.intern-qualified-module-id name-id) module-id)
@@ -3940,10 +3788,7 @@
       [local-id : i64 (ci.intern "selected-key-local")]
       [layer-id : i64 (ci.intern "selected-key-layer")]
       [callback-ty : ast.AstType
-        (ast_tests.ast-ty-c-func
-          (ast.ast-type-list-new)
-          (ast.AstType.I64)
-          ast.AstCFunctionMode.NonNull)]
+        (ast_tests.ast-ty-c-func (ast.ast-type-list-new) (I64) NonNull)]
       [structural-base : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-bind-id
@@ -3952,7 +3797,7 @@
             (tc_core.tc-global-shared-view callback-ty)))]
       [structural-layer : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-layer-over-explicit
-          (tc_core.tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
+          (tc_core.tc-bind-id structural-base layer-id (Bool)))]
       [qualified-raw : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-bind-id
@@ -4020,11 +3865,9 @@
       [missing-id : i64 (ci.intern "missing")]
       [base : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
-          (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (ast.AstType.I64)))]
-      [older : tc_core.TcTypeEnv
-        (tc_core.tc-bind-id base dup-id (ast.AstType.I64))]
-      [newer : tc_core.TcTypeEnv
-        (tc_core.tc-bind-id older dup-id (ast.AstType.Bool))]
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (I64)))]
+      [older : tc_core.TcTypeEnv (tc_core.tc-bind-id base dup-id (I64))]
+      [newer : tc_core.TcTypeEnv (tc_core.tc-bind-id older dup-id (Bool))]
       [layer : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-layer-over-explicit newer)]
       (and
@@ -4032,17 +3875,17 @@
         (tc-env-cache-explicit-head? layer)
         (tc-type-env-cache-partial-head? layer)
         (match (tc_core.tc-lookup-id layer dup-id)
-          [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+          [(Ok (Bool)) true]
           [_ false])
         (match (tc_core.tc-lookup-id layer base-id)
-          [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+          [(Ok (I64)) true]
           [_ false])
         (match (tc_core.tc-lookup-id layer missing-id)
-          [(tc_core.ResultTcType.Err message)
+          [(Err message)
             (string.eq
               message
               (cdiag.compiler-diagnostic-typecheck-tagged
-                (cdiag.CompilerTypecheckKind.UnboundName)
+                (UnboundName)
                 "typecheck: unbound name missing"))]
           [_ false])))))
 
@@ -4051,10 +3894,7 @@
   (define (tc-type-env-explicit-cache-layering-flags-smoke?) : bool
     (let
       [callback-ty : ast.AstType
-        (ast_tests.ast-ty-c-func
-          (ast.ast-type-list-new)
-          (ast.AstType.I64)
-          ast.AstCFunctionMode.NonNull)]
+        (ast_tests.ast-ty-c-func (ast.ast-type-list-new) (I64) NonNull)]
       [base-callback-id : i64 (ci.intern "base-callback")]
       [danger-callback-id : i64 (ci.intern "danger-callback")]
       [base : tc_core.TcTypeEnv
@@ -4075,8 +3915,7 @@
         (tc-type-env-has-c-function-value? layer danger-callback-id)
         (tc_core.tc-binding-unsafe-id? layer danger-callback-id)
         (match (tc_core.tc-lookup-unsafe-id layer danger-callback-id)
-          [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe)
-            unsafe]
+          [(Ok (CFunc _ _) unsafe) unsafe]
           [_ false])))))
 
 (cfg
@@ -4090,7 +3929,7 @@
         (tc_core.tc-bind-id
           base
           (ci.intern "__tl_string_length")
-          (tc_core.tc-fn1 (ast.AstType.I64) (ast.AstType.I64)))]
+          (tc_core.tc-fn1 (I64) (I64)))]
       [layer : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache-layer-over-explicit shadowed)]
       (and
@@ -4104,21 +3943,21 @@
             layer
             cbi.compiler-builtin-id-tl-private-string-length))
         (match (tc_core.tc-active-region layer)
-          [(tc_core.TcMaybeNameId.No) true]
+          [(No) true]
           [_ false])
         (not (tc_core.tc-lifetime-visible-id? layer (ci.intern "hidden")))))))
 
 (define (tc-type-env-local-cache-lambda-capture-smoke?) : bool
   (let
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
-    [body : ast.AstExpr (ast.AstExpr.Var (ci.intern "captured"))]
+    [body : ast.AstExpr (Var (ci.intern "captured"))]
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache (tc_core.tc-empty-env))]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (tc_core.tc-push-region-id base (ci.intern "outer"))
         (ci.intern "captured")
-        (ast.ast-ty-ref (ci.intern "outer") (ast.AstType.I64)))]
+        (ast.ast-ty-ref (ci.intern "outer") (I64)))]
     [deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many env (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
     [scoped : tc_core.TcTypeEnvScopedCarrier
@@ -4139,11 +3978,11 @@
         deep
         (ast.ast-param-list-new)
         (tc_core.tc-global-shared-view body))
-        [(tc_core.ResultTcUnit.Err message)
+        [(Err message)
           (string.eq
             message
             (cdiag.compiler-diagnostic-typecheck-tagged
-              (cdiag.CompilerTypecheckKind.RegionEscape)
+              (RegionEscape)
               "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
         [_ false])
       (match (tc_core.tc-check-lambda-region-captures-allow-refs
@@ -4151,7 +3990,7 @@
         deep
         (ast.ast-param-list-new)
         body)
-        [(tc_core.ResultTcUnit.Ok) true]
+        [(Ok) true]
         [_ false]))))
 
 (define (tc-type-env-scoped-stack-grow-smoke?) : bool
@@ -4162,18 +4001,12 @@
     [b-id : i64 (ci.intern "scoped-grow-b")]
     [c-id : i64 (ci.intern "scoped-grow-c")]
     (begin
-      (tc_core.tc-type-env-scoped-stack-bind-id!
-        (&mut stack)
-        a-id
-        (ast.AstType.I64))
+      (tc_core.tc-type-env-scoped-stack-bind-id! (&mut stack) a-id (I64))
       (let
         [outer : tc_core.TcTypeEnvScopedMark
           (tc-type-env-scoped-stack-save! (&mut stack))]
         (begin
-          (tc_core.tc-type-env-scoped-stack-bind-id!
-            (&mut stack)
-            b-id
-            (ast.AstType.Bool))
+          (tc_core.tc-type-env-scoped-stack-bind-id! (&mut stack) b-id (Bool))
           (let
             [inner : tc_core.TcTypeEnvScopedMark
               (tc-type-env-scoped-stack-save! (&mut stack))]
@@ -4181,7 +4014,7 @@
               (tc_core.tc-type-env-scoped-stack-bind-id!
                 (&mut stack)
                 c-id
-                (ast.AstType.String))
+                (String))
               (tc_core.tc-type-env-scoped-stack-restore! (&mut stack) inner)
               (let
                 [after-inner : bool
@@ -4192,17 +4025,12 @@
                     (match (tc_core.tc-type-env-scoped-stack-lookup-id
                       stack
                       c-id)
-                      [(tc_core.TcTypeEnvScopedLookup.Missing) true]
+                      [(Missing) true]
                       [_ false])
                     (match (tc_core.tc-type-env-scoped-stack-lookup-id
                       stack
                       b-id)
-                      [(tc_core.TcTypeEnvScopedLookup.Found
-                          (ast.AstType.Bool)
-                          unsafe
-                          _
-                          depth
-                          _)
+                      [(Found (Bool) unsafe _ depth _)
                         (and (not unsafe) (= depth 1))]
                       [_ false]))]
                 (begin
@@ -4215,22 +4043,17 @@
                     (match (tc_core.tc-type-env-scoped-stack-lookup-id
                       stack
                       b-id)
-                      [(tc_core.TcTypeEnvScopedLookup.Missing) true]
+                      [(Missing) true]
                       [_ false])
                     (match (tc_core.tc-type-env-scoped-stack-lookup-id
                       stack
                       a-id)
-                      [(tc_core.TcTypeEnvScopedLookup.Found
-                          (ast.AstType.I64)
-                          unsafe
-                          marker-kind
-                          depth
-                          _)
+                      [(Found (I64) unsafe marker-kind depth _)
                         (and
                           (not unsafe)
                           (tc_core.tc-type-env-scoped-marker-kind-same?
                             marker-kind
-                            tc_core.TcTypeEnvScopedMarkerKind.None)
+                            None)
                           (= depth 0))]
                       [_ false])))))))))))
 
@@ -4240,10 +4063,7 @@
       (tc-type-env-scoped-stack-with-capacity 1 1)]
     [name-id : i64 (+ tc_core.tc-type-env-scoped-dense-lookup-capacity 17)]
     (begin
-      (tc_core.tc-type-env-scoped-stack-bind-id!
-        (&mut stack)
-        name-id
-        (ast.AstType.I64))
+      (tc_core.tc-type-env-scoped-stack-bind-id! (&mut stack) name-id (I64))
       (let
         [mark : tc_core.TcTypeEnvScopedMark
           (tc-type-env-scoped-stack-save! (&mut stack))]
@@ -4251,17 +4071,11 @@
           (tc_core.tc-type-env-scoped-stack-bind-id!
             (&mut stack)
             name-id
-            (ast.AstType.Bool))
+            (Bool))
           (let
             [shadowed : bool
               (match (tc_core.tc-type-env-scoped-stack-lookup-id stack name-id)
-                [(tc_core.TcTypeEnvScopedLookup.Found
-                    (ast.AstType.Bool)
-                    _
-                    _
-                    _
-                    _)
-                  true]
+                [(Found (Bool) _ _ _ _) true]
                 [_ false])]
             (begin
               (tc_core.tc-type-env-scoped-stack-restore! (&mut stack) mark)
@@ -4270,31 +4084,19 @@
                   (match (tc_core.tc-type-env-scoped-stack-lookup-id
                     stack
                     name-id)
-                    [(tc_core.TcTypeEnvScopedLookup.Found
-                        (ast.AstType.I64)
-                        _
-                        _
-                        _
-                        _)
-                      true]
+                    [(Found (I64) _ _ _ _) true]
                     [_ false])]
                 [repaired-index : i64
                   (match (tc_i64_i64_map.get
                     (& (__tl-box-place stack.lookup-cache))
                     name-id)
-                    [(tc_i64_i64_map.LookupFound index) index]
-                    [(tc_i64_i64_map.LookupMissing) -1])]
+                    [(LookupFound index) index]
+                    [(LookupMissing) -1])]
                 [restored-again : bool
                   (match (tc_core.tc-type-env-scoped-stack-lookup-id
                     stack
                     name-id)
-                    [(tc_core.TcTypeEnvScopedLookup.Found
-                        (ast.AstType.I64)
-                        _
-                        _
-                        _
-                        _)
-                      true]
+                    [(Found (I64) _ _ _ _) true]
                     [_ false])]
                 (and shadowed restored (= repaired-index 0) restored-again)))))))))
 
@@ -4306,10 +4108,7 @@
     (begin
       (set!
         sidecar
-        (tc_core.tc-type-env-scoped-sidecar-bind-id
-          sidecar
-          value-id
-          (ast.AstType.I64)))
+        (tc_core.tc-type-env-scoped-sidecar-bind-id sidecar value-id (I64)))
       (let
         [stack-mark : tc_core.TcTypeEnvScopedMark
           (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
@@ -4322,55 +4121,35 @@
         (begin
           (set!
             sidecar
-            (tc_core.tc-type-env-scoped-sidecar-bind-id
-              sidecar
-              value-id
-              (ast.AstType.Bool)))
+            (tc_core.tc-type-env-scoped-sidecar-bind-id sidecar value-id (Bool)))
           (set!
             sidecar
-            (tc-type-env-scoped-sidecar-bind-unsafe-id
-              sidecar
-              fn-id
-              (ast.AstType.I64)))
+            (tc-type-env-scoped-sidecar-bind-unsafe-id sidecar fn-id (I64)))
           (let
             [before-restore : bool
               (and
                 (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
                   (tc_core.tc-global-shared-view sidecar)
                   value-id)
-                  [(tc_core.TcTypeEnvScopedLookup.Found
-                      (ast.AstType.Bool)
-                      unsafe
-                      marker-kind
-                      depth
-                      generation)
+                  [(Found (Bool) unsafe marker-kind depth generation)
                     (and
                       (not unsafe)
                       (tc_core.tc-type-env-scoped-marker-kind-same?
                         marker-kind
-                        tc_core.TcTypeEnvScopedMarkerKind.None)
+                        None)
                       (= depth 1)
                       (= generation generation-before))]
                   [_ false])
                 (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
                   (tc_core.tc-global-shared-view sidecar)
                   fn-id)
-                  [(tc_core.TcTypeEnvScopedLookup.Found
-                      (ast.AstType.I64)
-                      unsafe
-                      _
-                      depth
-                      generation)
+                  [(Found (I64) unsafe _ depth generation)
                     (and unsafe (= depth 1) (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   sidecar.stack
-                  tc_core.TcTypeEnvScopedMarkerKind.UnsafeDecl)
-                  [(TcTypeEnvScopedMarkerLookup.Found
-                      marker-id
-                      (ast.AstType.Unit)
-                      depth
-                      generation)
+                  UnsafeDecl)
+                  [(Found marker-id (Unit) depth generation)
                     (and
                       (= marker-id (tc_core.tc-unsafe-decl-marker-id fn-id))
                       (= depth 1)
@@ -4380,20 +4159,19 @@
                   (tc_core.tc-type-env-scoped-sidecar-persistent
                     (tc_core.tc-global-shared-view sidecar))
                   value-id)
-                  [(tc_core.ResultTcType.Err _) true]
+                  [(Err _) true]
                   [_ false])
                 (match (tc_core.tc-lookup-unsafe-id
                   (tc_core.tc-type-env-scoped-sidecar-materialize
                     (tc_core.tc-global-shared-view sidecar))
                   fn-id)
-                  [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe)
-                    unsafe]
+                  [(Ok (I64) unsafe) unsafe]
                   [_ false])
                 (match (tc_core.tc-lookup-id
                   (tc_core.tc-type-env-scoped-sidecar-materialize
                     (tc_core.tc-global-shared-view sidecar))
                   value-id)
-                  [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+                  [(Ok (Bool)) true]
                   [_ false]))]
             (begin
               (tc_core.tc-type-env-scoped-sidecar-restore! (&mut sidecar) mark)
@@ -4408,34 +4186,29 @@
                 (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
                   (tc_core.tc-global-shared-view sidecar)
                   fn-id)
-                  [(tc_core.TcTypeEnvScopedLookup.Missing) true]
+                  [(Missing) true]
                   [_ false])
                 (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
                   (tc_core.tc-global-shared-view sidecar)
                   value-id)
-                  [(tc_core.TcTypeEnvScopedLookup.Found
-                      (ast.AstType.I64)
-                      unsafe
-                      marker-kind
-                      depth
-                      _)
+                  [(Found (I64) unsafe marker-kind depth _)
                     (and
                       (not unsafe)
                       (tc_core.tc-type-env-scoped-marker-kind-same?
                         marker-kind
-                        tc_core.TcTypeEnvScopedMarkerKind.None)
+                        None)
                       (= depth 0))]
                   [_ false])
                 (match (tc_core.tc-lookup-id
                   (tc_core.tc-type-env-scoped-sidecar-materialize
                     (tc_core.tc-global-shared-view sidecar))
                   value-id)
-                  [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                  [(Ok (I64)) true]
                   [_ false])
                 (match (tc_core.tc-lookup-id
                   (tc_core.tc-type-env-scoped-sidecar-materialize sidecar)
                   fn-id)
-                  [(tc_core.ResultTcType.Err _) true]
+                  [(Err _) true]
                   [_ false])))))))))
 
 (define (tc-type-env-scoped-carrier-bind-many
@@ -4455,7 +4228,7 @@
               (tc_core.tc-type-env-scoped-carrier-bind-id
                 out
                 (tc_core.tc-generated-name-id name)
-                (ast.AstType.I64)))
+                (I64)))
             (set! i (+ i 1)))))
       out)))
 
@@ -4463,31 +4236,30 @@
   [carrier : tc_core.TcTypeEnvScopedCarrier]) : bool
   (match (tc_core.tc-type-env-scoped-carrier-active-region
     (tc_core.tc-global-shared-view carrier))
-    [(tc_core.TcMaybeNameId.Some sidecar-region)
+    [(Some sidecar-region)
       (match (tc_core.tc-active-region
         (tc_core.tc-type-env-scoped-carrier-env carrier))
-        [(tc_core.TcMaybeNameId.Some env-region) (= sidecar-region env-region)]
+        [(Some env-region) (= sidecar-region env-region)]
         [_ false])]
-    [(tc_core.TcMaybeNameId.No)
+    [(No)
       (match (tc_core.tc-active-region
         (tc_core.tc-type-env-scoped-carrier-env carrier))
-        [(tc_core.TcMaybeNameId.No) true]
+        [(No) true]
         [_ false])]))
 
 (define (tc-type-env-scoped-carrier-return-matches-env?
   [carrier : tc_core.TcTypeEnvScopedCarrier]) : bool
   (match (tc_core.tc-type-env-scoped-carrier-current-return-type
     (tc_core.tc-global-shared-view carrier))
-    [(tc_core.ResultTcType.Ok carrier-ty)
+    [(Ok carrier-ty)
       (match (tc_core.tc-current-return-type
         (tc_core.tc-type-env-scoped-carrier-env carrier))
-        [(tc_core.ResultTcType.Ok env-ty)
-          (tc_core.tc-type-eq carrier-ty env-ty)]
+        [(Ok env-ty) (tc_core.tc-type-eq carrier-ty env-ty)]
         [_ false])]
-    [(tc_core.ResultTcType.Err _)
+    [(Err _)
       (match (tc_core.tc-current-return-type
         (tc_core.tc-type-env-scoped-carrier-env carrier))
-        [(tc_core.ResultTcType.Err _) true]
+        [(Err _) true]
         [_ false])]))
 
 (define (tc-type-env-scoped-carrier-smoke?) : bool
@@ -4505,16 +4277,14 @@
     [carrier : tc_core.TcTypeEnvScopedCarrier
       (tc_core.tc-type-env-scoped-carrier-from-env base)]
     [fn-id : i64 (ci.intern "carrier-callback")]
-    [callback-ty : ast.AstType (tc_core.tc-fn0 (ast.AstType.I64))]
+    [callback-ty : ast.AstType (tc_core.tc-fn0 (I64))]
     (begin
       (set! carrier (tc-type-env-scoped-carrier-bind-default-boundary carrier))
       (set! carrier (tc-type-env-scoped-carrier-push-region carrier _outer-id))
       (set! carrier (tc-type-env-scoped-carrier-enter-unsafe carrier))
       (set!
         carrier
-        (tc_core.tc-type-env-scoped-carrier-bind-return-type
-          carrier
-          (ast.AstType.I64)))
+        (tc_core.tc-type-env-scoped-carrier-bind-return-type carrier (I64)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-cleanup-owner carrier _resource-id))
@@ -4523,25 +4293,19 @@
         (tc_core.tc-type-env-scoped-carrier-bind-id
           carrier
           _resource-id
-          (ast.AstType.String)))
+          (String)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-ordinary-arena-owner carrier _arena-id))
       (set!
         carrier
-        (tc_core.tc-type-env-scoped-carrier-bind-id
-          carrier
-          _arena-id
-          (ast.AstType.I64)))
+        (tc_core.tc-type-env-scoped-carrier-bind-id carrier _arena-id (I64)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-atomic-arena-owner carrier _atomic-id))
       (set!
         carrier
-        (tc_core.tc-type-env-scoped-carrier-bind-id
-          carrier
-          _atomic-id
-          (ast.AstType.I64)))
+        (tc_core.tc-type-env-scoped-carrier-bind-id carrier _atomic-id (I64)))
       (let
         [_outer-snapshot-smoke : i64 0]
         (begin
@@ -4577,7 +4341,7 @@
                   (tc_core.tc-type-env-scoped-carrier-env deep))
                 (match (tc_core.tc-type-env-scoped-carrier-active-region
                   (tc_core.tc-global-shared-view deep))
-                  [(tc_core.TcMaybeNameId.Some region) (= region _inner-id)]
+                  [(Some region) (= region _inner-id)]
                   [_ false])
                 (tc_core.tc-cleanup-owner-active-id?
                   (tc_core.tc-type-env-scoped-carrier-env deep)
@@ -4592,11 +4356,11 @@
                   (tc_core.tc-global-shared-view snapshot))
                 (match (tc_core.tc-type-env-scoped-carrier-active-region
                   (tc_core.tc-global-shared-view snapshot))
-                  [(tc_core.TcMaybeNameId.Some region) (= region _inner-id)]
+                  [(Some region) (= region _inner-id)]
                   [_ false])
                 (match (tc_core.tc-type-env-scoped-carrier-current-return-type
                   (tc_core.tc-global-shared-view snapshot))
-                  [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                  [(Ok (I64)) true]
                   [_ false])
                 (tc_core.tc-type-env-scoped-carrier-cleanup-owner-active?
                   (tc_core.tc-global-shared-view snapshot)
@@ -4637,56 +4401,34 @@
                 (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
                   (tc_core.tc-global-shared-view deep-sidecar)
                   fn-id)
-                  [(tc_core.TcTypeEnvScopedLookup.Found
-                      (ast.AstType.Func _ _)
-                      unsafe
-                      _
-                      _
-                      _)
-                    (and unsafe)]
+                  [(Found (Func _ _) unsafe _ _ _) (and unsafe)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   deep-sidecar.stack
-                  tc_core.TcTypeEnvScopedMarkerKind.DefaultBoundary)
-                  [(TcTypeEnvScopedMarkerLookup.Found
-                      marker-id
-                      (ast.AstType.Unit)
-                      _
-                      _)
+                  DefaultBoundary)
+                  [(Found marker-id (Unit) _ _)
                     (= marker-id (tc_core.tc-default-boundary-id))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   deep-sidecar.stack
-                  tc_core.TcTypeEnvScopedMarkerKind.CleanupOwner)
-                  [(TcTypeEnvScopedMarkerLookup.Found
-                      marker-id
-                      (ast.AstType.Var owner)
-                      _
-                      _)
+                  CleanupOwner)
+                  [(Found marker-id (Var owner) _ _)
                     (and
                       (= marker-id (tc_core.tc-cleanup-owner-marker-id))
                       (string.eq (ci.intern-str owner) "resource"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   deep-sidecar.stack
-                  tc_core.TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner)
-                  [(TcTypeEnvScopedMarkerLookup.Found
-                      marker-id
-                      (ast.AstType.Var owner)
-                      _
-                      _)
+                  OrdinaryArenaOwner)
+                  [(Found marker-id (Var owner) _ _)
                     (and
                       (= marker-id (tc_core.tc-ordinary-arena-owner-marker-id))
                       (string.eq (ci.intern-str owner) "arena"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   deep-sidecar.stack
-                  tc_core.TcTypeEnvScopedMarkerKind.AtomicArenaOwner)
-                  [(TcTypeEnvScopedMarkerLookup.Found
-                      marker-id
-                      (ast.AstType.Var owner)
-                      _
-                      _)
+                  AtomicArenaOwner)
+                  [(Found marker-id (Var owner) _ _)
                     (and
                       (= marker-id (tc_core.tc-atomic-arena-owner-marker-id))
                       (string.eq (ci.intern-str owner) "atomic"))]
@@ -4712,9 +4454,9 @@
               (tc_core.tc-bind-id
                 (tc_core.tc-default-env)
                 runtime-tail-id
-                (ast.AstType.String)))
+                (String)))
             outer-id)
-          (ast.AstType.I64))]
+          (I64))]
       [carrier : tc_core.TcTypeEnvScopedCarrier
         (tc_core.tc-type-env-scoped-carrier-from-env base-env)]
       [outer-save : tc_core.TcTypeEnvScopedRuntimeSave
@@ -4723,40 +4465,37 @@
         (tc_core.tc-bind-id
           (tc-bind-cleanup-owner base-env resource-id)
           resource-id
-          (ast.AstType.String))]
+          (String))]
       [scope-save : tc_core.TcTypeEnvScopedRuntimeSave
         (tc_core.tc-type-env-scoped-runtime-save runtime-env)]
       [unsafe-env : tc_core.TcTypeEnv
-        (tc_core.tc-bind-unsafe-id
-          runtime-env
-          runtime-unsafe-id
-          (ast.AstType.I64))]
+        (tc_core.tc-bind-unsafe-id runtime-env runtime-unsafe-id (I64))]
       [c-abi-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-id
           unsafe-env
           runtime-callback-id
-          (tc_core.tc-fn0 (ast.AstType.I64)))]
+          (tc_core.tc-fn0 (I64)))]
       [shadow-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-id
           c-abi-env
           cbi.compiler-builtin-id-tl-private-string-length
-          (tc_core.tc-fn1 (ast.AstType.I64) (ast.AstType.I64)))]
+          (tc_core.tc-fn1 (I64) (I64)))]
       [inner-env : tc_core.TcTypeEnv
         (tc_core.tc-push-region-id shadow-env inner-id)]
       [inner-ok : bool
         (and
           (match (tc_core.tc-active-region inner-env)
-            [(tc_core.TcMaybeNameId.Some region) (= region inner-id)]
+            [(Some region) (= region inner-id)]
             [_ false])
           (match (tc_core.tc-lookup-id inner-env runtime-tail-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-lookup-id inner-env runtime-unsafe-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (tc_core.tc-name-bound-id? inner-env runtime-unsafe-id)
           (match (tc_core.tc-lookup-unsafe-id inner-env runtime-unsafe-id)
-            [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
+            [(Ok (I64) unsafe) unsafe]
             [_ false])
           (not
             (tc_core.tc-default-builtin-unshadowed-id?
@@ -4768,18 +4507,18 @@
           [restored-ok : bool
             (and
               (match (tc_core.tc-active-region runtime-env)
-                [(tc_core.TcMaybeNameId.Some region) (= region outer-id)]
+                [(Some region) (= region outer-id)]
                 [_ false])
               (match (tc_core.tc-current-return-type runtime-env)
-                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [(Ok (I64)) true]
                 [_ false])
               (tc_core.tc-in-unsafe? runtime-env)
               (tc_core.tc-cleanup-owner-active-id? runtime-env resource-id)
               (match (tc_core.tc-lookup-id runtime-env runtime-tail-id)
-                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [(Ok (String)) true]
                 [_ false])
               (match (tc_core.tc-lookup-id runtime-env runtime-unsafe-id)
-                [(tc_core.ResultTcType.Err _) true]
+                [(Err _) true]
                 [_ false])
               (not (tc_core.tc-name-bound-id? runtime-env runtime-unsafe-id))
               (tc_core.tc-default-builtin-unshadowed-id?
@@ -4821,14 +4560,12 @@
       [save-a : tc_core.TcTypeEnvScopedRuntimeSave
         (tc_core.tc-type-env-scoped-runtime-enter!
           (tc_core.tc-type-env-scoped-carrier-from-env base-a))]
-      [env-a : tc_core.TcTypeEnv
-        (tc_core.tc-bind-id base-a name-a (ast.AstType.I64))]
+      [env-a : tc_core.TcTypeEnv (tc_core.tc-bind-id base-a name-a (I64))]
       ;; Entering B while A is live must select B's carrier without suspending A.
       [save-b : tc_core.TcTypeEnvScopedRuntimeSave
         (tc_core.tc-type-env-scoped-runtime-enter!
           (tc_core.tc-type-env-scoped-carrier-from-env base-b))]
-      [env-b : tc_core.TcTypeEnv
-        (tc_core.tc-bind-id base-b name-b (ast.AstType.Bool))]
+      [env-b : tc_core.TcTypeEnv (tc_core.tc-bind-id base-b name-b (Bool))]
       [interleaved : bool
         (and
           lazy-before
@@ -4836,16 +4573,16 @@
           (tc_core.tc-type-env-scoped-runtime-active? env-a)
           (tc_core.tc-type-env-scoped-runtime-active? env-b)
           (match (tc_core.tc-lookup-id env-a name-a)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (match (tc_core.tc-lookup-id env-a name-b)
-            [(tc_core.ResultTcType.Err _) true]
+            [(Err _) true]
             [_ false])
           (match (tc_core.tc-lookup-id env-b name-b)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-lookup-id env-b name-a)
-            [(tc_core.ResultTcType.Err _) true]
+            [(Err _) true]
             [_ false])
           ;; These two queries populate equal-shaped visibility memo cells in
           ;; different states; B's miss must not replace A's hit.
@@ -4880,7 +4617,7 @@
               (tc_core.tc-type-env-scoped-runtime-active? env-a)
               (not (tc_core.tc-type-env-scoped-runtime-active? env-b))
               (match (tc_core.tc-lookup-id env-a name-a)
-                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [(Ok (I64)) true]
                 [_ false])
               (tc_core.tc-lifetime-visible-id? env-a lifetime-a))]
           (begin
@@ -4928,44 +4665,35 @@
     [fresh-id : i64 (tc_core.tc-generated-name-id "fresh")]
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
-        (tc_core.tc-bind-id
-          (tc_core.tc-empty-env)
-          tail-only-id
-          (ast.AstType.String)))]
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) tail-only-id (String)))]
     [carrier : tc_core.TcTypeEnvScopedCarrier
       (tc_core.tc-type-env-scoped-carrier-from-env base)]
     [fn-id : i64 (tc_core.tc-generated-name-id "scoped-primary-fn")]
     (begin
       (set!
         carrier
-        (tc_core.tc-type-env-scoped-carrier-bind-id
-          carrier
-          shadow-id
-          (ast.AstType.I64)))
+        (tc_core.tc-type-env-scoped-carrier-bind-id carrier shadow-id (I64)))
       (set!
         carrier
-        (tc_core.tc-type-env-scoped-carrier-bind-id
-          carrier
-          shadow-id
-          (ast.AstType.Bool)))
+        (tc_core.tc-type-env-scoped-carrier-bind-id carrier shadow-id (Bool)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-alias-id-if-free
           carrier
           shadow-id
-          (ast.AstType.String)))
+          (String)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-alias-id-if-free
           carrier
           alias-id
-          (ast.AstType.I64)))
+          (I64)))
       (set!
         carrier
         (tc-type-env-scoped-carrier-bind-unsafe-id
           carrier
           fn-id
-          (tc_core.tc-fn0 (ast.AstType.I64))))
+          (tc_core.tc-fn0 (I64))))
       (let
         [snapshot : tc_core.TcTypeEnv
           (tc_core.tc-type-env-scoped-carrier-env carrier)]
@@ -4974,44 +4702,38 @@
             (tc_core.tc-type-env-scoped-carrier-from-env
               (tc_core.tc-env-with-cache (tc_core.tc-default-env)))
             cbi.compiler-builtin-id-tl-private-string-length
-            (tc_core.tc-fn1 (ast.AstType.I64) (ast.AstType.I64)))]
+            (tc_core.tc-fn1 (I64) (I64)))]
         [hygiene-carrier : tc_core.TcTypeEnvScopedCarrier
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-env
               (tc_core.tc-hygiene-global-env
-                (tc_core.tc-bind-id
-                  (tc_core.tc-empty-env)
-                  hygiene-id
-                  (ast.AstType.I64))))
+                (tc_core.tc-bind-id (tc_core.tc-empty-env) hygiene-id (I64))))
             hygiene-id
-            (ast.AstType.Bool))]
+            (Bool))]
         [mirrored-carrier : tc_core.TcTypeEnvScopedCarrier
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-marker-visible-env
-              (tc_core.tc-bind-id
-                (tc_core.tc-empty-env)
-                mirrored-id
-                (ast.AstType.I64)))
+              (tc_core.tc-bind-id (tc_core.tc-empty-env) mirrored-id (I64)))
             fresh-id
-            (ast.AstType.Bool))]
+            (Bool))]
         [mirrored-snapshot : tc_core.TcTypeEnv
           (tc_core.tc-type-env-scoped-carrier-env mirrored-carrier)]
         (and
           (match (tc-type-env-scoped-carrier-lookup-id carrier tail-only-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc-type-env-scoped-carrier-lookup-id carrier shadow-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc-type-env-scoped-carrier-lookup-id carrier alias-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (tc-type-env-scoped-carrier-binding-unsafe-id? carrier fn-id)
           (match (tc_core.tc-lookup-id snapshot tail-only-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-lookup-id snapshot shadow-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (tc_core.tc-binding-unsafe-id? snapshot fn-id)
           (not
@@ -5021,7 +4743,7 @@
           (match (tc-lookup-hygiene-global-id
             (tc_core.tc-type-env-scoped-carrier-env hygiene-carrier)
             hygiene-id)
-            [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+            [(Ok (I64)) true]
             [_ false])
           (=
             (tc_core.tc-ordinary-binding-rank-id-from
@@ -5060,9 +4782,9 @@
         (tc_core.tc-bind-id
           (tc_core.tc-empty-env)
           (ci.intern "global")
-          (ast.AstType.String)))]
+          (String)))]
     [lookup-local : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id lookup-base (ci.intern "local") (ast.AstType.I64))]
+      (tc_core.tc-bind-id lookup-base (ci.intern "local") (I64))]
     [lookup-deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         lookup-local
@@ -5083,34 +4805,31 @@
       (tc_core.tc-bind-unsafe-id
         (tc_core.tc-empty-env)
         (ci.intern "unsafe-value")
-        (ast.AstType.I64))]
+        (I64))]
     [hygiene-top : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-empty-env)
-        (ci.intern "visible")
-        (ast.AstType.I64))]
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) (ci.intern "visible") (I64))]
     [hygiene-root : tc_core.TcTypeEnv
       (tc_core.tc-hygiene-global-env hygiene-top)]
     [hygiene-env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id hygiene-root (ci.intern "visible") (ast.AstType.Bool))]
+      (tc_core.tc-bind-id hygiene-root (ci.intern "visible") (Bool))]
     (and
       (match (tc-type-env-lookup-step lookup-local (ci.intern "local"))
-        [(TcTypeEnvLookupStep.Found (ast.AstType.I64)) true]
+        [(Found (I64)) true]
         [_ false])
       (match (tc-type-env-lookup-step lookup-local (ci.intern "global"))
-        [(TcTypeEnvLookupStep.Miss rest-env)
+        [(Miss rest-env)
           (match (tc-type-env-lookup-step rest-env (ci.intern "global"))
-            [(TcTypeEnvLookupStep.Found (ast.AstType.String)) true]
+            [(Found (String)) true]
             [_ false])]
         [_ false])
       (match (tc_core.tc-type-env-marker-step
         (tc_core.tc-type-env-marker-start marker-local))
-        [(tc_core.TcTypeEnvMarkerStep.Bind key (ast.AstType.Var region) _)
+        [(Bind key (Var region) _)
           (and (= key (tc_core.tc-region-marker-id)) (= region inner-id))]
         [_ false])
       (match (tc_core.tc-type-env-scoped-marker-step
         (tc_core.tc-type-env-scoped-carrier-marker-cursor marker-scoped))
-        [(tc_core.TcTypeEnvScopedMarkerStep.Bind key (ast.AstType.I64) _)
+        [(Bind key (I64) _)
           (=
             key
             (ci.intern
@@ -5122,34 +4841,34 @@
       (match (tc-type-env-unsafe-lookup-step
         unsafe-env
         (ci.intern "unsafe-value"))
-        [(TcTypeEnvUnsafeLookupStep.Found (ast.AstType.I64) unsafe) unsafe]
+        [(Found (I64) unsafe) unsafe]
         [_ false])
       (match (tc_core.tc-ptr-addr-of-local-lookup
         hygiene-env
         (ci.intern "visible"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+        [(Ok (Bool)) true]
         [_ false])
       (match (tc_core.tc-ptr-addr-of-local-lookup
         hygiene-root
         (ci.intern "visible"))
-        [(tc_core.ResultTcType.Err _) true]
+        [(Err _) true]
         [_ false])
       (match (tc_core.tc-lookup-id lookup-deep (ci.intern "global"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+        [(Ok (String)) true]
         [_ false])
       (match (tc_core.tc-lookup-id lookup-deep (ci.intern "local"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false])
       (match (tc_core.tc-active-region marker-deep)
-        [(tc_core.TcMaybeNameId.Some region) (= region (ci.intern "inner"))]
+        [(Some region) (= region (ci.intern "inner"))]
         [_ false])
       (tc_core.tc-lifetime-visible-id? marker-deep (ci.intern "inner"))
       (not (tc_core.tc-lifetime-visible-id? marker-deep (ci.intern "outer")))
       (match (tc_core.tc-lookup-id hygiene-env (ci.intern "visible"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+        [(Ok (Bool)) true]
         [_ false])
       (match (tc-lookup-hygiene-global-id hygiene-env (ci.intern "visible"))
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false]))))
 
 (test
@@ -5208,43 +4927,32 @@
     [flag-id : i64 (ci.intern "flag")]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
-        (tc_core.tc-bind-id (tc_core.tc-empty-env) x-id (ast.AstType.I64))
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) x-id (I64))
         flag-id
-        (ast.AstType.Bool))]
+        (Bool))]
     [shadow-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
-        (tc_core.tc-bind-id (tc_core.tc-empty-env) x-id (ast.AstType.I64))
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) x-id (I64))
         x-id
-        (ast.AstType.Bool))]
+        (Bool))]
     [shadow-spmd : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-from-type-env shadow-env)]
     [outer : tc_core.TcSpmdEnv (tc_core.tc-spmd-env-from-type-env env)]
     [local : tc_core.TcSpmdEnv
-      (tc_core.tc-spmd-env-bind-id
-        outer
-        lane-id
-        (ast.AstType.I64)
-        tc_core.TcSpmdClass.Varying
-        tc_core.TcSpmdScope.Local)]
+      (tc_core.tc-spmd-env-bind-id outer lane-id (I64) Varying Local)]
     [updated : tc_core.TcSpmdEnv
-      (tc_core.tc-spmd-env-set-local-class-id
-        local
-        lane-id
-        tc_core.TcSpmdClass.Uniform)]
+      (tc_core.tc-spmd-env-set-local-class-id local lane-id Uniform)]
     [indexed : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-bind-role-id
         updated
         idx-id
-        (ast.AstType.I64)
-        tc_core.TcSpmdClass.Uniform
-        tc_core.TcSpmdScope.Local
-        tc_core.TcSpmdRole.ForeachIndex)]
+        (I64)
+        Uniform
+        Local
+        ForeachIndex)]
     [marked-outer : tc_core.TcSpmdEnv (tc_core.tc-spmd-env-mark-outer indexed)]
     [branch-right : tc_core.TcSpmdEnv
-      (tc_core.tc-spmd-env-set-local-class-id
-        indexed
-        lane-id
-        tc_core.TcSpmdClass.Varying)]
+      (tc_core.tc-spmd-env-set-local-class-id indexed lane-id Varying)]
     [merged : tc_core.TcSpmdEnv
       (tc_core.tc-spmd-env-merge-classes indexed branch-right)]
     [restore-mark : tc_core.TcSpmdEnvMark (tc_core.tc-spmd-env-mark outer)]
@@ -5252,54 +4960,29 @@
       (tc_core.tc-spmd-env-restore updated restore-mark)]
     (and
       (match (tc_core.tc-spmd-env-lookup-id updated lane-id)
-        [(tc_core.TcSpmdLookup.Found
-            (ast.AstType.I64)
-            (tc_core.TcSpmdClass.Uniform)
-            (tc_core.TcSpmdScope.Local)
-            (tc_core.TcSpmdRole.Value))
-          true]
+        [(Found (I64) (Uniform) (Local) (Value)) true]
         [_ false])
       (tc_core.tc-spmd-env-has-local-id? updated lane-id)
       (tc_core.tc-spmd-env-has-outer-id? updated x-id)
       (match (tc_core.tc-spmd-env-lookup-id shadow-spmd x-id)
-        [(tc_core.TcSpmdLookup.Found
-            (ast.AstType.Bool)
-            (tc_core.TcSpmdClass.Uniform)
-            (tc_core.TcSpmdScope.Outer)
-            (tc_core.TcSpmdRole.Value))
-          true]
+        [(Found (Bool) (Uniform) (Outer) (Value)) true]
         [_ false])
       (match (tc_core.tc-spmd-env-lookup-id marked-outer idx-id)
-        [(tc_core.TcSpmdLookup.Found
-            (ast.AstType.I64)
-            (tc_core.TcSpmdClass.Uniform)
-            (tc_core.TcSpmdScope.Outer)
-            (tc_core.TcSpmdRole.ForeachIndex))
-          true]
+        [(Found (I64) (Uniform) (Outer) (ForeachIndex)) true]
         [_ false])
       (not (tc_core.tc-spmd-env-has-local-id? marked-outer lane-id))
       (tc_core.tc-spmd-env-has-outer-id? marked-outer lane-id)
       (match (tc_core.tc-spmd-env-lookup-id merged lane-id)
-        [(tc_core.TcSpmdLookup.Found
-            (ast.AstType.I64)
-            (tc_core.TcSpmdClass.Varying)
-            (tc_core.TcSpmdScope.Local)
-            (tc_core.TcSpmdRole.Value))
-          true]
+        [(Found (I64) (Varying) (Local) (Value)) true]
         [_ false])
       (match (tc_core.tc-spmd-env-lookup-id merged idx-id)
-        [(tc_core.TcSpmdLookup.Found
-            (ast.AstType.I64)
-            (tc_core.TcSpmdClass.Uniform)
-            (tc_core.TcSpmdScope.Local)
-            (tc_core.TcSpmdRole.ForeachIndex))
-          true]
+        [(Found (I64) (Uniform) (Local) (ForeachIndex)) true]
         [_ false])
       (match (tc_core.tc-spmd-env-lookup-id (tc-spmd-env-pop updated 1) lane-id)
-        [(tc_core.TcSpmdLookup.Missing) true]
+        [(Missing) true]
         [_ false])
       (match (tc_core.tc-spmd-env-lookup-id restored lane-id)
-        [(tc_core.TcSpmdLookup.Missing) true]
+        [(Missing) true]
         [_ false]))))
 
 (cfg
@@ -5309,8 +4992,8 @@
     [module-id : i64]
     [fallback : i64]) : i64
     (match (tc_core.tc-import-alias-summary-index-lookup index module-id)
-      [(tc_core.TcImportAliasSummaryLookup.Found slot) slot]
-      [(tc_core.TcImportAliasSummaryLookup.Missing) fallback])))
+      [(Found slot) slot]
+      [(Missing) fallback])))
 
 (cfg
   test
@@ -5320,7 +5003,7 @@
     [expected-name : i64]
     [expected-value : i64]) : bool
     (match (ast.ast-decl-list-ref decls index)
-      [(ast.AstDecl.Def _ name _ value)
+      [(Def _ name _ value)
         (and (= name expected-name) (= value expected-value))]
       [_ false])))
 
@@ -5338,49 +5021,42 @@
       [last-a-name : i64 (ci.intern "summary-index-last-a")]
       [b-name : i64 (ci.intern "summary-index-b")]
       [base : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
-      [_dummy : unit
-        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module -101))]
-      [_module-a : unit
-        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module module-a))]
+      [_dummy : unit (ast.ast-decl-list-push (&mut base) (Module -101))]
+      [_module-a : unit (ast.ast-decl-list-push (&mut base) (Module module-a))]
       [_generated : unit
         (ast.ast-decl-list-push
           (&mut base)
           (ast.ast-decl-comptime-decl-with-meta
-            (ast.AstGeneratedDeclMeta.Some
+            (Some
               "summary-generator"
               "summary-item"
               (ast.ast-expr-list-new)
               "summary-key")
-            (ast.ast-decl-def-id generated-name (ast.AstMaybeType.No) 21)))]
+            (ast.ast-decl-def-id generated-name (No) 21)))]
       [_test : unit
         (ast.ast-decl-list-push
           (&mut base)
           (ast.ast-decl-test-id test-name 22 (ast.ast-source-span 1 2 3 4)))]
       [_bin : unit
-        (ast.ast-decl-list-push
-          (&mut base)
-          (ast.AstDecl.IncludeBin bin-name "summary.bin"))]
+        (ast.ast-decl-list-push (&mut base) (IncludeBin bin-name "summary.bin"))]
       [_str : unit
-        (ast.ast-decl-list-push
-          (&mut base)
-          (ast.AstDecl.IncludeStr str-name "summary.txt"))]
+        (ast.ast-decl-list-push (&mut base) (IncludeStr str-name "summary.txt"))]
       [_last-a : unit
         (ast.ast-decl-list-push
           (&mut base)
-          (ast.ast-decl-def-id last-a-name (ast.AstMaybeType.No) 25))]
-      [_module-b : unit
-        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module module-b))]
+          (ast.ast-decl-def-id last-a-name (No) 25))]
+      [_module-b : unit (ast.ast-decl-list-push (&mut base) (Module module-b))]
       [_b : unit
         (ast.ast-decl-list-push
           (&mut base)
-          (ast.ast-decl-def-id b-name (ast.AstMaybeType.No) 31))]
+          (ast.ast-decl-def-id b-name (No) 31))]
       ;; Tail shares grown source storage but is not prependable. Rebuilding a
       ;; root row in front gives the index a non-zero-offset source and mirrors
       ;; the generated-list prepend/rebuild shapes used by macro expansion.
       [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail base)]
       [all-decls : ast.AstDeclList
         (ast.ast-decl-list-prepend-builder
-          (ast.ast-decl-def-id root-name (ast.AstMaybeType.No) 11)
+          (ast.ast-decl-def-id root-name (No) 11)
           tail)]
       [summary : tc_core.TcImportAliasSummaryIndex
         (tc_core.tc-import-alias-summary-index-build-current
@@ -5407,14 +5083,13 @@
         (match (let
           [decl (ast.ast-decl-list-ref a-decls 0)]
           (ast.ast-decl-generated-meta decl))
-          [(ast.AstGeneratedDeclMeta.Some _ _ _ key)
-            (string.eq key "summary-key")]
-          [(ast.AstGeneratedDeclMeta.No) false])]
+          [(Some _ _ _ key) (string.eq key "summary-key")]
+          [(No) false])]
       ;; A later source-slot write must not affect the owned per-module list.
       [_rewrite-source : unit
         (set!
           (array-ref all-decls.slots (+ all-decls.offset 2))
-          (ast.ast-decl-def-id generated-name (ast.AstMaybeType.No) 99))]
+          (ast.ast-decl-def-id generated-name (No) 99))]
       [empty-summary : tc_core.TcImportAliasSummaryIndex
         (tc_core.tc-import-alias-summary-index-build-current
           (ast.ast-decl-list-new))]
@@ -5425,7 +5100,7 @@
         (>= a-slot 0)
         (>= b-slot 0)
         (match (tc_core.tc-import-alias-summary-index-lookup (& summary) -202)
-          [(tc_core.TcImportAliasSummaryLookup.Missing) true]
+          [(Missing) true]
           [_ false])
         (= (ast.ast-decl-list-len (& root-decls)) 1)
         (tc-import-alias-summary-index-test-def-at? root-decls 0 root-name 11)
@@ -5437,7 +5112,7 @@
           21)
         generated-meta-ok
         (match (ast.ast-decl-list-ref a-decls 1)
-          [(ast.AstDecl.Test name body _ span)
+          [(Test name body _ span)
             (and
               (= name test-name)
               (= body 22)
@@ -5445,11 +5120,11 @@
               (= (ast.ast-source-span-end-line span) 3))]
           [_ false])
         (match (ast.ast-decl-list-ref a-decls 2)
-          [(ast.AstDecl.IncludeBin name path)
+          [(IncludeBin name path)
             (and (= name bin-name) (string.eq path "summary.bin"))]
           [_ false])
         (match (ast.ast-decl-list-ref a-decls 3)
-          [(ast.AstDecl.IncludeStr name path)
+          [(IncludeStr name path)
             (and (= name str-name) (string.eq path "summary.txt"))]
           [_ false])
         (tc-import-alias-summary-index-test-def-at? a-decls 4 last-a-name 25)
@@ -5459,7 +5134,7 @@
         (match (tc_core.tc-import-alias-summary-index-lookup
           (& empty-summary)
           module-a)
-          [(tc_core.TcImportAliasSummaryLookup.Missing) true]
+          [(Missing) true]
           [_ false])))))
 
 (cfg
@@ -5477,10 +5152,7 @@
     [literal : ast.AstLiteral]
     [line : i64]) : i64
     (let
-      [leaf : i64
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Literal literal))]
+      [leaf : i64 (ast.ast-node-pool-context-expr-push pools (Literal literal))]
       [original : i64
         (ast.ast-expr-source-view-with-pools
           pools
@@ -5489,7 +5161,7 @@
       [expanded : i64
         (ast.ast-node-pool-context-expr-push
           pools
-          (ast.AstExpr.MacroExpansion original 0 0))]
+          (MacroExpansion original 0 0))]
       (ast.ast-expr-source-view-with-pools
         pools
         expanded
@@ -5515,12 +5187,9 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [pools-c : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
-    [root-a : i64
-      (tc-literal-pool-test-root pools-a (ast.AstLiteral.Int 17 "17") 7)]
-    [root-b : i64
-      (tc-literal-pool-test-root pools-b (ast.AstLiteral.Float "3.5") 41)]
-    [root-c : i64
-      (tc-literal-pool-test-root pools-c (ast.AstLiteral.Float "1e100") 83)]
+    [root-a : i64 (tc-literal-pool-test-root pools-a (Int 17 "17") 7)]
+    [root-b : i64 (tc-literal-pool-test-root pools-b (Float "3.5") 41)]
+    [root-c : i64 (tc-literal-pool-test-root pools-c (Float "1e100") 83)]
     [ctx-a : tc_core.TcContext (tc-literal-pool-test-context pools-a)]
     [ctx-b : tc_core.TcContext (tc-literal-pool-test-context pools-b)]
     [ctx-c : tc_core.TcContext (tc-literal-pool-test-context pools-c)]
@@ -5547,9 +5216,8 @@
           (match (tc_core.tc-float-literal-expr-with-expected
             ctx-b
             (tc_core.tc-context-expr-get ctx-b root-b)
-            (ast.AstType.F32))
-            [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.F32))]
+            (F32))
+            [(Ok ty) (tc_core.tc-type-eq ty (F32))]
             [_ false])
           ;; Literal validation returns raw errors; the diagnostic boundary
           ;; attaches locations. Check rejection and retained provenance
@@ -5557,24 +5225,24 @@
           (match (tc_core.tc-float-literal-expr-with-expected
             ctx-c
             (tc_core.tc-context-expr-get ctx-c root-c)
-            (ast.AstType.F32))
-            [(tc_core.ResultTcType.Err message)
+            (F32))
+            [(Err message)
               (string.eq
                 message
                 (cdiag.compiler-diagnostic-typecheck-tagged
-                  (cdiag.CompilerTypecheckKind.TypeMismatch)
+                  (TypeMismatch)
                   "typecheck: non-finite f32 literal is not supported"))]
             [_ false])
           (match (ast_tests.ast-node-pool-context-expr-canonical-span
             pools-c
             root-c)
-            [(ast.AstMaybeSourceSpan.Some span)
+            [(Some span)
               (and
                 (= (ast.ast-source-span-start-line span) 83)
                 (= (ast.ast-source-span-start-col span) 3))]
             [_ false])
           (match (ast.ast-node-pool-context-expr-view-span pools-c root-c)
-            [(ast.AstMaybeSourceSpan.Some span)
+            [(Some span)
               (and
                 (= (ast.ast-source-span-start-line span) 93)
                 (= (ast.ast-source-span-start-col span) 5))]
@@ -5594,18 +5262,11 @@
           (match (tc_core.tc-integer-literal-expr-with-expected
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-a)
-            (ast.AstType.I64))
-            [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.I64))]
+            (I64))
+            [(Ok ty) (tc_core.tc-type-eq ty (I64))]
             [_ false])
-          (not
-            (tc_core.tc-integer-literal-expr?
-              ctx-a
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))
-          (not
-            (tc_core.tc-float-literal-expr?
-              ctx-a
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))))
+          (not (tc_core.tc-integer-literal-expr? ctx-a (Literal (Bool true))))
+          (not (tc_core.tc-float-literal-expr? ctx-a (Literal (Bool true))))))
       ;; A compatibility pool context does not redirect typechecker reads: the
       ;; owner-A context still reads its integer literal at the shared id.
       (ast.ast-node-pool-compat-context-use! pools-b)
@@ -5622,9 +5283,8 @@
           (match (tc_core.tc-integer-literal-expr-with-expected
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b)
-            (ast.AstType.I64))
-            [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.I64))]
+            (I64))
+            [(Ok ty) (tc_core.tc-type-eq ty (I64))]
             [_ false])))
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-install! saved)
@@ -5697,13 +5357,13 @@
             (tc_core.tc-bind-id
               (tc_core.tc-bind-id
                 (tc_core.tc-bind-id
-                  (tc_core.tc-bind-id base candidate-key (ast.AstType.I64))
+                  (tc_core.tc-bind-id base candidate-key (I64))
                   candidate-key
-                  (ast.AstType.Bool))
+                  (Bool))
                 other-key
-                (ast.AstType.String))
+                (String))
               plain-id
-              (ast.AstType.I64)))]
+              (I64)))]
         [visible : tc_core.TcUnboundVisibleNames
           (tc_core.tc-unbound-visible-names true module-id false env)]
         [unqualified : String
@@ -5749,10 +5409,7 @@
             [hidden-id : i64 (ci.intern "__alpha")]
             [hidden-wanted-id : i64 (ci.intern "alpha")]
             [hidden-env : tc_core.TcTypeEnv
-              (tc_core.tc-bind-id
-                (tc_core.tc-empty-env)
-                hidden-id
-                (ast.AstType.I64))]
+              (tc_core.tc-bind-id (tc_core.tc-empty-env) hidden-id (I64))]
             [hidden-result : String
               (tc_core.tc-unbound-near-miss
                 false
@@ -5794,9 +5451,9 @@
         [persistent : tc_core.TcTypeEnv
           (tc_core.tc-env-with-cache
             (tc_core.tc-bind-id
-              (tc_core.tc-bind-id base macro-id (ast.AstType.I64))
+              (tc_core.tc-bind-id base macro-id (I64))
               structural-id
-              (ast.AstType.Bool)))]
+              (Bool)))]
         [macro-result : String
           (tc_core.tc-unbound-near-miss
             true
@@ -5829,7 +5486,7 @@
           (tc_core.tc-type-env-scoped-carrier-bind-id
             carrier-before
             scoped-id
-            (ast.AstType.String))]
+            (String))]
         [active-save : tc_core.TcTypeEnvScopedRuntimeSave
           (tc_core.tc-type-env-scoped-runtime-enter!
             (tc_core.tc-global-shared-view carrier-after))]
@@ -5884,12 +5541,12 @@
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-env env-a)
             name-a
-            (ast.AstType.I64))]
+            (I64))]
         [carrier-b : tc_core.TcTypeEnvScopedCarrier
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-env env-b)
             name-b
-            (ast.AstType.Bool))]
+            (Bool))]
         [save-a : tc_core.TcTypeEnvScopedRuntimeSave
           (tc_core.tc-type-env-scoped-runtime-enter! carrier-a)]
         [save-b : tc_core.TcTypeEnvScopedRuntimeSave
@@ -5928,7 +5585,7 @@
         [alpha-id : i64 (ci.intern "alpha")]
         [wanted-id : i64 (ci.intern "alphi")]
         [env : tc_core.TcTypeEnv
-          (tc_core.tc-bind-id (tc_core.tc-empty-env) alpha-id (ast.AstType.I64))]
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) alpha-id (I64))]
         [first : String
           (tc_core.tc-unbound-near-miss false -1 env "alphi" wanted-id)]
         (begin
@@ -5945,8 +5602,7 @@
           ;; at the same distance the alphabetically smaller name wins.
           (let
             [alph-id : i64 (ci.intern "alph")]
-            [env2 : tc_core.TcTypeEnv
-              (tc_core.tc-bind-id env alph-id (ast.AstType.I64))]
+            [env2 : tc_core.TcTypeEnv (tc_core.tc-bind-id env alph-id (I64))]
             [after : String
               (tc_core.tc-unbound-near-miss false -1 env2 "alphi" wanted-id)]
             (begin
@@ -5977,12 +5633,12 @@
           (tc_core.tc-bind-id
             (tc_core.tc-empty-env-with-job-state job-a)
             alpha-id
-            (ast.AstType.I64))]
+            (I64))]
         [env-b : tc_core.TcTypeEnv
           (tc_core.tc-bind-id
             (tc_core.tc-empty-env-with-job-state job-b)
             alpha-id
-            (ast.AstType.I64))]
+            (I64))]
         (begin
           (unless
             (string.eq
@@ -6010,7 +5666,7 @@
             env-a
             "alphq"
             wanted-id)
-            [(tc_core.TcUnboundSuggestion.No) unit]
+            [(No) unit]
             [_
               (io.panic "typecheck: suppressed scope still built a suggestion")])
           (tc_core.tc-unbound-suggestions-suppress-pop! env-a)
@@ -6034,13 +5690,13 @@
   (test
     tc-lifetime-substitution-rewrites-region-wrapper
     (match (tc_core.tc-lifetime-subst-type
-      (tc_core.TcLifetimeSubst.One 101 202)
-      (ast.ast-ty-region 101 (ast.AstType.String)))
-      [(ast.AstType.Region region inner)
+      (One 101 202)
+      (ast.ast-ty-region 101 (String)))
+      [(Region region inner)
         (if (and
           (= region 202)
           (match (ast.ty-node-get inner)
-            [(ast.AstType.String) true]
+            [(String) true]
             [_ false]))
           unit
           (io.panic "typecheck: region lifetime substitution test failed"))]
@@ -6067,14 +5723,14 @@
         (ast.ast-node-pool-context-expr-push
           pools
           (if owner?
-            (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-            (ast.AstExpr.Literal (ast.AstLiteral.Int 42 "42"))))]
+            (Literal (Bool true))
+            (Literal (Int 42 "42"))))]
       [second : i64
         (ast.ast-node-pool-context-expr-push
           pools
           (if owner?
-            (ast.AstExpr.Literal (ast.AstLiteral.Int 17 "17"))
-            (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))]
+            (Literal (Int 17 "17"))
+            (Literal (Bool true))))]
       [line : i64
         (if owner?
           7
@@ -6096,7 +5752,7 @@
       [expanded : i64
         (ast.ast-node-pool-context-expr-push
           pools
-          (ast.AstExpr.MacroExpansion
+          (MacroExpansion
             (if owner?
               nested
               view)
@@ -6105,12 +5761,10 @@
       [chained : i64
         (ast.ast-node-pool-context-expr-push
           pools
-          (ast.AstExpr.MacroExpansion expanded 0 0))]
+          (MacroExpansion expanded 0 0))]
       [tail : i64
         (if owner?
-          (ast.ast-node-pool-context-expr-push
-            pools
-            (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
+          (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))
           (ast.ast-expr-source-view-with-pools
             pools
             first
@@ -6134,8 +5788,8 @@
     [arg : ast.AstExpr]
     [want : ast.AstType]) : bool
     (match (tc_core.tc-call-arg-expr-type ctx env arg)
-      [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty want)]
-      [(tc_core.ResultTcType.Err _) false])))
+      [(Ok ty) (tc_core.tc-type-eq ty want)]
+      [(Err _) false])))
 
 (cfg
   test
@@ -6145,26 +5799,14 @@
     [ctx : tc_core.TcContext]
     [env : tc_core.TcTypeEnv]) : bool
     (and
+      (tc-call-arg-fact-test-type-is? ctx env (MacroExpansion 2 0 0) (I64))
+      (tc-call-arg-fact-test-type-is? ctx env (MacroExpansion 3 0 0) (F64))
+      (tc-call-arg-fact-test-type-is? ctx env (MacroExpansion 5 0 0) (F64))
       (tc-call-arg-fact-test-type-is?
         ctx
         env
-        (ast.AstExpr.MacroExpansion 2 0 0)
-        (ast.AstType.I64))
-      (tc-call-arg-fact-test-type-is?
-        ctx
-        env
-        (ast.AstExpr.MacroExpansion 3 0 0)
-        (ast.AstType.F64))
-      (tc-call-arg-fact-test-type-is?
-        ctx
-        env
-        (ast.AstExpr.MacroExpansion 5 0 0)
-        (ast.AstType.F64))
-      (tc-call-arg-fact-test-type-is?
-        ctx
-        env
-        (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5))
-        (ast.AstType.I64)))))
+        (Spanned 1 (ast.ast-source-span 7 3 7 5))
+        (I64)))))
 
 (test
   tc-call-arg-fact-key-pool-isolation
@@ -6197,76 +5839,32 @@
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a
-              (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5)))
+              (Spanned 1 (ast.ast-source-span 7 3 7 5)))
             1)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 2 0 0))
-            1)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 2 0 0)) 1)
           ;; A nested view keys on its immediate payload, not the deepest leaf.
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 3 0 0))
-            2)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 5 0 0))
-            2)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 3 0 0)) 2)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 5 0 0)) 2)
           ;; The decoy holds a view where the owner holds a non-view.
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 6 0 0))
-            -1)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 1 0 0))
-            -1)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.Literal (ast.AstLiteral.Int 17 "17")))
-            -1)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 6 0 0)) -1)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 1 0 0)) -1)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (Literal (Int 17 "17"))) -1)
           ;; The decoy's own context selects the decoy's keys for the same ids.
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-b
-              (ast.AstExpr.MacroExpansion 2 0 0))
-            0)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-b
-              (ast.AstExpr.MacroExpansion 5 0 0))
-            0)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-b
-              (ast.AstExpr.MacroExpansion 6 0 0))
-            0)))
+          (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 2 0 0)) 0)
+          (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 5 0 0)) 0)
+          (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 6 0 0)) 0)))
       ;; A compatibility pool context does not redirect typechecker reads: the
       ;; owner-A context keeps its own keys for the same ids.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
         (and
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 2 0 0)) 1)
+          (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 3 0 0)) 2)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a
-              (ast.AstExpr.MacroExpansion 2 0 0))
-            1)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.MacroExpansion 3 0 0))
-            2)
-          (=
-            (tc_core.tc-call-arg-fact-key
-              ctx-a
-              (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5)))
+              (Spanned 1 (ast.ast-source-span 7 3 7 5)))
             1)))
       (ast.ast-node-pool-compat-context-clear!)
       ;; Seed three valid keys with distinct types that inference cannot
@@ -6274,9 +5872,9 @@
       ;; and the decoy-selected key 0 from the owning keys 1 and 2.
       (tc_core.tc-body-type-fact-storage-start! state 8)
       (tc_core.tc-body-type-facts-start-recording! state)
-      (tc_core.tc-body-type-fact-record! state 0 (ast.AstType.Bool))
-      (tc_core.tc-body-type-fact-record! state 1 (ast.AstType.I64))
-      (tc_core.tc-body-type-fact-record! state 2 (ast.AstType.F64))
+      (tc_core.tc-body-type-fact-record! state 0 (Bool))
+      (tc_core.tc-body-type-fact-record! state 1 (I64))
+      (tc_core.tc-body-type-fact-record! state 2 (F64))
       (set! recording-ok? (tc-call-arg-fact-test-owning-facts? ctx-a env))
       (tc_core.tc-body-type-facts-start-consuming! state)
       ;; Installing the owner, then the decoy again, must not move the facts an
@@ -6297,8 +5895,8 @@
           (tc-call-arg-fact-test-type-is?
             ctx-a
             env
-            (ast.AstExpr.MacroExpansion 2 0 0)
-            (ast.AstType.I32))
+            (MacroExpansion 2 0 0)
+            (I32))
           (< (tc_core.tc-body-type-fact-slot state 0) 0)
           (< (tc_core.tc-body-type-fact-slot state 1) 0)
           (< (tc_core.tc-body-type-fact-slot state 2) 0)))
@@ -6311,14 +5909,13 @@
           (tc-call-arg-fact-test-type-is?
             ctx-a
             env
-            (ast.AstExpr.MacroExpansion 2 0 0)
-            (ast.AstType.I32))
+            (MacroExpansion 2 0 0)
+            (I32))
           (>= (tc_core.tc-body-type-fact-slot state 1) 0)
           (< (tc_core.tc-body-type-fact-slot state 0) 0)
           (match (tc_core.tc-call-arg-fact-lookup state 1)
-            [(tc_core.TcBodyTypeFact.Hit ty)
-              (tc_core.tc-type-eq ty (ast.AstType.I32))]
-            [(tc_core.TcBodyTypeFact.Miss) false])))
+            [(Hit ty) (tc_core.tc-type-eq ty (I32))]
+            [(Miss) false])))
       (tc_core.tc-body-type-fact-storage-release! state)
       (ast.ast-node-pool-context-install! saved)
       (unless
@@ -6580,10 +6177,10 @@
                 (> root-b-arena 0)
                 (not (= root-a-before.root-arena root-b-arena))
                 (match (tc_core.tc-resolve-type-name-cache-lookup nominal-a 41)
-                  [(tc_core.TcTypeNameLookupCache.Miss) true]
+                  [(Miss) true]
                   [_ false])
                 (match (tc_core.tc-resolve-type-name-cache-lookup nominal-b 41)
-                  [(tc_core.TcTypeNameLookupCache.Missing) true]
+                  [(Missing) true]
                   [_ false])
                 (= (array-ref nominal-a-after.owner-handles owner-slot) -1)
                 (string.eq
@@ -6706,7 +6303,7 @@
     [state-b : tc_core.TcSpmdTraversalState
       (tc_core.tc-job-state-spmd-traversal job-b)]
     [scratch : arena.Arena (arena.make)]
-    [saved-a : tc_core.TcNameIdList tc_core.TcNameIdList.Nil]
+    [saved-a : tc_core.TcNameIdList Nil]
     [owned-dense? : bool false]
     [interleaved? : bool false]
     [reset-isolated? : bool false]
@@ -6724,7 +6321,7 @@
       (set!
         owned-dense?
         (match (tc_core.tc-spmd-inline-helper-stack-for-state state-a)
-          [(tc_core.TcNameIdList.Dense address _ 3)
+          [(Dense address _ 3)
             (=
               (__tl-project-field
                 (tc_core.tc-name-id-list-store-read address)
@@ -6813,12 +6410,9 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [owner-id : i64 (ci.intern "cleanup-owner/pool-a")]
     [decoy-id : i64 (ci.intern "cleanup-owner/pool-b-decoy")]
-    [leaf-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var owner-id))]
-    [leaf-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var decoy-id))]
-    [root : ast.AstExpr
-      (ast.AstExpr.Spanned leaf-a (ast.ast-source-span 1 1 1 2))]
+    [leaf-a : i64 (ast.ast-node-pool-context-expr-push pools-a (Var owner-id))]
+    [leaf-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Var decoy-id))]
+    [root : ast.AstExpr (Spanned leaf-a (ast.ast-source-span 1 1 1 2))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -6831,11 +6425,9 @@
       (tc_core.tc-bind-id
         (tc-bind-cleanup-owner (tc_core.tc-empty-env) owner-id)
         owner-id
-        (ast.AstType.String))]
+        (String))]
     [owners : tc_core.TcStringList
-      (tc_core.tc-string-list-add
-        tc_core.TcStringList.Nil
-        (ci.intern-str owner-id))]
+      (tc_core.tc-string-list-add Nil (ci.intern-str owner-id))]
     [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
     [owner-found? : bool
       (tc_core.tc-expr-result-uses-active-cleanup-owner?
@@ -6848,7 +6440,7 @@
           (ast.ast-node-pool-context-expr-segment-bases (& pools-b))
           root
           owners
-          tc_core.TcStringList.Nil))]
+          Nil))]
     [decoy-still-installed? : bool
       (ast.ast-node-pool-context-expr-installed? pools-b)]
     [ok? : bool
@@ -6869,8 +6461,8 @@
 ;; structs share.
 (define (tc-inline-layout-fields [layout : tc_core.TcInlineAggregateLayout]) : tc_core.TcInlineFieldLayoutList
   (match layout
-    [(tc_core.TcInlineAggregateLayout.Struct _ _ fields) fields]
-    [(tc_core.TcInlineAggregateLayout.Enum _ _ _)
+    [(Struct _ _ fields) fields]
+    [(Enum _ _ _)
       (tc_core.TcInlineFieldLayoutList
         (__tl_make-array tc_core.TcInlineFieldLayout 0))]))
 
@@ -6890,7 +6482,7 @@
       (while (< index (tc_core.tc-inline-field-layout-list-count (& fields)))
         (begin
           (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
-            [(tc_core.TcInlineFieldLayout.Field field-name _ offset)
+            [(Field field-name _ offset)
               (when
                 (string.eq (tc_core.tc-env-key-name-text field-name) name)
                 (begin
@@ -6904,7 +6496,7 @@
 (define (tc-inline-variant-layout-size
   [variant : tc_core.TcInlineVariantLayout]) : i64
   (match variant
-    [(tc_core.TcInlineVariantLayout.Variant _ size _ _) size]))
+    [(Variant _ size _ _) size]))
 
 (define (tc-inline-variant-layout-list-size-exact-id
   [variants : tc_core.TcInlineVariantLayoutList]
@@ -6961,8 +6553,8 @@
     [layout : tc_core.TcInlineAggregateLayout
       (owned_view.compiler-owned-reference-shared-view layout)]
     (match layout
-      [(tc_core.TcInlineAggregateLayout.Struct _ _ _) -1]
-      [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+      [(Struct _ _ _) -1]
+      [(Enum _ _ variants)
         (let
           [exact : i64
             (tc-inline-variant-layout-list-size-exact-id
@@ -7072,13 +6664,13 @@
         (tc_core.tc-global-shared-view owner)
         (tc_core.tc-global-shared-view elem-ty)
         cbi.compiler-builtin-id-fix-items)
-        [(tc_core.ResultTcType.Ok (ast.AstType.DynArray _)) true]
+        [(Ok (DynArray _)) true]
         [_ false])
       (match (tc_core.tc-comptime-sequence-field-type
         owner
         elem-ty
         cbi.compiler-builtin-id-fix-len)
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [(Ok (I64)) true]
         [_ false]))))
 
 (cfg
@@ -7089,7 +6681,7 @@
       (let
         [generated-items : i64 (ci.intern-generated-canonical-name "items")]
         (and
-          (tc-comptime-sequence-field-pair-ok? "ExprList" (ast.AstType.Expr))
+          (tc-comptime-sequence-field-pair-ok? "ExprList" (Expr))
           (tc-comptime-sequence-field-pair-ok?
             "ExprClauseList"
             (tc_core.tc-macro-expr-clause-type))
@@ -7104,45 +6696,45 @@
             (tc_core.tc-macro-match-arm-type))
           (match (tc_core.tc-comptime-expr-clause-field-type
             cbi.compiler-builtin-id-fix-first)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Expr)) true]
+            [(Ok (Expr)) true]
             [_ false])
           (match (tc_core.tc-comptime-expr-clause-field-type
             cbi.compiler-builtin-id-fix-second)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Expr)) true]
+            [(Ok (Expr)) true]
             [_ false])
           (match (tc_core.tc-comptime-expr-binding-clause-field-type
             cbi.compiler-builtin-id-fix-name)
-            [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+            [(Ok (String)) true]
             [_ false])
           (match (tc_core.tc-comptime-expr-binding-clause-field-type
             cbi.compiler-builtin-id-fix-has_type)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+            [(Ok (Bool)) true]
             [_ false])
           (match (tc_core.tc-comptime-expr-binding-clause-field-type
             cbi.compiler-builtin-id-fix-ty)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Expr)) true]
+            [(Ok (Expr)) true]
             [_ false])
           (match (tc_core.tc-comptime-expr-binding-clause-field-type
             cbi.compiler-builtin-id-fix-init)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Expr)) true]
+            [(Ok (Expr)) true]
             [_ false])
           (match (tc_core.tc-comptime-match-arm-field-type
             cbi.compiler-builtin-id-fix-pattern)
-            [(tc_core.ResultTcType.Ok _) true]
+            [(Ok _) true]
             [_ false])
           (match (tc_core.tc-comptime-match-arm-field-type
             cbi.compiler-builtin-id-fix-body)
-            [(tc_core.ResultTcType.Ok (ast.AstType.Expr)) true]
+            [(Ok (Expr)) true]
             [_ false])
           (match (tc_core.tc-comptime-sequence-field-type
             "ExprList"
-            (ast.AstType.Expr)
+            (Expr)
             generated-items)
-            [(tc_core.ResultTcType.Err message)
+            [(Err message)
               (string.eq
                 message
                 (cdiag.compiler-diagnostic-typecheck-tagged
-                  (cdiag.CompilerTypecheckKind.UnknownStructField)
+                  (UnknownStructField)
                   "typecheck: unknown struct field ExprList.items"))]
             [_ false]))))))
 
@@ -7163,40 +6755,29 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [quoted-value-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
+      (ast.ast-node-pool-context-expr-push pools-a (Var 101))]
     [quote-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Quote quoted-value-a))]
+      (ast.ast-node-pool-context-expr-push pools-a (Quote quoted-value-a))]
     [unquote-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Unquote quote-a))]
+      (ast.ast-node-pool-context-expr-push pools-a (Unquote quote-a))]
     [return-value-a : i64
-      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 202))]
+      (ast.ast-node-pool-context-expr-push pools-a (Var 202))]
     [return-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Return return-value-a))]
+      (ast.ast-node-pool-context-expr-push pools-a (Return return-value-a))]
     [template-items : ast.AstExprList (ast.ast-expr-list-new)]
     [_item-unquote : unit
       (ast.ast-expr-list-push (&mut template-items) unquote-a)]
     [_item-return : unit
       (ast.ast-expr-list-push (&mut template-items) return-a)]
     [quoted-value-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 901))]
-    [quote-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 902))]
+      (ast.ast-node-pool-context-expr-push pools-b (Var 901))]
+    [quote-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Var 902))]
     [unquote-b : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-b
-        (ast.AstExpr.Unquote quote-b))]
+      (ast.ast-node-pool-context-expr-push pools-b (Unquote quote-b))]
     [return-value-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 903))]
+      (ast.ast-node-pool-context-expr-push pools-b (Var 903))]
     [return-b : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-b
-        (ast.AstExpr.Return return-value-b))]
+      (ast.ast-node-pool-context-expr-push pools-b (Return return-value-b))]
     [job-state : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new-with-source-names-and-job-state
@@ -7211,17 +6792,14 @@
     [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job-state)]
     [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
     [result : tc_core.ResultTcUnit
-      (tc_core.tc-quasiquote-template-ok
-        ctx
-        env
-        (ast.AstExpr.Begin template-items))]
+      (tc_core.tc-quasiquote-template-ok ctx env (Begin template-items))]
     [decoy-still-installed? : bool
       (and
         (=
           (ast.ast-node-pool-active-expr-segment-bases)
           (ast.ast-node-pool-context-expr-segment-bases pools-b))
         (match (ast.ast-node-pool-context-expr-get pools-b quote-b)
-          [(ast.AstExpr.Var name-id) (= name-id 902)]
+          [(Var name-id) (= name-id 902)]
           [_ false]))]
     [ok? : bool
       (and
@@ -7231,8 +6809,8 @@
         (= return-value-a return-value-b)
         (= return-a return-b)
         (match result
-          [(tc_core.ResultTcUnit.Ok) true]
-          [(tc_core.ResultTcUnit.Err _) false])
+          [(Ok) true]
+          [(Err _) false])
         decoy-still-installed?
         (= (ast.ast-node-pool-context-expr-len pools-a) 5)
         (= (ast.ast-node-pool-context-expr-len pools-b) 5))]
@@ -7453,15 +7031,10 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 16 8)]
-    [value : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
-    [returns : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Return value))]
-    [breaks : i64 (ast.ast-node-pool-context-expr-push pools ast.AstExpr.Break)]
-    [continues : i64
-      (ast.ast-node-pool-context-expr-push pools ast.AstExpr.Continue)]
+    [value : i64 (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))]
+    [returns : i64 (ast.ast-node-pool-context-expr-push pools (Return value))]
+    [breaks : i64 (ast.ast-node-pool-context-expr-push pools Break)]
+    [continues : i64 (ast.ast-node-pool-context-expr-push pools Continue)]
     [ends-in-return : ast.AstExprList (ast.ast-expr-list-new)]
     [return-then-value : ast.AstExprList (ast.ast-expr-list-new)]
     [_fill : unit
@@ -7471,25 +7044,17 @@
         (ast.ast-expr-list-push (&mut return-then-value) returns)
         (ast.ast-expr-list-push (&mut return-then-value) value))]
     [tail-return : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Begin ends-in-return))]
+      (ast.ast-node-pool-context-expr-push pools (Begin ends-in-return))]
     [tail-value : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Begin return-then-value))]
+      (ast.ast-node-pool-context-expr-push pools (Begin return-then-value))]
     [empty : i64
       (ast.ast-node-pool-context-expr-push
         pools
-        (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
+        (Begin (ast.ast-expr-list-new)))]
     [both-leave : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.If value tail-return breaks))]
+      (ast.ast-node-pool-context-expr-push pools (If value tail-return breaks))]
     [one-leaves : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.If value continues value))]
+      (ast.ast-node-pool-context-expr-push pools (If value continues value))]
     [spanned : i64
       (ast.ast-expr-source-view-with-pools
         pools
@@ -7644,7 +7209,7 @@
   test
   (define (macro-decl-module-eq? [decl : ast.AstDecl] [wanted : i64]) : bool
     (match decl
-      [(ast.AstDecl.Module name) (= name wanted)]
+      [(Module name) (= name wanted)]
       [_ false])))
 
 (cfg
@@ -7658,17 +7223,12 @@
       [prefix-a-id : i64 (ci.intern-generated-name "prefix-a")]
       [prefix-b-id : i64 (ci.intern-generated-name "prefix-b")]
       [left : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
-      [_left : unit
-        (ast.ast-decl-list-push (&mut left) (ast.AstDecl.Module left-id))]
+      [_left : unit (ast.ast-decl-list-push (&mut left) (Module left-id))]
       [right-base : ast.AstDeclList (ast.ast-decl-list-new)]
       [right-tail : ast.AstDeclList
-        (ast.ast-decl-list-prepend-builder
-          (ast.AstDecl.Module right-b-id)
-          right-base)]
+        (ast.ast-decl-list-prepend-builder (Module right-b-id) right-base)]
       [right : ast.AstDeclList
-        (ast.ast-decl-list-prepend-builder
-          (ast.AstDecl.Module right-a-id)
-          right-tail)]
+        (ast.ast-decl-list-prepend-builder (Module right-a-id) right-tail)]
       [right-address : i64
         (macro-decl-list-slots-address (tc_core.tc-global-shared-view right))]
       [reused : ast.AstDeclList
@@ -7693,13 +7253,9 @@
         (macro-decl-list-slots-address (tc_core.tc-global-shared-view reserved))]
       [prefix-base : ast.AstDeclList (ast.ast-decl-list-new)]
       [prefix-tail : ast.AstDeclList
-        (ast.ast-decl-list-prepend-builder
-          (ast.AstDecl.Module prefix-a-id)
-          prefix-base)]
+        (ast.ast-decl-list-prepend-builder (Module prefix-a-id) prefix-base)]
       [prefix-rev : ast.AstDeclList
-        (ast.ast-decl-list-prepend-builder
-          (ast.AstDecl.Module prefix-b-id)
-          prefix-tail)]
+        (ast.ast-decl-list-prepend-builder (Module prefix-b-id) prefix-tail)]
       [prefixed : ast.AstDeclList
         (macro-decl-list-prefix-rev-current-suffix
           prefix-rev
@@ -7861,8 +7417,8 @@
         (begin
           (while (not done)
             (match (ast.ast-decl-list-step cursor)
-              [(ast.AstDeclListStep.Nil) (set! done true)]
-              [(ast.AstDeclListStep.Cons decl rest)
+              [(Nil) (set! done true)]
+              [(Cons decl rest)
                 (begin
                   (set! (array-ref suffix.slots write-index) decl)
                   (set! write-index (- write-index 1))
@@ -7901,8 +7457,8 @@
                   0
                   cbi.compiler-builtin-id-fix-empty)]
               (match (ast.ast-decl-path-list-step cursor)
-                [(ast.AstDeclPathListStep.Nil) (set! done true)]
-                [(ast.AstDeclPathListStep.Cons path rest)
+                [(Nil) (set! done true)]
+                [(Cons path rest)
                   (begin
                     (set! (array-ref suffix.slots write-index) path)
                     (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
@@ -8085,11 +7641,8 @@
   [state : tc_core.TcJobState]
   [index : i64]
   [fallback : i64]) : i64
-  (match (macro-segmented-program-decl-at
-    state
-    index
-    (ast.AstDecl.Module fallback))
-    [(ast.AstDecl.Module name) name]
+  (match (macro-segmented-program-decl-at state index (Module fallback))
+    [(Module name) name]
     [_ fallback]))
 
 (define (macro-segmented-program-empty-head-inject!
@@ -8126,7 +7679,7 @@
       (and
         iter.has-current
         (match (tc_core.macro-segmented-program-iter-current-decl (& iter))
-          [(ast.AstDecl.Module name) (= name expected)]
+          [(Module name) (= name expected)]
           [_ false])
         (string.eq (macro-segmented-program-iter-current-path (& iter)) "a")
         (= (macro-segmented-program-iter-current-owner-id (& iter)) 20)
@@ -8144,8 +7697,8 @@
     [z : i64 (ci.intern "seg-z")]
     [prefix-rev : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.AstDecl.Module p1)
-        (ast.ast-decl-cons (ast.AstDecl.Module p0) (ast.ast-decl-list-new)))]
+        (Module p1)
+        (ast.ast-decl-cons (Module p0) (ast.ast-decl-list-new)))]
     [prefix-paths-rev : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "p1"
@@ -8156,10 +7709,10 @@
           (ast.ast-decl-path-list-new)))]
     [source : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.AstDecl.Module a)
+        (Module a)
         (ast.ast-decl-cons
-          (ast.AstDecl.Module b)
-          (ast.ast-decl-cons (ast.AstDecl.Module c) (ast.ast-decl-list-new))))]
+          (Module b)
+          (ast.ast-decl-cons (Module c) (ast.ast-decl-list-new))))]
     [source-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "a"
@@ -8173,8 +7726,8 @@
             (ast.ast-decl-path-list-new))))]
     [xy : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.AstDecl.Module x)
-        (ast.ast-decl-cons (ast.AstDecl.Module y) (ast.ast-decl-list-new)))]
+        (Module x)
+        (ast.ast-decl-cons (Module y) (ast.ast-decl-list-new)))]
     [xy-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "x"
@@ -8184,7 +7737,7 @@
           31
           (ast.ast-decl-path-list-new)))]
     [zs : ast.AstDeclList
-      (ast.ast-decl-cons (ast.AstDecl.Module z) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (Module z) (ast.ast-decl-list-new))]
     [z-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id "z" 40 (ast.ast-decl-path-list-new))]
     [state : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -8282,12 +7835,12 @@
                         (let
                           [expected-id : i64
                             (match (ast.ast-decl-list-ref flat-decls iter-index)
-                              [(ast.AstDecl.Module name) name]
+                              [(Module name) name]
                               [_ -1])]
                           [actual-id : i64
                             (match (tc_core.macro-segmented-program-iter-current-decl
                               (& iter))
-                              [(ast.AstDecl.Module name) name]
+                              [(Module name) name]
                               [_ -1])]
                           (if (and
                             (= actual-id expected-id)
@@ -8338,14 +7891,14 @@
       (tc_core.macro-module-import-marker-decls
         "target"
         id
-        (ast.AstMaybeImportAlias.Some (+ id 1))
+        (Some (+ id 1))
         (ast.ast-source-span 1 1 1 2))]
     [import : ast.AstDecl (ast.ast-decl-list-ref marker 0)]
     (cond
-      [(= kind 0) (ast.AstDecl.Module id)]
+      [(= kind 0) (Module id)]
       [(= kind 1) import]
-      [(= kind 2) (ast.AstDecl.Unsafe (box import))]
-      [else (ast.AstDecl.IncludeStr id "row")])))
+      [(= kind 2) (Unsafe (box import))]
+      [else (IncludeStr id "row")])))
 
 ;; `specs` holds (kind, id) pairs.
 (define (macro-segmented-event-rows [specs : (& specs (__tl_dyn-array i64))]) : ast.AstDeclList
@@ -8665,9 +8218,9 @@
     [left-id : i64 (ci.intern "seg-job-left")]
     [right-id : i64 (ci.intern "seg-job-right")]
     [left-decls : ast.AstDeclList
-      (ast.ast-decl-cons (ast.AstDecl.Module left-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (Module left-id) (ast.ast-decl-list-new))]
     [right-decls : ast.AstDeclList
-      (ast.ast-decl-cons (ast.AstDecl.Module right-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (Module right-id) (ast.ast-decl-list-new))]
     [left-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "left"
@@ -8725,11 +8278,11 @@
                 (tc_core.macro-segmented-program-active? right-state)
                 (match (tc_core.macro-segmented-program-iter-current-decl
                   (& left-iter))
-                  [(ast.AstDecl.Module name) (= name left-id)]
+                  [(Module name) (= name left-id)]
                   [_ false])
                 (match (tc_core.macro-segmented-program-iter-current-decl
                   (& right-iter))
-                  [(ast.AstDecl.Module name) (= name right-id)]
+                  [(Module name) (= name right-id)]
                   [_ false])
                 (=
                   (macro-segmented-program-iter-current-owner-id (& left-iter))
@@ -8798,21 +8351,19 @@
   macro-import-kind-module-alias-classification
   (begin
     (test.assert-true
-      (tc_core.macro-import-kind-module-alias? ast.AstImportKind.Module)
+      (tc_core.macro-import-kind-module-alias? Module)
       "file module imports bind module aliases")
     (test.assert-true
-      (tc_core.macro-import-kind-module-alias?
-        (ast.AstImportKind.Macro 0 ast.AstMaybeModuleName.No))
+      (tc_core.macro-import-kind-module-alias? (Macro 0 No))
       "expression module macros bind module aliases")
     (test.assert-true
-      (tc_core.macro-import-kind-module-alias?
-        (ast.AstImportKind.MacroDecls 0 ast.AstMaybeModuleName.No))
+      (tc_core.macro-import-kind-module-alias? (MacroDecls 0 No))
       "declaration module macros bind module aliases")
     (test.assert-false
-      (tc_core.macro-import-kind-module-alias? ast.AstImportKind.ModuleAll)
+      (tc_core.macro-import-kind-module-alias? ModuleAll)
       "wildcard imports do not bind module aliases")
     (test.assert-false
-      (tc_core.macro-import-kind-module-alias? (ast.AstImportKind.ModuleItem 0))
+      (tc_core.macro-import-kind-module-alias? (ModuleItem 0))
       "selected imports do not bind module aliases")))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
@@ -8824,10 +8375,7 @@
       [line : i64 (+ 100 index)]
       [col : i64 (+ 200 index)]
       [span : ast.AstSourceSpan (ast.ast-source-span line col line (+ col 1))]
-      [previous : i64
-        (tc_core.tc-unused-unsafe-enter-block
-          state
-          (tc_core.TcMaybeAstSourceSpan.Some span))]
+      [previous : i64 (tc_core.tc-unused-unsafe-enter-block state (Some span))]
       (begin
         (if (= index 128)
           (tc_core.tc-unused-unsafe-mark-current-used! state)
@@ -8920,9 +8468,7 @@
         (tc_core.tc-global-shared-view path-b))
       (let
         [previous-b : i64
-          (tc_core.tc-unused-unsafe-enter-block
-            state-b
-            (tc_core.TcMaybeAstSourceSpan.Some span-b))]
+          (tc_core.tc-unused-unsafe-enter-block state-b (Some span-b))]
         (begin
           (tc_core.tc-unused-unsafe-mark-current-used! state-b)
           (tc_core.tc-unused-unsafe-restore-block! state-b previous-b)
@@ -9288,7 +8834,7 @@
                 (tc_core.tc-agg-layout-cache-state-data layout-state)
                 agg-layout-cache)
               0)
-              [(tc_core.TcAggLayoutCacheSlot.Empty) true]
+              [(Empty) true]
               [_ false]))]
         (begin
           (set! (array-ref resolution-data.slots 0) 0)
@@ -9334,20 +8880,15 @@
         (ast.ast-node-pool-context-new-with-capacities 4 4)]
       [pools-b : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 4 4)]
-      [child-a : i64
-        (ast.ast-node-pool-context-type-push pools-a (ast.AstType.I64))]
+      [child-a : i64 (ast.ast-node-pool-context-type-push pools-a (I64))]
       [parent-a : i64
-        (ast.ast-node-pool-context-type-push
-          pools-a
-          (ast.AstType.Array child-a 3))]
+        (ast.ast-node-pool-context-type-push pools-a (Array child-a 3))]
       [child-b : i64
         (ast.ast-node-pool-context-type-push
           pools-b
-          (ast.AstType.Var (ci.intern "resolution-owner-b")))]
+          (Var (ci.intern "resolution-owner-b")))]
       [parent-b : i64
-        (ast.ast-node-pool-context-type-push
-          pools-b
-          (ast.AstType.Array child-b 3))]
+        (ast.ast-node-pool-context-type-push pools-b (Array child-b 3))]
       [initially-lazy? : bool
         (and
           (=
@@ -9459,14 +9000,14 @@
         (ast.ast-node-pool-context-new-with-capacities 4 4)]
       [job-state : tc_core.TcJobState (tc_core.tc-job-state-new)]
       [concrete-child : i64
-        (ast.ast-node-pool-context-type-push concrete-pools (ast.AstType.I64))]
-      [concrete-root : ast.AstType (ast.AstType.Array concrete-child 3)]
+        (ast.ast-node-pool-context-type-push concrete-pools (I64))]
+      [concrete-root : ast.AstType (Array concrete-child 3)]
       [unresolved-name : i64 (ci.intern "Expr")]
       [unresolved-child : i64
         (ast.ast-node-pool-context-type-push
           compatibility-pools
-          (ast.AstType.Var unresolved-name))]
-      [unresolved-root : ast.AstType (ast.AstType.Array unresolved-child 5)]
+          (Var unresolved-name))]
+      [unresolved-root : ast.AstType (Array unresolved-child 5)]
       [ctx : tc_core.TcContext
         (tc_core.tc-context-new-with-source-names-and-job-state
           (ast.ast-program (ast.ast-decl-list-new))
@@ -9481,23 +9022,21 @@
         (ast.ast-node-pool-context-install! concrete-pools)]
       [concrete-len-before : i64
         (ast.ast-node-pool-context-type-len concrete-pools)]
-      [resolved-primitive : ast.AstType
-        (tc_core.tc-resolve-type ctx (ast.AstType.I64))]
+      [resolved-primitive : ast.AstType (tc_core.tc-resolve-type ctx (I64))]
       [resolved-nominal : ast.AstType
-        (tc_core.tc-resolve-type ctx (ast.AstType.Struct 700))]
+        (tc_core.tc-resolve-type ctx (Struct 700))]
       [resolved-concrete : ast.AstType
         (tc_core.tc-resolve-type ctx concrete-root)]
       [concrete-unchanged? : bool
         (and
           (match resolved-primitive
-            [(ast.AstType.I64) true]
+            [(I64) true]
             [_ false])
           (match resolved-nominal
-            [(ast.AstType.Struct name) (= name 700)]
+            [(Struct name) (= name 700)]
             [_ false])
           (match resolved-concrete
-            [(ast.AstType.Array child len)
-              (and (= child concrete-child) (= len 3))]
+            [(Array child len) (and (= child concrete-child) (= len 3))]
             [_ false])
           (=
             (ast.ast-node-pool-context-type-len concrete-pools)
@@ -9510,13 +9049,13 @@
         (tc_core.tc-resolve-type ctx unresolved-root)]
       [compatibility-result-ok? : bool
         (match resolved-unresolved
-          [(ast.AstType.Array child len)
+          [(Array child len)
             (and
               (= len 5)
               (match (ast.ast-node-pool-context-type-get
                 compatibility-pools
                 child)
-                [(ast.AstType.Expr) true]
+                [(Expr) true]
                 [_ false]))]
           [_ false])]
       [compatibility-len-grew? : bool
@@ -9819,14 +9358,14 @@
                 state-a
                 importer-a
                 alias-a)
-                [(tc_core.TcMaybeNameId.Some target) (= target target-a)]
-                [(tc_core.TcMaybeNameId.No) false])
+                [(Some target) (= target target-a)]
+                [(No) false])
               (match (tc_core.tc-lazy-import-stub-target-id-for-state
                 state-b
                 importer-b
                 alias-b)
-                [(tc_core.TcMaybeNameId.Some target) (= target target-b)]
-                [(tc_core.TcMaybeNameId.No) false]))]
+                [(Some target) (= target target-b)]
+                [(No) false]))]
           (begin
             (tc_core.tc-lazy-import-stubs-reset-for-job! job-a)
             (let
@@ -9844,8 +9383,8 @@
                     state-a
                     importer-a
                     alias-a)
-                    [(tc_core.TcMaybeNameId.Some _) false]
-                    [(tc_core.TcMaybeNameId.No) true])
+                    [(Some _) false]
+                    [(No) true])
                   (= (tc_core.tc-lazy-import-stub-count-for-state state-b) 1)
                   (=
                     (tc_core.tc-lazy-import-summary-macro-force-count-for-state
@@ -9855,8 +9394,8 @@
                     state-b
                     importer-b
                     alias-b)
-                    [(tc_core.TcMaybeNameId.Some target) (= target target-b)]
-                    [(tc_core.TcMaybeNameId.No) false]))]
+                    [(Some target) (= target target-b)]
+                    [(No) false]))]
               (begin
                 (tc_core.tc-lazy-import-stub-record-for-job!
                   job-a
@@ -10032,10 +9571,10 @@
               (and
                 ok
                 (match (tc_core.macro-hygiene-env-lookup env-a 71)
-                  [(tc_core.MacroMaybeHygieneName.Some value) (= value 81)]
+                  [(Some value) (= value 81)]
                   [_ false])
                 (match (tc_core.macro-hygiene-env-lookup env-b 71)
-                  [(tc_core.MacroMaybeHygieneName.Some value) (= value 91)]
+                  [(Some value) (= value 91)]
                   [_ false])))
             (tc_core.macro-hygiene-env-root-finish! state-a)
             (tc_core.macro-hygiene-env-root-finish! state-b)))
@@ -10071,17 +9610,9 @@
             (tc_core.macro-flat-import-target-list-empty)
             403))
         (tc_core.macro-surface-call-decl-cache-ensure! state-a)
-        (tc_core.macro-surface-call-decl-cache-put!
-          state-a
-          501
-          601
-          (tc_core.MacroMaybeDecl.No))
+        (tc_core.macro-surface-call-decl-cache-put! state-a 501 601 (No))
         (tc_core.macro-surface-call-decl-cache-ensure! state-b)
-        (tc_core.macro-surface-call-decl-cache-put!
-          state-b
-          501
-          601
-          (tc_core.MacroMaybeDecl.No))
+        (tc_core.macro-surface-call-decl-cache-put! state-b 501 601 (No))
         (set!
           ok
           (and
@@ -10107,24 +9638,20 @@
             (match (tc_core.macro-flat-import-target-cache-get
               state-a
               module-id-a)
-              [(tc_core.MacroFlatImportTargetCacheLookup.Hit targets)
+              [(Hit targets)
                 (and (= targets.len 1) (= (array-ref targets.slots 0) 303))]
               [_ false])
             (match (tc_core.macro-flat-import-target-cache-get
               state-b
               module-id-b)
-              [(tc_core.MacroFlatImportTargetCacheLookup.Hit targets)
+              [(Hit targets)
                 (and (= targets.len 1) (= (array-ref targets.slots 0) 403))]
               [_ false])
             (match (tc_core.macro-surface-call-decl-cache-get state-a 501 601)
-              [(tc_core.MacroSurfaceCallDeclCacheLookup.Hit
-                  (tc_core.MacroMaybeDecl.No))
-                true]
+              [(Hit (No)) true]
               [_ false])
             (match (tc_core.macro-surface-call-decl-cache-get state-b 501 601)
-              [(tc_core.MacroSurfaceCallDeclCacheLookup.Hit
-                  (tc_core.MacroMaybeDecl.No))
-                true]
+              [(Hit (No)) true]
               [_ false])))
         ;; Interleave generated-declaration and generated-module memos.
         (tc_core.macro-generated-decls-memo-put!
@@ -10182,38 +9709,22 @@
             (match (tc_core.macro-generated-decls-memo-get
               state-a
               "tc-macro-state-isolation")
-              [(tc_core.MacroMaybeSpliceDecls.Some decls)
-                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
               [_ false])
             (match (tc_core.macro-generated-decls-memo-get
               state-b
               "tc-macro-state-isolation")
-              [(tc_core.MacroMaybeSpliceDecls.Some decls)
-                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
               [_ false])
             (match (tc_core.macro-generated-module-memo-get-catalog
               state-a
               "tc-macro-state-isolation-module")
-              [(tc_core.MacroGeneratedModuleCatalogEntry.Catalog
-                  target
-                  _
-                  _
-                  _
-                  _
-                  _)
-                (= target 901)]
+              [(Catalog target _ _ _ _ _) (= target 901)]
               [_ false])
             (match (tc_core.macro-generated-module-memo-get-catalog
               state-b
               "tc-macro-state-isolation-module")
-              [(tc_core.MacroGeneratedModuleCatalogEntry.Catalog
-                  target
-                  _
-                  _
-                  _
-                  _
-                  _)
-                (= target 902)]
+              [(Catalog target _ _ _ _ _) (= target 902)]
               [_ false])))
         ;; Independent live-symbol generations and declaration/splice rings must
         ;; survive another job's reset and destroy cadence.
@@ -10310,16 +9821,16 @@
               (and
                 ok
                 (match symbols-a
-                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [(Ok _) true]
                   [_ false])
                 (match symbols-a-rebuild
-                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [(Ok _) true]
                   [_ false])
                 (match symbols-b
-                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [(Ok _) true]
                   [_ false])
                 (match symbols-b-reused
-                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [(Ok _) true]
                   [_ false])
                 a-rebuild-reclaimed?
                 a-decl-rotation-reclaimed?
@@ -10364,7 +9875,7 @@
               (tc_core.tc-macro-ctfe-state state-a))]
           [failed : ctfe_support.ResultCtfe
             (ctfe_support.compiler-ctfe-eval
-              (ast.AstExpr.Literal (ast.AstLiteral.Float "not-a-float"))
+              (Literal (Float "not-a-float"))
               failed-env
               8)]
           (set!
@@ -10372,7 +9883,7 @@
             (and
               ok
               (match failed
-                [(ctfe_support.ResultCtfe.Err _) true]
+                [(Err _) true]
                 [_ false]))))
         (set!
           ok
@@ -10430,44 +9941,34 @@
             (match (tc_core.macro-flat-import-target-cache-get
               state-a
               module-id-a)
-              [(tc_core.MacroFlatImportTargetCacheLookup.Missing) true]
+              [(Missing) true]
               [_ false])
             (match (tc_core.macro-flat-import-target-cache-get
               state-b
               module-id-b)
-              [(tc_core.MacroFlatImportTargetCacheLookup.Hit targets)
+              [(Hit targets)
                 (and (= targets.len 1) (= (array-ref targets.slots 0) 403))]
               [_ false])
             (match (tc_core.macro-surface-call-decl-cache-get state-a 501 601)
-              [(tc_core.MacroSurfaceCallDeclCacheLookup.Miss) true]
+              [(Miss) true]
               [_ false])
             (match (tc_core.macro-surface-call-decl-cache-get state-b 501 601)
-              [(tc_core.MacroSurfaceCallDeclCacheLookup.Hit
-                  (tc_core.MacroMaybeDecl.No))
-                true]
+              [(Hit (No)) true]
               [_ false])
             (match (tc_core.macro-generated-decls-memo-get
               state-b
               "tc-macro-state-isolation")
-              [(tc_core.MacroMaybeSpliceDecls.Some decls)
-                (= (ast.ast-decl-list-len (& decls)) 0)]
+              [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
               [_ false])
             (match (tc_core.macro-generated-module-memo-get-catalog
               state-a
               "tc-macro-state-isolation-module")
-              [(tc_core.MacroGeneratedModuleCatalogEntry.Empty) true]
+              [(Empty) true]
               [_ false])
             (match (tc_core.macro-generated-module-memo-get-catalog
               state-b
               "tc-macro-state-isolation-module")
-              [(tc_core.MacroGeneratedModuleCatalogEntry.Catalog
-                  target
-                  _
-                  _
-                  _
-                  _
-                  _)
-                (= target 902)]
+              [(Catalog target _ _ _ _ _) (= target 902)]
               [_ false])
             (string.eq
               (tc-macro-walk-field state-a macro-expand-active-module)
@@ -10514,11 +10015,9 @@
     [missing : i64
       (ast.ast-node-pool-context-expr-push
         pools
-        (ast.AstExpr.Var (ci.intern "tc-discarding-scope-missing-name")))]
+        (Var (ci.intern "tc-discarding-scope-missing-name")))]
     [literal : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+      (ast.ast-node-pool-context-expr-push pools (Literal (Bool true)))]
     [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
     [env : tc_core.TcTypeEnv (tc_core.tc-type-env-new)]
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -10527,17 +10026,16 @@
         ctx
         env
         (tc_core.tc-context-expr-get ctx missing))
-        [(tc_core.ResultTcType.Err _) true]
-        [(tc_core.ResultTcType.Ok _) false])]
+        [(Err _) true]
+        [(Ok _) false])]
     [after-error : i64 (tc_core.tc-unbound-suggestion-suppress-depth env)]
     [succeeded? : bool
       (match (tc_core.tc-expr-discarding-errors
         ctx
         env
         (tc_core.tc-context-expr-get ctx literal))
-        [(tc_core.ResultTcType.Ok ty)
-          (tc_core.tc-type-eq ty (ast.AstType.Bool))]
-        [(tc_core.ResultTcType.Err _) false])]
+        [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
+        [(Err _) false])]
     [after-success : i64 (tc_core.tc-unbound-suggestion-suppress-depth env)]
     (begin
       (ast.ast-node-pool-context-install! saved)
@@ -10600,19 +10098,14 @@
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [literal-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Literal (ast.AstLiteral.Int 7 "7")))]
+      (ast.ast-node-pool-context-expr-push pools-a (Literal (Int 7 "7")))]
     [macro-a : i64
-      (ast.ast-node-pool-context-expr-push
-        pools-a
-        (ast.AstExpr.Literal (ast.AstLiteral.Int 8 "8")))]
+      (ast.ast-node-pool-context-expr-push pools-a (Literal (Int 8 "8")))]
     [literal-b : i64
       (ast.ast-node-pool-context-expr-push
         pools-b
-        (ast.AstExpr.Unsafe (ast.ast-expr-list-new)))]
-    [macro-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Quasiquote 0))]
+        (Unsafe (ast.ast-expr-list-new)))]
+    [macro-b : i64 (ast.ast-node-pool-context-expr-push pools-b (Quasiquote 0))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -10631,41 +10124,41 @@
       (match (tc_core.tc-integer-literal-expr-with-expected-with-bases
         ctx-a
         expr-bases-a
-        (ast.AstExpr.Spanned literal-a (ast.ast-source-span 1 1 1 2))
-        (ast.AstType.I64))
-        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        (Spanned literal-a (ast.ast-source-span 1 1 1 2))
+        (I64))
+        [(Ok (I64)) true]
         [_ false])]
     [literal-b-differs? : bool
       (match (tc_core.tc-integer-literal-expr-with-expected-with-bases
         ctx-a
         expr-bases-b
-        (ast.AstExpr.Spanned literal-b (ast.ast-source-span 1 1 1 2))
-        (ast.AstType.I64))
-        [(tc_core.ResultTcType.Ok (ast.AstType.I32)) true]
+        (Spanned literal-b (ast.ast-source-span 1 1 1 2))
+        (I64))
+        [(Ok (I32)) true]
         [_ false])]
     [purity-a-ok? : bool
       (match (tc_core.tc-comptime-purity-node-mode
         ctx-a
         expr-bases-a
         env
-        tc_core.TcStringList.Nil
-        tc_core.TcStringList.Nil
-        tc_core.TcStringList.Nil
+        Nil
+        Nil
+        Nil
         false
         literal-a)
-        [(tc_core.ResultTcUnit.Ok) true]
+        [(Ok) true]
         [_ false])]
     [purity-b-differs? : bool
       (match (tc_core.tc-comptime-purity-node-mode
         ctx-a
         expr-bases-b
         env
-        tc_core.TcStringList.Nil
-        tc_core.TcStringList.Nil
-        tc_core.TcStringList.Nil
+        Nil
+        Nil
+        Nil
         false
         literal-b)
-        [(tc_core.ResultTcUnit.Err _) true]
+        [(Err _) true]
         [_ false])]
     [macro-a-ok? : bool
       (not
@@ -10835,8 +10328,8 @@
               macro-state
               importer-id
               alias-id)
-              [(tc_core.TcMaybeNameId.Some target) (= target target-id)]
-              [(tc_core.TcMaybeNameId.No) false])]
+              [(Some target) (= target target-id)]
+              [(No) false])]
           (begin
             (tc_core.compiler-typecheck-reset-file-state-for-job! job-state)
             (if (and
@@ -10845,8 +10338,8 @@
                 macro-state
                 importer-id
                 alias-id)
-                [(tc_core.TcMaybeNameId.Some _) false]
-                [(tc_core.TcMaybeNameId.No) true]))
+                [(Some _) false]
+                [(No) true]))
               unit
               (io.panic
                 "typecheck: preserving lazy-import handoff reset failed"))))))))
@@ -10867,9 +10360,8 @@
                 (ast.ast-decl-def-fn-id
                   (ci.intern-generated-name "memo-test-decl")
                   (ast.ast-param-list-new)
-                  (ast.AstType.Unit)
-                  (ast.ast-node-push
-                    (ast.AstExpr.Literal (ast.AstLiteral.Unit))))
+                  (Unit)
+                  (ast.ast-node-push (Literal (Unit))))
                 out))
             (set! index (+ index 1))))
         out))))
@@ -10886,9 +10378,8 @@
     (match (tc_core.macro-generated-decls-memo-get
       state
       (memo-test-identity index))
-      [(tc_core.MacroMaybeSpliceDecls.Some decls)
-        (ast.ast-decl-list-len (& decls))]
-      [(tc_core.MacroMaybeSpliceDecls.No) -1])))
+      [(Some decls) (ast.ast-decl-list-len (& decls))]
+      [(No) -1])))
 
 ;; An identity index past 0 whose bucket is identity 0's, so it probes past it.
 (cfg

@@ -13,10 +13,8 @@
 
 (define (ctfe-reflect-info-must-use? [info : ctfe.CtfeReflectInfo]) : bool
   (match info
-    [(ctfe.CtfeReflectInfo.Struct _ _ _ _ _ _ markers)
-      (not (= (bit-and markers 1) 0))]
-    [(ctfe.CtfeReflectInfo.Enum _ _ _ _ _ _ markers)
-      (not (= (bit-and markers 1) 0))]))
+    [(Struct _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]
+    [(Enum _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]))
 
 (define (ctfe-env-with-layouts [layouts : ctfe.CtfeLayoutInfoList]) : ctfe.CtfeEnv
   (ctfe.ctfe-env-with-layouts-and-pools
@@ -67,51 +65,50 @@
 
 (define (ctfe-value-type-name [value : ctfe.CompilerCtfeValue]) : String
   (match value
-    [(ctfe.CompilerCtfeValue.I64 _) "i64"]
-    [(ctfe.CompilerCtfeValue.F64 _) "f64"]
-    [(ctfe.CompilerCtfeValue.F32 _) "f32"]
-    [(ctfe.CompilerCtfeValue.Bool _) "bool"]
-    [(ctfe.CompilerCtfeValue.Char _) "char"]
-    [(ctfe.CompilerCtfeValue.String _ _) "String"]
-    [(ctfe.CompilerCtfeValue.Name _ _) "String"]
-    [(ctfe.CompilerCtfeValue.Unit) "unit"]
-    [(ctfe.CompilerCtfeValue.Type _) "type"]
-    [(ctfe.CompilerCtfeValue.Expr _ _) "Expr"]
-    [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
-    [(ctfe.CompilerCtfeValue.ExprList _) "expr-list"]
-    [(ctfe.CompilerCtfeValue.CapturedExprList _ _) "expr-list"]
-    [(ctfe.CompilerCtfeValue.ExprClause _) "ExprClause"]
-    [(ctfe.CompilerCtfeValue.CapturedExprClause _ _) "ExprClause"]
-    [(ctfe.CompilerCtfeValue.ExprClauseList _) "ExprClauseList"]
-    [(ctfe.CompilerCtfeValue.CapturedExprClauseList _ _) "ExprClauseList"]
-    [(ctfe.CompilerCtfeValue.ExprBindingClause _) "ExprBindingClause"]
-    [(ctfe.CompilerCtfeValue.ExprBindingClauseList _) "ExprBindingClauseList"]
-    [(ctfe.CompilerCtfeValue.Pattern _) "Pattern"]
-    [(ctfe.CompilerCtfeValue.PatternList _) "PatternList"]
-    [(ctfe.CompilerCtfeValue.MatchArm _) "MatchArm"]
-    [(ctfe.CompilerCtfeValue.MatchArmList _) "MatchArmList"]
-    [(ctfe.CompilerCtfeValue.LetBinding _) "LetBinding"]
-    [(ctfe.CompilerCtfeValue.LetBindingList _) "LetBindingList"]
-    [(ctfe.CompilerCtfeValue.TypeInfo _) "TypeInfo"]
-    [(ctfe.CompilerCtfeValue.TypeInfoBox _) "Box"]
-    [(ctfe.CompilerCtfeValue.TypeInfoList _) "TypeInfoList"]
-    [(ctfe.CompilerCtfeValue.TypeField _ _) "TypeField"]
-    [(ctfe.CompilerCtfeValue.TypeFieldList _) "TypeFieldList"]
-    [(ctfe.CompilerCtfeValue.TypeVariantPayload _) "TypeVariantPayload"]
-    [(ctfe.CompilerCtfeValue.TypeVariantPayloadList _) "TypeVariantPayloadList"]
-    [(ctfe.CompilerCtfeValue.TypeVariant _ _) "TypeVariant"]
-    [(ctfe.CompilerCtfeValue.TypeVariantList _) "TypeVariantList"]))
+    [(I64 _) "i64"]
+    [(F64 _) "f64"]
+    [(F32 _) "f32"]
+    [(Bool _) "bool"]
+    [(Char _) "char"]
+    [(String _ _) "String"]
+    [(Name _ _) "String"]
+    [(Unit) "unit"]
+    [(Type _) "type"]
+    [(Expr _ _) "Expr"]
+    [(CapturedExpr _ _ _) "Expr"]
+    [(ExprList _) "expr-list"]
+    [(CapturedExprList _ _) "expr-list"]
+    [(ExprClause _) "ExprClause"]
+    [(CapturedExprClause _ _) "ExprClause"]
+    [(ExprClauseList _) "ExprClauseList"]
+    [(CapturedExprClauseList _ _) "ExprClauseList"]
+    [(ExprBindingClause _) "ExprBindingClause"]
+    [(ExprBindingClauseList _) "ExprBindingClauseList"]
+    [(Pattern _) "Pattern"]
+    [(PatternList _) "PatternList"]
+    [(MatchArm _) "MatchArm"]
+    [(MatchArmList _) "MatchArmList"]
+    [(LetBinding _) "LetBinding"]
+    [(LetBindingList _) "LetBindingList"]
+    [(TypeInfo _) "TypeInfo"]
+    [(TypeInfoBox _) "Box"]
+    [(TypeInfoList _) "TypeInfoList"]
+    [(TypeField _ _) "TypeField"]
+    [(TypeFieldList _) "TypeFieldList"]
+    [(TypeVariantPayload _) "TypeVariantPayload"]
+    [(TypeVariantPayloadList _) "TypeVariantPayloadList"]
+    [(TypeVariant _ _) "TypeVariant"]
+    [(TypeVariantList _) "TypeVariantList"]))
 
 (define (ctfe-expr-list-eq [a : ast.AstExprList] [b : ast.AstExprList]) : bool
   (ctfe.ctfe-expr-list-eq-in-env (ctfe.ctfe-env-empty) a b))
 
 ;; CONSTRUCTORS ----------------------------------------------------------------
 (define (ctfe-expr-bool [b : bool]) : i64
-  (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Bool b))))
+  (ast.ast-node-push (Literal (Bool b))))
 
 (define (ctfe-expr-var [name : String]) : i64
-  (ast.ast-node-push
-    (ast.AstExpr.Var (ctfe.ctfe-materialize-generated-name-id name))))
+  (ast.ast-node-push (Var (ctfe.ctfe-materialize-generated-name-id name))))
 
 (define (ctfe-expr-struct-get [target : i64] [field : String]) : i64
   (ast.ast-expr-struct-get-id
@@ -145,7 +142,7 @@
 
 (define (ctfe-expr-list-head [lst : ast.AstExprList]) : i64
   (if (ast.ast-expr-list-empty? (& lst))
-    (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
+    (ast.ast-node-push (Literal (Unit)))
     (ast.ast-expr-list-get (& lst) 0 0)))
 
 (define (ctfe-expr-list-tail [lst : ast.AstExprList]) : ast.AstExprList
@@ -153,104 +150,94 @@
 
 (define (compiler-ctfe-type-literal-ok?) : bool
   (let
-    [want : ast.AstType (ast.ast-ty-array (ast.AstType.I64) 4)]
+    [want : ast.AstType (ast.ast-ty-array (I64) 4)]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (match (ctfe.compiler-ctfe-eval
-      (ast.AstExpr.TypeLiteral (ast.ty-node-push (clone want)))
+      (TypeLiteral (ast.ty-node-push (clone want)))
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match (ctfe.ctfe-value-owned-copy (& value))
-          [(ctfe.CompilerCtfeValue.Type actual)
+          [(Type actual)
             (and
               (ctfe.ctfe-type-eq actual want)
               (string.eq (ctfe-value-type-name value) "type"))]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-ctfe-type-comparison-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (match (ctfe.compiler-ctfe-eval
-      (ast.AstExpr.Binary
-        (ast.AstBinOp.Eq)
-        (ast.ast-node-push
-          (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.I64))))
-        (ast.ast-node-push
-          (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.I64)))))
+      (Binary
+        (Eq)
+        (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64))))
+        (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64)))))
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok same _)
+      [(Ok same _)
         (match same
-          [(ctfe.CompilerCtfeValue.Bool same-ok)
+          [(Bool same-ok)
             (match (ctfe.compiler-ctfe-eval
-              (ast.AstExpr.Binary
-                (ast.AstBinOp.Eq)
-                (ast.ast-node-push
-                  (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.I64))))
-                (ast.ast-node-push
-                  (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.I32)))))
+              (Binary
+                (Eq)
+                (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64))))
+                (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I32)))))
               env
               (ctfe.ctfe-fuel-limit))
-              [(ctfe.ResultCtfe.Ok different _)
+              [(Ok different _)
                 (match different
-                  [(ctfe.CompilerCtfeValue.Bool different-ok)
-                    (and same-ok (not different-ok))]
+                  [(Bool different-ok) (and same-ok (not different-ok))]
                   [_ false])]
-              [(ctfe.ResultCtfe.Err _) false])]
+              [(Err _) false])]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-ctfe-raw-pointer-type-comparison-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (match (ctfe.compiler-ctfe-eval
-      (ast.AstExpr.Binary
-        (ast.AstBinOp.Eq)
+      (Binary
+        (Eq)
         (ast.ast-node-push
-          (ast.AstExpr.TypeLiteral
-            (ast.ty-node-push (ast.ast-ty-ptr (ast.AstType.I64)))))
+          (TypeLiteral (ast.ty-node-push (ast.ast-ty-ptr (I64)))))
         (ast.ast-node-push
-          (ast.AstExpr.TypeLiteral
-            (ast.ty-node-push (ast.ast-ty-ptr (ast.AstType.I64))))))
+          (TypeLiteral (ast.ty-node-push (ast.ast-ty-ptr (I64))))))
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok same _)
+      [(Ok same _)
         (match same
-          [(ctfe.CompilerCtfeValue.Bool same-ok)
+          [(Bool same-ok)
             (match (ctfe.compiler-ctfe-eval
-              (ast.AstExpr.Binary
-                (ast.AstBinOp.Eq)
+              (Binary
+                (Eq)
                 (ast.ast-node-push
-                  (ast.AstExpr.TypeLiteral
-                    (ast.ty-node-push (ast.ast-ty-ptr (ast.AstType.I64)))))
+                  (TypeLiteral (ast.ty-node-push (ast.ast-ty-ptr (I64)))))
                 (ast.ast-node-push
-                  (ast.AstExpr.TypeLiteral
-                    (ast.ty-node-push (ast.ast-ty-mut-ptr (ast.AstType.I64))))))
+                  (TypeLiteral (ast.ty-node-push (ast.ast-ty-mut-ptr (I64))))))
               env
               (ctfe.ctfe-fuel-limit))
-              [(ctfe.ResultCtfe.Ok different _)
+              [(Ok different _)
                 (match different
-                  [(ctfe.CompilerCtfeValue.Bool different-ok)
-                    (and same-ok (not different-ok))]
+                  [(Bool different-ok) (and same-ok (not different-ok))]
                   [_ false])]
-              [(ctfe.ResultCtfe.Err _) false])]
+              [(Err _) false])]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-ctfe-call1 [name-id : i64] [arg : i64]) : i64
   (ast.ast-expr-call
-    (ast.ast-node-push (ast.AstExpr.Var name-id))
+    (ast.ast-node-push (Var name-id))
     (ast.ast-expr-cons arg (ast.ast-expr-list-new))))
 
 (define (compiler-ctfe-call2 [name-id : i64] [a : i64] [b : i64]) : i64
   (ast.ast-expr-call
-    (ast.ast-node-push (ast.AstExpr.Var name-id))
+    (ast.ast-node-push (Var name-id))
     (ast.ast-expr-cons a (ast.ast-expr-cons b (ast.ast-expr-list-new)))))
 
 (define (compiler-ctfe-call3 [name-id : i64] [a : i64] [b : i64] [c : i64]) : i64
   (ast.ast-expr-call
-    (ast.ast-node-push (ast.AstExpr.Var name-id))
+    (ast.ast-node-push (Var name-id))
     (ast.ast-expr-cons
       a
       (ast.ast-expr-cons b (ast.ast-expr-cons c (ast.ast-expr-list-new))))))
@@ -261,7 +248,7 @@
   [arg : i64]) : i64
   (ast.ast-expr-call-with-pools
     (ctfe.ctfe-env-pools env)
-    (ctfe.ctfe-ast-push env (ast.AstExpr.Var name-id))
+    (ctfe.ctfe-ast-push env (Var name-id))
     (ast.ast-expr-cons arg (ast.ast-expr-list-new))))
 
 (define (compiler-ctfe-call2-in-env
@@ -271,7 +258,7 @@
   [b : i64]) : i64
   (ast.ast-expr-call-with-pools
     (ctfe.ctfe-env-pools env)
-    (ctfe.ctfe-ast-push env (ast.AstExpr.Var name-id))
+    (ctfe.ctfe-ast-push env (Var name-id))
     (ast.ast-expr-cons a (ast.ast-expr-cons b (ast.ast-expr-list-new)))))
 
 (define (compiler-ctfe-call3-in-env
@@ -282,7 +269,7 @@
   [c : i64]) : i64
   (ast.ast-expr-call-with-pools
     (ctfe.ctfe-env-pools env)
-    (ctfe.ctfe-ast-push env (ast.AstExpr.Var name-id))
+    (ctfe.ctfe-ast-push env (Var name-id))
     (ast.ast-expr-cons
       a
       (ast.ast-expr-cons b (ast.ast-expr-cons c (ast.ast-expr-list-new))))))
@@ -290,8 +277,7 @@
 (define (compiler-ctfe-fixed-type-head-name-provenance-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [i64-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Var (ctfe.ctfe-builtin "i64")))]
+    [i64-expr : i64 (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "i64")))]
     [source-call : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "Array") i64-expr)]
     [generated-array : i64 (ctfe.ctfe-materialize-generated-name-id "Array")]
@@ -304,21 +290,19 @@
         (clone origin)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfeQuoteType.Ok actual _)
+        [(Ok actual _)
           (ctfe.ctfe-type-eq-in-env
             env
             actual
-            (ast.ast-ty-dyn-array-with-pools
-              (ctfe.ctfe-env-pools env)
-              (ast.AstType.I64)))]
-        [(ctfe.ResultCtfeQuoteType.Err _) false])
+            (ast.ast-ty-dyn-array-with-pools (ctfe.ctfe-env-pools env) (I64)))]
+        [(Err _) false])
       (match (ctfe.ctfe-expr-to-type
         (ctfe.ctfe-ast-get env generated-call)
         origin
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfeQuoteType.Err _) true]
-        [(ctfe.ResultCtfeQuoteType.Ok _ _) false]))))
+        [(Err _) true]
+        [(Ok _ _) false]))))
 
 (define (compiler-ctfe-type-expr-is?
   [env : (& env ctfe.CtfeEnv)]
@@ -330,9 +314,8 @@
     origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfeQuoteType.Ok actual _)
-      (ctfe.ctfe-type-eq-in-env env actual expected)]
-    [(ctfe.ResultCtfeQuoteType.Err _) false]))
+    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env actual expected)]
+    [(Err _) false]))
 
 (define (compiler-ctfe-type-expr-rejected?
   [env : (& env ctfe.CtfeEnv)]
@@ -343,16 +326,14 @@
     origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfeQuoteType.Err _) true]
-    [(ctfe.ResultCtfeQuoteType.Ok _ _) false]))
+    [(Err _) true]
+    [(Ok _ _) false]))
 
 (define (compiler-ctfe-dyn-array-type-head-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [i64-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Var (ctfe.ctfe-builtin "i64")))]
-    [count-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [i64-expr : i64 (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "i64")))]
+    [count-expr : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 2)))]
     [private-call : i64
       (compiler-ctfe-call1-in-env
         env
@@ -361,9 +342,7 @@
     [private-empty-call : i64
       (ast.ast-expr-call-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push
-          env
-          (ast.AstExpr.Var (ctfe.ctfe-builtin "__tl_dyn-array")))
+        (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "__tl_dyn-array")))
         (ast.ast-expr-list-new))]
     [private-two-call : i64
       (compiler-ctfe-call2-in-env
@@ -382,14 +361,9 @@
     [generated-private-call : i64
       (compiler-ctfe-call1-in-env env generated-private i64-expr)]
     [dyn-array-ty : ast.AstType
-      (ast.ast-ty-dyn-array-with-pools
-        (ctfe.ctfe-env-pools env)
-        (ast.AstType.I64))]
+      (ast.ast-ty-dyn-array-with-pools (ctfe.ctfe-env-pools env) (I64))]
     [fixed-array-ty : ast.AstType
-      (ast.ast-ty-array-with-pools
-        (ctfe.ctfe-env-pools env)
-        (ast.AstType.I64)
-        2)]
+      (ast.ast-ty-array-with-pools (ctfe.ctfe-env-pools env) (I64) 2)]
     [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (clone dyn-array-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env private-call)]
     (and
@@ -407,28 +381,25 @@
         (clone origin))
       (compiler-ctfe-type-expr-is? env roundtrip-call origin dyn-array-ty)
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
-        [(ast.AstExpr.Call func-box args)
+        [(Call func-box args)
           (and
             (= args.len 1)
             (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env func-box))
-              [(ast.AstExpr.Var name)
-                (= name (ctfe.ctfe-builtin "__tl_dyn-array"))]
+              [(Var name) (= name (ctfe.ctfe-builtin "__tl_dyn-array"))]
               [_ false]))]
         [_ false]))))
 
 (define (compiler-ctfe-slice-type-head-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [i64-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Var (ctfe.ctfe-builtin "i64")))]
-    [count-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [i64-expr : i64 (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "i64")))]
+    [count-expr : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 2)))]
     [slice-id : i64 cbi.compiler-builtin-id-comptime-type-info-slice-variant]
     [slice-call : i64 (compiler-ctfe-call1-in-env env slice-id i64-expr)]
     [slice-empty-call : i64
       (ast.ast-expr-call-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var slice-id))
+        (ctfe.ctfe-ast-push env (Var slice-id))
         (ast.ast-expr-list-new))]
     [slice-two-call : i64
       (compiler-ctfe-call2-in-env env slice-id i64-expr count-expr)]
@@ -436,7 +407,7 @@
     [generated-slice-call : i64
       (compiler-ctfe-call1-in-env env generated-slice-id i64-expr)]
     [slice-ty : ast.AstType
-      (ast.ast-ty-slice-with-pools (ctfe.ctfe-env-pools env) ast.AstType.I64)]
+      (ast.ast-ty-slice-with-pools (ctfe.ctfe-env-pools env) I64)]
     [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (clone slice-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env slice-call)]
     (and
@@ -453,11 +424,11 @@
         (clone origin))
       (compiler-ctfe-type-expr-is? env roundtrip-call origin slice-ty)
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
-        [(ast.AstExpr.Call func-box args)
+        [(Call func-box args)
           (and
             (= args.len 1)
             (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env func-box))
-              [(ast.AstExpr.Var name) (= name slice-id)]
+              [(Var name) (= name slice-id)]
               [_ false]))]
         [_ false]))))
 
@@ -469,11 +440,11 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.I64 actual) (= actual want)]
+        [(I64 actual) (= actual want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-f64-ok?
   [expr : i64]
@@ -483,11 +454,11 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.F64 actual) (= actual want)]
+        [(F64 actual) (= actual want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-f32-ok?
   [expr : i64]
@@ -497,11 +468,11 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.F32 actual) (= actual want)]
+        [(F32 actual) (= actual want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-bool-ok?
   [expr : i64]
@@ -511,14 +482,14 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.Bool actual)
+        [(Bool actual)
           (if want
             actual
             (not actual))]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-string-ok?
   [expr : i64]
@@ -528,12 +499,12 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.String actual _) (string.eq actual want)]
-        [(ctfe.CompilerCtfeValue.Name actual _) (string.eq actual want)]
+        [(String actual _) (string.eq actual want)]
+        [(Name actual _) (string.eq actual want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-type-ok?
   [expr : i64]
@@ -543,11 +514,11 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.Type actual) (ctfe.ctfe-type-eq actual want)]
+        [(Type actual) (ctfe.ctfe-type-eq actual want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-eval-error-ok?
   [expr : i64]
@@ -557,136 +528,98 @@
     (ctfe.ctfe-ast-get env expr)
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Err diag)
+    [(Err diag)
       (string.eq (cdiag.compiler-diagnostic-message (__tl-box-place diag)) want)]
-    [(ctfe.ResultCtfe.Ok _ _) false]))
+    [(Ok _ _) false]))
 
 (define (compiler-ctfe-f64-ok?) : bool
   (let
-    [one-five : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "1.5")))]
-    [two-quarter : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "2.25")))]
-    [zero : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "0.0")))]
-    [neg-zero : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "-0.0")))]
-    [one-f32 : i64 (ast.ast-expr-cast one-five (ast.AstType.F32))]
-    [zero-f32 : i64 (ast.ast-expr-cast zero (ast.AstType.F32))]
-    [sum-f32 : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Binary (ast.AstBinOp.Add) one-f32 zero-f32))]
-    [neg-f32 : i64
-      (ast.ast-node-push (ast.AstExpr.Unary (ast.AstUnOp.Neg) sum-f32))]
-    [wide-f32 : i64 (ast.ast-expr-cast one-f32 (ast.AstType.F64))]
+    [one-five : i64 (ast.ast-node-push (Literal (Float "1.5")))]
+    [two-quarter : i64 (ast.ast-node-push (Literal (Float "2.25")))]
+    [zero : i64 (ast.ast-node-push (Literal (Float "0.0")))]
+    [neg-zero : i64 (ast.ast-node-push (Literal (Float "-0.0")))]
+    [one-f32 : i64 (ast.ast-expr-cast one-five (F32))]
+    [zero-f32 : i64 (ast.ast-expr-cast zero (F32))]
+    [sum-f32 : i64 (ast.ast-node-push (Binary (Add) one-f32 zero-f32))]
+    [neg-f32 : i64 (ast.ast-node-push (Unary (Neg) sum-f32))]
+    [wide-f32 : i64 (ast.ast-expr-cast one-f32 (F64))]
     [large-f32 : i64
-      (ast.ast-expr-cast
-        (ast.ast-node-push
-          (ast.AstExpr.Literal (ast.AstLiteral.Float "3.0e+38")))
-        (ast.AstType.F32))]
+      (ast.ast-expr-cast (ast.ast-node-push (Literal (Float "3.0e+38"))) (F32))]
     [two-f32 : i64
-      (ast.ast-expr-cast
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "2.0")))
-        (ast.AstType.F32))]
-    [overflow-f32 : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Binary (ast.AstBinOp.Mul) large-f32 two-f32))]
+      (ast.ast-expr-cast (ast.ast-node-push (Literal (Float "2.0"))) (F32))]
+    [overflow-f32 : i64 (ast.ast-node-push (Binary (Mul) large-f32 two-f32))]
     [overflow-f32-cast : i64
-      (ast.ast-expr-cast
-        (ast.ast-node-push
-          (ast.AstExpr.Literal (ast.AstLiteral.Float "3.5e+38")))
-        (ast.AstType.F32))]
-    [overflow-f64-left : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "1e+308")))]
+      (ast.ast-expr-cast (ast.ast-node-push (Literal (Float "3.5e+38"))) (F32))]
+    [overflow-f64-left : i64 (ast.ast-node-push (Literal (Float "1e+308")))]
     [overflow-f64 : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Binary
-          (ast.AstBinOp.Mul)
-          overflow-f64-left
-          overflow-f64-left))]
+      (ast.ast-node-push (Binary (Mul) overflow-f64-left overflow-f64-left))]
     [non-finite-f64-literal : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "1e+309")))]
-    [sum : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Binary (ast.AstBinOp.Add) one-five two-quarter))]
-    [neg : i64 (ast.ast-node-push (ast.AstExpr.Unary (ast.AstUnOp.Neg) sum))]
-    [neg-int : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int (- 0 42))))]
+      (ast.ast-node-push (Literal (Float "1e+309")))]
+    [sum : i64 (ast.ast-node-push (Binary (Add) one-five two-quarter))]
+    [neg : i64 (ast.ast-node-push (Unary (Neg) sum))]
+    [neg-int : i64 (ast.ast-node-push (Literal (ast.ast-lit-int (- 0 42))))]
     [u64-max : i64
       (ast.ast-expr-cast
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int (- 0 1))))
-        (ast.AstType.U64))]
-    [u64-max-f64 : i64 (ast.ast-expr-cast u64-max (ast.AstType.F64))]
-    [u64-max-f32 : i64 (ast.ast-expr-cast u64-max (ast.AstType.F32))]
+        (ast.ast-node-push (Literal (ast.ast-lit-int (- 0 1))))
+        (U64))]
+    [u64-max-f64 : i64 (ast.ast-expr-cast u64-max (F64))]
+    [u64-max-f32 : i64 (ast.ast-expr-cast u64-max (F32))]
     [u64-f32-above-tie : i64
       (ast.ast-expr-cast
         (ast.ast-expr-cast
           (ast.ast-node-push
-            (ast.AstExpr.Literal (ast.ast-lit-int (- 0 9223371487098961919))))
-          (ast.AstType.U64))
-        (ast.AstType.F32))]
+            (Literal (ast.ast-lit-int (- 0 9223371487098961919))))
+          (U64))
+        (F32))]
     [x-id : i64 (ctfe.ctfe-materialize-generated-name-id "x")]
-    [u64-var : i64 (ast.ast-node-push (ast.AstExpr.Var x-id))]
+    [u64-var : i64 (ast.ast-node-push (Var x-id))]
     [typed-let-u64-max-f64 : i64
       (ast.ast-expr-let
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id
-            x-id
-            (ast.AstMaybeType.Some (ast.AstType.U64))
-            u64-max)
+          (ast.ast-let-binding-id x-id (Some (U64)) u64-max)
           (ast.ast-let-binding-list-new))
-        (ast.ast-expr-cast u64-var (ast.AstType.F64)))]
+        (ast.ast-expr-cast u64-var (F64)))]
     [untyped-let-u64-max-f64 : i64
       (ast.ast-expr-let
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id x-id (ast.AstMaybeType.No) u64-max)
+          (ast.ast-let-binding-id x-id (No) u64-max)
           (ast.ast-let-binding-list-new))
-        (ast.ast-expr-cast u64-var (ast.AstType.F64)))]
+        (ast.ast-expr-cast u64-var (F64)))]
     [m-id : i64 (ctfe.ctfe-materialize-generated-name-id "m")]
-    [match-u64-var : i64 (ast.ast-node-push (ast.AstExpr.Var m-id))]
+    [match-u64-var : i64 (ast.ast-node-push (Var m-id))]
     [match-u64-max-f64 : i64
       (ast.ast-expr-match
         u64-max
         (ast.ast-match-arm-cons
           (ast.ast-match-arm
             (ast.ast-pat-binding-id m-id)
-            (ast.ast-expr-cast match-u64-var (ast.AstType.F64)))
+            (ast.ast-expr-cast match-u64-var (F64)))
           (ast.ast-match-arm-list-new)))]
-    [char-a : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Char 'A')))]
-    [char-a-f64 : i64 (ast.ast-expr-cast char-a (ast.AstType.F64))]
-    [neg-int-f64 : i64 (ast.ast-expr-cast neg-int (ast.AstType.F64))]
+    [char-a : i64 (ast.ast-node-push (Literal (Char 'A')))]
+    [char-a-f64 : i64 (ast.ast-expr-cast char-a (F64))]
+    [neg-int-f64 : i64 (ast.ast-expr-cast neg-int (F64))]
     [rounded-int-f32 : i64
       (ast.ast-expr-cast
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 16777217)))
-        (ast.AstType.F32))]
-    [f64-to-i64 : i64 (ast.ast-expr-cast sum (ast.AstType.I64))]
-    [f32-to-i64 : i64 (ast.ast-expr-cast one-f32 (ast.AstType.I64))]
+        (ast.ast-node-push (Literal (ast.ast-lit-int 16777217)))
+        (F32))]
+    [f64-to-i64 : i64 (ast.ast-expr-cast sum (I64))]
+    [f32-to-i64 : i64 (ast.ast-expr-cast one-f32 (I64))]
     [f64-to-char-to-i64 : i64
       (ast.ast-expr-cast
-        (ast.ast-expr-cast
-          (ast.ast-node-push
-            (ast.AstExpr.Literal (ast.AstLiteral.Float "65.9")))
-          (ast.AstType.Char))
-        (ast.AstType.I64))]
+        (ast.ast-expr-cast (ast.ast-node-push (Literal (Float "65.9"))) (Char))
+        (I64))]
     [f64-out-of-i64 : i64
       (ast.ast-expr-cast
-        (ast.ast-node-push
-          (ast.AstExpr.Literal (ast.AstLiteral.Float "9223372036854775808.0")))
-        (ast.AstType.I64))]
+        (ast.ast-node-push (Literal (Float "9223372036854775808.0")))
+        (I64))]
     [f64-u64-high-bit : i64
       (ast.ast-expr-cast
-        (ast.ast-node-push
-          (ast.AstExpr.Literal (ast.AstLiteral.Float "9223372036854775808.0")))
-        (ast.AstType.U64))]
+        (ast.ast-node-push (Literal (Float "9223372036854775808.0")))
+        (U64))]
     [lt : i64
       (ast.ast-node-push
-        (ast.AstExpr.Binary
-          (ast.AstBinOp.Lt)
-          sum
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Float "4.0")))))]
-    [div-zero : i64
-      (ast.ast-node-push (ast.AstExpr.Binary (ast.AstBinOp.Div) one-five zero))]
+        (Binary (Lt) sum (ast.ast-node-push (Literal (Float "4.0")))))]
+    [div-zero : i64 (ast.ast-node-push (Binary (Div) one-five zero))]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (and
       (compiler-ctfe-eval-f64-ok? one-five env 1.5)
@@ -751,34 +684,30 @@
         cbi.compiler-builtin-id-fix-Status)]
     [packet-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Packet))))]
+        (TypeLiteral
+          (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Packet))))]
     [box-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.AstType.Var cbi.compiler-builtin-id-fix-Box))))]
+        (TypeLiteral (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Box))))]
     [choice-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Choice))))]
+        (TypeLiteral
+          (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Choice))))]
     [qualified-status-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.AstType.Var qualified-status-id))))]
+        (TypeLiteral (ast.ty-node-push (Var qualified-status-id))))]
     [packet-fields : ctfe.CtfeLayoutFieldList
       (ctfe.ctfe-layout-field-list-push-id
         (ctfe.ctfe-layout-field-list-push-id
           (ctfe.ctfe-layout-field-list-with-capacity 2)
-          (ctfe.CtfeLayoutField.Field "tag" 0)
+          (Field "tag" 0)
           cbi.compiler-builtin-id-fix-tag)
-        (ctfe.CtfeLayoutField.Field "count" 8)
+        (Field "count" 8)
         cbi.compiler-builtin-id-fix-count)]
     [box-fields : ctfe.CtfeLayoutFieldList
       (ctfe.ctfe-layout-field-list-push-id
         (ctfe.ctfe-layout-field-list-with-capacity 1)
-        (ctfe.CtfeLayoutField.Field "x" 0)
+        (Field "x" 0)
         cbi.compiler-builtin-id-fix-x)]
     [layouts : ctfe.CtfeLayoutInfoList
       (ctfe.ctfe-layout-info-list-push-id
@@ -786,23 +715,13 @@
           (ctfe.ctfe-layout-info-list-push-id
             (ctfe.ctfe-layout-info-list-push-id
               (ctfe.ctfe-layout-info-list-with-capacity 4)
-              (ctfe.CtfeLayoutInfo.Info "Packet" true 16 8 packet-fields)
+              (Info "Packet" true 16 8 packet-fields)
               cbi.compiler-builtin-id-fix-Packet)
-            (ctfe.CtfeLayoutInfo.Info "Box" true 8 8 box-fields)
+            (Info "Box" true 8 8 box-fields)
             cbi.compiler-builtin-id-fix-Box)
-          (ctfe.CtfeLayoutInfo.Info
-            "Choice"
-            false
-            24
-            8
-            (ctfe.ctfe-layout-field-list-empty))
+          (Info "Choice" false 24 8 (ctfe.ctfe-layout-field-list-empty))
           cbi.compiler-builtin-id-fix-Choice)
-        (ctfe.CtfeLayoutInfo.Info
-          "stdlib/Status"
-          false
-          32
-          8
-          (ctfe.ctfe-layout-field-list-empty))
+        (Info "stdlib/Status" false 32 8 (ctfe.ctfe-layout-field-list-empty))
         (ctfe.ctfe-qualified-name-key-id
           cbi.compiler-builtin-id-fix-stdlib
           cbi.compiler-builtin-id-fix-Status))]
@@ -825,8 +744,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "offset-of")
           packet-ty
-          (ast.ast-node-push
-            (ast.AstExpr.Var cbi.compiler-builtin-id-fix-count)))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-count)))
         env
         8)
         unit
@@ -841,7 +759,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "offset-of")
           box-ty
-          (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-x)))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-x)))
         env
         0)
         unit
@@ -868,7 +786,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "offset-of")
           choice-ty
-          (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-tag)))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-tag)))
         env
         "offset-of requires struct layout type")
         unit
@@ -877,8 +795,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "offset-of")
           packet-ty
-          (ast.ast-node-push
-            (ast.AstExpr.Var cbi.compiler-builtin-id-fix-missing)))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-missing)))
         env
         "offset-of unknown field missing")
         unit
@@ -891,55 +808,49 @@
       (ctfe.ctfe-reflect-field-list-push
         (ctfe.ctfe-reflect-field-list-push
           (ctfe.ctfe-reflect-field-list-with-capacity 2)
-          (ctfe.CtfeReflectField.Field
-            cbi.compiler-builtin-id-fix-x
-            (ast.AstType.I64)))
-        (ctfe.CtfeReflectField.Field
-          cbi.compiler-builtin-id-fix-flag
-          (ast.AstType.Bool)))]
+          (Field cbi.compiler-builtin-id-fix-x (I64)))
+        (Field cbi.compiler-builtin-id-fix-flag (Bool)))]
     [maybe-variants : ctfe.CtfeReflectVariantList
       (ctfe.ctfe-reflect-variant-list-push
         (ctfe.ctfe-reflect-variant-list-push
           (ctfe.ctfe-reflect-variant-list-with-capacity 2)
-          (ctfe.CtfeReflectVariant.Variant
-            (ctfe.ctfe-builtin "None")
-            (ast.ast-type-list-new)))
-        (ctfe.CtfeReflectVariant.Variant
+          (Variant (ctfe.ctfe-builtin "None") (ast.ast-type-list-new)))
+        (Variant
           cbi.compiler-builtin-id-fix-Some
-          (ast.ast-type-cons (ast.AstType.String) (ast.ast-type-list-new))))]
+          (ast.ast-type-cons (String) (ast.ast-type-list-new))))]
     [infos : ctfe.CtfeReflectInfoList
       (ctfe.ctfe-reflect-info-list-push-id
         (ctfe.ctfe-reflect-info-list-push-id
           (ctfe.ctfe-reflect-info-list-push-id
             (ctfe.ctfe-reflect-info-list-with-capacity 3)
-            (ctfe.CtfeReflectInfo.Struct
+            (Struct
               "Point"
               ""
               "Point"
               cbi.compiler-builtin-id-fix-Point
-              (ctfe.CtfeReflectCleanup.Fn
+              (Fn
                 "cleanup-point"
                 (ctfe.ctfe-materialize-generated-name-id "cleanup-point"))
               point-fields
               0)
             cbi.compiler-builtin-id-fix-Point)
-          (ctfe.CtfeReflectInfo.Enum
+          (Enum
             "Maybe"
             ""
             "Maybe"
             cbi.compiler-builtin-id-fix-Maybe
-            ctfe.CtfeReflectCleanup.No
+            No
             (clone maybe-variants)
             0)
           cbi.compiler-builtin-id-fix-Maybe)
-        (ctfe.CtfeReflectInfo.Enum
+        (Enum
           "stdlib/Status"
           "stdlib"
           "Status"
           (ctfe.ctfe-qualified-name-key-id
             cbi.compiler-builtin-id-fix-stdlib
             cbi.compiler-builtin-id-fix-Status)
-          ctfe.CtfeReflectCleanup.No
+          No
           maybe-variants
           0)
         (ctfe.ctfe-qualified-name-key-id
@@ -948,7 +859,7 @@
     ;; Point declares `(:align 16)` and its `flag` field `(:align 8)`.
     [point-repr : ast.AstStructRepr
       (ast.ast-struct-repr-with-field-align
-        (ast.AstStructRepr.C 16 (ast.ast-no-field-aligns))
+        (C 16 (ast.ast-no-field-aligns))
         1
         8)]
     (ctfe-env-with-reflections
@@ -968,52 +879,44 @@
         cbi.compiler-builtin-id-fix-Status)]
     [point-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.AstType.Var cbi.compiler-builtin-id-fix-Point))))]
+        (TypeLiteral (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Point))))]
     [maybe-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.AstType.Var cbi.compiler-builtin-id-fix-Maybe))))]
+        (TypeLiteral (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Maybe))))]
     [qualified-status-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.AstType.Var qualified-status-id))))]
+        (TypeLiteral (ast.ty-node-push (Var qualified-status-id))))]
     [array-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.ast-ty-array (ast.AstType.I64) 4))))]
+        (TypeLiteral (ast.ty-node-push (ast.ast-ty-array (I64) 4))))]
     [dyn-array-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.ast-ty-dyn-array (ast.AstType.Bool)))))]
+        (TypeLiteral (ast.ty-node-push (ast.ast-ty-dyn-array (Bool)))))]
     [box-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push (ast.ast-ty-box (ast.AstType.String)))))]
+        (TypeLiteral (ast.ty-node-push (ast.ast-ty-box (String)))))]
     [tuple-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
             (ast.ast-ty-tuple
               (ast.ast-type-cons
-                (ast.AstType.I64)
-                (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))))))]
+                (I64)
+                (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))))))]
     [str-ref-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
-            (ast.ast-ty-ref
-              (ctfe.ctfe-materialize-generated-name-id "r")
-              (ast.AstType.Str)))))]
+            (ast.ast-ty-ref (ctfe.ctfe-materialize-generated-name-id "r") (Str)))))]
     [fn-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
             (ast.ast-ty-func
               (ast.ast-type-cons
-                (ast.AstType.I64)
-                (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))
-              (ast.AstType.String)))))]
+                (I64)
+                (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))
+              (String)))))]
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-string-ok?
@@ -1025,8 +928,7 @@
       (if (compiler-ctfe-eval-string-ok?
         (compiler-ctfe-call1
           (ctfe.ctfe-builtin "type-key")
-          (ast.ast-node-push
-            (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.I64)))))
+          (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64)))))
         env
         "i64")
         unit
@@ -1085,7 +987,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-name")
           point-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
         "flag")
         unit
@@ -1094,9 +996,9 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-type")
           point-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
         env
-        (ast.AstType.I64))
+        (I64))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
@@ -1121,7 +1023,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-declared-align")
           point-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
         8)
         unit
@@ -1130,7 +1032,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-declared-align")
           point-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
         env
         0)
         unit
@@ -1139,7 +1041,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-declared-align")
           point-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 2))))
         env
         "struct-field-declared-align index out of range")
         unit
@@ -1148,7 +1050,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-declared-align")
           maybe-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
         env
         "struct-field-declared-align requires struct type")
         unit
@@ -1163,7 +1065,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "enum-variant-name")
           maybe-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
         "Some")
         unit
@@ -1172,7 +1074,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "enum-variant-payload-count")
           maybe-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
         1)
         unit
@@ -1181,22 +1083,22 @@
         (compiler-ctfe-call3
           (ctfe.ctfe-builtin "enum-variant-payload-type")
           maybe-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
         env
-        (ast.AstType.String))
+        (String))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-element-type") array-ty)
         env
-        (ast.AstType.I64))
+        (I64))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call1 (ctfe.ctfe-builtin "box-element-type") box-ty)
         env
-        (ast.AstType.String))
+        (String))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
@@ -1221,9 +1123,9 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "tuple-element-type")
           tuple-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
-        (ast.AstType.Bool))
+        (Bool))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
@@ -1236,15 +1138,15 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "function-param-type")
           fn-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
-        (ast.AstType.Bool))
+        (Bool))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call1 (ctfe.ctfe-builtin "function-return-type") fn-ty)
         env
-        (ast.AstType.String))
+        (String))
         unit
         (set! ok false))
       ok)))
@@ -1254,40 +1156,31 @@
     [module-id : i64 (ci.intern "ctfe.module.values")]
     [make-id : i64 (ci.intern "make")]
     [missing-id : i64 (ci.intern "missing")]
-    [module-expr : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Literal (ast.AstLiteral.String module-id)))]
-    [make-expr : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.String make-id)))]
-    [missing-expr : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Literal (ast.AstLiteral.String missing-id)))]
+    [module-expr : i64 (ast.ast-node-push (Literal (String module-id)))]
+    [make-expr : i64 (ast.ast-node-push (Literal (String make-id)))]
+    [missing-expr : i64 (ast.ast-node-push (Literal (String missing-id)))]
     [signature : ast.AstType
-      (ast.ast-ty-func
-        (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new))
-        (ast.AstType.Bool))]
+      (ast.ast-ty-func (ast.ast-type-cons (I64) (ast.ast-type-list-new)) (Bool))]
     [shared-ref : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
-            (ast.ast-ty-ref (ci.intern "query_region") (ast.AstType.String)))))]
+            (ast.ast-ty-ref (ci.intern "query_region") (String)))))]
     [mutable-ref : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
-            (ast.ast-ty-mut-ref (ci.intern "query_region") (ast.AstType.I64)))))]
+            (ast.ast-ty-mut-ref (ci.intern "query_region") (I64)))))]
     [nested-referent : ast.AstType
-      (ast.ast-ty-ref (ci.intern "inner_query_region") (ast.AstType.Bool))]
+      (ast.ast-ty-ref (ci.intern "inner_query_region") (Bool))]
     [nested-ref : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ast.ty-node-push
             (ast.ast-ty-ref
               (ci.intern "outer_query_region")
               (clone nested-referent)))))]
-    [non-ref : i64
-      (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral (ast.ty-node-push (ast.AstType.Bool))))]
+    [non-ref : i64 (ast.ast-node-push (TypeLiteral (ast.ty-node-push (Bool))))]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (begin
       (ctfe-module-value-reflection-enable! true)
@@ -1329,13 +1222,13 @@
                 (ctfe.ctfe-builtin "reference-element-type")
                 shared-ref)
               env
-              (ast.AstType.String))
+              (String))
             (compiler-ctfe-eval-type-ok?
               (compiler-ctfe-call1
                 (ctfe.ctfe-builtin "reference-element-type")
                 mutable-ref)
               env
-              (ast.AstType.I64))
+              (I64))
             (compiler-ctfe-eval-type-ok?
               (compiler-ctfe-call1
                 (ctfe.ctfe-builtin "reference-element-type")
@@ -1359,27 +1252,27 @@
     (begin
       (ctfe-module-value-reflection-enable! false)
       (ctfe-module-value-reset!)
-      (ctfe-module-value-add-id! module-id name-id (ast.AstType.I64))
+      (ctfe-module-value-add-id! module-id name-id (I64))
       (match (ctfe-module-value-type-id module-id name-id)
-        [(ctfe.CtfeMaybeModuleValueType.Some _) false]
-        [(ctfe.CtfeMaybeModuleValueType.None)
+        [(Some _) false]
+        [(None)
           (begin
             (ctfe-module-value-reflection-enable! true)
             (ctfe-module-value-reset!)
-            (ctfe-module-value-add-id! module-id name-id (ast.AstType.I64))
+            (ctfe-module-value-add-id! module-id name-id (I64))
             (match (ctfe-module-value-type-id module-id name-id)
-              [(ctfe.CtfeMaybeModuleValueType.Some ty)
+              [(Some ty)
                 (let
-                  [found : bool (ctfe.ctfe-type-eq ty (ast.AstType.I64))]
+                  [found : bool (ctfe.ctfe-type-eq ty (I64))]
                   (begin
                     (ctfe-module-value-reflection-enable! false)
                     (ctfe-module-value-reset!)
                     (and
                       found
                       (match (ctfe-module-value-type-id module-id name-id)
-                        [(ctfe.CtfeMaybeModuleValueType.Some _) false]
-                        [(ctfe.CtfeMaybeModuleValueType.None) true]))))]
-              [(ctfe.CtfeMaybeModuleValueType.None) false]))]))))
+                        [(Some _) false]
+                        [(None) true]))))]
+              [(None) false]))]))))
 
 ;; `type-expr` must preserve every AstType shape as an opaque TypeLiteral and
 ;; make that node immediately consumable by ExprList reflection. Keeping this
@@ -1398,31 +1291,30 @@
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-expr") arg)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env call)]
     (match (ctfe.compiler-ctfe-eval (clone origin) env (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match value
-          [(ctfe.CompilerCtfeValue.Expr node produced)
+          [(Expr node produced)
             (and
-              (ctfe.ctfe-type-eq-in-env env produced (ast.AstType.Expr))
+              (ctfe.ctfe-type-eq-in-env env produced (Expr))
               (match (ast.ast-node-pool-context-expr-get (& pools) node)
-                [(ast.AstExpr.TypeLiteral ty-id)
+                [(TypeLiteral ty-id)
                   (ctfe.ctfe-type-eq-in-env
                     env
                     (ast.ast-node-pool-context-type-get (& pools) ty-id)
                     (clone resolved))]
                 [_ false])
               (match (ctfe.ctfe-expr-list-type-nth
-                (ctfe.CompilerCtfeValue.ExprList
-                  (ast.ast-expr-cons node (ast.ast-expr-list-new)))
+                (ExprList (ast.ast-expr-cons node (ast.ast-expr-list-new)))
                 0
                 pools)
-                [(ctfe.CtfeBuilt.Ok reflected)
+                [(Ok reflected)
                   (match reflected
-                    [(ctfe.CompilerCtfeValue.Type actual)
+                    [(Type actual)
                       (ctfe.ctfe-type-eq-in-env env actual resolved)]
                     [_ false])]
-                [(ctfe.CtfeBuilt.Err _) false]))]
+                [(Err _) false]))]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 ;; A captured type list can belong to a caller snapshot whose node pools do not
 ;; share storage with the transformer definition. `expr-list-type-nth` returns
@@ -1440,8 +1332,7 @@
         (ast.ast-type-node-pool-state-create 8)
         ;; Self-test scratch pool: never installed, owned by the caller arena.
         (arena.tl_arena_current))]
-    [foreign-ty : ast.AstType
-      (ast.ast-ty-box-with-pools foreign-pools (ast.AstType.I64))]
+    [foreign-ty : ast.AstType (ast.ast-ty-box-with-pools foreign-pools (I64))]
     [foreign-node : i64
       (ast.ast-expr-type-literal-with-pools foreign-pools foreign-ty)]
     [items : ast.AstExprList
@@ -1452,10 +1343,9 @@
       (ctfe.ctfe-env-extend-id
         base-env
         items-name
-        (ctfe.CompilerCtfeValue.CapturedExprList items foreign-pools))]
-    [items-expr : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var items-name))]
-    [zero-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+        (CapturedExprList items foreign-pools))]
+    [items-expr : i64 (ctfe.ctfe-ast-push env (Var items-name))]
+    [zero-expr : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 0)))]
     [nth-call : i64
       (compiler-ctfe-call2-in-env
         env
@@ -1470,24 +1360,24 @@
         (ctfe.ctfe-ast-get env type-expr-call)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.CapturedExpr node (ast.AstType.Expr) owner)
+            [(CapturedExpr node (Expr) owner)
               (and
                 (ctfe.ctfe-node-pools-share-storage? owner foreign-pools)
                 (match (ast.ast-node-pool-context-expr-get (& owner) node)
-                  [(ast.AstExpr.TypeLiteral ty-id)
+                  [(TypeLiteral ty-id)
                     (match (ast.ast-node-pool-context-type-get (& owner) ty-id)
-                      [(ast.AstType.Box inner-id)
+                      [(Box inner-id)
                         (match (ast.ast-node-pool-context-type-get
                           (& owner)
                           inner-id)
-                          [(ast.AstType.I64) true]
+                          [(I64) true]
                           [_ false])]
                       [_ false])]
                   [_ false]))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false]))))
+        [(Err _) false]))))
 
 (define (compiler-ctfe-type-expr-roundtrip-ok?) : bool
   (let
@@ -1523,19 +1413,13 @@
     [pair : ast.AstTypeList
       (ast.ast-type-cons-with-pools
         pools
-        (ast.AstType.I64)
-        (ast.ast-type-cons-with-pools
-          pools
-          (ast.AstType.Bool)
-          (ast.ast-type-list-new)))]
-    [unit-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+        (I64)
+        (ast.ast-type-cons-with-pools pools (Bool) (ast.ast-type-list-new)))]
+    [unit-expr : i64 (ctfe.ctfe-ast-push env (Literal (Unit)))]
     [empty-call : i64
       (ast.ast-expr-call-with-pools
         pools
-        (ctfe.ctfe-ast-push
-          env
-          (ast.AstExpr.Var (ctfe.ctfe-builtin "type-expr")))
+        (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "type-expr")))
         (ast.ast-expr-list-new))]
     [two-call : i64
       (compiler-ctfe-call2-in-env
@@ -1544,88 +1428,76 @@
         unit-expr
         unit-expr)]
     (and
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I64))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I32))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I16))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I8))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U64))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U32))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U16))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U8))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.F64))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.F32))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Bool))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Char))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.String))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Str))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Bytes))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Unit))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Never))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Expr))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.ExprList))
+      (compiler-ctfe-type-expr-roundtrip-one? env (I64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (I32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (I16))
+      (compiler-ctfe-type-expr-roundtrip-one? env (I8))
+      (compiler-ctfe-type-expr-roundtrip-one? env (U64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (U32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (U16))
+      (compiler-ctfe-type-expr-roundtrip-one? env (U8))
+      (compiler-ctfe-type-expr-roundtrip-one? env (F64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (F32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Bool))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Char))
+      (compiler-ctfe-type-expr-roundtrip-one? env (String))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Str))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Bytes))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Unit))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Never))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Expr))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ExprList))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-func-with-pools pools (clone pair) (ast.AstType.String)))
+        (ast.ast-ty-func-with-pools pools (clone pair) (String)))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Tuple (box pair)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.AstType.Tuple (box pair)))
+        (ast.ast-ty-array-with-pools pools (Char) 17))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-array-with-pools pools (ast.AstType.Char) 17))
+        (ast.ast-ty-dyn-array-with-pools pools (U8)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-dyn-array-with-pools pools (ast.AstType.U8)))
+        (ast.ast-ty-slice-with-pools pools (U16)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-slice-with-pools pools (ast.AstType.U16)))
+        (ast.ast-ty-box-with-pools pools (String)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-box-with-pools pools (ast.AstType.String)))
+        (ast.ast-ty-ptr-with-pools pools (I32)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-ptr-with-pools pools (ast.AstType.I32)))
+        (ast.ast-ty-mut-ptr-with-pools pools (I16)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-mut-ptr-with-pools pools (ast.AstType.I16)))
+        (ast.ast-ty-region-with-pools pools region (Bool)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-region-with-pools pools region (ast.AstType.Bool)))
+        (ast.ast-ty-ref-with-pools pools region (Str)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-ref-with-pools pools region (ast.AstType.Str)))
+        (ast.ast-ty-mut-ref-with-pools pools region (I64)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-mut-ref-with-pools pools region (ast.AstType.I64)))
+        (Struct cbi.compiler-builtin-id-fix-Point))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.AstType.Struct cbi.compiler-builtin-id-fix-Point))
+        (Enum cbi.compiler-builtin-id-fix-Maybe))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.AstType.Enum cbi.compiler-builtin-id-fix-Maybe))
+        (StructArgs cbi.compiler-builtin-id-fix-Point (box (clone lifetimes))))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.AstType.StructArgs
-          cbi.compiler-builtin-id-fix-Point
-          (box (clone lifetimes))))
+        (EnumArgs cbi.compiler-builtin-id-fix-Maybe (box (clone lifetimes))))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Var unknown))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Var qualified-status))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.AstType.EnumArgs
-          cbi.compiler-builtin-id-fix-Maybe
-          (box (clone lifetimes))))
-      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Var unknown))
-      (compiler-ctfe-type-expr-roundtrip-one?
-        env
-        (ast.AstType.Var qualified-status))
-      (compiler-ctfe-type-expr-roundtrip-one?
-        env
-        (ast.AstType.VarArgs unknown (box lifetimes)))
+        (VarArgs unknown (box lifetimes)))
       (not (= left-same right-same))
-      (compiler-ctfe-type-expr-roundtrip-one?
-        env
-        (ast.AstType.Struct right-same))
-      (compiler-ctfe-type-expr-roundtrip-one?
-        env
-        (ast.AstType.Struct left-same))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Struct right-same))
+      (compiler-ctfe-type-expr-roundtrip-one? env (Struct left-same))
       (compiler-ctfe-eval-error-ok?
         (compiler-ctfe-call1-in-env
           env
@@ -1646,43 +1518,43 @@
   (let
     [fields : ast.AstFieldDefList
       (ast.ast-field-def-cons
-        (ast.AstFieldDef.Def
+        (Def
           (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-id)
-          (ast.AstType.I64)
-          (ast.AstFieldCleanup.No))
+          (I64)
+          (No))
         (ast.ast-field-def-cons
-          (ast.AstFieldDef.Def
+          (Def
             (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-label)
-            (ast.AstType.String)
-            (ast.AstFieldCleanup.No))
+            (String)
+            (No))
           (ast.ast-field-def-list-new)))]
     [variants : ast.AstVariantDefList
       (ast.ast-variant-def-cons
-        (ast.AstVariantDef.Def
+        (Def
           cbi.compiler-builtin-id-fix-Ready
           (ast.ast-type-list-new)
           (ast.ast-variant-payload-cleanup-list-new))
         (ast.ast-variant-def-cons
-          (ast.AstVariantDef.Def
+          (Def
             cbi.compiler-builtin-id-fix-Failed
-            (ast.ast-type-cons (ast.AstType.String) (ast.ast-type-list-new))
+            (ast.ast-type-cons (String) (ast.ast-type-list-new))
             (ast.ast-variant-payload-cleanup-list-new))
           (ast.ast-variant-def-list-new)))]
-    (ast.AstProgram.Program
+    (Program
       (box
         (ast.ast-decl-cons-boxed
-          (ast.AstDecl.DefStruct
+          (DefStruct
             (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
             cbi.compiler-builtin-id-fix-Record
-            (ast.AstStructRepr.Default)
-            (ast.AstStructCleanup.No)
+            (Default)
+            (No)
             fields)
           (box
             (ast.ast-decl-cons-boxed
-              (ast.AstDecl.DefEnum
+              (DefEnum
                 (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
                 cbi.compiler-builtin-id-fix-Status
-                (ast.AstEnumCleanup.No)
+                (No)
                 variants)
               (box (ast.ast-decl-list-new)))))))))
 
@@ -1693,14 +1565,12 @@
         (ctfe.ctfe-reflections-from-program (compiler-ctfe-reflection-program)))]
     [record-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Record))))]
+        (TypeLiteral
+          (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Record))))]
     [status-ty : i64
       (ast.ast-node-push
-        (ast.AstExpr.TypeLiteral
-          (ast.ty-node-push
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Status))))]
+        (TypeLiteral
+          (ast.ty-node-push (Var cbi.compiler-builtin-id-fix-Status))))]
     [infos : ctfe.CtfeReflectInfoList (ctfe.ctfe-env-reflections env)]
     [alias-id : i64 (ctfe.ctfe-materialize-generated-name-id "RecordAlias")]
     [ok : bool true]
@@ -1708,7 +1578,7 @@
       (match (ctfe.ctfe-reflect-info-lookup-name-id
         infos
         cbi.compiler-builtin-id-fix-Record)
-        [(ctfe.CtfeMaybeReflectInfo.Some info)
+        [(Some info)
           (begin
             (unless (ctfe-reflect-info-must-use? (clone info)) (set! ok false))
             (let
@@ -1721,18 +1591,18 @@
               (match (ctfe.ctfe-reflect-info-lookup-name-id
                 alias-infos
                 alias-id)
-                [(ctfe.CtfeMaybeReflectInfo.Some alias-info)
+                [(Some alias-info)
                   (unless
                     (ctfe-reflect-info-must-use? alias-info)
                     (set! ok false))]
-                [(ctfe.CtfeMaybeReflectInfo.None) (set! ok false)])))]
-        [(ctfe.CtfeMaybeReflectInfo.None) (set! ok false)])
+                [(None) (set! ok false)])))]
+        [(None) (set! ok false)])
       (match (ctfe.ctfe-reflect-info-lookup-name-id
         infos
         cbi.compiler-builtin-id-fix-Status)
-        [(ctfe.CtfeMaybeReflectInfo.Some info)
+        [(Some info)
           (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
-        [(ctfe.CtfeMaybeReflectInfo.None) (set! ok false)])
+        [(None) (set! ok false)])
       (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") record-ty)
         env
@@ -1743,7 +1613,7 @@
         (compiler-ctfe-call2
           (ctfe.ctfe-builtin "struct-field-name")
           record-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
         env
         "label")
         unit
@@ -1752,10 +1622,10 @@
         (compiler-ctfe-call3
           (ctfe.ctfe-builtin "enum-variant-payload-type")
           status-ty
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
         env
-        (ast.AstType.String))
+        (String))
         unit
         (set! ok false))
       ok)))
@@ -1765,23 +1635,23 @@
   [name-id : i64]
   [want : String]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.Some value)
+    [(Some value)
       (match value
-        [(ctfe.CompilerCtfeValue.String actual _) (string.eq actual want)]
-        [(ctfe.CompilerCtfeValue.Name actual _) (string.eq actual want)]
+        [(String actual _) (string.eq actual want)]
+        [(Name actual _) (string.eq actual want)]
         [_ false])]
-    [(ctfe.CtfeMaybeValue.None) false]))
+    [(None) false]))
 
 (define (compiler-ctfe-env-i64-eq?
   [env : (& env ctfe.CtfeEnv)]
   [name-id : i64]
   [want : i64]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.Some value)
+    [(Some value)
       (match value
-        [(ctfe.CompilerCtfeValue.I64 actual) (= actual want)]
+        [(I64 actual) (= actual want)]
         [_ false])]
-    [(ctfe.CtfeMaybeValue.None) false]))
+    [(None) false]))
 
 (define (compiler-ctfe-type-info-builtin-kind?
   [env : (& env ctfe.CtfeEnv)]
@@ -1796,21 +1666,19 @@
         (ast.ast-pattern-list-new))
       ty
       (ctfe.ctfe-env-shared-view env))
-      [(ctfe.CtfePatternMatch.Matched matched)
-        (compiler-ctfe-env-string-eq? matched kind-id want)]
-      [(ctfe.CtfePatternMatch.No) false])))
+      [(Matched matched) (compiler-ctfe-env-string-eq? matched kind-id want)]
+      [(No) false])))
 
 (define (compiler-ctfe-env-type-info-box-builtin-kind?
   [env : (& env ctfe.CtfeEnv)]
   [name-id : i64]
   [want : String]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.Some value)
+    [(Some value)
       (match value
-        [(ctfe.CompilerCtfeValue.TypeInfoBox ty)
-          (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [(TypeInfoBox ty) (compiler-ctfe-type-info-builtin-kind? env ty want)]
         [_ false])]
-    [(ctfe.CtfeMaybeValue.None) false]))
+    [(None) false]))
 
 (define (compiler-ctfe-type-info-list-ref-builtin-kind?
   [env : (& env ctfe.CtfeEnv)]
@@ -1820,17 +1688,16 @@
   (match (ctfe.ctfe-eval-array-ref-value
     items
     index
-    (ast.AstExpr.Literal (ast.AstLiteral.Unit))
+    (Literal (Unit))
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok value _)
+    [(Ok value _)
       (match value
-        [(ctfe.CompilerCtfeValue.TypeInfo ty)
-          (compiler-ctfe-type-info-builtin-kind? env ty want)]
-        [(ctfe.CompilerCtfeValue.TypeVariantPayload ty)
+        [(TypeInfo ty) (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [(TypeVariantPayload ty)
           (compiler-ctfe-type-info-builtin-kind? env ty want)]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-env-type-info-list-ref-builtin-kind?
   [env : (& env ctfe.CtfeEnv)]
@@ -1838,9 +1705,9 @@
   [index : i64]
   [want : String]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.Some value)
+    [(Some value)
       (compiler-ctfe-type-info-list-ref-builtin-kind? env value index want)]
-    [(ctfe.CtfeMaybeValue.None) false]))
+    [(None) false]))
 
 (define (compiler-ctfe-type-info-field-list-ok?
   [env : ctfe.CtfeEnv]
@@ -1848,17 +1715,17 @@
   (match (ctfe.ctfe-eval-array-ref-value
     fields-value
     0
-    (ast.AstExpr.Literal (ast.AstLiteral.Unit))
+    (Literal (Unit))
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok field-value _)
+    [(Ok field-value _)
       (match field-value
-        [(ctfe.CompilerCtfeValue.TypeField name ty)
+        [(TypeField name ty)
           (and
             (string.eq name "id")
             (compiler-ctfe-type-info-builtin-kind? env ty "i64"))]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-type-info-variant-list-ok?
   [env : ctfe.CtfeEnv]
@@ -1866,21 +1733,21 @@
   (match (ctfe.ctfe-eval-array-ref-value
     variants-value
     1
-    (ast.AstExpr.Literal (ast.AstLiteral.Unit))
+    (Literal (Unit))
     env
     (ctfe.ctfe-fuel-limit))
-    [(ctfe.ResultCtfe.Ok variant-value _)
+    [(Ok variant-value _)
       (match variant-value
-        [(ctfe.CompilerCtfeValue.TypeVariant name payloads)
+        [(TypeVariant name payloads)
           (and
             (string.eq name "Failed")
             (compiler-ctfe-type-info-list-ref-builtin-kind?
               env
-              (ctfe.CompilerCtfeValue.TypeVariantPayloadList payloads)
+              (TypeVariantPayloadList payloads)
               0
               "string"))]
         [_ false])]
-    [(ctfe.ResultCtfe.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-ctfe-type-info-source-match-ok? [env : ctfe.CtfeEnv]) : bool
   (let
@@ -1888,29 +1755,18 @@
       (ctfe.ctfe-env-extend-id
         env
         cbi.compiler-builtin-id-fix-info
-        (ctfe.CompilerCtfeValue.TypeInfo (ast.AstType.I64)))]
+        (TypeInfo (I64)))]
     [scrutinee : i64
-      (ctfe.ctfe-ast-push
-        match-env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-info))]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push
-        match-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push
-        match-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+      (ctfe.ctfe-ast-push match-env (Var cbi.compiler-builtin-id-fix-info))]
+    [true-lit : i64 (ctfe.ctfe-ast-push match-env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push match-env (Literal (Bool false)))]
     [builtin-arm : ast.AstMatchArm
       (ast.ast-match-arm
         (ast.ast-pat-variant-id
           cbi.compiler-builtin-id-comptime-type-info-builtin-variant
-          (ast.ast-pattern-cons
-            ast.AstPattern.Wildcard
-            (ast.ast-pattern-list-new)))
+          (ast.ast-pattern-cons Wildcard (ast.ast-pattern-list-new)))
         true-lit)]
-    [fallback-arm : ast.AstMatchArm
-      (ast.ast-match-arm ast.AstPattern.Wildcard false-lit)]
+    [fallback-arm : ast.AstMatchArm (ast.ast-match-arm Wildcard false-lit)]
     [match-expr : i64
       (ast.ast-expr-match-with-pools
         (ctfe.ctfe-env-pools match-env)
@@ -1922,11 +1778,11 @@
       (ctfe.ctfe-ast-get match-env match-expr)
       match-env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match value
-          [(ctfe.CompilerCtfeValue.Bool actual) actual]
+          [(Bool actual) actual]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 ;; A captured CTFE pool snapshot has independent cursor cells but can share its
 ;; current physical segment with the installed legacy pool. Default source-type
@@ -1947,22 +1803,17 @@
       [binding-name : i64
         (ctfe.ctfe-materialize-generated-name-id "ctfe-pool-type-info-box")]
       [sentinel-id : i64
-        (ast.ast-node-pool-context-type-push
-          snapshot
-          (ast.AstType.Var sentinel-name))]
+        (ast.ast-node-pool-context-type-push snapshot (Var sentinel-name))]
       [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty-with-pools snapshot)]
       [bound : ctfe.CtfeEnv
-        (ctfe.ctfe-env-extend-id
-          env
-          binding-name
-          (ctfe.CompilerCtfeValue.TypeInfoBox (ast.AstType.Bool)))]
+        (ctfe.ctfe-env-extend-id env binding-name (TypeInfoBox (Bool)))]
       [source-ok : bool
         (match (ctfe.ctfe-env-lookup-type-id bound binding-name)
-          [(ast.AstMaybeType.Some (ast.AstType.Box child-id))
+          [(Some (Box child-id))
             (and
               (= child-id (+ installed-cursor 1))
               (match (ast.ast-node-pool-context-type-get snapshot child-id)
-                [(ast.AstType.Var name-id)
+                [(Var name-id)
                   (=
                     name-id
                     (ctfe.ctfe-qualified-name-key-id
@@ -1972,7 +1823,7 @@
           [_ false])]
       [sentinel-ok : bool
         (match (ast.ast-node-pool-context-type-get snapshot sentinel-id)
-          [(ast.AstType.Var name-id) (= name-id sentinel-name)]
+          [(Var name-id) (= name-id sentinel-name)]
           [_ false])]
       [cursor-ok : bool
         (and
@@ -1997,63 +1848,53 @@
     [fields-id : i64 (ctfe.ctfe-materialize-generated-name-id "fields")]
     [variants-id : i64 (ctfe.ctfe-materialize-generated-name-id "variants")]
     [i64-ty : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.TypeLiteral (ctfe.ctfe-ty-push env (ast.AstType.I64))))]
+      (ctfe.ctfe-ast-push env (TypeLiteral (ctfe.ctfe-ty-push env (I64))))]
     [array-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
-          (ctfe.ctfe-ty-push env (ast.ast-ty-array (ast.AstType.I64) 4))))]
+        (TypeLiteral (ctfe.ctfe-ty-push env (ast.ast-ty-array (I64) 4))))]
     [dyn-array-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
-          (ctfe.ctfe-ty-push env (ast.ast-ty-dyn-array (ast.AstType.Bool)))))]
+        (TypeLiteral (ctfe.ctfe-ty-push env (ast.ast-ty-dyn-array (Bool)))))]
     [slice-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ctfe.ctfe-ty-push
             env
-            (ast.ast-ty-slice-with-pools
-              (ctfe.ctfe-env-pools env)
-              (ast.AstType.Bool)))))]
+            (ast.ast-ty-slice-with-pools (ctfe.ctfe-env-pools env) (Bool)))))]
     [tuple-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ctfe.ctfe-ty-push
             env
             (ast.ast-ty-tuple
               (ast.ast-type-cons
-                (ast.AstType.I64)
-                (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))))))]
+                (I64)
+                (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))))))]
     [fn-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
+        (TypeLiteral
           (ctfe.ctfe-ty-push
             env
             (ast.ast-ty-func
               (ast.ast-type-cons
-                (ast.AstType.I64)
-                (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))
-              (ast.AstType.String)))))]
+                (I64)
+                (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))
+              (String)))))]
     [record-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
-          (ctfe.ctfe-ty-push
-            env
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Record))))]
+        (TypeLiteral
+          (ctfe.ctfe-ty-push env (Var cbi.compiler-builtin-id-fix-Record))))]
     [status-ty : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.TypeLiteral
-          (ctfe.ctfe-ty-push
-            env
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-Status))))]
+        (TypeLiteral
+          (ctfe.ctfe-ty-push env (Var cbi.compiler-builtin-id-fix-Status))))]
     [ok : bool true]
     (begin
       (match (ctfe.compiler-ctfe-eval
@@ -2065,14 +1906,14 @@
             i64-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (if (compiler-ctfe-type-info-builtin-kind? env ty "i64")
                 unit
                 (set! ok false))]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2082,9 +1923,9 @@
             array-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-array-variant
                 (ast.ast-pattern-cons
@@ -2094,7 +1935,7 @@
                     (ast.ast-pattern-list-new)))
                 (clone ty)
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (and
                     (compiler-ctfe-env-i64-eq?
                       matched
@@ -2106,9 +1947,9 @@
                       "i64"))
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2118,9 +1959,9 @@
             dyn-array-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-dyn-array-variant
                 (ast.ast-pattern-cons
@@ -2128,16 +1969,16 @@
                   (ast.ast-pattern-list-new))
                 ty
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
                     elem-id
                     "bool")
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2147,9 +1988,9 @@
             slice-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-slice-variant
                 (ast.ast-pattern-cons
@@ -2157,16 +1998,16 @@
                   (ast.ast-pattern-list-new))
                 ty
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
                     cbi.compiler-builtin-id-fix-items
                     "bool")
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2176,14 +2017,14 @@
             slice-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.String kind _)
+            [(String kind _)
               (if (string.eq kind "slice")
                 unit
                 (set! ok false))]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2193,14 +2034,14 @@
             slice-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.String key _)
+            [(String key _)
               (if (string.eq key "slice_bool")
                 unit
                 (set! ok false))]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2210,14 +2051,14 @@
             slice-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Type ty)
+            [(Type ty)
               (match ty
-                [(ast.AstType.Bool) unit]
+                [(Bool) unit]
                 [_ (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2227,9 +2068,9 @@
             tuple-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-tuple-variant
                 (ast.ast-pattern-cons
@@ -2237,7 +2078,7 @@
                   (ast.ast-pattern-list-new))
                 ty
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                     matched
                     cbi.compiler-builtin-id-fix-items
@@ -2245,18 +2086,18 @@
                     "bool")
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
           (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-info") fn-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-function-variant
                 (ast.ast-pattern-cons
@@ -2266,7 +2107,7 @@
                     (ast.ast-pattern-list-new)))
                 ty
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (and
                     (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                       matched
@@ -2279,9 +2120,9 @@
                       "string"))
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2291,9 +2132,9 @@
             record-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-struct-variant
                 (ast.ast-pattern-cons
@@ -2303,23 +2144,23 @@
                     (ast.ast-pattern-list-new)))
                 (clone ty)
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
                       key-id
                       (ctfe.ctfe-type-info-key-in-env env ty))
                     (match (ctfe.ctfe-env-lookup-id matched fields-id)
-                      [(ctfe.CtfeMaybeValue.Some fields-value)
+                      [(Some fields-value)
                         (compiler-ctfe-type-info-field-list-ok?
                           matched
                           fields-value)]
-                      [(ctfe.CtfeMaybeValue.None) false]))
+                      [(None) false]))
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get
           env
@@ -2329,9 +2170,9 @@
             status-ty))
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.TypeInfo ty)
+            [(TypeInfo ty)
               (match (ctfe.ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-comptime-type-info-enum-variant
                 (ast.ast-pattern-cons
@@ -2341,23 +2182,23 @@
                     (ast.ast-pattern-list-new)))
                 (clone ty)
                 env)
-                [(ctfe.CtfePatternMatch.Matched matched)
+                [(Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
                       key-id
                       (ctfe.ctfe-type-info-key-in-env env ty))
                     (match (ctfe.ctfe-env-lookup-id matched variants-id)
-                      [(ctfe.CtfeMaybeValue.Some variants-value)
+                      [(Some variants-value)
                         (compiler-ctfe-type-info-variant-list-ok?
                           matched
                           variants-value)]
-                      [(ctfe.CtfeMaybeValue.None) false]))
+                      [(None) false]))
                     unit
                     (set! ok false))]
-                [(ctfe.CtfePatternMatch.No) (set! ok false)])]
+                [(No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ctfe.ResultCtfe.Err _) (set! ok false)])
+        [(Err _) (set! ok false)])
       (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
       ok)))
 
@@ -2447,21 +2288,17 @@
     [_cache-warm : unit (ctfe.ctfe-builtin-refresh!)]
     [_cache-reset-after : unit (ctfe.ctfe-builtin-reset!)]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool false)))]
     [items : ast.AstExprList
       (ctfe-expr-list-cons true-lit (ctfe-expr-list-singleton false-lit))]
     [list-env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         env
         cbi.compiler-builtin-id-fix-items
-        (ctfe.CompilerCtfeValue.ExprList items))]
+        (ExprList items))]
     [items-var : i64
-      (ctfe.ctfe-ast-push
-        list-env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-items))]
+      (ctfe.ctfe-ast-push list-env (Var cbi.compiler-builtin-id-fix-items))]
     [len-call : i64
       (compiler-ctfe-call1-in-env
         list-env
@@ -2475,17 +2312,15 @@
     [prefix : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string "payload")))]
-    [count : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Int 9 "")))]
+        (Literal (ast.ast-lit-generated-string "payload")))]
+    [count : i64 (ctfe.ctfe-ast-push env (Literal (Int 9 "")))]
     [call : i64
       (compiler-ctfe-call2-in-env
         env
         (ctfe.ctfe-builtin "pattern-list-bindings")
         prefix
         count)]
-    [negative-count : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Int -1 "")))]
+    [negative-count : i64 (ctfe.ctfe-ast-push env (Literal (Int -1 "")))]
     [negative-call : i64
       (compiler-ctfe-call2-in-env
         env
@@ -2493,9 +2328,7 @@
         prefix
         negative-count)]
     [huge-count : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.AstLiteral.Int (ctfe.ctfe-fuel-limit) "")))]
+      (ctfe.ctfe-ast-push env (Literal (Int (ctfe.ctfe-fuel-limit) "")))]
     [huge-call : i64
       (compiler-ctfe-call2-in-env
         env
@@ -2507,27 +2340,25 @@
         (ctfe.ctfe-ast-get env call)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.PatternList patterns)
+            [(PatternList patterns)
               (and
                 (= (ast.ast-pattern-list-len (& patterns)) 9)
                 (match (ast.ast-pattern-list-get
                   (& patterns)
                   0
                   (ast.ast-pattern-fallback))
-                  [(ast.AstPattern.Binding name)
-                    (string.eq (ci.intern-str name) "payload0")]
+                  [(Binding name) (string.eq (ci.intern-str name) "payload0")]
                   [_ false])
                 (match (ast.ast-pattern-list-get
                   (& patterns)
                   8
                   (ast.ast-pattern-fallback))
-                  [(ast.AstPattern.Binding name)
-                    (string.eq (ci.intern-str name) "payload8")]
+                  [(Binding name) (string.eq (ci.intern-str name) "payload8")]
                   [_ false]))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (compiler-ctfe-eval-error-ok?
         negative-call
         env
@@ -2559,10 +2390,8 @@
         (ctfe.ctfe-env-source-names env)
         "counter.push-ref"
         helper-id)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool false)))]
     [true-expr : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "expr-bool") true-lit)]
     [false-expr : i64
@@ -2586,33 +2415,24 @@
         false-lit
         true-lit)]
     [point-name-lit : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string "point")))]
+      (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-generated-string "point")))]
     [field-name-lit : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string "x")))]
+      (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-generated-string "x")))]
     [name-lit : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string "Ada")))]
+      (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-generated-string "Ada")))]
     [name-expr : i64
       (compiler-ctfe-call1-in-env
         env
         (ctfe.ctfe-builtin "expr-string")
         name-lit)]
     [expected-name : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string "Ada")))]
+      (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-generated-string "Ada")))]
     [binary-expr : i64
       (compiler-ctfe-call1-in-env
         env
         (ctfe.ctfe-builtin "expr-binary-data")
         name-lit)]
-    [expected-binary : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.BinaryData "Ada"))]
+    [expected-binary : i64 (ctfe.ctfe-ast-push env (BinaryData "Ada"))]
     [point-expr : i64
       (compiler-ctfe-call1-in-env
         env
@@ -2624,8 +2444,7 @@
         (ctfe.ctfe-builtin "expr-struct-get")
         point-expr
         field-name-lit)]
-    [tuple-index-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "")))]
+    [tuple-index-lit : i64 (ctfe.ctfe-ast-push env (Literal (Int 1 "")))]
     [tuple-ref-expr : i64
       (compiler-ctfe-call2-in-env
         env
@@ -2640,9 +2459,7 @@
         field-name-lit
         true-expr)]
     [helper-name-lit : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Literal (ast.ast-lit-string-id helper-id)))]
+      (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-string-id helper-id)))]
     [helper-expr : i64
       (compiler-ctfe-call1-in-env
         env
@@ -2656,9 +2473,7 @@
     [empty-call-args : i64
       (ast.ast-expr-call-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push
-          env
-          (ast.AstExpr.Var (ctfe.ctfe-builtin "expr-list-empty")))
+        (ctfe.ctfe-ast-push env (Var (ctfe.ctfe-builtin "expr-list-empty")))
         (ast.ast-expr-list-new))]
     [value-tail : i64
       (compiler-ctfe-call2-in-env
@@ -2681,29 +2496,29 @@
     [expected-field : i64
       (ast.ast-expr-struct-get-id-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var point-syntax-id))
+        (ctfe.ctfe-ast-push env (Var point-syntax-id))
         x-syntax-id)]
     [expected-tuple-ref : i64
       (ast.ast-expr-tuple-ref-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var point-syntax-id))
+        (ctfe.ctfe-ast-push env (Var point-syntax-id))
         1)]
     [expected-field-set : i64
       (ast.ast-expr-struct-set-id-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var point-syntax-id))
+        (ctfe.ctfe-ast-push env (Var point-syntax-id))
         x-syntax-id
         true-lit)]
     [expected-mut-borrow : i64
       (ast.ast-expr-borrow-with-pools
         (ctfe.ctfe-env-pools env)
         true
-        ast.AstBorrowLifetime.Inferred
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var point-syntax-id)))]
+        Inferred
+        (ctfe.ctfe-ast-push env (Var point-syntax-id)))]
     [expected-call : i64
       (ast.ast-expr-call-with-pools
         (ctfe.ctfe-env-pools env)
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var helper-syntax-id))
+        (ctfe.ctfe-ast-push env (Var helper-syntax-id))
         (ast.ast-expr-cons
           expected-mut-borrow
           (ast.ast-expr-cons true-lit (ast.ast-expr-list-new))))]
@@ -2712,110 +2527,108 @@
         (ctfe.ctfe-ast-get env if-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq checked-ty (Bool))
                 (ctfe-test-expr-eq-in-env env node expected))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env name-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.String))
+                (ctfe.ctfe-type-eq checked-ty (String))
                 (ctfe-test-expr-eq-in-env env node expected-name))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env binary-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
                 (ctfe.ctfe-type-eq
                   checked-ty
                   (ast.ast-ty-dyn-array-with-pools
                     (ctfe.ctfe-env-pools env)
-                    (ast.AstType.U8)))
+                    (U8)))
                 (ctfe-test-expr-eq-in-env env node expected-binary))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env field-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
                 (ctfe.ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-field))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env tuple-ref-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
                 (ctfe.ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-tuple-ref))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env field-set-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Unit))
+                (ctfe.ctfe-type-eq checked-ty (Unit))
                 (ctfe-test-expr-eq-in-env env node expected-field-set))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env mut-borrow-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
                 (ctfe.ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-mut-borrow))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env built-call)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
                 (ctfe.ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-call))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false]))))
+        [(Err _) false]))))
 
 (define (compiler-ctfe-checked-expr-inspectors-ok?) : bool
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool false)))]
     [true-expr : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "expr-bool") true-lit)]
     [false-expr : i64
@@ -2878,11 +2691,9 @@
       (ctfe.ctfe-env-extend-id
         env
         cbi.compiler-builtin-id-fix-arm
-        (ctfe.CompilerCtfeValue.ExprClause clause))]
+        (ExprClause clause))]
     [clause-var : i64
-      (ctfe.ctfe-ast-push
-        clause-env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-arm))]
+      (ctfe.ctfe-ast-push clause-env (Var cbi.compiler-builtin-id-fix-arm))]
     [clause-first : i64
       (compiler-ctfe-call1-in-env
         clause-env
@@ -2905,78 +2716,74 @@
         (ctfe.ctfe-ast-get env cond-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq checked-ty (Bool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env then-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq checked-ty (Bool))
                 (ctfe-test-expr-eq-in-env env node false-lit))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env else-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq checked-ty (Bool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env fallback-cond-expr)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node checked-ty)
+            [(Expr node checked-ty)
               (and
-                (ctfe.ctfe-type-eq checked-ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq checked-ty (Bool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get clause-env clause-first)
         clause-env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node _)
-              (ctfe-test-expr-eq-in-env clause-env node true-lit)]
+            [(Expr node _) (ctfe-test-expr-eq-in-env clause-env node true-lit)]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get clause-env clause-second)
         clause-env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node _)
-              (ctfe-test-expr-eq-in-env clause-env node false-lit)]
+            [(Expr node _) (ctfe-test-expr-eq-in-env clause-env node false-lit)]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false]))))
+        [(Err _) false]))))
 
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
     [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [int-node : i64
-      (ctfe.ctfe-ast-push base-env (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [int-expr-value : ctfe.CompilerCtfeValue
-      (ctfe.CompilerCtfeValue.Expr int-node (ast.AstType.I64))]
+    [int-node : i64 (ctfe.ctfe-ast-push base-env (Literal (ast.ast-lit-int 1)))]
+    [int-expr-value : ctfe.CompilerCtfeValue (Expr int-node (I64))]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         base-env
@@ -2986,14 +2793,12 @@
       (compiler-ctfe-call1-in-env
         env
         (ctfe.ctfe-builtin "expr-splice")
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-n)))]
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-n)))]
     [true-expr : i64
       (compiler-ctfe-call1-in-env
         env
         (ctfe.ctfe-builtin "expr-bool")
-        (ctfe.ctfe-ast-push
-          env
-          (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))]
+        (ctfe.ctfe-ast-push env (Literal (Bool true))))]
     [if-expr : i64
       (compiler-ctfe-call3-in-env
         env
@@ -3009,18 +2814,10 @@
 (define (compiler-ctfe-quote-syntax-ok?) : bool
   (let
     [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool false)))]
     [flag-var : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-flag))]
+      (ctfe.ctfe-ast-push base-env (Var cbi.compiler-builtin-id-fix-flag))]
     [spliced : ast.AstExprList
       (ast.ast-expr-cons
         true-lit
@@ -3030,15 +2827,13 @@
         (ctfe.ctfe-env-extend-id
           base-env
           cbi.compiler-builtin-id-fix-cond
-          (ctfe.CompilerCtfeValue.Expr flag-var (ast.AstType.Bool)))
+          (Expr flag-var (Bool)))
         cbi.compiler-builtin-id-fix-xs
-        (ctfe.CompilerCtfeValue.ExprList (clone spliced)))]
+        (ExprList (clone spliced)))]
     [quoted-bool : i64
       (ast.ast-expr-quote-with-pools (ctfe.ctfe-env-pools env) true-lit)]
     [cond-var : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-cond))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-cond))]
     [qq-if : i64
       (ast.ast-expr-quasiquote-with-pools
         (ctfe.ctfe-env-pools env)
@@ -3047,37 +2842,32 @@
           (ast.ast-expr-unquote-with-pools (ctfe.ctfe-env-pools env) cond-var)
           true-lit
           false-lit))]
-    [xs-var : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-xs))]
+    [xs-var : i64 (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-xs))]
     [qq-splice : i64
       (ast.ast-expr-quasiquote-with-pools
         (ctfe.ctfe-env-pools env)
         (ctfe.ctfe-ast-push
           env
-          (ast.AstExpr.Begin
+          (Begin
             (ast.ast-expr-cons
               (ast.ast-expr-unquote-splicing-with-pools
                 (ctfe.ctfe-env-pools env)
                 xs-var)
               (ast.ast-expr-list-new)))))]
     [record-var : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-record))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-record))]
     [field-place : i64
       (ast.ast-expr-struct-get-id-with-pools
         (ctfe.ctfe-env-pools env)
         record-var
         cbi.compiler-builtin-id-fix-field)]
     [set-target-var : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-target))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-target))]
     [set-env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         env
         cbi.compiler-builtin-id-fix-target
-        (ctfe.CompilerCtfeValue.Expr field-place (ast.AstType.Expr)))]
+        (Expr field-place (Expr)))]
     [qq-set : i64
       (ast.ast-expr-quasiquote-with-pools
         (ctfe.ctfe-env-pools set-env)
@@ -3094,7 +2884,7 @@
         flag-var
         true-lit
         false-lit)]
-    [expected-begin : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Begin spliced))]
+    [expected-begin : i64 (ctfe.ctfe-ast-push env (Begin spliced))]
     [expected-set : i64
       (ast.ast-expr-struct-set-id-with-pools
         (ctfe.ctfe-env-pools set-env)
@@ -3106,46 +2896,44 @@
         (ctfe.ctfe-ast-get env quoted-bool)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node ty)
+            [(Expr node ty)
               (and
-                (ctfe.ctfe-type-eq ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq ty (Bool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env qq-if)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node ty)
+            [(Expr node ty)
               (and
-                (ctfe.ctfe-type-eq ty (ast.AstType.Bool))
+                (ctfe.ctfe-type-eq ty (Bool))
                 (ctfe-test-expr-eq-in-env env node expected-if))]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env qq-splice)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node _)
-              (ctfe-test-expr-eq-in-env env node expected-begin)]
+            [(Expr node _) (ctfe-test-expr-eq-in-env env node expected-begin)]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false])
+        [(Err _) false])
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get set-env qq-set)
         set-env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node _)
-              (ctfe-test-expr-eq-in-env set-env node expected-set)]
+            [(Expr node _) (ctfe-test-expr-eq-in-env set-env node expected-set)]
             [_ false])]
-        [(ctfe.ResultCtfe.Err _) false]))))
+        [(Err _) false]))))
 
 ;; Type-position unquotes in lambda annotations preserve the resolved tuple's
 ;; heterogeneous references, nominal identity, and lifetime names. Refs #6868.
@@ -3163,60 +2951,54 @@
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
           pools
-          (ast.ast-ty-ref-with-pools
-            pools
-            owner-region
-            (ast.AstType.Var owner-name))
+          (ast.ast-ty-ref-with-pools pools owner-region (Var owner-name))
           (ast.ast-type-cons-with-pools
             pools
-            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (ast.ast-ty-ref-with-pools pools text-region (Str))
             (ast.ast-type-list-new))))]
     [env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id
-        base-env
-        type-name
-        (ctfe.CompilerCtfeValue.Type (clone expected)))]
+      (ctfe.ctfe-env-extend-id base-env type-name (Type (clone expected)))]
     [type-unquote : ast.AstType
       (ast.ast-ty-var-args
         cbi.compiler-builtin-id-fix-unquote
         (ast.ast-lifetime-cons type-name (ast.ast-lifetime-list-new)))]
-    [body : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var param-name))]
+    [body : i64 (ctfe.ctfe-ast-push env (Var param-name))]
     [lambda-node : i64
       (ast.ast-expr-lambda-with-pools
         pools
         (ast.ast-param-cons
-          (ast.AstParam.Param param-name (clone type-unquote) false)
+          (Param param-name (clone type-unquote) false)
           (ast.ast-param-list-new))
-        (ast.AstMaybeType.Some type-unquote)
+        (Some type-unquote)
         body)]
     [quasiquoted : i64 (ast.ast-expr-quasiquote-with-pools pools lambda-node)]
     (match (ctfe.compiler-ctfe-eval
       (ctfe.ctfe-ast-get env quasiquoted)
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match value
-          [(ctfe.CompilerCtfeValue.Expr node (ast.AstType.Expr))
+          [(Expr node (Expr))
             (match (ctfe.ctfe-ast-get env node)
-              [(ast.AstExpr.Lambda lambda-box)
+              [(Lambda lambda-box)
                 (match (__tl-box-place lambda-box)
-                  [(ast.AstLambda.Lambda params maybe-ret _)
+                  [(Lambda params maybe-ret _)
                     (and
                       (= (ast.ast-param-list-len (& params)) 1)
                       (match (ast.ast-param-list-get
                         (& params)
                         0
                         (ast.ast-param-fallback))
-                        [(ast.AstParam.Param _ actual false)
+                        [(Param _ actual false)
                           (ctfe.ctfe-type-eq-in-env env actual (clone expected))]
                         [_ false])
                       (match maybe-ret
-                        [(ast.AstMaybeType.Some actual)
+                        [(Some actual)
                           (ctfe.ctfe-type-eq-in-env env actual expected)]
-                        [(ast.AstMaybeType.No) false]))])]
+                        [(No) false]))])]
               [_ false])]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 ;; A computed body can project the parameter before `expr-lambda1` attaches
 ;; its reflected tuple type. The same fresh Name value must bind and refer to
@@ -3240,28 +3022,24 @@
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
           pools
-          (ast.ast-ty-ref-with-pools
-            pools
-            owner-region
-            (ast.AstType.Var owner-name))
+          (ast.ast-ty-ref-with-pools pools owner-region (Var owner-name))
           (ast.ast-type-cons-with-pools
             pools
-            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (ast.ast-ty-ref-with-pools pools text-region (Str))
             (ast.ast-type-list-new))))]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         (ctfe.ctfe-env-extend-id
           base-env
           name-binding
-          (ctfe.CompilerCtfeValue.Name "lambda1-values" parameter-name))
+          (Name "lambda1-values" parameter-name))
         type-binding
-        (ctfe.CompilerCtfeValue.Type (clone parameter-type)))]
-    [name-value : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var name-binding))]
-    [type-value : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var type-binding))]
+        (Type (clone parameter-type)))]
+    [name-value : i64 (ctfe.ctfe-ast-push env (Var name-binding))]
+    [type-value : i64 (ctfe.ctfe-ast-push env (Var type-binding))]
     [target : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "expr-var") name-value)]
-    [index : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [index : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 1)))]
     [body : i64
       (compiler-ctfe-call2-in-env
         env
@@ -3275,23 +3053,22 @@
         name-value
         type-value
         body)]
-    [unit-expr : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [unit-expr : i64 (ctfe.ctfe-ast-push env (Literal (Unit)))]
     [status : i64 0]
     (begin
       (match (ctfe.compiler-ctfe-eval
         (ctfe.ctfe-ast-get env lambda-call)
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfe.Ok value _)
+        [(Ok value _)
           (match value
-            [(ctfe.CompilerCtfeValue.Expr node produced)
+            [(Expr node produced)
               (begin
                 (unless (ctfe.ctfe-untyped-expr-type? produced) (set! status 2))
                 (match (ctfe.ctfe-ast-get env node)
-                  [(ast.AstExpr.Lambda lambda-box)
+                  [(Lambda lambda-box)
                     (match (__tl-box-place lambda-box)
-                      [(ast.AstLambda.Lambda params maybe-ret body-node)
+                      [(Lambda params maybe-ret body-node)
                         (begin
                           (unless
                             (= (ast.ast-param-list-len (& params)) 1)
@@ -3300,7 +3077,7 @@
                             (& params)
                             0
                             (ast.ast-param-fallback))
-                            [(ast.AstParam.Param actual-name actual-type false)
+                            [(Param actual-name actual-type false)
                               (unless
                                 (and
                                   (= actual-name parameter-name)
@@ -3311,12 +3088,12 @@
                                 (set! status 5))]
                             [_ (set! status 5)])
                           (match maybe-ret
-                            [(ast.AstMaybeType.No) unit]
-                            [(ast.AstMaybeType.Some _) (set! status 6)])
+                            [(No) unit]
+                            [(Some _) (set! status 6)])
                           (match (ctfe.ctfe-ast-get env body-node)
-                            [(ast.AstExpr.TupleRef target-node 1)
+                            [(TupleRef target-node 1)
                               (match (ctfe.ctfe-ast-get env target-node)
-                                [(ast.AstExpr.Var actual-name)
+                                [(Var actual-name)
                                   (unless
                                     (= actual-name parameter-name)
                                     (set! status 9))]
@@ -3324,7 +3101,7 @@
                             [_ (set! status 7)]))])]
                   [_ (set! status 3)]))]
             [_ (set! status 2)])]
-        [(ctfe.ResultCtfe.Err _) (set! status 1)])
+        [(Err _) (set! status 1)])
       (if (!= status 0)
         status
         (if (compiler-ctfe-eval-error-ok?
@@ -3350,10 +3127,7 @@
       (ctfe.ctfe-materialize-generated-name-id "captured-quote-expr")]
     [list-name : i64
       (ctfe.ctfe-materialize-generated-name-id "captured-quote-list")]
-    [value-node : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [value-node : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool true)))]
     [values : ast.AstExprList
       (ast.ast-expr-cons value-node (ast.ast-expr-list-new))]
     [env : ctfe.CtfeEnv
@@ -3361,14 +3135,11 @@
         (ctfe.ctfe-env-extend-id
           base-env
           expr-name
-          (ctfe.CompilerCtfeValue.CapturedExpr
-            value-node
-            (ast.AstType.Bool)
-            pools))
+          (CapturedExpr value-node (Bool) pools))
         list-name
-        (ctfe.CompilerCtfeValue.CapturedExprList values pools))]
-    [expr-var : ast.AstExpr (ast.AstExpr.Var expr-name)]
-    [list-var : ast.AstExpr (ast.AstExpr.Var list-name)]
+        (CapturedExprList values pools))]
+    [expr-var : ast.AstExpr (Var expr-name)]
+    [list-var : ast.AstExpr (Var list-name)]
     [foreign-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 2)
@@ -3383,36 +3154,32 @@
         expr-var
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfeQuoteExpr.Ok node ty _)
-          (and (= node value-node) (ctfe.ctfe-type-eq ty (ast.AstType.Bool)))]
-        [(ctfe.ResultCtfeQuoteExpr.Err _) false])
+        [(Ok node ty _) (and (= node value-node) (ctfe.ctfe-type-eq ty (Bool)))]
+        [(Err _) false])
       (match (ctfe.ctfe-eval-unquote-splice
         (clone list-var)
         list-var
         env
         (ctfe.ctfe-fuel-limit))
-        [(ctfe.ResultCtfeQuoteExprList.Ok quoted _)
+        [(Ok quoted _)
           (and
             (= quoted.len 1)
             (= (ast.ast-expr-list-get (& quoted) 0 0) value-node))]
-        [(ctfe.ResultCtfeQuoteExprList.Err _) false]))))
+        [(Err _) false]))))
 
 (define (compiler-ctfe-expr-pattern-match-int-ok?) : bool
   (let
     [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     [subject-node : i64
-      (ctfe.ctfe-ast-push base-env (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
-    [subject : ctfe.CompilerCtfeValue
-      (ctfe.CompilerCtfeValue.Expr subject-node (ast.AstType.I64))]
+      (ctfe.ctfe-ast-push base-env (Literal (ast.ast-lit-int 7)))]
+    [subject : ctfe.CompilerCtfeValue (Expr subject-node (I64))]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         base-env
         cbi.compiler-builtin-id-fix-subject
         subject)]
     [scrutinee : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-subject))]
     [int-pattern : ast.AstPattern
       (ast.ast-pat-variant-id
         cbi.compiler-builtin-id-comptime-expr-int-variant
@@ -3422,11 +3189,11 @@
     [int-arm : ast.AstMatchArm
       (ast.ast-match-arm
         int-pattern
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-n)))]
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-n)))]
     [fallback-arm : ast.AstMatchArm
       (ast.ast-match-arm
-        ast.AstPattern.Wildcard
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 0))))]
+        Wildcard
+        (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 0))))]
     [match-expr : i64
       (ast.ast-expr-match-with-pools
         (ctfe.ctfe-env-pools env)
@@ -3440,34 +3207,23 @@
   (let
     [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     [flag : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-flag))]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+      (ctfe.ctfe-ast-push base-env (Var cbi.compiler-builtin-id-fix-flag))]
+    [true-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool false)))]
     [if-node : i64
       (ast.ast-expr-if-with-pools
         (ctfe.ctfe-env-pools base-env)
         flag
         true-lit
         false-lit)]
-    [subject : ctfe.CompilerCtfeValue
-      (ctfe.CompilerCtfeValue.Expr if-node (ast.AstType.Bool))]
+    [subject : ctfe.CompilerCtfeValue (Expr if-node (Bool))]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         base-env
         cbi.compiler-builtin-id-fix-subject
         subject)]
     [scrutinee : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-subject))]
     [if-pattern : ast.AstPattern
       (ast.ast-pat-variant-id
         cbi.compiler-builtin-id-comptime-expr-if-variant
@@ -3482,12 +3238,11 @@
       (compiler-ctfe-call3-in-env
         env
         (ctfe.ctfe-builtin "expr-if")
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-c))
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-e))
-        (ctfe.ctfe-ast-push env (ast.AstExpr.Var cbi.compiler-builtin-id-fix-t)))]
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-c))
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-e))
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-t)))]
     [if-arm : ast.AstMatchArm (ast.ast-match-arm if-pattern swapped)]
-    [fallback-arm : ast.AstMatchArm
-      (ast.ast-match-arm ast.AstPattern.Wildcard scrutinee)]
+    [fallback-arm : ast.AstMatchArm (ast.ast-match-arm Wildcard scrutinee)]
     [match-expr : i64
       (ast.ast-expr-match-with-pools
         (ctfe.ctfe-env-pools env)
@@ -3505,38 +3260,29 @@
       (ctfe.ctfe-ast-get env match-expr)
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match value
-          [(ctfe.CompilerCtfeValue.Expr node ty)
+          [(Expr node ty)
             (and
-              (ctfe.ctfe-type-eq ty (ast.AstType.Bool))
+              (ctfe.ctfe-type-eq ty (Bool))
               (ctfe-test-expr-eq-in-env env node expected))]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-ctfe-expr-pattern-match-clause-ok?) : bool
   (let
     [base-env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [false-lit : i64
-      (ctfe.ctfe-ast-push
-        base-env
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+    [true-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool true)))]
+    [false-lit : i64 (ctfe.ctfe-ast-push base-env (Literal (Bool false)))]
     [clause : ast.AstExprClause (ast.AstExprClause true-lit false-lit)]
-    [subject : ctfe.CompilerCtfeValue
-      (ctfe.CompilerCtfeValue.ExprClause clause)]
+    [subject : ctfe.CompilerCtfeValue (ExprClause clause)]
     [env : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         base-env
         cbi.compiler-builtin-id-fix-subject
         subject)]
     [scrutinee : i64
-      (ctfe.ctfe-ast-push
-        env
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
+      (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-subject))]
     [clause-pattern : ast.AstPattern
       (ast.ast-pat-variant-id
         cbi.compiler-builtin-id-fix-ExprClause
@@ -3548,9 +3294,7 @@
     [clause-arm : ast.AstMatchArm
       (ast.ast-match-arm
         clause-pattern
-        (ctfe.ctfe-ast-push
-          env
-          (ast.AstExpr.Var cbi.compiler-builtin-id-fix-second)))]
+        (ctfe.ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-second)))]
     [match-expr : i64
       (ast.ast-expr-match-with-pools
         (ctfe.ctfe-env-pools env)
@@ -3560,12 +3304,11 @@
       (ctfe.ctfe-ast-get env match-expr)
       env
       (ctfe.ctfe-fuel-limit))
-      [(ctfe.ResultCtfe.Ok value _)
+      [(Ok value _)
         (match value
-          [(ctfe.CompilerCtfeValue.Expr node _)
-            (ctfe-test-expr-eq-in-env env node false-lit)]
+          [(Expr node _) (ctfe-test-expr-eq-in-env env node false-lit)]
           [_ false])]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-ctfe-expr-pattern-match-ok?) : bool
   (and
@@ -3577,49 +3320,39 @@
   (let
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     [pools : ast.AstNodePoolContext (ctfe.ctfe-env-pools env)]
-    [zero : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
-    [one : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [three : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 3)))]
+    [zero : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 0)))]
+    [one : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 1)))]
+    [three : i64 (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 3)))]
     [i-id : i64 (ctfe.ctfe-materialize-generated-name-id "i")]
-    [i-var : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var i-id))]
-    [loop-cond : i64
-      (ast.ast-expr-binary-with-pools pools (ast.AstBinOp.Lt) i-var three)]
-    [increment : i64
-      (ast.ast-expr-binary-with-pools pools (ast.AstBinOp.Add) i-var one)]
+    [i-var : i64 (ctfe.ctfe-ast-push env (Var i-id))]
+    [loop-cond : i64 (ast.ast-expr-binary-with-pools pools (Lt) i-var three)]
+    [increment : i64 (ast.ast-expr-binary-with-pools pools (Add) i-var one)]
     [set-i : i64 (ast.ast-expr-set-id-with-pools pools i-id increment)]
     [loop-body : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.Begin (ast.ast-expr-cons set-i (ast.ast-expr-list-new))))]
+        (Begin (ast.ast-expr-cons set-i (ast.ast-expr-list-new))))]
     [loop : i64 (ast.ast-expr-while-with-pools pools loop-cond loop-body)]
-    [loop-result : i64 (ctfe.ctfe-ast-push env (ast.AstExpr.Var i-id))]
+    [loop-result : i64 (ctfe.ctfe-ast-push env (Var i-id))]
     [loop-body-result : i64
       (ctfe.ctfe-ast-push
         env
-        (ast.AstExpr.Begin
+        (Begin
           (ast.ast-expr-cons
             loop
             (ast.ast-expr-cons loop-result (ast.ast-expr-list-new)))))]
     [loop-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id
-          i-id
-          (ast.AstMaybeType.Some (ast.AstType.I64))
-          zero)
+        (ast.ast-let-binding-id i-id (Some (I64)) zero)
         (ast.ast-let-binding-list-new))]
     [loop-let : i64
       (ast.ast-expr-let-with-pools pools loop-bindings loop-body-result)]
     [outer-id : i64 (ctfe.ctfe-materialize-generated-name-id "outer")]
     [immutable-env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id env outer-id (ctfe.CompilerCtfeValue.I64 0))]
+      (ctfe.ctfe-env-extend-id env outer-id (I64 0))]
     [immutable-set : i64 (ast.ast-expr-set-id-with-pools pools outer-id one)]
-    [true-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-    [unit-lit : i64
-      (ctfe.ctfe-ast-push env (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [true-lit : i64 (ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [unit-lit : i64 (ctfe.ctfe-ast-push env (Literal Unit))]
     [infinite-loop : i64
       (ast.ast-expr-while-with-pools pools true-lit unit-lit)]
     (and
@@ -3632,37 +3365,37 @@
         (ctfe.ctfe-ast-get env infinite-loop)
         env
         3)
-        [(ctfe.ResultCtfe.Err diag)
+        [(Err diag)
           (string.eq
             (cdiag.compiler-diagnostic-message (__tl-box-place diag))
             "compile-time evaluation limit exceeded")]
-        [(ctfe.ResultCtfe.Ok _ _) false]))))
+        [(Ok _ _) false]))))
 
 (define (compiler-ctfe-env-i64-value-ok?
   [env : (& env ctfe.CtfeEnv)]
   [name-id : i64]
   [expected : i64]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.Some value)
+    [(Some value)
       (match value
-        [(ctfe.CompilerCtfeValue.I64 actual) (= actual expected)]
+        [(I64 actual) (= actual expected)]
         [_ false])]
-    [(ctfe.CtfeMaybeValue.None) false]))
+    [(None) false]))
 
 (define (compiler-ctfe-env-value-missing?
   [env : (& env ctfe.CtfeEnv)]
   [name-id : i64]) : bool
   (match (ctfe.ctfe-env-lookup-id env name-id)
-    [(ctfe.CtfeMaybeValue.None) true]
-    [(ctfe.CtfeMaybeValue.Some _) false]))
+    [(None) true]
+    [(Some _) false]))
 
 (define (compiler-ctfe-env-type-ok?
   [env : ctfe.CtfeEnv]
   [name-id : i64]
   [expected : ast.AstType]) : bool
   (match (ctfe.ctfe-env-lookup-type-id env name-id)
-    [(ast.AstMaybeType.Some actual) (ctfe.ctfe-type-eq actual expected)]
-    [(ast.AstMaybeType.No) false]))
+    [(Some actual) (ctfe.ctfe-type-eq actual expected)]
+    [(No) false]))
 
 ;; Arena snapshots may branch and may outlive backing-array growth. Each branch
 ;; must continue following the parent index captured when its head was appended.
@@ -3673,15 +3406,9 @@
     [left-id : i64 (ctfe.ctfe-materialize-generated-name-id "arena-left")]
     [right-id : i64 (ctfe.ctfe-materialize-generated-name-id "arena-right")]
     [shared : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-typed-id
-        base
-        shared-id
-        (ctfe.CompilerCtfeValue.I64 1)
-        (ast.AstType.I64))]
-    [left : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id shared left-id (ctfe.CompilerCtfeValue.I64 2))]
-    [right : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id shared right-id (ctfe.CompilerCtfeValue.I64 3))]
+      (ctfe.ctfe-env-extend-typed-id base shared-id (I64 1) (I64))]
+    [left : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id shared left-id (I64 2))]
+    [right : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id shared right-id (I64 3))]
     [grown : ctfe.CtfeEnv right]
     [index : i64 0]
     (begin
@@ -3690,15 +3417,12 @@
         (begin
           (set!
             grown
-            (ctfe.ctfe-env-extend-id
-              grown
-              (+ 100000 index)
-              (ctfe.CompilerCtfeValue.I64 index)))
+            (ctfe.ctfe-env-extend-id grown (+ 100000 index) (I64 index)))
           (set! index (+ index 1))))
       (and
         (compiler-ctfe-env-value-missing? base shared-id)
         (compiler-ctfe-env-i64-value-ok? shared shared-id 1)
-        (compiler-ctfe-env-type-ok? shared shared-id (ast.AstType.I64))
+        (compiler-ctfe-env-type-ok? shared shared-id (I64))
         (compiler-ctfe-env-i64-value-ok? left left-id 2)
         (compiler-ctfe-env-i64-value-ok? left shared-id 1)
         (compiler-ctfe-env-value-missing? left right-id)
@@ -3716,40 +3440,18 @@
     [name-id : i64 (ctfe.ctfe-materialize-generated-name-id "arena-local")]
     [other-id : i64 (ctfe.ctfe-materialize-generated-name-id "arena-other")]
     [local : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-local-typed-id
-        base
-        name-id
-        (ctfe.CompilerCtfeValue.I64 1)
-        (ast.AstType.I64))]
-    [descendant : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id local other-id (ctfe.CompilerCtfeValue.I64 9))]
+      (ctfe.ctfe-env-extend-local-typed-id base name-id (I64 1) (I64))]
+    [descendant : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id local other-id (I64 9))]
     [updated-through-descendant? : bool
-      (ctfe.ctfe-env-set-local-id!
-        descendant
-        name-id
-        (ctfe.CompilerCtfeValue.I64 2))]
+      (ctfe.ctfe-env-set-local-id! descendant name-id (I64 2))]
     [immutable-shadow : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id
-        descendant
-        name-id
-        (ctfe.CompilerCtfeValue.I64 3))]
+      (ctfe.ctfe-env-extend-id descendant name-id (I64 3))]
     [immutable-stopped? : bool
-      (not
-        (ctfe.ctfe-env-set-local-id!
-          immutable-shadow
-          name-id
-          (ctfe.CompilerCtfeValue.I64 4)))]
+      (not (ctfe.ctfe-env-set-local-id! immutable-shadow name-id (I64 4)))]
     [local-shadow : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-local-typed-id
-        descendant
-        name-id
-        (ctfe.CompilerCtfeValue.I64 5)
-        (ast.AstType.I64))]
+      (ctfe.ctfe-env-extend-local-typed-id descendant name-id (I64 5) (I64))]
     [local-shadow-updated? : bool
-      (ctfe.ctfe-env-set-local-id!
-        local-shadow
-        name-id
-        (ctfe.CompilerCtfeValue.I64 6))]
+      (ctfe.ctfe-env-set-local-id! local-shadow name-id (I64 6))]
     (and
       updated-through-descendant?
       immutable-stopped?
@@ -3758,7 +3460,7 @@
       (compiler-ctfe-env-i64-value-ok? descendant name-id 2)
       (compiler-ctfe-env-i64-value-ok? immutable-shadow name-id 3)
       (compiler-ctfe-env-i64-value-ok? local-shadow name-id 6)
-      (compiler-ctfe-env-type-ok? local-shadow name-id (ast.AstType.I64)))))
+      (compiler-ctfe-env-type-ok? local-shadow name-id (I64)))))
 
 ;; Rebasing changes only the definition pools. Bindings and root metadata stay
 ;; shared, while a captured value's newer syntax pools remain snapshot-local.
@@ -3786,12 +3488,7 @@
     [layouts : ctfe.CtfeLayoutInfoList
       (ctfe.ctfe-layout-info-list-push-id
         (ctfe.ctfe-layout-info-list-with-capacity 1)
-        (ctfe.CtfeLayoutInfo.Info
-          "Packet"
-          true
-          8
-          8
-          (ctfe.ctfe-layout-field-list-empty))
+        (Info "Packet" true 8 8 (ctfe.ctfe-layout-field-list-empty))
         layout-name)]
     [reflection-env : ctfe.CtfeEnv (compiler-ctfe-reflection-env)]
     [source-names : ci.InternSourceNameSessionHandle
@@ -3803,26 +3500,17 @@
         definition-pools
         source-names)]
     [binding-id : i64 (ctfe.ctfe-materialize-generated-name-id "arena-rebase")]
-    [bound : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id base binding-id (ctfe.CompilerCtfeValue.I64 7))]
+    [bound : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id base binding-id (I64 7))]
     [rebased : ctfe.CtfeEnv (ctfe.ctfe-env-rebase-pools bound rebased-pools)]
     [captured-node : i64
-      (ast.ast-node-pool-context-expr-push
-        syntax-pools
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+      (ast.ast-node-pool-context-expr-push syntax-pools (Literal (Bool true)))]
     [captured : ctfe.CtfeEnv
       (ctfe.ctfe-env-extend-id
         bound
         (+ binding-id 1)
-        (ctfe.CompilerCtfeValue.CapturedExpr
-          captured-node
-          (ast.AstType.Bool)
-          syntax-pools))]
+        (CapturedExpr captured-node (Bool) syntax-pools))]
     [captured-child : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id
-        captured
-        (+ binding-id 2)
-        (ctfe.CompilerCtfeValue.I64 8))]
+      (ctfe.ctfe-env-extend-id captured (+ binding-id 2) (I64 8))]
     [captured-rebased : ctfe.CtfeEnv
       (ctfe.ctfe-env-rebase-pools captured-child rebased-pools)]
     [rebased-reflections : ctfe.CtfeReflectInfoList
@@ -3854,13 +3542,13 @@
       (match (ctfe.ctfe-layout-info-lookup-name-id
         (ctfe.ctfe-env-layouts rebased)
         layout-name)
-        [(ctfe.CtfeMaybeLayoutInfo.Some _) true]
-        [(ctfe.CtfeMaybeLayoutInfo.None) false])
+        [(Some _) true]
+        [(None) false])
       (match (ctfe.ctfe-reflect-info-lookup-name-id
         rebased-reflections
         cbi.compiler-builtin-id-fix-Point)
-        [(ctfe.CtfeMaybeReflectInfo.Some _) true]
-        [(ctfe.CtfeMaybeReflectInfo.None) false]))))
+        [(Some _) true]
+        [(None) false]))))
 
 (define (compiler-ctfe-env-arena-ok?) : bool
   (and
@@ -3874,7 +3562,7 @@
     -1
     "Some"
     cbi.compiler-builtin-id-fix-Some)
-    [(ctfe.CompilerCtfeValue.String suffix suffix-id)
+    [(String suffix suffix-id)
       (if (and
         (string.eq suffix ".Some")
         (= (ci.intern-first-dot suffix-id) 0)
@@ -3886,7 +3574,7 @@
           cbi.compiler-builtin-id-fix-Maybe
           suffix
           suffix-id)
-          [(ctfe.CompilerCtfeValue.String full full-id)
+          [(String full full-id)
             (and
               (string.eq full "Maybe.Some")
               (=
@@ -3910,8 +3598,8 @@
       field-id
       (ctfe.ctfe-expr-shared-view expr)
       7)
-      [(ctfe.ResultCtfe.Ok _ next-fuel) (= next-fuel 7)]
-      [(ctfe.ResultCtfe.Err _) false])))
+      [(Ok _ next-fuel) (= next-fuel 7)]
+      [(Err _) false])))
 
 (cfg
   test
@@ -3919,7 +3607,7 @@
     (let
       [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
       [pools : ast.AstNodePoolContext (ctfe.ctfe-env-pools env)]
-      [expr : ast.AstExpr (ast.AstExpr.Literal (ast.AstLiteral.Unit))]
+      [expr : ast.AstExpr (Literal (Unit))]
       [exprs : ast.AstExprList (ast.ast-expr-list-new)]
       [clause : ast.AstExprClause (ast.ast-expr-clause 0 0)]
       [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
@@ -3934,7 +3622,7 @@
       [bindings : ast.AstExprBindingClauseList
         (ast.ast-expr-binding-clause-list-new)]
       [patterns : ast.AstPatternList (ast.ast-pattern-list-new)]
-      [arm : ast.AstMatchArm (ast.ast-match-arm ast.AstPattern.Wildcard 0)]
+      [arm : ast.AstMatchArm (ast.ast-match-arm Wildcard 0)]
       [arms : ast.AstMatchArmList (ast.ast-match-arm-list-new)]
       [types : ast.AstTypeList (ast.ast-type-list-new)]
       [fields : ctfe.CtfeReflectFieldList
@@ -3947,175 +3635,175 @@
           (ctfe.ctfe-expr-binding-clause-name-id (clone binding))
           (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-name))
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprList (clone exprs))
+          (ExprList (clone exprs))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprList (clone exprs))
+          (ExprList (clone exprs))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprList
+          (CapturedExprList
             (clone exprs)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprList
+          (CapturedExprList
             (clone exprs)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprClause (clone clause))
+          (ExprClause (clone clause))
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprClause (clone clause))
+          (ExprClause (clone clause))
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprClause
+          (CapturedExprClause
             (clone clause)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprClause
+          (CapturedExprClause
             (clone clause)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprClauseList (clone clauses))
+          (ExprClauseList (clone clauses))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprClauseList (clone clauses))
+          (ExprClauseList (clone clauses))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprClauseList
+          (CapturedExprClauseList
             (clone clauses)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.CapturedExprClauseList
+          (CapturedExprClauseList
             (clone clauses)
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClause (clone binding))
+          (ExprBindingClause (clone binding))
           cbi.compiler-builtin-id-fix-name
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClause (clone binding))
+          (ExprBindingClause (clone binding))
           cbi.compiler-builtin-id-fix-has_type
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClause (clone binding))
+          (ExprBindingClause (clone binding))
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClause (clone binding))
+          (ExprBindingClause (clone binding))
           cbi.compiler-builtin-id-fix-init
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClauseList (clone bindings))
+          (ExprBindingClauseList (clone bindings))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.ExprBindingClauseList (clone bindings))
+          (ExprBindingClauseList (clone bindings))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.PatternList (clone patterns))
+          (PatternList (clone patterns))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.PatternList (clone patterns))
+          (PatternList (clone patterns))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.MatchArm (clone arm))
+          (MatchArm (clone arm))
           cbi.compiler-builtin-id-fix-pattern
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.MatchArm (clone arm))
+          (MatchArm (clone arm))
           cbi.compiler-builtin-id-fix-body
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.MatchArmList (clone arms))
+          (MatchArmList (clone arms))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.MatchArmList (clone arms))
+          (MatchArmList (clone arms))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeInfoList (clone types))
+          (TypeInfoList (clone types))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeInfoList (clone types))
+          (TypeInfoList (clone types))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeField "value" (ast.AstType.I64))
+          (TypeField "value" (I64))
           cbi.compiler-builtin-id-fix-name
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeField "value" (ast.AstType.I64))
+          (TypeField "value" (I64))
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeFieldList (clone fields))
+          (TypeFieldList (clone fields))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeFieldList (clone fields))
+          (TypeFieldList (clone fields))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariantPayload (ast.AstType.I64))
+          (TypeVariantPayload (I64))
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariantPayloadList (clone types))
+          (TypeVariantPayloadList (clone types))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariantPayloadList (clone types))
+          (TypeVariantPayloadList (clone types))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariant "Some" (clone types))
+          (TypeVariant "Some" (clone types))
           cbi.compiler-builtin-id-fix-name
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariant "Some" (clone types))
+          (TypeVariant "Some" (clone types))
           cbi.compiler-builtin-id-fix-payloads
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariantList (clone variants))
+          (TypeVariantList (clone variants))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ctfe.CompilerCtfeValue.TypeVariantList (clone variants))
+          (TypeVariantList (clone variants))
           cbi.compiler-builtin-id-fix-len
           expr)
         (match (ctfe.ctfe-eval-struct-get-value
-          (ctfe.CompilerCtfeValue.ExprList exprs)
+          (ExprList exprs)
           generated-items
           expr
           7)
-          [(ctfe.ResultCtfe.Err diag)
+          [(Err diag)
             (string.eq
               (cdiag.compiler-diagnostic-message (__tl-box-place diag))
               "unsupported stdlib.comptime field 'items'")]
-          [(ctfe.ResultCtfe.Ok _ _) false])))))
+          [(Ok _ _) false])))))
 
 (define (compiler-ctfe-self-test) : i64
   (begin

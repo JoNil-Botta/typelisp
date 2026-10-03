@@ -217,7 +217,7 @@
   [src : String]
   [want-message-fragment : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -232,7 +232,7 @@
           (compiler-typecheck-secondary-label-contains?
             (diagnostic.compiler-diagnostic-secondary-spans first)
             "remains live")))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-borrow-diagnostic-tests-ok?) : bool
   (and
@@ -522,7 +522,7 @@
   [want-message : String]
   [want-label-fragment : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -538,7 +538,7 @@
           (compiler-typecheck-secondary-label-contains?
             (diagnostic.compiler-diagnostic-secondary-spans first)
             want-label-fragment)))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-labeled-cleanup-move-error-ok?
   [src : String]
@@ -546,7 +546,7 @@
   [want-move-label-fragment : String]
   [want-owner-label-fragment : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -565,7 +565,7 @@
           (compiler-typecheck-secondary-label-contains?
             (diagnostic.compiler-diagnostic-secondary-spans first)
             want-owner-label-fragment)))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-move-diagnostic-tests-ok?) : bool
   (and
@@ -1720,8 +1720,8 @@
 (bundle \"i64\")
 (bundle (type-key (type i64)))
 (define (main) : i64 0)")
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Ok _) false]
+    [(Err diag)
       (let
         [value : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -1879,14 +1879,14 @@
         7
         "state-a"
         71
-        (tc_core.CompilerTypecheckSummary 1 2 3))
+        (CompilerTypecheckSummary 1 2 3))
       (tc_core.tc-prefix-snapshot-cache-store-persistent-for-state
         state-b
         "shared-key"
         11
         "state-b"
         73
-        (tc_core.CompilerTypecheckSummary 4 5 6))
+        (CompilerTypecheckSummary 4 5 6))
       (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-a)
       (tc_core.tc-prefix-snapshot-cache-note-miss-for-state! state-a)
       (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-b)
@@ -1924,7 +1924,7 @@
                 (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
                   state-a
                   "shared-key")
-                  [(tc_core.TcPrefixSnapshotLookup.Miss) true]
+                  [(Miss) true]
                   [_ false]))]
             (begin
               ;; Teardown of A owns and destroys only A's retained arena.
@@ -1948,11 +1948,7 @@
                     (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
                       state-b
                       "shared-key")
-                      [(tc_core.TcPrefixSnapshotLookup.Hit
-                          count
-                          module
-                          module-id
-                          summary)
+                      [(Hit count module module-id summary)
                         (and
                           (= count 11)
                           (string.eq module "state-b")
@@ -1970,8 +1966,8 @@
   [paths : ast.AstDeclPathList]
   [needle : String]) : bool
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Nil) false]
-    [(ast.AstDeclPathListStep.Cons path rest)
+    [(Nil) false]
+    [(Cons path rest)
       (or
         (load.compiler-load-string-contains?
           (load.compiler-load-normalize-path path)
@@ -1985,7 +1981,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parser.parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         program
         paths
@@ -1995,9 +1991,9 @@
           "typecheck-prefix-smoke"
           stdlib-roots
           cfgs))
-        [(tc_core.ResultCompilerTypecheck.Ok _) true]
-        [(tc_core.ResultCompilerTypecheck.Err _) false])]
-    [(parser.ResultAstProgramDiagnostic.Err _) false]))
+        [(Ok _) true]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?) : bool
   (let
@@ -2122,7 +2118,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match loaded
-    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(Ok decls paths _ _)
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         (ast.ast-program decls)
         paths
@@ -2132,9 +2128,9 @@
           "typecheck-prefix-smoke"
           stdlib-roots
           cfgs))
-        [(tc_core.ResultCompilerTypecheck.Ok _) true]
-        [(tc_core.ResultCompilerTypecheck.Err _) false])]
-    [(load.ResultCompilerLoadWithPaths.Err _) false]))
+        [(Ok _) true]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-file-check
   [entry-path : String]
@@ -2375,15 +2371,15 @@
         (ctfe.ctfe-env-empty-with-pools
           (ast.ast-node-pool-context-shared-view (& source-pools)))
         name-id
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.I64)))]
+        (Type (I64)))]
     [installed-type-id : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
-        (ast.AstType.Bool))]
+        (Bool))]
     [installed-expr-id : i64
       (ast.ast-node-pool-context-expr-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
-        (ast.AstExpr.Literal (ast.AstLiteral.Bool false)))]
+        (Literal (Bool false)))]
     (begin
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-shared-view (& installed-pools)))
@@ -2392,7 +2388,7 @@
           (tc_core.macro-generated-type-param-expr
             (ast.ast-node-pool-context-shared-view (& source-pools))
             env
-            (ast.AstExpr.Var name-id))]
+            (Var name-id))]
         [installed-expr-bases : i64
           (ast.ast-node-pool-context-expr-segment-bases (& installed-pools))]
         [installed-type-bases : i64
@@ -2421,24 +2417,24 @@
             (match (ast.ast-node-pool-context-expr-get
               (& source-pools)
               result-id)
-              [(ast.AstExpr.TypeLiteral source-type-id)
+              [(TypeLiteral source-type-id)
                 (and
                   (= source-type-id installed-type-id)
                   (match (ast.ast-node-pool-context-type-get
                     (& source-pools)
                     source-type-id)
-                    [(ast.AstType.I64) true]
+                    [(I64) true]
                     [_ false]))]
               [_ false])
             (match (ast.ast-node-pool-context-expr-get
               (& installed-pools)
               installed-expr-id)
-              [(ast.AstExpr.Literal (ast.AstLiteral.Bool value)) (not value)]
+              [(Literal (Bool value)) (not value)]
               [_ false])
             (match (ast.ast-node-pool-context-type-get
               (& installed-pools)
               installed-type-id)
-              [(ast.AstType.Bool) true]
+              [(Bool) true]
               [_ false])
             (=
               (ast.ast-node-pool-active-expr-segment-bases)
@@ -2461,20 +2457,20 @@
     [installed-child : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
-        (ast.AstType.I64))]
+        (I64))]
     [installed-parent : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
-        (ast.AstType.Array installed-child 3))]
+        (Array installed-child 3))]
     [name-id : i64 (ci.intern "Expr")]
     [owned-child : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& owned-pools))
-        (ast.AstType.Var name-id))]
+        (Var name-id))]
     [owned-parent : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& owned-pools))
-        (ast.AstType.Array owned-child 3))]
+        (Array owned-child 3))]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -2516,11 +2512,11 @@
         [installed-var : i64
           (ast.ast-node-pool-context-type-push
             (ast.ast-node-pool-context-shared-view (& installed-pools))
-            (ast.AstType.Var name-id))]
+            (Var name-id))]
         [installed-var-parent : i64
           (ast.ast-node-pool-context-type-push
             (ast.ast-node-pool-context-shared-view (& installed-pools))
-            (ast.AstType.Array installed-var 5))]
+            (Array installed-var 5))]
         [installed-resolved : ast.AstType
           (tc_core.tc-resolve-type
             installed-ctx
@@ -2552,26 +2548,26 @@
                 (ast.ast-node-pool-context-shared-view (& owned-pools)))
               3)
             (match resolved
-              [(ast.AstType.Array resolved-child count)
+              [(Array resolved-child count)
                 (and
                   (= count 3)
                   (match (ast.ast-node-pool-context-type-get
                     (& owned-pools)
                     resolved-child)
-                    [(ast.AstType.Expr) true]
+                    [(Expr) true]
                     [_ false]))]
               [_ false])
             (match (ast.ast-node-pool-context-type-get
               (& installed-pools)
               installed-child)
-              [(ast.AstType.I64) true]
+              [(I64) true]
               [_ false])
             (match installed-resolved
-              [(ast.AstType.Array resolved-child count)
+              [(Array resolved-child count)
                 (and
                   (= count 5)
                   (match (ast.ty-node-get resolved-child)
-                    [(ast.AstType.Expr) true]
+                    [(Expr) true]
                     [_ false]))]
               [_ false])
             (=
@@ -2585,16 +2581,15 @@
   [source : String]
   [key : String]) : ast.AstDecl
   (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
-    [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons decl _)
+        [(Cons decl _)
           (ast.ast-decl-comptime-decl-with-meta
             (tc_core.macro-generated-meta "state-isolation" "import" key)
             decl)]
-        [(ast.AstDeclListStep.Nil)
+        [(Nil)
           (io.panic "typecheck: generated import fixture parsed no declaration")])]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))]))
+    [(Err diag) (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))]))
 
 ;; A load failure keeps its dependency primary and one actionable import site.
 (define (compiler-typecheck-smoke-generated-import-location-ok?
@@ -2679,7 +2674,7 @@
         (sym_i64_env.sym-i64-empty)
         (tc_core.tc-global-shared-view roots)
         cfgs)
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-cache
             (ast.ast-program decls)
             paths
@@ -2689,7 +2684,7 @@
               "typecheck-generated-import-call-site"
               roots
               cfgs))
-            [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+            [(Err diagnostics)
               (let
                 [first : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-list-first
@@ -2713,8 +2708,8 @@
                     entry
                     6
                     1)))]
-            [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
+            [(Ok _) false])]
+        [(Err _) false]))))
 
 (define (compiler-typecheck-smoke-generated-provided-module-ok?) : bool
   (match (tc_api.typecheck-compiler-source
@@ -2724,8 +2719,8 @@
 (defmacro (emit) : Decls `(import generated.provided as p))
 (emit)
 (define (main) : i64 (p.answer))")
-    [(tc_core.ResultCompilerTypecheck.Ok _) true]
-    [(tc_core.ResultCompilerTypecheck.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-typecheck-smoke-generated-import-state-run
   [state : load.CompilerLoadSessionState]
@@ -2750,7 +2745,7 @@
       (tc_core.tc-global-shared-view roots)
       cfgs
       pools)
-      [(tc_core.ResultMacroMaterializeImport.Ok _ _ first-seen)
+      [(Ok _ _ first-seen)
         ;; A second traversal from an independent seen set must reuse A's
         ;; program/surface caches. The selected compatibility session is
         ;; intentionally irrelevant to both traversals.
@@ -2765,7 +2760,7 @@
           (tc_core.tc-global-shared-view roots)
           cfgs
           pools)
-          [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
+          [(Ok _ _ _)
             (match (core_tests.macro-materialize-generated-import
               state
               generated-import
@@ -2777,7 +2772,7 @@
               (tc_core.tc-global-shared-view roots)
               cfgs
               pools)
-              [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
+              [(Ok _ _ _)
                 (match (core_tests.macro-materialize-generated-import
                   state
                   missing-import
@@ -2789,7 +2784,7 @@
                   roots
                   cfgs
                   pools)
-                  [(tc_core.ResultMacroMaterializeImport.Err diag)
+                  [(Err diag)
                     (begin
                       (if (compiler-typecheck-smoke-generated-import-location-ok?
                         (diagnostic.compiler-diagnostic-box-shared-view
@@ -2811,21 +2806,21 @@
                         (load.compiler-load-session-state-program-cache-store-count-value
                           state)
                         (match (sym_i64_env.sym-i64-view first-seen)
-                          [(sym_i64_env.SymI64ViewNil) false]
-                          [(sym_i64_env.SymI64ViewBind _ _ _) true])
+                          [(SymI64ViewNil) false]
+                          [(SymI64ViewBind _ _ _) true])
                         (match (load.compiler-load-session-state-surface-summary-find-module
                           state
                           (ci.intern "tc_state_dep"))
                           [(CompilerLoadSomeSurfaceSummary _) true]
                           [(CompilerLoadNoSurfaceSummary) false])))]
-                  [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
+                  [(Ok _ _ _)
                     (io.panic
                       "typecheck: generated missing import unexpectedly loaded")])]
-              [(tc_core.ResultMacroMaterializeImport.Err diag)
+              [(Err diag)
                 (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
-          [(tc_core.ResultMacroMaterializeImport.Err diag)
+          [(Err diag)
             (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
-      [(tc_core.ResultMacroMaterializeImport.Err diag)
+      [(Err diag)
         (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])))
 
 (define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
@@ -2979,10 +2974,10 @@
         source
         (sym_i64_env.sym-i64-empty)
         (tc_core.tc-global-shared-view roots)
-        ast.AstMaybeModuleName.No
+        No
         cfgs
         pools)
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+        [(Ok decls paths modules _)
           (tc_api.typecheck-compiler-request
             (tc_api.TypecheckRequest
               (tc_core.tc-global-shared-view state-a)
@@ -2996,16 +2991,14 @@
               pools
               (ci.intern-compat-state-capture-active)
               (tc_core.TcSemanticObserver 0)))]
-        [(load.ResultCompilerLoadWithPaths.Err diag)
-          (tc_core.ResultCompilerTypecheck.Err
-            (diagnostic.compiler-diagnostic-list-box-single diag))])]
+        [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [_reset-before-controlled-failure : unit
       (tc_core.compiler-typecheck-reset-file-state!)]
     [controlled-failure : tc_core.ResultCompilerTypecheck
       (match (parser.parse-ast-source-diagnostic
         "target/tc_state_controlled_failure.tl"
         "(define broken : i64 true)")
-        [(parser.ResultAstProgramDiagnostic.Ok bad-program)
+        [(Ok bad-program)
           (tc_api.typecheck-compiler-request
             (tc_api.TypecheckRequest
               (tc_core.tc-global-shared-view state-a)
@@ -3021,22 +3014,20 @@
               pools
               (ci.intern-compat-state-capture-active)
               (tc_core.TcSemanticObserver 0)))]
-        [(parser.ResultAstProgramDiagnostic.Err diag)
-          (tc_core.ResultCompilerTypecheck.Err
-            (diagnostic.compiler-diagnostic-list-box-single diag))])]
+        [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (and
         (match result
-          [(tc_core.ResultCompilerTypecheck.Ok _) true]
-          [(tc_core.ResultCompilerTypecheck.Err diag)
+          [(Ok _) true]
+          [(Err diag)
             (io.panic
               (let
                 [diag-arg
                   (diagnostic.compiler-diagnostic-list-first (deref diag))]
                 (diagnostic.compiler-diagnostic-render diag-arg)))])
         (match controlled-failure
-          [(tc_core.ResultCompilerTypecheck.Err _) true]
-          [(tc_core.ResultCompilerTypecheck.Ok _) false])
+          [(Err _) true]
+          [(Ok _) false])
         (match (load.compiler-load-session-state-surface-summary-find-module
           state-a
           (ci.intern "tc_state_dep"))
@@ -3136,7 +3127,7 @@
         (sym_i64_env.sym-i64-empty)
         (tc_core.tc-global-shared-view roots)
         cfgs)
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-cache
             (ast.ast-program decls)
             paths
@@ -3146,7 +3137,7 @@
               "typecheck-specialized-import-path-smoke"
               roots
               cfgs))
-            [(tc_core.ResultCompilerTypecheck.Err diag)
+            [(Err diag)
               (let
                 [first : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -3155,8 +3146,8 @@
                   (string.eq
                     (diagnostic.compiler-diagnostic-message first)
                     "typecheck: value definition type mismatch: expected i64, found bool")))]
-            [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
+            [(Ok _) false])]
+        [(Err _) false]))))
 
 (define (compiler-typecheck-smoke-macro-dependency-state-check
   [entry : String]
@@ -3177,7 +3168,7 @@
         (tc_core.tc-global-shared-view roots)
         cfgs
         (ast.ast-node-pool-context-shared-view (& pools)))
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+        [(Ok decls paths modules _)
           (tc_api.typecheck-compiler-request
             (tc_api.TypecheckRequest
               load-state
@@ -3191,13 +3182,11 @@
               pools
               (ci.intern-compat-state-capture-active)
               (tc_core.TcSemanticObserver 0)))]
-        [(load.ResultCompilerLoadWithPaths.Err diag)
-          (tc_core.ResultCompilerTypecheck.Err
-            (diagnostic.compiler-diagnostic-list-box-single diag))])]
+        [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (match result
-        [(tc_core.ResultCompilerTypecheck.Ok _) true]
-        [(tc_core.ResultCompilerTypecheck.Err _) false])]
+        [(Ok _) true]
+        [(Err _) false])]
     (begin
       (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache)
       ok)))
@@ -3225,7 +3214,7 @@
         (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
-        [(load.ResultCompilerLoadWithPaths.Err diag)
+        [(Err diag)
           (and
             (string.eq
               (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
@@ -3233,7 +3222,7 @@
             (string.eq
               (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
               (str_cat.str-cat "compiler-load: cannot read import " missing)))]
-        [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
+        [(Ok _ _ _ _) false]))))
 
 (define (compiler-typecheck-smoke-macro-dependency-context-ok?) : bool
   (let
@@ -3307,7 +3296,7 @@
         (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
-        [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _)
+        [(Ok _ _ _ _)
           (begin
             (tc_core.tc-macro-state-bind-source-names!
               macro-state
@@ -3318,7 +3307,7 @@
                 (tc_core.macro-collect-surface-summary-macro-names
                   macro-state
                   (load.compiler-load-surface-summaries)
-                  (tc_core.TcNameIdList.Nil))]
+                  (Nil))]
               ;; The provider stays a lazy surface summary (aliased dotted
               ;; import of a module-declared target), so its decls are not in
               ;; the loaded program; the summary keys are the session-interned
@@ -3360,7 +3349,7 @@
                     macro-state
                     provider-id
                     (ci.intern "wide"))
-                    [(tc_core.MacroMaybeDecl.No) true]
+                    [(No) true]
                     [_ false])
                   (string.eq
                     (ci.intern-str generated-provider-id)
@@ -3386,15 +3375,15 @@
                     macro-state
                     provider-id
                     hook-id)
-                    [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) true]
-                    [(tc_core.MacroMaybeDecl.No) false])
+                    [(Some _ _ _ _ _ _) true]
+                    [(No) false])
                   (match (tc_core.macro-surface-call-decl-in-module
                     (ast.ast-node-pool-active-expr-segment-bases)
                     macro-state
                     generated-provider-id
                     generated-hook-id)
-                    [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
-                    [(tc_core.MacroMaybeDecl.No) true])
+                    [(Some _ _ _ _ _ _) false]
+                    [(No) true])
                   (ctfe.ctfe-module-macro-export-id-for-state?
                     ctfe-state
                     provider-id
@@ -3412,7 +3401,7 @@
                   ;; The selected signature owns its parameter payload even after
                   ;; the loader destroys the summary arena used by the scan.
                   (match retained
-                    [(tc_core.MacroMaybeDecl.Some name module _ params ret _)
+                    [(Some name module _ params ret _)
                       (and
                         (= name hook-id)
                         (= module provider-id)
@@ -3421,17 +3410,13 @@
                           (& params)
                           0
                           (ast.ast-macro-param-fallback))
-                          [(ast.AstMacroParam.Param
-                              parameter
-                              (ast.AstType.I64)
-                              false
-                              _)
+                          [(Param parameter (I64) false _)
                             (= parameter (ci.intern "value"))]
                           [_ false])
                         (match ret
-                          [(ast.AstType.I64) true]
+                          [(I64) true]
                           [_ false]))]
-                    [(tc_core.MacroMaybeDecl.No) false])
+                    [(No) false])
                   (not
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))
@@ -3440,9 +3425,9 @@
                     macro-state
                     provider-id
                     hook-id)
-                    [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) false]
-                    [(tc_core.MacroMaybeDecl.No) true])))))]
-        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
+                    [(Some _ _ _ _ _ _) false]
+                    [(No) true])))))]
+        [(Err _) false]))))
 
 (define (compiler-typecheck-smoke-record-surface-summary?
   [path : String]
@@ -3455,7 +3440,7 @@
     (match (parser.parse-ast-source-diagnostic
       (tc_core.tc-global-shared-view path)
       source)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (match (load.compiler-load-surface-summary-build
           (tc_core.tc-global-shared-view path)
           path-id
@@ -3463,12 +3448,12 @@
           program
           fallback-id
           false)
-          [(load.ResultCompilerLoadSurfaceSummary.Ok summary)
+          [(Ok summary)
             (begin
               (load.compiler-load-record-surface-summary! summary)
               true)]
-          [(load.ResultCompilerLoadSurfaceSummary.Err _) false])]
-      [(parser.ResultAstProgramDiagnostic.Err _) false])))
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-provider-source) : String
   "(module tc.lazy.summary.macro.provider)
@@ -3489,11 +3474,11 @@
         provider-path
         provider-source)
         (match (parser.parse-ast-source-diagnostic "" entry-source)
-          [(parser.ResultAstProgramDiagnostic.Ok entry-program)
+          [(Ok entry-program)
             (match (tc_api.typecheck-compiler-program-with-paths-checked
               entry-program
               (ast.ast-decl-path-list-new))
-              [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
+              [(Ok _ _ _ _)
                 (set!
                   ok
                   (and
@@ -3505,10 +3490,9 @@
                       (>
                         (core_tests.tc-lazy-import-summary-macro-force-count)
                         0))))]
-              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _)
-                (set! ok false)]
-              [(tc_core.ResultCompilerTypecheckChecked.Err _) (set! ok false)])]
-          [(parser.ResultAstProgramDiagnostic.Err _) (set! ok false)])
+              [(Partial _ _ _ _) (set! ok false)]
+              [(Err _) (set! ok false)])]
+          [(Err _) (set! ok false)])
         (set! ok false))
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -3633,9 +3617,8 @@
   [expr-id : i64]
   [name : (& name str)]) : i64
   (match (ast.ast-node-get expr-id)
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-typecheck-smoke-expr-parsed-id inner name)]
-    [(ast.AstExpr.Var name-id)
+    [(Spanned inner _) (compiler-typecheck-smoke-expr-parsed-id inner name)]
+    [(Var name-id)
       (let
         [leading-id : i64 (ci.intern-leading-dot-id name-id)]
         (cond
@@ -3645,21 +3628,20 @@
               (string.eq (tc_core.tc-env-key-name-text leading-id) name))
             leading-id]
           [else -1]))]
-    [(ast.AstExpr.Binary _ left right)
+    [(Binary _ left right)
       (let
         [found : i64 (compiler-typecheck-smoke-expr-parsed-id left name)]
         (if (>= found 0)
           found
           (compiler-typecheck-smoke-expr-parsed-id right name)))]
-    [(ast.AstExpr.Unary _ value)
-      (compiler-typecheck-smoke-expr-parsed-id value name)]
-    [(ast.AstExpr.Call func args)
+    [(Unary _ value) (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [(Call func args)
       (let
         [found : i64 (compiler-typecheck-smoke-expr-parsed-id func name)]
         (if (>= found 0)
           found
           (compiler-typecheck-smoke-expr-list-parsed-id (& args) name)))]
-    [(ast.AstExpr.If cond then else-expr)
+    [(If cond then else-expr)
       (let
         [found : i64 (compiler-typecheck-smoke-expr-parsed-id cond name)]
         (if (>= found 0)
@@ -3669,33 +3651,30 @@
             (if (>= found 0)
               found
               (compiler-typecheck-smoke-expr-parsed-id else-expr name)))))]
-    [(ast.AstExpr.Tuple items)
+    [(Tuple items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
-    [(ast.AstExpr.Array items)
+    [(Array items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
-    [(ast.AstExpr.DynArray items)
+    [(DynArray items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
-    [(ast.AstExpr.Begin items)
+    [(Begin items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
-    [(ast.AstExpr.Unsafe items)
+    [(Unsafe items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
-    [(ast.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee _)
+        [(Match scrutinee _)
           (compiler-typecheck-smoke-expr-parsed-id scrutinee name)])]
-    [(ast.AstExpr.StructGet base _)
-      (compiler-typecheck-smoke-expr-parsed-id base name)]
-    [(ast.AstExpr.Ann value _)
-      (compiler-typecheck-smoke-expr-parsed-id value name)]
-    [(ast.AstExpr.Cast value _)
-      (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [(StructGet base _) (compiler-typecheck-smoke-expr-parsed-id base name)]
+    [(Ann value _) (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [(Cast value _) (compiler-typecheck-smoke-expr-parsed-id value name)]
     [_ -1]))
 
 (define (compiler-typecheck-smoke-program-parsed-id
   [program : ast.AstProgram]
   [name : (& name str)]) : i64
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         [index : i64 0]
@@ -3709,37 +3688,37 @@
                 (set!
                   found
                   (match decl
-                    [(ast.AstDecl.Module name-id)
+                    [(Module name-id)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
                         -1)]
-                    [(ast.AstDecl.Def decl-meta name-id _ value)
+                    [(Def decl-meta name-id _ value)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id value name))]
-                    [(ast.AstDecl.DefFn decl-meta name-id _ _ body _)
+                    [(DefFn decl-meta name-id _ _ body _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(ast.AstDecl.DefMacro decl-meta name-id _ _ body)
+                    [(DefMacro decl-meta name-id _ _ body)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(ast.AstDecl.DefStruct decl-meta name-id _ _ _)
+                    [(DefStruct decl-meta name-id _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
                         -1)]
-                    [(ast.AstDecl.DefEnum decl-meta name-id _ _)
+                    [(DefEnum decl-meta name-id _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
@@ -3797,7 +3776,7 @@
         "typecheck smoke: missing dotted lookup id: "
         "helper.value")
       true)
-      [(tc_core.ResultTcString.Ok key)
+      [(Ok key)
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
@@ -3824,10 +3803,9 @@
               "helper.value"
               name-id
               true)
-              [(tc_core.ResultTcString.Ok cached-key)
-                (string.eq cached-key key)]
-              [(tc_core.ResultTcString.Err _) false])))]
-      [(tc_core.ResultTcString.Err _) false])))
+              [(Ok cached-key) (string.eq cached-key key)]
+              [(Err _) false])))]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
   [full-ctx : tc_core.TcContext]
@@ -3843,7 +3821,7 @@
         "typecheck smoke: missing full dotted lookup id: "
         "helper.module.value")
       true)
-      [(tc_core.ResultTcString.Ok key)
+      [(Ok key)
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
@@ -3870,10 +3848,9 @@
               "helper.module.value"
               name-id
               true)
-              [(tc_core.ResultTcString.Ok cached-key)
-                (string.eq cached-key key)]
-              [(tc_core.ResultTcString.Err _) false])))]
-      [(tc_core.ResultTcString.Err _) false])))
+              [(Ok cached-key) (string.eq cached-key key)]
+              [(Err _) false])))]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-ok?) : bool
   (let
@@ -3885,11 +3862,11 @@
 (module full.entry)
 (import helper.module)
 (define (full-score) : i64 helper.module.value)")
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             program
             (ast.ast-decl-path-list-new))
-            [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx env _)
+            [(Ok _ ctx env _)
               (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
                 (tc_core.tc-context-with-module-id
                   ctx
@@ -3899,9 +3876,9 @@
                     "typecheck smoke: missing full.entry id: "
                     "full.entry"))
                 env)]
-            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-            [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
+            [(Partial _ _ _ _) false]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       ok)))
@@ -4243,11 +4220,11 @@
         [(helper.Choice.Full n) n]
         [(helper.Choice.Empty) 0]))))
 (define (main) : i64 (score (helper.Item 1)))")
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             program
             (ast.ast-decl-path-list-new))
-            [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx env _)
+            [(Ok _ ctx env _)
               (let
                 [entry-ctx : tc_core.TcContext
                   (tc_core.tc-context-with-module-id
@@ -4281,8 +4258,8 @@
                       entry-ctx
                       "typecheck smoke: missing helper.value id: "
                       "helper.value"))
-                    [(tc_core.ResultTcType.Ok _) true]
-                    [(tc_core.ResultTcType.Err _) false])
+                    [(Ok _) true]
+                    [(Err _) false])
                   (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
                     entry-ctx
                     env)
@@ -4294,8 +4271,8 @@
                       entry-ctx
                       "typecheck smoke: missing helper.get id: "
                       "helper.get"))
-                    [(tc_core.ResultTcType.Ok _) true]
-                    [(tc_core.ResultTcType.Err _) false])
+                    [(Ok _) true]
+                    [(Err _) false])
                   (match (core_tests.tc-lookup-dotted-source-visible
                     entry-ctx
                     env
@@ -4304,8 +4281,8 @@
                       entry-ctx
                       "typecheck smoke: missing helper.Choice.Full id: "
                       "helper.Choice.Full"))
-                    [(tc_core.ResultTcType.Ok _) true]
-                    [(tc_core.ResultTcType.Err _) false])
+                    [(Ok _) true]
+                    [(Err _) false])
                   (match (tc_core.tc-dotted-type-name-lookup-key-from-id
                     entry-ctx
                     "helper.Item"
@@ -4313,15 +4290,14 @@
                       entry-ctx
                       "typecheck smoke: missing helper.Item id: "
                       "helper.Item"))
-                    [(tc_core.ResultTcString.Ok key)
-                      (string.eq key "helper.module/Item")]
-                    [(tc_core.ResultTcString.Err _) false])
+                    [(Ok key) (string.eq key "helper.module/Item")]
+                    [(Err _) false])
                   (match (tc_core.tc-module-local-env-id
                     entry-ctx
                     env
                     "entry.module"
                     (tc_core.tc-context-module-id entry-ctx))
-                    [(tc_core.ResultTcEnv.Ok local-env)
+                    [(Ok local-env)
                       (and
                         (not
                           (tc_core.tc-name-bound-id?
@@ -4338,12 +4314,12 @@
                             entry-ctx
                             "typecheck smoke: missing helper.value id: "
                             "helper.value"))
-                          [(tc_core.ResultTcType.Ok _) true]
-                          [(tc_core.ResultTcType.Err _) false]))]
-                    [(tc_core.ResultTcEnv.Err _) false])))]
-            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-            [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
+                          [(Ok _) true]
+                          [(Err _) false]))]
+                    [(Err _) false])))]
+            [(Partial _ _ _ _) false]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       ok)))
@@ -4355,11 +4331,11 @@
         "(module main)
 (import stdlib.vector as vec)
 (define (main) : i64 0)")
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             (ast.ast-program decls)
             paths)
-            [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ env _)
+            [(Ok _ _ env _)
               (and
                 (> (core_tests.tc-lazy-import-summary-backed-stub-count) 0)
                 (not
@@ -4367,9 +4343,9 @@
                     env
                     (ci.intern
                       (compiler_symbols.compiler-symbol-module-key "vec" "Vec")))))]
-            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-            [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-        [(load.ResultCompilerLoadWithPaths.Err _) false])]
+            [(Partial _ _ _ _) false]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4389,7 +4365,7 @@
         (match (load_tests.compiler-load-file-with-paths
           "target/tc_lazy_stdlib_result/result.tl"
           (sym_i64_env.sym-i64-empty))
-          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          [(Ok decls paths _ _)
             (let
               [skip-count : i64
                 (load_tests.compiler-load-lazy-import-skip-count)]
@@ -4400,10 +4376,9 @@
               (match (tc_api.typecheck-compiler-program-with-paths-checked
                 (ast.ast-program decls)
                 paths)
-                [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
-                  (and (= skip-count 0) result-materialized)]
-                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-                [(tc_core.ResultCompilerTypecheckChecked.Err diag)
+                [(Ok _ _ _ _) (and (= skip-count 0) result-materialized)]
+                [(Partial _ _ _ _) false]
+                [(Err diag)
                   (let
                     [first : diagnostic.CompilerDiagnostic
                       (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -4412,7 +4387,7 @@
                     (begin
                       (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       false))]))]
-          [(load.ResultCompilerLoadWithPaths.Err _) false]))]
+          [(Err _) false]))]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4437,13 +4412,13 @@
         (match (load_tests.compiler-load-file-with-paths
           "target/tc_unused_result_local_type/main.tl"
           (sym_i64_env.sym-i64-empty))
-          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          [(Ok decls paths _ _)
             (match (tc_api.typecheck-compiler-program-with-paths-checked
               (ast.ast-program decls)
               paths)
-              [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
-              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-              [(tc_core.ResultCompilerTypecheckChecked.Err diag)
+              [(Ok _ _ _ _) true]
+              [(Partial _ _ _ _) false]
+              [(Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
                     (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -4452,7 +4427,7 @@
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
-          [(load.ResultCompilerLoadWithPaths.Err _) false]))]
+          [(Err _) false]))]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4480,13 +4455,13 @@
         (match (load_tests.compiler-load-file-with-paths
           "target/tc_result_enum_then_helper/main.tl"
           (sym_i64_env.sym-i64-empty))
-          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          [(Ok decls paths _ _)
             (match (tc_api.typecheck-compiler-program-with-paths-checked
               (ast.ast-program decls)
               paths)
-              [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
-              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-              [(tc_core.ResultCompilerTypecheckChecked.Err diag)
+              [(Ok _ _ _ _) true]
+              [(Partial _ _ _ _) false]
+              [(Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
                     (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -4495,7 +4470,7 @@
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
-          [(load.ResultCompilerLoadWithPaths.Err _) false]))]
+          [(Err _) false]))]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4509,14 +4484,14 @@
 (import stdlib.str_cat)
 (define (main) : String
   (str_cat.str-cat \"a\" \"b\" \"c\" \"d\" \"e\"))")
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             (ast.ast-program decls)
             paths)
-            [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
-            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-            [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-        [(load.ResultCompilerLoadWithPaths.Err _) false])]
+            [(Ok _ _ _ _) true]
+            [(Partial _ _ _ _) false]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4550,14 +4525,14 @@
     \"f\"))
 
 (define (main) : i64 0)")
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        [(Ok decls paths _ _)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             (ast.ast-program decls)
             paths)
-            [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
-            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-            [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-        [(load.ResultCompilerLoadWithPaths.Err _) false])]
+            [(Ok _ _ _ _) true]
+            [(Partial _ _ _ _) false]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (load.compiler-load-surface-summaries-reset!)
@@ -4568,7 +4543,7 @@
   [path : String]
   [message : String]) : bool
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
         (ast.ast-decl-root-path-cons
@@ -4576,7 +4551,7 @@
           (ast.ast-decl-root-path-cons
             (tc_core.tc-global-shared-view path)
             (ast.ast-decl-path-list-new))))
-        [(tc_core.ResultCompilerTypecheck.Err diag)
+        [(Err diag)
           (let
             [value : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-list-first (deref diag))]
@@ -4585,8 +4560,8 @@
               (string.eq (diagnostic.compiler-diagnostic-path value) path)
               (= (diagnostic.compiler-diagnostic-line value) 4)
               (= (diagnostic.compiler-diagnostic-col value) 3)))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-scoped-marker-queries-ok?) : bool
   (let
@@ -4601,25 +4576,22 @@
     [arena-id : i64 (ci.intern "arena")]
     [atomic-id : i64 (ci.intern "atomic")]
     [tail-value-env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-default-env)
-        runtime-tail-id
-        (ast.AstType.String))]
+      (tc_core.tc-bind-id (tc_core.tc-default-env) runtime-tail-id (String))]
     [tail-cleanup-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (core_tests.tc-bind-cleanup-owner tail-value-env tail-resource-id)
         tail-resource-id
-        (ast.AstType.String))]
+        (String))]
     [tail-arena-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (tc_core.tc-bind-ordinary-arena-owner tail-cleanup-env tail-arena-id)
         tail-arena-id
-        (ast.AstType.I64))]
+        (I64))]
     [tail-atomic-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (tc_core.tc-bind-atomic-arena-owner tail-arena-env tail-atomic-id)
         tail-atomic-id
-        (ast.AstType.I64))]
+        (I64))]
     [base-env : tc_core.TcTypeEnv
       (tc_core.tc-push-region
         (tc_core.tc-env-with-cache tail-atomic-env)
@@ -4631,17 +4603,17 @@
       (tc_core.tc-bind-id
         (core_tests.tc-bind-cleanup-owner base-env resource-id)
         resource-id
-        (ast.AstType.String))]
+        (String))]
     [arena-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (tc_core.tc-bind-ordinary-arena-owner resource-env arena-id)
         arena-id
-        (ast.AstType.I64))]
+        (I64))]
     [runtime-env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id
         (tc_core.tc-bind-atomic-arena-owner arena-env atomic-id)
         atomic-id
-        (ast.AstType.I64))]
+        (I64))]
     [scope-save : tc_core.TcTypeEnvScopedRuntimeSave
       (tc_core.tc-type-env-scoped-runtime-save runtime-env)]
     [before-shadow : bool
@@ -4690,7 +4662,7 @@
             arena-id
             resource-id)))]
     [shadow-env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id runtime-env resource-id (ast.AstType.Bool))]
+      (tc_core.tc-bind-id runtime-env resource-id (Bool))]
     [shadowed : bool
       (and
         (not (tc_core.tc-cleanup-owner-active-id? shadow-env resource-id))
@@ -4720,10 +4692,7 @@
   (let
     [cache-owner-id : i64 (ci.intern "cache-owner")]
     [outer-env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-default-env)
-        cache-owner-id
-        (ast.AstType.I64))]
+      (tc_core.tc-bind-id (tc_core.tc-default-env) cache-owner-id (I64))]
     [inactive-save : tc_core.TcTypeEnvScopedRuntimeSave
       (tc_core.tc-type-env-scoped-runtime-enter!
         (tc_core.tc-type-env-scoped-carrier-from-env outer-env))]
@@ -4858,25 +4827,25 @@
         (match (cis.intern-structural-session-macro-global-record-for-raw
           session-a
           context-id)
-          [(cis.InternMaybeMacroGlobalRecord.Some record)
+          [(Some record)
             (and
               (= record.definition-module-id module-id)
               (= record.source-name-id source-id)
               (match record.role
-                [(cis.InternMacroGlobalRole.Context) true]
+                [(Context) true]
                 [_ false]))]
           [_ false])
         (match (cis.intern-structural-session-macro-local-record-for-raw
           session-a
           deep-local-id)
-          [(cis.InternMaybeMacroLocalRecord.Some record)
+          [(Some record)
             (and
               (= record.lexical-depth 1024)
               (= record.source-name-id source-id)
               (match (cis.intern-structural-session-macro-definition-record
                 session-a
                 record.macro-definition)
-                [(cis.InternMaybeMacroDefinitionRecord.Some definition)
+                [(Some definition)
                   (and
                     (= definition.definition-module-id root-module-id)
                     (= definition.macro-name-id source-id))]
@@ -4967,9 +4936,9 @@
   (let
     [ok : bool
       (match (parser.parse-ast-source-diagnostic "" source)
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           (match (tc_core.macro-expand-program program)
-            [(tc_core.ResultMacroExpand.Ok _ _)
+            [(Ok _ _)
               (if expected-change
                 (tc_core.macro-expand-program-structurally-changed?
                   (tc_core.tc-job-state-macro-state
@@ -4978,8 +4947,8 @@
                   (tc_core.macro-expand-program-structurally-changed?
                     (tc_core.tc-job-state-macro-state
                       (tc_core.tc-serial-job-state)))))]
-            [(tc_core.ResultMacroExpand.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       ok)))
@@ -4987,16 +4956,16 @@
 (define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
   [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) false]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) false]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(ast.AstDecl.DefStruct _ name _ _ _)
+          [(DefStruct _ name _ _ _)
             (if (string.eq (ci.intern-str name) "Generated")
               (match (parser.compiler-parse-semantic-origin-run (& decls) 0)
-                [(parser.CompilerParseMaybeSemanticOriginRun.Some _) false]
-                [(parser.CompilerParseMaybeSemanticOriginRun.None) true])
+                [(Some _) false]
+                [(None) true])
               (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
                 rest))]
           [_
@@ -5012,15 +4981,15 @@
         "(defmacro (emit) : Decls
   `(begin (defstruct Generated (field Source.Type))))
 (emit)")
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           (match (tc_core.macro-expand-program program)
-            [(tc_core.ResultMacroExpand.Ok expanded _)
+            [(Ok expanded _)
               (match expanded
-                [(ast.AstProgram.Program decls-box)
+                [(Program decls-box)
                   (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
                     (ast.ast-decl-list-box-shared-view decls-box))])]
-            [(tc_core.ResultMacroExpand.Err _) false])]
-        [(parser.ResultAstProgramDiagnostic.Err _) false])]
+            [(Err _) false])]
+        [(Err _) false])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       (reader.sp-node-pool-truncate! mark)
@@ -5192,33 +5161,33 @@
         [a-region : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
+            (Region large-owner large-token))]
         [a-region-again : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
+            (Region large-owner large-token))]
         ;; The initial map has 512 slots. Changing this component by 512
         ;; deliberately preserves the arena record's first bucket.
         [a-region-hash-collision : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.Region (+ large-owner 512) large-token))]
+            (Region (+ large-owner 512) large-token))]
         [a-current-marker : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.CurrentRegionMarker large-owner))]
+            (CurrentRegionMarker large-owner))]
         [a-owner-marker : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.TokenOwnerMarker large-token))]
+            (TokenOwnerMarker large-token))]
         [a-region-marker : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-a
-            (cis.InternArenaPhaseRecord.TokenRegionMarker large-token))]
+            (TokenRegionMarker large-token))]
         [b-region : cis.InternArenaPhaseIdentity
           (cis.intern-structural-session-arena-phase-identity
             session-b
-            (cis.InternArenaPhaseRecord.Region large-owner large-token))]
+            (Region large-owner large-token))]
         (begin
           (set! stale-arena-raw (cis.intern-arena-phase-identity-raw a-region))
           (set!
@@ -5299,40 +5268,33 @@
               (match (cis.intern-structural-session-arena-phase-record
                 session-a
                 a-region)
-                [(cis.InternMaybeArenaPhaseRecord.Some
-                    (cis.InternArenaPhaseRecord.Region owner token))
+                [(Some (Region owner token))
                   (and (= owner large-owner) (= token large-token))]
                 [_ false])
               (match (cis.intern-structural-session-arena-phase-record
                 session-a
                 a-current-marker)
-                [(cis.InternMaybeArenaPhaseRecord.Some
-                    (cis.InternArenaPhaseRecord.CurrentRegionMarker owner))
-                  (= owner large-owner)]
+                [(Some (CurrentRegionMarker owner)) (= owner large-owner)]
                 [_ false])
               (match (cis.intern-structural-session-arena-phase-record
                 session-a
                 a-owner-marker)
-                [(cis.InternMaybeArenaPhaseRecord.Some
-                    (cis.InternArenaPhaseRecord.TokenOwnerMarker token))
-                  (= token large-token)]
+                [(Some (TokenOwnerMarker token)) (= token large-token)]
                 [_ false])
               (match (cis.intern-structural-session-arena-phase-record
                 session-a
                 a-region-marker)
-                [(cis.InternMaybeArenaPhaseRecord.Some
-                    (cis.InternArenaPhaseRecord.TokenRegionMarker token))
-                  (= token large-token)]
+                [(Some (TokenRegionMarker token)) (= token large-token)]
                 [_ false])
               (match (cis.intern-structural-session-arena-phase-record
                 session-b
                 a-region)
-                [(cis.InternMaybeArenaPhaseRecord.No) true]
+                [(No) true]
                 [_ false])
               (match (cis.intern-structural-session-arena-phase-record-for-raw
                 session-a
                 (cis.intern-structural-key-raw a-pair))
-                [(cis.InternMaybeArenaPhaseRecord.No) true]
+                [(No) true]
                 [_ false])))
           (let
             [index : i64 0]
@@ -5348,7 +5310,7 @@
                 [phase : cis.InternArenaPhaseIdentity
                   (cis.intern-structural-session-arena-phase-identity
                     session-a
-                    (cis.InternArenaPhaseRecord.Region
+                    (Region
                       (+ (ci.intern-capacity) 4000 index)
                       (+ (ci.intern-capacity) 5000 index)))]
                 (begin
@@ -5362,8 +5324,7 @@
                   (match (cis.intern-structural-session-arena-phase-record
                     session-a
                     phase)
-                    [(cis.InternMaybeArenaPhaseRecord.Some
-                        (cis.InternArenaPhaseRecord.Region owner token))
+                    [(Some (Region owner token))
                       (unless
                         (and
                           (= owner (+ (ci.intern-capacity) 4000 index))
@@ -5419,7 +5380,7 @@
             (match (cis.intern-structural-session-arena-phase-record-for-raw
               next-session-a
               stale-arena-raw)
-              [(cis.InternMaybeArenaPhaseRecord.No) true]
+              [(No) true]
               [_ false])
             (= session-a.address next-session-a.address))]
         (begin
@@ -5446,8 +5407,8 @@
 (define (checked-after-bad) : i64 42)")]
     [failed-once : bool
       (match failed
-        [(tc_core.ResultCompilerTypecheck.Ok _) false]
-        [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+        [(Ok _) false]
+        [(Err diagnostics)
           (= (diagnostic.compiler-diagnostic-list-count (deref diagnostics)) 1)])]
     [reused : tc_core.ResultCompilerTypecheck
       (tc_api.typecheck-compiler-source
@@ -5455,8 +5416,8 @@
     (and
       failed-once
       (match reused
-        [(tc_core.ResultCompilerTypecheck.Ok _) true]
-        [(tc_core.ResultCompilerTypecheck.Err _) false]))))
+        [(Ok _) true]
+        [(Err _) false]))))
 
 (cfg
   compile-profile

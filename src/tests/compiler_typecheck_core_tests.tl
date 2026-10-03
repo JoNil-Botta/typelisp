@@ -1225,10 +1225,11 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [from : i64 (ci.intern "type-reader/from")]
     [to : i64 (ci.intern "type-reader/to")]
+    [region : i64 (ci.intern "type-reader/region")]
     [scalar-a : i64 (ast.ast-node-pool-context-type-push a (I64))]
     [scalar-b : i64 (ast.ast-node-pool-context-type-push b (Bool))]
     [region-a : i64
-      (ast.ast-node-pool-context-type-push a (Region from scalar-a))]
+      (ast.ast-node-pool-context-type-push a (Region region scalar-a))]
     [region-b : i64 (ast.ast-node-pool-context-type-push b (F64))]
     [var-a : i64
       (ast.ast-node-pool-context-type-push a (Var (ci.intern "Expr")))]
@@ -1237,6 +1238,8 @@
     [root-b : i64 (ast.ast-node-pool-context-type-push b (Array region-b 9))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases a)]
     [ctx : tc_core.TcContext (macro-prepare-test-ctx a)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-default-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [params : ast.AstLifetimeList
       (ast.ast-lifetime-cons from (ast.ast-lifetime-list-new))]
     [index : i64 0]
@@ -1259,12 +1262,11 @@
       [substitution? : bool
         (match (tc_core.tc-infer-lifetime-subst-from-type
           ctx
-          (tc_core.tc-default-env-with-job-state
-            (tc_core.tc-context-job-state ctx))
+          env
           params
           Nil
           (Ref from region-a)
-          (Ref to scalar-a)
+          (Ref to region-a)
           TcVarianceCovariant)
           [(Ok subst)
             (match (tc_core.tc-lifetime-subst-lookup subst from)
@@ -1282,23 +1284,26 @@
                 [(Expr) true]
                 [_ false]))]
           [_ false])]
-      [ok : bool
-        (and
-          (= scalar-a scalar-b)
-          (= region-a region-b)
-          (= var-a var-b)
-          (= root-a root-b)
-          (= bases (ast.ast-node-pool-context-type-segment-bases a))
-          equal?
-          different?
-          (string.eq rendered "(Array i64 3)")
-          (string.eq grown "(Array i64 1120)")
-          substitution?
-          resolution?
-          (= b-before (ast.ast-node-pool-context-type-len b))
-          (ast.ast-node-pool-context-type-installed? b))]
+      [decoy-unchanged? : bool
+        (= b-before (ast.ast-node-pool-context-type-len b))]
+      [decoy-installed? : bool (ast.ast-node-pool-context-type-installed? b)]
       (ast.ast-node-pool-context-install! installed)
-      (test.assert-true ok "type readers retain their owner under a decoy pool"))))
+      (test.assert-true
+        (and (= scalar-a scalar-b) (= region-a region-b)
+          (= var-a var-b) (= root-a root-b)) "colliding type ids")
+      (test.assert-true
+        (= bases (ast.ast-node-pool-context-type-segment-bases a))
+        "the owning type table survives growth")
+      (test.assert-true equal? "type equality reads the owning pool")
+      (test.assert-true different? "type equality preserves array lengths")
+      (test.assert-true (string.eq rendered "(Array i64 3)")
+        "rendering reads the owning scalar")
+      (test.assert-true (string.eq grown "(Array i64 1120)")
+        "rendering reads a grown segment")
+      (test.assert-true substitution? "lifetime substitution reads the owning pool")
+      (test.assert-true resolution? "resolution writes children to the owning pool")
+      (test.assert-true decoy-unchanged? "resolution leaves the decoy pool unchanged")
+      (test.assert-true decoy-installed? "type readers leave the decoy installed"))))
 
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
@@ -2216,7 +2221,7 @@
         (ast.ast-param-id (ci.intern "elided") (I64) false))
       (set! index (+ index 1)))
     (match (tc_core.tc-elide-function-signature
-      (ast.ast-node-pool-context-type-segment-bases pools)
+      pools
       params
       (I64))
       [(Ok signature)

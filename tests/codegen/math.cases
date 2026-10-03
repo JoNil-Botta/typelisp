@@ -127,7 +127,10 @@ source {{work}}/pow_codegen.tl
 contains tl_test_math_pow_f64
 contains tl_test_math_pow_f32
 contains math_pow_f64_table_entry
-contains math_powf_table_entry
+# math-powf-table-entry returns a two-word register group, which the multiblock
+# inliner takes since #8555: its musl powf_data.c rows appear inline as
+# constants (interval 1's invc bits) instead of behind a helper symbol.
+contains $4608715057657776189
 not-match global_init.*math_pow|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?powf?([[:space:]]|$)
 not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|f2xm1|fscale|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]

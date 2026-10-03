@@ -77357,7 +77357,7 @@
       (& branches)
       branches.len
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed0)
+      [(Ok borrowed0)
         (match (tc-borrow-check-add-composite-arg-leaf
           ctx
           expr-bases
@@ -77368,7 +77368,7 @@
           binding-id
           (ast.ast-expr-segment-bases-get expr-bases then-box)
           result-lifetimes)
-          [(TcBorrowCheckResult.Ok borrowed1)
+          [(Ok borrowed1)
             (tc-borrow-check-add-composite-arg-leaf
               ctx
               expr-bases
@@ -77379,8 +77379,8 @@
               binding-id
               (ast.ast-expr-segment-bases-get expr-bases else-box)
               result-lifetimes)]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+          [(Err message) (Err message)])]
+      [(Err message) (Err message)])))
 
 (define (tc-borrow-check-add-composite-last-arg
   [ctx : TcContext]
@@ -77393,7 +77393,7 @@
   [exprs : ast.AstExprList]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (<= exprs.len 0)
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (match (tc-borrow-check-add-composite-arg-leaf
       (tc-global-shared-view ctx)
       expr-bases
@@ -77406,7 +77406,7 @@
         expr-bases
         (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (tc-borrow-check-add-composite-sequence-assignments-at
           ctx
           expr-bases
@@ -77418,7 +77418,7 @@
           (& exprs)
           0
           result-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+      [(Err message) (Err message)])))
 
 ;; A preceding assignment can feed the final form. Follow its right side only
 ;; when the assigned local can reach a later assignment or the final value.
@@ -77434,7 +77434,7 @@
   [index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (>= index (- exprs.len 1))
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect
       (tc-global-shared-view ctx)
       expr-bases
@@ -77449,7 +77449,7 @@
       exprs
       (+ index 1)
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (tc-borrow-check-add-composite-sequence-assignments-at
           ctx
           expr-bases
@@ -77461,7 +77461,7 @@
           exprs
           (+ index 1)
           result-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+      [(Err message) (Err message)])))
 
 (define (tc-borrow-check-add-composite-assignment-effects-in-list
   [ctx : TcContext]
@@ -77477,7 +77477,7 @@
   [later-index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (>= index items.len)
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (let
       [next : ast.AstExprList
         (tc-borrow-check-composite-later-list
@@ -77500,7 +77500,7 @@
         (& next)
         0
         (tc-global-shared-view result-lifetimes))
-        [(TcBorrowCheckResult.Ok borrowed1)
+        [(Ok borrowed1)
           (tc-borrow-check-add-composite-assignment-effects-in-list
             ctx
             expr-bases
@@ -77514,7 +77514,7 @@
             later
             later-index
             result-lifetimes)]
-        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
+        [(Err message) (Err message)]))))
 
 ;; Every item runs before the same later forms.
 (define (tc-borrow-check-add-composite-assignment-effects-in-each
@@ -77531,7 +77531,7 @@
   [later-index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (>= index items.len)
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect
       (tc-global-shared-view ctx)
       expr-bases
@@ -77546,7 +77546,7 @@
       later
       later-index
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (tc-borrow-check-add-composite-assignment-effects-in-each
           ctx
           expr-bases
@@ -77560,7 +77560,7 @@
           later
           later-index
           result-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+      [(Err message) (Err message)])))
 
 ;; Effects of `expr` when `ahead` from `start` runs next, then `later`.
 (define (tc-borrow-check-add-composite-assignment-effect-before
@@ -77601,7 +77601,7 @@
         (& next)
         0
         result-lifetimes))
-    (TcBorrowCheckResult.Ok borrowed)))
+    (Ok borrowed)))
 
 (define (tc-borrow-check-add-composite-assignment-effect
   [ctx : TcContext]
@@ -77618,7 +77618,7 @@
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
     (tc-global-shared-view expr))
-    [(ast.AstExpr.Set target value-box)
+    [(Set target value-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -77634,7 +77634,7 @@
           later
           later-index
           (tc-global-shared-view result-lifetimes))
-          [(TcBorrowCheckResult.Ok borrowed1)
+          [(Ok borrowed1)
             (if (tc-borrow-check-composite-value-uses-name-in-sequence-from?
               expr-bases
               later
@@ -77651,9 +77651,9 @@
                 (tc-lookup-visible-id ctx env target)
                 value
                 result-lifetimes)
-              (TcBorrowCheckResult.Ok borrowed1))]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
-    [(ast.AstExpr.If cond-box then-box else-box)
+              (Ok borrowed1))]
+          [(Err message) (Err message)]))]
+    [(If cond-box then-box else-box)
       (let
         [branches : ast.AstExprList
           (tc-borrow-check-composite-pair-list then-box else-box)]
@@ -77672,7 +77672,7 @@
           later
           later-index
           (tc-global-shared-view result-lifetimes))
-          [(TcBorrowCheckResult.Ok borrowed1)
+          [(Ok borrowed1)
             (tc-borrow-check-add-composite-assignment-effects-in-each
               ctx
               expr-bases
@@ -77686,15 +77686,15 @@
               later
               later-index
               result-lifetimes)]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+          [(Err message) (Err message)]))]
     ;; Binding a let or a match arm types its initializers, so skip forms
     ;; that cannot store anything.
-    [(ast.AstExpr.Let let-box)
+    [(Let let-box)
       (if (tc-borrow-check-composite-has-store?
         expr-bases
         (tc-global-shared-view expr))
         (match (__tl-box-place let-box)
-          [(ast.AstLet.Let bindings body-box)
+          [(Let bindings body-box)
             (tc-borrow-check-add-composite-let-assignment-effect-at
               ctx
               expr-bases
@@ -77709,8 +77709,8 @@
               later
               later-index
               result-lifetimes)])
-        (TcBorrowCheckResult.Ok borrowed))]
-    [(ast.AstExpr.Begin items)
+        (Ok borrowed))]
+    [(Begin items)
       (tc-borrow-check-add-composite-assignment-effects-in-list
         ctx
         expr-bases
@@ -77724,7 +77724,7 @@
         later
         later-index
         result-lifetimes)]
-    [(ast.AstExpr.Unsafe items)
+    [(Unsafe items)
       (tc-borrow-check-add-composite-assignment-effects-in-list
         ctx
         expr-bases
@@ -77738,12 +77738,12 @@
         later
         later-index
         result-lifetimes)]
-    [(ast.AstExpr.Match match-box)
+    [(Match match-box)
       (if (tc-borrow-check-composite-has-store?
         expr-bases
         (tc-global-shared-view expr))
         (match (ast.ast-match-box-shared-view match-box)
-          [(ast.AstMatch.Match scrut-box arms)
+          [(Match scrut-box arms)
             (tc-borrow-check-add-composite-match-effect
               ctx
               expr-bases
@@ -77757,7 +77757,7 @@
               later
               later-index
               result-lifetimes)])
-        (TcBorrowCheckResult.Ok borrowed))]
+        (Ok borrowed))]
     [_
       (let
         [unspanned : ast.AstExpr
@@ -77789,9 +77789,8 @@
               (tc-global-shared-view env)
               unspanned
               result-lifetimes)
-              (TcBorrowCheckResult.Err
-                (tc-borrow-check-untracked-store-message))
-              (TcBorrowCheckResult.Ok borrowed))]
+              (Err (tc-borrow-check-untracked-store-message))
+              (Ok borrowed))]
           [else
             (tc-borrow-check-add-composite-children-effects
               ctx
@@ -77845,7 +77844,7 @@
         (& next)
         0
         result-lifetimes))
-    (TcBorrowCheckResult.Ok borrowed)))
+    (Ok borrowed)))
 
 ;; A place write can reach a later read through its root, a projection, or a
 ;; reference, so its value always counts as fed onward.
@@ -77878,7 +77877,7 @@
       later
       later-index
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (tc-borrow-check-add-composite-stored-value
           (tc-global-shared-view ctx)
           expr-bases
@@ -77890,25 +77889,25 @@
           (tc-expr ctx env (ast.ast-expr-segment-bases-get expr-bases place-id))
           (ast.ast-expr-segment-bases-get expr-bases value-id)
           result-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+      [(Err message) (Err message)])))
 
 ;; The written place and the stored value of a place write, or -1.
 (define (tc-borrow-check-composite-store-place-id [expr : ast.AstExpr]) : i64
   (match expr
-    [(ast.AstExpr.Replace place-box _) place-box]
-    [(ast.AstExpr.StructSet receiver-box _ _) receiver-box]
-    [(ast.AstExpr.ArraySet array-box _ _) array-box]
-    [(ast.AstExpr.BoxSet inner-box _) inner-box]
-    [(ast.AstExpr.ArrayPush array-box _) array-box]
+    [(Replace place-box _) place-box]
+    [(StructSet receiver-box _ _) receiver-box]
+    [(ArraySet array-box _ _) array-box]
+    [(BoxSet inner-box _) inner-box]
+    [(ArrayPush array-box _) array-box]
     [_ -1]))
 
 (define (tc-borrow-check-composite-store-value-id [expr : ast.AstExpr]) : i64
   (match expr
-    [(ast.AstExpr.Replace _ value-box) value-box]
-    [(ast.AstExpr.StructSet _ _ value-box) value-box]
-    [(ast.AstExpr.ArraySet _ _ value-box) value-box]
-    [(ast.AstExpr.BoxSet _ value-box) value-box]
-    [(ast.AstExpr.ArrayPush _ value-box) value-box]
+    [(Replace _ value-box) value-box]
+    [(StructSet _ _ value-box) value-box]
+    [(ArraySet _ _ value-box) value-box]
+    [(BoxSet _ value-box) value-box]
+    [(ArrayPush _ value-box) value-box]
     [_ -1]))
 
 (define (tc-borrow-check-add-composite-stored-value
@@ -77926,7 +77925,7 @@
     (tc-global-shared-view ctx)
     (tc-global-shared-view env)
     (tc-global-shared-view value))
-    [(ResultTcType.Ok _)
+    [(Ok _)
       (tc-borrow-check-add-composite-arg-leaf
         ctx
         expr-bases
@@ -77937,42 +77936,42 @@
         binding-id
         value
         result-lifetimes)]
-    [(ResultTcType.Err _)
+    [(Err _)
       (if (tc-borrow-check-composite-destination-holds?
         ctx
         destination-ty
         result-lifetimes)
-        (TcBorrowCheckResult.Err (tc-borrow-check-untracked-store-message))
-        (TcBorrowCheckResult.Ok borrowed))]))
+        (Err (tc-borrow-check-untracked-store-message))
+        (Ok borrowed))]))
 
 (define (tc-borrow-check-composite-destination-holds?
   [ctx : TcContext]
   [destination-ty : ResultTcType]
   [result-lifetimes : TcNameIdList]) : bool
   (match destination-ty
-    [(ResultTcType.Ok ty)
+    [(Ok ty)
       (tc-name-id-list-overlaps?
         (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))
         result-lifetimes)]
-    [(ResultTcType.Err _) true]))
+    [(Err _) true]))
 
 (define (tc-borrow-check-untracked-store-message) : String
   (tc-kind-message
-    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    (BorrowViolation)
     "typecheck: a call argument stores a value the call result may borrow under bindings the borrow checker does not track (lambda, foreach, for over a fixed array, or with-resource); store it outside the argument"))
 
 ;; Forms that bind names the effect walker does not model.
 (define (tc-borrow-check-composite-binding-form? [expr : ast.AstExpr]) : bool
   (match expr
-    [(ast.AstExpr.Lambda _) true]
-    [(ast.AstExpr.Foreach _) true]
-    [(ast.AstExpr.ForeachActive _ _) true]
-    [(ast.AstExpr.ForOwnedState _) true]
-    [(ast.AstExpr.ForOwnedStep _) true]
-    [(ast.AstExpr.WithResource _) true]
-    [(ast.AstExpr.SpmdReduce _) true]
-    [(ast.AstExpr.SpmdScan _) true]
-    [(ast.AstExpr.SpmdCompact _) true]
+    [(Lambda _) true]
+    [(Foreach _) true]
+    [(ForeachActive _ _) true]
+    [(ForOwnedState _) true]
+    [(ForOwnedStep _) true]
+    [(WithResource _) true]
+    [(SpmdReduce _) true]
+    [(SpmdScan _) true]
+    [(SpmdCompact _) true]
     [_ false]))
 
 ;; Inside an untracked binding form, a store is safe only when its
@@ -77989,17 +77988,17 @@
       (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
     [here : bool
       (match (tc-global-shared-view unspanned)
-        [(ast.AstExpr.Set target _)
+        [(Set target _)
           (match (tc-lookup-visible-id
             (tc-global-shared-view ctx)
             (tc-global-shared-view env)
             target)
-            [(ResultTcType.Ok ty)
+            [(Ok ty)
               (tc-borrow-check-composite-destination-holds?
                 (tc-global-shared-view ctx)
-                (ResultTcType.Ok ty)
+                (Ok ty)
                 (tc-global-shared-view result-lifetimes))]
-            [(ResultTcType.Err _) false])]
+            [(Err _) false])]
         [_
           (let
             [place-id : i64
@@ -78072,7 +78071,7 @@
       later
       later-index
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (match (tc-borrow-check-add-composite-match-arm-effects-at
           (tc-global-shared-view ctx)
           expr-bases
@@ -78087,7 +78086,7 @@
           later
           later-index
           (tc-global-shared-view result-lifetimes))
-          [(TcBorrowCheckResult.Ok borrowed2)
+          [(Ok borrowed2)
             (if (tc-borrow-check-composite-match-arms-feed-pattern?
               expr-bases
               arms
@@ -78104,9 +78103,9 @@
                 scrut-ty
                 scrut
                 result-lifetimes)
-              (TcBorrowCheckResult.Ok borrowed2))]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+              (Ok borrowed2))]
+          [(Err message) (Err message)])]
+      [(Err message) (Err message)])))
 
 (define (tc-borrow-check-add-composite-match-arm-effects-at
   [ctx : TcContext]
@@ -78123,9 +78122,9 @@
   [later-index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (>= index arms.len)
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body-box)
+      [(Arm pattern body-box)
         (match (tc-borrow-check-add-composite-assignment-effect
           (tc-global-shared-view ctx)
           expr-bases
@@ -78142,7 +78141,7 @@
           later
           later-index
           (tc-global-shared-view result-lifetimes))
-          [(TcBorrowCheckResult.Ok borrowed1)
+          [(Ok borrowed1)
             (tc-borrow-check-add-composite-match-arm-effects-at
               ctx
               expr-bases
@@ -78157,7 +78156,7 @@
               later
               later-index
               result-lifetimes)]
-          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])])))
+          [(Err message) (Err message)])])))
 
 ;; Without a typed scrutinee the arm keeps the outer environment, so a store
 ;; of a pattern-bound value cannot be typed and fails as untracked.
@@ -78167,11 +78166,11 @@
   [scrut-ty : ResultTcType]
   [pattern : ast.AstPattern]) : TcTypeEnv
   (match scrut-ty
-    [(ResultTcType.Ok ty)
+    [(Ok ty)
       (match (tc-bind-match-pattern ctx (tc-global-shared-view env) ty pattern)
-        [(ResultTcEnv.Ok arm-env) arm-env]
-        [(ResultTcEnv.Err _) env])]
-    [(ResultTcType.Err _) env]))
+        [(Ok arm-env) arm-env]
+        [(Err _) env])]
+    [(Err _) env]))
 
 ;; Children evaluate left to right, so a store in one child can feed only a
 ;; later child's value.
@@ -78187,7 +78186,7 @@
   [index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (if (>= (+ index 1) children.len)
-    (TcBorrowCheckResult.Ok borrowed)
+    (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect-before
       (tc-global-shared-view ctx)
       expr-bases
@@ -78205,7 +78204,7 @@
       children
       children.len
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed1)
+      [(Ok borrowed1)
         (tc-borrow-check-add-composite-sibling-effects-at
           ctx
           expr-bases
@@ -78217,7 +78216,7 @@
           children
           (+ index 1)
           result-lifetimes)]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+      [(Err message) (Err message)])))
 
 (define (tc-borrow-check-add-composite-sibling-effects
   [ctx : TcContext]
@@ -78247,7 +78246,7 @@
         (& children)
         0
         result-lifetimes))
-    (TcBorrowCheckResult.Ok borrowed)))
+    (Ok borrowed)))
 
 (define (tc-borrow-check-add-composite-let-assignment-effect-at
   [ctx : TcContext]
@@ -78280,7 +78279,7 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name maybe-ty init-box)
+      [(Binding name maybe-ty init-box)
         (let
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
@@ -78299,7 +78298,7 @@
             later
             later-index
             (tc-global-shared-view result-lifetimes))
-            [(TcBorrowCheckResult.Ok borrowed0)
+            [(Ok borrowed0)
               (match (if (tc-borrow-check-composite-let-effect-binding-feeds?
                 expr-bases
                 bindings
@@ -78319,7 +78318,7 @@
                   (tc-global-shared-view init)
                   (tc-global-shared-view result-lifetimes))
                 (TcBorrowCheckResult.Ok borrowed0))
-                [(TcBorrowCheckResult.Ok borrowed1)
+                [(Ok borrowed1)
                   (let
                     [binding-ty : ast.AstType
                       (tc-move-binding-type-id
@@ -78347,10 +78346,8 @@
                       later
                       later-index
                       result-lifetimes))]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResult.Err message)])]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)]))])))
+                [(Err message) (Err message)])]
+            [(Err message) (Err message)]))])))
 
 ;; An initializer runs before the later initializers and the body, all of
 ;; which may still bind its stored names, then before `later`.
@@ -78394,7 +78391,7 @@
         (& next)
         0
         result-lifetimes))
-    (TcBorrowCheckResult.Ok borrowed)))
+    (Ok borrowed)))
 
 ;; The value-position form: the body is the value the let returns.
 (define (tc-borrow-check-add-composite-let-init-value-effects
@@ -78435,7 +78432,7 @@
         (& next)
         0
         result-lifetimes))
-    (TcBorrowCheckResult.Ok borrowed)))
+    (Ok borrowed)))
 
 ;; A binding contributes to a composite argument only through a child whose
 ;; value reaches the argument. In particular, using a reference in a branch
@@ -78544,8 +78541,7 @@
             arms
             index
             (ast.ast-match-arm-fallback))
-            [(ast.AstMatchArm.Arm _ body-box)
-              (ast.ast-expr-list-push (&mut out) body-box)])
+            [(Arm _ body-box) (ast.ast-expr-list-push (&mut out) body-box)])
           (set! index (+ index 1))))
       out)))
 
@@ -78564,7 +78560,7 @@
             bindings
             next
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding _ _ init-box)
+            [(Binding _ _ init-box)
               (ast.ast-expr-list-push (&mut out) init-box)])
           (set! next (+ next 1))))
       (ast.ast-expr-list-push (&mut out) body-box)
@@ -78572,7 +78568,7 @@
 
 (define (tc-borrow-check-composite-store? [expr : ast.AstExpr]) : bool
   (match (tc-global-shared-view expr)
-    [(ast.AstExpr.Set _ _) true]
+    [(Set _ _) true]
     [_ (>= (tc-borrow-check-composite-store-place-id expr) 0)]))
 
 (define (tc-borrow-check-composite-has-store?
@@ -78608,8 +78604,8 @@
     [unspanned : ast.AstExpr
       (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
     (match (tc-global-shared-view unspanned)
-      [(ast.AstExpr.Break) true]
-      [(ast.AstExpr.Continue) true]
+      [(Break) true]
+      [(Continue) true]
       [_
         (let
           [children : ast.AstExprList (ast.ast-expr-child-ids unspanned)]
@@ -78657,14 +78653,14 @@
   [expr : ast.AstExpr]
   [name : i64]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(ast.AstExpr.Set target value-box)
+    [(Set target value-box)
       (or
         (= target name)
         (tc-borrow-check-composite-assigns-name?
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases value-box)
           name))]
-    [(ast.AstExpr.If cond-box then-box else-box)
+    [(If cond-box then-box else-box)
       (or
         (tc-borrow-check-composite-assigns-name?
           expr-bases
@@ -78679,19 +78675,19 @@
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases else-box)
             name)))]
-    [(ast.AstExpr.Begin items)
+    [(Begin items)
       (tc-borrow-check-composite-assigns-name-in-list?
         expr-bases
         (& items)
         name)]
-    [(ast.AstExpr.Unsafe items)
+    [(Unsafe items)
       (tc-borrow-check-composite-assigns-name-in-list?
         expr-bases
         (& items)
         name)]
-    [(ast.AstExpr.Let let-box)
+    [(Let let-box)
       (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
+        [(Let bindings body-box)
           (tc-borrow-check-composite-let-assigns-name?
             expr-bases
             (& bindings)
@@ -78740,7 +78736,7 @@
             bindings
             index
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding binding-name _ init-box)
+            [(Binding binding-name _ init-box)
               (if (tc-borrow-check-composite-assigns-name?
                 expr-bases
                 (ast.ast-expr-segment-bases-get expr-bases init-box)
@@ -78920,7 +78916,7 @@
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
     (tc-global-shared-view expr))
-    [(ast.AstExpr.Set target value-box)
+    [(Set target value-box)
       (let
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -78941,7 +78937,7 @@
             later
             later-index
             name)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
+    [(If cond-box then-box else-box)
       (let
         [branches : ast.AstExprList
           (tc-borrow-check-composite-pair-list then-box else-box)]
@@ -78961,9 +78957,9 @@
             later
             later-index
             name)))]
-    [(ast.AstExpr.Let let-box)
+    [(Let let-box)
       (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
+        [(Let bindings body-box)
           (tc-borrow-check-composite-effect-uses-name-in-let?
             expr-bases
             (& bindings)
@@ -78971,7 +78967,7 @@
             later
             later-index
             name)])]
-    [(ast.AstExpr.Begin items)
+    [(Begin items)
       (tc-borrow-check-composite-effect-uses-name-in-list?
         expr-bases
         (& items)
@@ -78979,7 +78975,7 @@
         later
         later-index
         name)]
-    [(ast.AstExpr.Unsafe items)
+    [(Unsafe items)
       (tc-borrow-check-composite-effect-uses-name-in-list?
         expr-bases
         (& items)
@@ -78987,9 +78983,9 @@
         later
         later-index
         name)]
-    [(ast.AstExpr.Match match-box)
+    [(Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
-        [(ast.AstMatch.Match scrut-box arms)
+        [(Match scrut-box arms)
           (let
             [scrut : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases scrut-box)]
@@ -79095,10 +79091,10 @@
             arms
             index
             (ast.ast-match-arm-fallback))
-            [(ast.AstMatchArm.Arm pattern body-box)
+            [(Arm pattern body-box)
               (let
                 [names : TcNameIdList
-                  (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]
+                  (tc-pattern-add-bound-name-ids pattern Nil)]
                 [body : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases body-box)]
                 (while (and (not feeds) (not (tc-name-id-list-empty? names)))
@@ -79140,7 +79136,7 @@
             bindings
             next
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding later-name _ later-init-box)
+            [(Binding later-name _ later-init-box)
               (let
                 [later-init : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases later-init-box)]
@@ -79196,7 +79192,7 @@
             bindings
             index
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding binding-name _ init-box)
+            [(Binding binding-name _ init-box)
               (let
                 [init : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases init-box)]
@@ -79296,8 +79292,8 @@
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
     (tc-global-shared-view expr))
-    [(ast.AstExpr.Var var-name) (= var-name name)]
-    [(ast.AstExpr.If cond-box then-box else-box)
+    [(Var var-name) (= var-name name)]
+    [(If cond-box then-box else-box)
       (or
         (tc-borrow-check-composite-value-uses-name?
           expr-bases
@@ -79319,7 +79315,7 @@
             (& branches)
             branches.len
             name)))]
-    [(ast.AstExpr.Begin exprs)
+    [(Begin exprs)
       (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
     [(Unsafe exprs)
       (tc-borrow-check-composite-value-uses-name-in-last? expr-bases exprs name)]
@@ -79464,7 +79460,7 @@
             bindings
             later
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding later-name _ later-init-box)
+            [(Binding later-name _ later-init-box)
               (let
                 [later-init : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases later-init-box)]
@@ -79509,7 +79505,7 @@
             bindings
             index
             (ast.ast-let-binding-fallback))
-            [(ast.AstLetBinding.Binding binding-name _ init-box)
+            [(Binding binding-name _ init-box)
               (let
                 [init : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases init-box)]
@@ -79581,7 +79577,7 @@
             index
             (tc-global-shared-view init)
             (tc-global-shared-view result-lifetimes))
-            [(TcBorrowCheckResult.Ok borrowed0)
+            [(Ok borrowed0)
               (match (if (tc-borrow-check-composite-let-binding-feeds?
                 expr-bases
                 bindings
@@ -79599,7 +79595,7 @@
                   (tc-global-shared-view init)
                   result-lifetimes)
                 (TcBorrowCheckResult.Ok borrowed0))
-                [(TcBorrowCheckResult.Ok borrowed1)
+                [(Ok borrowed1)
                   (let
                     [binding-ty : ast.AstType
                       (tc-move-binding-type-id
@@ -79625,10 +79621,8 @@
                       body-box
                       (+ index 1)
                       result-lifetimes))]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResult.Err message)])]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)]))])))
+                [(Err message) (Err message)])]
+            [(Err message) (Err message)]))])))
 
 (define (tc-borrow-check-composite-match-arm-uses-pattern?
   [ctx : TcContext]
@@ -79759,9 +79753,9 @@
       (& bodies)
       bodies.len
       (tc-global-shared-view result-lifetimes))
-      [(TcBorrowCheckResult.Ok borrowed0)
+      [(Ok borrowed0)
         (match (tc-expr ctx env (tc-global-shared-view scrut))
-          [(ResultTcType.Ok scrut-ty)
+          [(Ok scrut-ty)
             (match (if (tc-borrow-check-composite-match-arm-uses-pattern?
               ctx
               expr-bases
@@ -79779,7 +79773,7 @@
                 scrut
                 result-lifetimes)
               (TcBorrowCheckResult.Ok borrowed0))
-              [(TcBorrowCheckResult.Ok borrowed1)
+              [(Ok borrowed1)
                 (tc-borrow-check-add-composite-match-arms-at
                   ctx
                   expr-bases
@@ -79792,10 +79786,9 @@
                   (& arms)
                   0
                   result-lifetimes)]
-              [(TcBorrowCheckResult.Err message)
-                (TcBorrowCheckResult.Err message)])]
-          [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed0)])]
-      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+              [(Err message) (Err message)])]
+          [(Err _) (Ok borrowed0)])]
+      [(Err message) (Err message)])))
 
 ;; Elements evaluate in order, so a store in one element can feed a later
 ;; element before every element keeps its own loans.
@@ -79820,7 +79813,7 @@
     exprs
     0
     (tc-global-shared-view result-lifetimes))
-    [(TcBorrowCheckResult.Ok borrowed1)
+    [(Ok borrowed1)
       (tc-borrow-check-add-composite-all-args-at
         ctx
         expr-bases
@@ -79832,7 +79825,7 @@
         exprs
         0
         result-lifetimes)]
-    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+    [(Err message) (Err message)]))
 
 ;; Every element of a constructed aggregate can reach the value a later
 ;; projection returns, so each keeps the loans its own type stores.
@@ -79888,7 +79881,7 @@
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
     (tc-global-shared-view arg))
-    [(ast.AstExpr.If cond-box then-box else-box)
+    [(If cond-box then-box else-box)
       (tc-borrow-check-add-composite-if-arg
         ctx
         expr-bases
@@ -80040,7 +80033,7 @@
                 (& items)
                 0
                 (tc-global-shared-view result-lifetimes))
-                [(TcBorrowCheckResult.Ok borrowed1)
+                [(Ok borrowed1)
                   (tc-borrow-check-add-composite-arg-leaf
                     ctx
                     expr-bases
@@ -80053,8 +80046,7 @@
                       expr-bases
                       (ast.ast-expr-list-get (& items) index 0))
                     result-lifetimes)]
-                [(TcBorrowCheckResult.Err message)
-                  (TcBorrowCheckResult.Err message)])
+                [(Err message) (Err message)])
               (tc-borrow-check-add-composite-arg-leaf
                 ctx
                 expr-bases
@@ -80107,7 +80099,7 @@
             binding-id
             base
             (tc-global-shared-view result-lifetimes))
-            [(TcBorrowCheckResult.Ok borrowed1)
+            [(Ok borrowed1)
               (tc-borrow-check-add-composite-arg-leaf
                 ctx
                 expr-bases
@@ -80118,8 +80110,7 @@
                 binding-id
                 (ast.ast-expr-segment-bases-get expr-bases selected)
                 result-lifetimes)]
-            [(TcBorrowCheckResult.Err message)
-              (TcBorrowCheckResult.Err message)])
+            [(Err message) (Err message)])
           (tc-borrow-check-add-composite-arg-leaf
             ctx
             expr-bases
@@ -80130,7 +80121,7 @@
             binding-id
             base
             result-lifetimes)))]
-    [(ast.AstExpr.BoxTake inner-box)
+    [(BoxTake inner-box)
       (tc-borrow-check-add-composite-arg-leaf
         ctx
         expr-bases
@@ -80176,7 +80167,7 @@
         binding-id
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
         result-lifetimes)]
-    [(ast.AstExpr.Tuple exprs)
+    [(Tuple exprs)
       (tc-borrow-check-add-composite-elements
         ctx
         expr-bases
@@ -80187,7 +80178,7 @@
         binding-id
         (& exprs)
         result-lifetimes)]
-    [(ast.AstExpr.Array exprs)
+    [(Array exprs)
       (tc-borrow-check-add-composite-elements
         ctx
         expr-bases
@@ -80198,7 +80189,7 @@
         binding-id
         (& exprs)
         result-lifetimes)]
-    [(ast.AstExpr.DynArray exprs)
+    [(DynArray exprs)
       (tc-borrow-check-add-composite-elements
         ctx
         expr-bases
@@ -80400,7 +80391,7 @@
     (& args)
     0
     (tc-global-shared-view result-lifetimes))
-    [(TcBorrowCheckResult.Ok borrowed1)
+    [(Ok borrowed1)
       (tc-borrow-check-add-bound-returned-call-borrows-at
         ctx
         expr-bases
@@ -80411,7 +80402,7 @@
         (& args)
         0
         result-lifetimes)]
-    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+    [(Err message) (Err message)]))
 
 (define (tc-borrow-check-after-bind-known-type-id
   [ctx : TcContext]
@@ -83641,7 +83632,7 @@
     (& args)
     0
     (tc-global-shared-view result-lifetimes))
-    [(TcBorrowCheckResult.Ok borrowed1)
+    [(Ok borrowed1)
       (tc-borrow-check-add-returned-call-borrows-at
         ctx
         expr-bases
@@ -83651,7 +83642,7 @@
         (& args)
         0
         result-lifetimes)]
-    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+    [(Err message) (Err message)]))
 
 (define (tc-borrow-check-add-returned-call-borrows-at
   [ctx : TcContext]

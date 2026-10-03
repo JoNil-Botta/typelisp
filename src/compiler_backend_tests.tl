@@ -241,19 +241,20 @@
       (owned_view.compiler-owned-reference-shared-view program)]
     [spans : ir.CompilerSourceSpans
       (owned_view.compiler-owned-reference-shared-view spans)]
-    (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-      backend-state
-      (ast.ast-node-pool-reader-type-segment-bases)
-      program
-      target
-      (Scalar)
-      spans
-      emit-entry
-      false
-      false
-      (profile_state.compiler-profile-state-new))
-      [(Ok buf) (Ok (text_buf.render buf))]
-      [(Err message) (Err message)])))
+    [buf
+      (try
+        (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          backend-state
+          (ast.ast-node-pool-reader-type-segment-bases)
+          program
+          target
+          (Scalar)
+          spans
+          emit-entry
+          false
+          false
+          (profile_state.compiler-profile-state-new)))]
+    (Ok (text_buf.render buf))))
 
 ;; String-returning shim for the outgoing stack-argument emitter: it appends
 ;; into a caller-owned buffer, so its Ok payload is not the emitted text.
@@ -272,18 +273,19 @@
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (match (backend.compiler-backend-emit-scalar-stack-call-arg-into
-      (&mut body)
-      type-segment-bases
-      target
-      assignments
-      value
-      arg-ty
-      is-float
-      stack-idx
-      backend-state)
-      [(Ok _) (Ok (backend.compiler-backend-asm-buf-finish (& body)))]
-      [(Err diagnostic) (Err diagnostic)])))
+    [_
+      (try
+        (backend.compiler-backend-emit-scalar-stack-call-arg-into
+          (&mut body)
+          type-segment-bases
+          target
+          assignments
+          value
+          arg-ty
+          is-float
+          stack-idx
+          backend-state))]
+    (Ok (backend.compiler-backend-asm-buf-finish (& body)))))
 
 ;; Fixture-side dense prepend. Each result owns fresh backing storage, so
 ;; independently built fixtures never share mutable instruction slots.
@@ -315,14 +317,15 @@
     [body : backend.CompilerBackendAsmBuf
       (backend.compiler-backend-asm-buf-with-capacity
         backend.compiler-backend-asm-seq-capacity)]
-    (match (backend.compiler-backend-emit-instrs
-      ctx
-      fallthrough
-      instrs
-      0
-      (&mut body))
-      [(Ok _) (Ok (backend.compiler-backend-asm-buf-finish (& body)))]
-      [(Err diagnostic) (Err diagnostic)])))
+    [_
+      (try
+        (backend.compiler-backend-emit-instrs
+          ctx
+          fallthrough
+          instrs
+          0
+          (&mut body)))]
+    (Ok (backend.compiler-backend-asm-buf-finish (& body)))))
 
 ;; String-returning shim for the load-var emitter. The production emitter now
 ;; appends straight into a body buffer (`...-into`); its store sibling

@@ -18,15 +18,13 @@
       (unsafe
         (string-data (& source)))]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref slots i)
-            (unsafe
-              (ptr-read (ptr-offset src i))))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (ptr-read (ptr-offset src i))))
+      (set! i (+ i 1)))
+    out))
 
 (define (zero-i64-vec [n : i64]) : I64Buffer
   (I64Buffer (i64vec.Vec (__tl_make-array i64 n) n)))
@@ -73,40 +71,31 @@
     [k : i64 0]
     [stop : i64 (array-ref succ-start (+ g 1))]
     [slot : i64 (array-ref succ-start g)]
-    (begin
-      (while (< k words)
-        (begin
-          (set! (array-ref scratch k) 0)
-          (set! k (+ k 1))))
-      (while (< slot stop)
-        (let
-          [succ : i64 (array-ref succ-items slot)]
-          [succ-base : i64 (+ word-base (* (- succ block-base) words))]
-          [i : i64 0]
-          (begin
-            (while (< i words)
-              (begin
-                (set!
-                  (array-ref scratch i)
-                  (bit-or
-                    (array-ref scratch i)
-                    (array-ref live-in (+ succ-base i))))
-                (set! i (+ i 1))))
-            (set! slot (+ slot 1)))))
-      (when
-        with-phi-out
-        (let
-          [self-base : i64 (+ word-base (* (- g block-base) words))]
-          [i : i64 0]
-          (while (< i words)
-            (begin
-              (set!
-                (array-ref scratch i)
-                (bit-or
-                  (array-ref scratch i)
-                  (array-ref phi-out (+ self-base i))))
-              (set! i (+ i 1))))))
-      unit)))
+    (while (< k words)
+      (set! (array-ref scratch k) 0)
+      (set! k (+ k 1)))
+    (while (< slot stop)
+      (let
+        [succ : i64 (array-ref succ-items slot)]
+        [succ-base : i64 (+ word-base (* (- succ block-base) words))]
+        [i : i64 0]
+        (while (< i words)
+          (set!
+            (array-ref scratch i)
+            (bit-or (array-ref scratch i) (array-ref live-in (+ succ-base i))))
+          (set! i (+ i 1)))
+        (set! slot (+ slot 1))))
+    (when
+      with-phi-out
+      (let
+        [self-base : i64 (+ word-base (* (- g block-base) words))]
+        [i : i64 0]
+        (while (< i words)
+          (set!
+            (array-ref scratch i)
+            (bit-or (array-ref scratch i) (array-ref phi-out (+ self-base i))))
+          (set! i (+ i 1)))))
+    unit))
 
 (define (recompute!
   [g : i64]
@@ -127,63 +116,52 @@
     [self-base : i64 (+ word-base (* (- g block-base) words))]
     [i : i64 0]
     [changed : bool false]
-    (begin
-      (live-out-into!
-        scratch-out-buffer
-        words
-        g
-        succ-start
-        succ-items
-        live-in-buffer
-        word-base
-        block-base
-        phi-out
-        with-phi-out)
-      (let
-        [uses (i64vec.slots-mut (&mut uses-buffer.values))]
-        [defs (i64vec.slots-mut (&mut defs-buffer.values))]
-        [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
-        [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
-        [scratch-out (i64vec.slots-mut (&mut scratch-out-buffer.values))]
-        [scratch-in (i64vec.slots-mut (&mut scratch-in-buffer.values))]
-        (begin
-          (while (< i words)
-            (begin
-              (set!
-                (array-ref scratch-in i)
-                (bit-or
-                  (array-ref uses (+ self-base i))
-                  (bit-and
-                    (array-ref scratch-out i)
-                    (bit-xor (array-ref defs (+ self-base i)) -1))))
-              (set! i (+ i 1))))
-          (set! i 0)
-          (while (and (< i words) (not changed))
-            (begin
-              (when
-                (or
-                  (!=
-                    (array-ref scratch-in i)
-                    (array-ref live-in (+ self-base i)))
-                  (!=
-                    (array-ref scratch-out i)
-                    (array-ref live-out (+ self-base i))))
-                (set! changed true))
-              (set! i (+ i 1))))
-          (when
-            changed
-            (let
-              [k : i64 0]
-              (while (< k words)
-                (begin
-                  (set!
-                    (array-ref live-in (+ self-base k))
-                    (array-ref scratch-in k))
-                  (set!
-                    (array-ref live-out (+ self-base k))
-                    (array-ref scratch-out k))
-                  (set! k (+ k 1))))))
-          changed)))))
+    (live-out-into!
+      scratch-out-buffer
+      words
+      g
+      succ-start
+      succ-items
+      live-in-buffer
+      word-base
+      block-base
+      phi-out
+      with-phi-out)
+    (let
+      [uses (i64vec.slots-mut (&mut uses-buffer.values))]
+      [defs (i64vec.slots-mut (&mut defs-buffer.values))]
+      [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
+      [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
+      [scratch-out (i64vec.slots-mut (&mut scratch-out-buffer.values))]
+      [scratch-in (i64vec.slots-mut (&mut scratch-in-buffer.values))]
+      (while (< i words)
+        (set!
+          (array-ref scratch-in i)
+          (bit-or
+            (array-ref uses (+ self-base i))
+            (bit-and
+              (array-ref scratch-out i)
+              (bit-xor (array-ref defs (+ self-base i)) -1))))
+        (set! i (+ i 1)))
+      (set! i 0)
+      (while (and (< i words) (not changed))
+        (when
+          (or
+            (!= (array-ref scratch-in i) (array-ref live-in (+ self-base i)))
+            (!= (array-ref scratch-out i) (array-ref live-out (+ self-base i))))
+          (set! changed true))
+        (set! i (+ i 1)))
+      (when
+        changed
+        (let
+          [k : i64 0]
+          (while (< k words)
+            (set! (array-ref live-in (+ self-base k)) (array-ref scratch-in k))
+            (set!
+              (array-ref live-out (+ self-base k))
+              (array-ref scratch-out k))
+            (set! k (+ k 1)))))
+      changed)))
 
 (define (fixpoint!
   [block-base : i64]
@@ -206,71 +184,62 @@
   (let
     [b : i64 0]
     [done : bool false]
-    (begin
-      (let
-        [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
-        [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
-        [pending (i64vec.slots-mut (&mut pending-buffer.values))]
-        (begin
-          (while (< b blocks)
-            (let
-              [self-base : i64 (+ word-base (* b words))]
-              [k : i64 0]
-              (begin
-                (set! (array-ref pending (+ block-base b)) 1)
-                (while (< k words)
-                  (begin
-                    (set! (array-ref live-in (+ self-base k)) 0)
-                    (set! (array-ref live-out (+ self-base k)) 0)
-                    (set! k (+ k 1))))
-                (set! b (+ b 1)))))
-          0))
-      (while (not done)
+    (let
+      [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
+      [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
+      [pending (i64vec.slots-mut (&mut pending-buffer.values))]
+      (while (< b blocks)
         (let
-          [index : i64
+          [self-base : i64 (+ word-base (* b words))]
+          [k : i64 0]
+          (set! (array-ref pending (+ block-base b)) 1)
+          (while (< k words)
+            (set! (array-ref live-in (+ self-base k)) 0)
+            (set! (array-ref live-out (+ self-base k)) 0)
+            (set! k (+ k 1)))
+          (set! b (+ b 1))))
+      0)
+    (while (not done)
+      (let
+        [index : i64
+          (let
+            [pending (i64vec.slots-mut (&mut pending-buffer.values))]
+            [found : i64 -1]
+            [i : i64 (- blocks 1)]
+            (while (and (>= i 0) (< found 0))
+              (when
+                (= (array-ref pending (+ block-base i)) 1)
+                (set! (array-ref pending (+ block-base i)) 0)
+                (set! found i))
+              (set! i (- i 1)))
+            found)]
+        (if (< index 0)
+          (set! done true)
+          (when
+            (recompute!
+              (+ block-base index)
+              words
+              word-base
+              block-base
+              succ-start
+              succ-items
+              uses
+              defs
+              phi-out
+              live-in-buffer
+              live-out-buffer
+              scratch-out
+              scratch-in
+              with-phi-out)
             (let
+              [pred-start (i64vec.slots-mut (&mut pred-start-buffer.values))]
+              [pred-items (i64vec.slots-mut (&mut pred-items-buffer.values))]
               [pending (i64vec.slots-mut (&mut pending-buffer.values))]
-              [found : i64 -1]
-              [i : i64 (- blocks 1)]
-              (begin
-                (while (and (>= i 0) (< found 0))
-                  (begin
-                    (when
-                      (= (array-ref pending (+ block-base i)) 1)
-                      (begin
-                        (set! (array-ref pending (+ block-base i)) 0)
-                        (set! found i)))
-                    (set! i (- i 1))))
-                found))]
-          (if (< index 0)
-            (set! done true)
-            (when
-              (recompute!
-                (+ block-base index)
-                words
-                word-base
-                block-base
-                succ-start
-                succ-items
-                uses
-                defs
-                phi-out
-                live-in-buffer
-                live-out-buffer
-                scratch-out
-                scratch-in
-                with-phi-out)
-              (let
-                [pred-start (i64vec.slots-mut (&mut pred-start-buffer.values))]
-                [pred-items (i64vec.slots-mut (&mut pred-items-buffer.values))]
-                [pending (i64vec.slots-mut (&mut pending-buffer.values))]
-                [g : i64 (+ block-base index)]
-                [slot : i64 (array-ref pred-start g)]
-                [stop : i64 (array-ref pred-start (+ g 1))]
-                (begin
-                  (while (< slot stop)
-                    (begin
-                      (set! (array-ref pending (array-ref pred-items slot)) 1)
-                      (set! slot (+ slot 1))))
-                  unit))))))
-      unit)))
+              [g : i64 (+ block-base index)]
+              [slot : i64 (array-ref pred-start g)]
+              [stop : i64 (array-ref pred-start (+ g 1))]
+              (while (< slot stop)
+                (set! (array-ref pending (array-ref pred-items slot)) 1)
+                (set! slot (+ slot 1)))
+              unit)))))
+    unit))

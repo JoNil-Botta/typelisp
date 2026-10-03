@@ -23,28 +23,24 @@
     [rounds : i64 (+ hashmap-insert-base-rounds (io.arg-count))]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
+    (while (< round rounds)
+      (let
+        [m : map_i64_i64.Map (map_i64_i64.with-capacity 2048)]
+        [i : i64 0]
+        (while (< i hashmap-insert-size)
           (let
-            [m : map_i64_i64.Map (map_i64_i64.with-capacity 2048)]
-            [i : i64 0]
-            (begin
-              (while (< i hashmap-insert-size)
-                (begin
-                  (let
-                    [key : i64 (hashmap-insert-key round i)]
-                    (map_i64_i64.insert! m key (hashmap-insert-value key)))
-                  (set! i (+ i 1))))
-              (let
-                [sample : i64 (% round hashmap-insert-size)]
-                [sample-key : i64 (hashmap-insert-key round sample)]
-                (set!
-                  acc
-                  (+
-                    acc
-                    (+
-                      (map_i64_i64.len (& m))
-                      (map_i64_i64.get-value-or (& m) sample-key -1)))))))
-          (set! round (+ round 1))))
-      (bit-and acc 255))))
+            [key : i64 (hashmap-insert-key round i)]
+            (map_i64_i64.insert! m key (hashmap-insert-value key)))
+          (set! i (+ i 1)))
+        (let
+          [sample : i64 (% round hashmap-insert-size)]
+          [sample-key : i64 (hashmap-insert-key round sample)]
+          (set!
+            acc
+            (+
+              acc
+              (+
+                (map_i64_i64.len (& m))
+                (map_i64_i64.get-value-or (& m) sample-key -1))))))
+      (set! round (+ round 1)))
+    (bit-and acc 255)))

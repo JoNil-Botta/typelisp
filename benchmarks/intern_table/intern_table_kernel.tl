@@ -87,15 +87,13 @@
       (unsafe
         (string-data (& source)))]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref slots i)
-            (unsafe
-              (ptr-read (ptr-offset src i))))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (ptr-read (ptr-offset src i))))
+      (set! i (+ i 1)))
+    out))
 
 (define (it-zero-i64-vec [n : i64]) : i64vec.Vec
   (i64vec.Vec (__tl_make-array i64 n) n))
@@ -127,14 +125,10 @@
     [slots (u8vec.slots src)]
     [word : i64 0]
     [b : i64 7]
-    (begin
-      (while (>= b 0)
-        (begin
-          (set!
-            word
-            (bit-or (shl word 8) (cast (array-ref slots (+ at b)) : i64)))
-          (set! b (- b 1))))
-      word)))
+    (while (>= b 0)
+      (set! word (bit-or (shl word 8) (cast (array-ref slots (+ at b)) : i64)))
+      (set! b (- b 1)))
+    word))
 
 (define (it-hash-words [src : (& src u8vec.Vec)] [start : i64] [len : i64]) : i64
   (let
@@ -143,21 +137,14 @@
     [i : i64 0]
     [words : i64 (- len 7)]
     [tail : i64 0]
-    (begin
-      (while (< i words)
-        (begin
-          (set!
-            h
-            (* (bit-xor h (it-load-word src (+ start i))) it-hash-multiplier))
-          (set! i (+ i 8))))
-      (while (< i len)
-        (begin
-          (set!
-            tail
-            (+ (* tail 256) (cast (array-ref slots (+ start i)) : i64)))
-          (set! i (+ i 1))))
-      (set! h (* (bit-xor h tail) it-hash-multiplier))
-      (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))
+    (while (< i words)
+      (set! h (* (bit-xor h (it-load-word src (+ start i))) it-hash-multiplier))
+      (set! i (+ i 8)))
+    (while (< i len)
+      (set! tail (+ (* tail 256) (cast (array-ref slots (+ start i)) : i64)))
+      (set! i (+ i 1)))
+    (set! h (* (bit-xor h tail) it-hash-multiplier))
+    (bit-xor h (cast (shr (cast h : u64) 29) : i64))))
 
 ;: Mask `hash` into `[0, capacity)`; capacity is a power of two.
 (define (it-bucket [hash : i64] [capacity : i64]) : i64
@@ -177,16 +164,14 @@
       [text-slots (u8vec.slots text)]
       [i : i64 0]
       [ok : bool true]
-      (begin
-        (while (and (< i len) ok)
-          (begin
-            (if (=
-              (array-ref name-slots (+ name-start i))
-              (array-ref text-slots (+ start i)))
-              unit
-              (set! ok false))
-            (set! i (+ i 1))))
-        ok))
+      (while (and (< i len) ok)
+        (if (=
+          (array-ref name-slots (+ name-start i))
+          (array-ref text-slots (+ start i)))
+          unit
+          (set! ok false))
+        (set! i (+ i 1)))
+      ok)
     false))
 
 ;; `intern-map-insert-existing-from`: probe forward from `cursor` for the first
@@ -204,17 +189,16 @@
     [slot : i64 cursor]
     [probes : i64 0]
     [placed : bool false]
-    (begin
-      (while (and (< probes capacity) (not placed))
-        (if (= (array-ref id-slots slot) 0)
-          (begin
-            (set! (array-ref id-slots slot) (+ id 1))
-            (set! (array-ref hash-slots slot) hash)
-            (set! placed true))
-          (begin
-            (set! slot (it-bucket (+ slot 1) capacity))
-            (set! probes (+ probes 1)))))
-      unit)))
+    (while (and (< probes capacity) (not placed))
+      (if (= (array-ref id-slots slot) 0)
+        (begin
+          (set! (array-ref id-slots slot) (+ id 1))
+          (set! (array-ref hash-slots slot) hash)
+          (set! placed true))
+        (begin
+          (set! slot (it-bucket (+ slot 1) capacity))
+          (set! probes (+ probes 1)))))
+    unit))
 
 ;; `intern-map-rebuild-prefix` + `intern-map-insert-existing!`: after doubling,
 ;; every live id is rehashed from its pool name and reinserted.
@@ -229,30 +213,24 @@
     [capacity : i64 (* (it-i64-ref state it-state-capacity) 2)]
     [count : i64 (it-i64-ref state it-state-count)]
     [i : i64 0]
-    (begin
-      (while (< i capacity)
-        (begin
-          (it-i64-set! map-ids i 0)
-          (set! i (+ i 1))))
-      (it-i64-set! state it-state-capacity capacity)
-      (set! i 0)
-      (while (< i count)
-        (let
-          [hash : i64
-            (it-hash-words
-              names
-              (it-i64-ref name-off i)
-              (it-i64-ref name-len i))]
-          (begin
-            (it-map-insert-from
-              map-ids
-              map-hashes
-              i
-              hash
-              (it-bucket hash capacity)
-              capacity)
-            (set! i (+ i 1)))))
-      unit)))
+    (while (< i capacity)
+      (it-i64-set! map-ids i 0)
+      (set! i (+ i 1)))
+    (it-i64-set! state it-state-capacity capacity)
+    (set! i 0)
+    (while (< i count)
+      (let
+        [hash : i64
+          (it-hash-words names (it-i64-ref name-off i) (it-i64-ref name-len i))]
+        (it-map-insert-from
+          map-ids
+          map-hashes
+          i
+          hash
+          (it-bucket hash capacity)
+          capacity)
+        (set! i (+ i 1))))
+    unit))
 
 ;; `intern-slice`, the path `intern-source-slice` calls once per lexed symbol.
 (define (it-intern-slice
@@ -272,65 +250,53 @@
     [steps : i64 0]
     [out : i64 -1]
     [done : bool false]
-    (begin
-      (while (if done
-        false
-        (< steps capacity))
-        (let
-          [stored : i64 (it-i64-ref map-ids cursor)]
-          (if (= stored 0)
-            (let
-              [count : i64 (it-i64-ref state it-state-count)]
-              [name-cursor : i64 (it-i64-ref state it-state-name-cursor)]
-              [i : i64 0]
+    (while (if done
+      false
+      (< steps capacity))
+      (let
+        [stored : i64 (it-i64-ref map-ids cursor)]
+        (if (= stored 0)
+          (let
+            [count : i64 (it-i64-ref state it-state-count)]
+            [name-cursor : i64 (it-i64-ref state it-state-name-cursor)]
+            [i : i64 0]
+            ;; Miss: copy the slice into the persistent name pool, take the
+            ;; next source id, then place it. Growth happens first so the
+            ;; placement probe already runs at the final capacity.
+            (while (< i len)
+              (it-u8-set! names (+ name-cursor i) (it-u8-ref text (+ start i)))
+              (set! i (+ i 1)))
+            (it-i64-set! name-off count name-cursor)
+            (it-i64-set! name-len count len)
+            (it-i64-set! state it-state-name-cursor (+ name-cursor len))
+            (if (>= (* (+ count 1) 4) (* capacity 3))
               (begin
-                ;; Miss: copy the slice into the persistent name pool, take the
-                ;; next source id, then place it. Growth happens first so the
-                ;; placement probe already runs at the final capacity.
-                (while (< i len)
-                  (begin
-                    (it-u8-set!
-                      names
-                      (+ name-cursor i)
-                      (it-u8-ref text (+ start i)))
-                    (set! i (+ i 1))))
-                (it-i64-set! name-off count name-cursor)
-                (it-i64-set! name-len count len)
-                (it-i64-set! state it-state-name-cursor (+ name-cursor len))
-                (if (>= (* (+ count 1) 4) (* capacity 3))
-                  (begin
-                    (it-grow! map-ids map-hashes names name-off name-len state)
-                    (set! capacity (it-i64-ref state it-state-capacity))
-                    (set! cursor (it-bucket hash capacity)))
-                  unit)
-                (it-i64-set! state it-state-count (+ count 1))
-                (it-map-insert-from
-                  map-ids
-                  map-hashes
-                  count
-                  hash
-                  cursor
-                  capacity)
-                (set! out count)
-                (set! done true)))
-            (let
-              [source-id : i64 (- stored 1)]
-              (if (and
-                (= (it-i64-ref map-hashes cursor) hash)
-                (it-slice-eq?
-                  names
-                  (it-i64-ref name-off source-id)
-                  (it-i64-ref name-len source-id)
-                  text
-                  start
-                  len))
-                (begin
-                  (set! out source-id)
-                  (set! done true))
-                (begin
-                  (set! cursor (it-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
-      out)))
+                (it-grow! map-ids map-hashes names name-off name-len state)
+                (set! capacity (it-i64-ref state it-state-capacity))
+                (set! cursor (it-bucket hash capacity)))
+              unit)
+            (it-i64-set! state it-state-count (+ count 1))
+            (it-map-insert-from map-ids map-hashes count hash cursor capacity)
+            (set! out count)
+            (set! done true))
+          (let
+            [source-id : i64 (- stored 1)]
+            (if (and
+              (= (it-i64-ref map-hashes cursor) hash)
+              (it-slice-eq?
+                names
+                (it-i64-ref name-off source-id)
+                (it-i64-ref name-len source-id)
+                text
+                start
+                len))
+              (begin
+                (set! out source-id)
+                (set! done true))
+              (begin
+                (set! cursor (it-bucket (+ cursor 1) capacity))
+                (set! steps (+ steps 1))))))))
+    out))
 
 ;; `intern-reset!`: clear the dedup table and the pool for a fresh compile. The
 ;; compiler clears its whole fixed map; the analogue here is the capacity the
@@ -341,15 +307,13 @@
   (let
     [capacity : i64 (it-i64-ref state it-state-capacity)]
     [i : i64 0]
-    (begin
-      (while (< i capacity)
-        (begin
-          (it-i64-set! map-ids i 0)
-          (set! i (+ i 1))))
-      (it-i64-set! state it-state-capacity it-initial-capacity)
-      (it-i64-set! state it-state-count 0)
-      (it-i64-set! state it-state-name-cursor 0)
-      unit)))
+    (while (< i capacity)
+      (it-i64-set! map-ids i 0)
+      (set! i (+ i 1)))
+    (it-i64-set! state it-state-capacity it-initial-capacity)
+    (it-i64-set! state it-state-count 0)
+    (it-i64-set! state it-state-name-cursor 0)
+    unit))
 
 ;; Index the newline-separated corpus into (start, length) slices without
 ;; copying: `intern-slice` takes a source buffer plus a range, exactly as the
@@ -359,14 +323,12 @@
     [text-slots (u8vec.slots text)]
     [i : i64 0]
     [lines : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (when
-            (= (cast (array-ref text-slots i) : i64) 10)
-            (set! lines (+ lines 1)))
-          (set! i (+ i 1))))
-      lines)))
+    (while (< i n)
+      (when
+        (= (cast (array-ref text-slots i) : i64) 10)
+        (set! lines (+ lines 1)))
+      (set! i (+ i 1)))
+    lines))
 
 (define (it-index-lines
   [text : (& text u8vec.Vec)]
@@ -380,18 +342,15 @@
     [i : i64 0]
     [start : i64 0]
     [lines : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (when
-            (= (cast (array-ref text-slots i) : i64) 10)
-            (begin
-              (set! (array-ref start-slots lines) start)
-              (set! (array-ref length-slots lines) (- i start))
-              (set! lines (+ lines 1))
-              (set! start (+ i 1))))
-          (set! i (+ i 1))))
-      lines)))
+    (while (< i n)
+      (when
+        (= (cast (array-ref text-slots i) : i64) 10)
+        (set! (array-ref start-slots lines) start)
+        (set! (array-ref length-slots lines) (- i start))
+        (set! lines (+ lines 1))
+        (set! start (+ i 1)))
+      (set! i (+ i 1)))
+    lines))
 
 ;; Preallocated map storage. Doubling stops as soon as
 ;; `(count + 1) * 4 < capacity * 3`, so the capacity can never exceed
@@ -399,7 +358,6 @@
 (define (it-map-storage [lines : i64]) : i64
   (let
     [capacity : i64 it-initial-capacity]
-    (begin
-      (while (< capacity (* lines 3))
-        (set! capacity (* capacity 2)))
-      capacity)))
+    (while (< capacity (* lines 3))
+      (set! capacity (* capacity 2)))
+    capacity))

@@ -18,23 +18,19 @@
   (let
     [out : f32v.Vec (f32v.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (while (< index capacity)
-        (begin
-          (f32v.push! out (cast 0.0 : f32))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index capacity)
+      (f32v.push! out (cast 0.0 : f32))
+      (set! index (+ index 1)))
+    out))
 
 (define (bounds-i64-buffer [capacity : i64]) : i64v.Vec
   (let
     [out : i64v.Vec (i64v.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (while (< index capacity)
-        (begin
-          (i64v.push! out 0)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index capacity)
+      (i64v.push! out 0)
+      (set! index (+ index 1)))
+    out))
 
 (define (main) : i64
   (let
@@ -44,16 +40,14 @@
     [values-view : (&mut values (Slice f32)) (f32v.view-mut (&mut values))]
     [offsets-view : (&mut offsets (Slice i64)) (i64v.view-mut (&mut offsets))]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! (array-ref values-view i) (cast (+ i 1) : f32))
-          (set! (array-ref offsets-view i) 0)
-          (set! i (+ i 1))))
-      ;; Lane zero is invalid in scalar, AVX2, and AVX-512 modes.
-      (set! (array-ref offsets-view 0) count)
-      (if (>
-        (gathers-bounds-probe values-view offsets-view count)
-        (cast 0.0 : f32))
-        1
-        2))))
+    (while (< i count)
+      (set! (array-ref values-view i) (cast (+ i 1) : f32))
+      (set! (array-ref offsets-view i) 0)
+      (set! i (+ i 1)))
+    ;; Lane zero is invalid in scalar, AVX2, and AVX-512 modes.
+    (set! (array-ref offsets-view 0) count)
+    (if (>
+      (gathers-bounds-probe values-view offsets-view count)
+      (cast 0.0 : f32))
+      1
+      2)))

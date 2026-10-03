@@ -6,32 +6,27 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (string.string-ref text i) 'a')
-            (set! acc (+ acc 3))
-            (if (= (string.string-ref text i) 'z')
-              (set! acc (+ acc 7))
-              (set! acc (+ acc 1))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (if (= (string.string-ref text i) 'a')
+        (set! acc (+ acc 3))
+        (if (= (string.string-ref text i) 'z')
+          (set! acc (+ acc 7))
+          (set! acc (+ acc 1))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (scan-repeat [text : String] [rounds : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! acc (+ acc (scan-once text)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i rounds)
+      (set! acc (+ acc (scan-once text)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [text : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (scan-repeat text rounds))
-      0)))
+    (io.println "{}" (scan-repeat text rounds))
+    0))

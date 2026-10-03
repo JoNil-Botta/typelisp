@@ -64,18 +64,15 @@
   (let
     [n : i64 (byte_buf.bytes-mut-length out)]
     [index : i64 0]
-    (begin
-      (while (< index n)
-        (begin
-          (byte_buf.bytes-set! out index (cast 0 : u8))
-          (set! index (+ index 1))))
-      unit)))
+    (while (< index n)
+      (byte_buf.bytes-set! out index (cast 0 : u8))
+      (set! index (+ index 1)))
+    unit))
 
 ;: Wipe a valid output view and return `error`.
 (define (fill-failure! [out : (&mut out bytes)] [error : CryptoRandomError]) : ResultFillRandom
-  (begin
-    (wipe! out)
-    (ErrFillRandom error)))
+  (wipe! out)
+  (ErrFillRandom error))
 
 ;: Check that pointer offsets for the complete nonempty view cannot wrap.
 (define (pointer-range-valid? [data : (MutPtr u8)] [length : i64]) : bool
@@ -144,22 +141,18 @@
                             (set! done true)
                             unit)))]
                     [(CryptoRandomHostInterrupted)
-                      (begin
-                        (set! interruptions (+ interruptions 1))
-                        (if (>= interruptions (interruption-limit))
-                          (begin
-                            (set!
-                              result
-                              (fill-failure!
-                                out
-                                (CryptoRandomInterruptionExhausted
-                                  interruptions)))
-                            (set! done true))
-                          unit))]
+                      (set! interruptions (+ interruptions 1))
+                      (when
+                        (>= interruptions (interruption-limit))
+                        (set!
+                          result
+                          (fill-failure!
+                            out
+                            (CryptoRandomInterruptionExhausted interruptions)))
+                        (set! done true))]
                     [(CryptoRandomHostFailure error)
-                      (begin
-                        (set! result (fill-failure! out error))
-                        (set! done true))])))
+                      (set! result (fill-failure! out error))
+                      (set! done true)])))
               result)))])))
 
 ;: Linux x86-64 `getrandom` adapter preserving raw negative `-errno` status.
@@ -311,9 +304,8 @@
 (cfg
   test
   (define (test-host-reset!) : unit
-    (begin
-      (set! test-host-call-count 0)
-      unit)))
+    (set! test-host-call-count 0)
+    unit))
 
 ;: Write `count` deterministic bytes for inline adapter coverage.
 (cfg
@@ -321,13 +313,11 @@
   (define (test-host-write! [data : (MutPtr u8)] [count : i64] [base : i64]) : unit
     (let
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (unsafe
-              (ptr-write! (ptr-offset data index) (cast (+ base index) : u8)))
-            (set! index (+ index 1))))
-        unit))))
+      (while (< index count)
+        (unsafe
+          (ptr-write! (ptr-offset data index) (cast (+ base index) : u8)))
+        (set! index (+ index 1)))
+      unit)))
 
 ;: Inline-test adapter that completes one request in two partial writes.
 (cfg
@@ -340,22 +330,20 @@
             2
             requested)
           requested)]
-      (begin
-        (test-host-write! data count (+ 40 (* test-host-call-count 10)))
-        (set! test-host-call-count (+ test-host-call-count 1))
-        (CryptoRandomHostFilled count)))))
+      (test-host-write! data count (+ 40 (* test-host-call-count 10)))
+      (set! test-host-call-count (+ test-host-call-count 1))
+      (CryptoRandomHostFilled count))))
 
 ;: Inline-test adapter that is interrupted twice and then succeeds.
 (cfg
   test
   (define (test-host-interrupt-then-fill [data : (MutPtr u8)] [requested : i64]) : CryptoRandomHostStep
-    (begin
-      (set! test-host-call-count (+ test-host-call-count 1))
-      (if (<= test-host-call-count 2)
-        (CryptoRandomHostInterrupted)
-        (begin
-          (test-host-write! data requested 70)
-          (CryptoRandomHostFilled requested))))))
+    (set! test-host-call-count (+ test-host-call-count 1))
+    (if (<= test-host-call-count 2)
+      (CryptoRandomHostInterrupted)
+      (begin
+        (test-host-write! data requested 70)
+        (CryptoRandomHostFilled requested)))))
 
 ;: Inline-test adapter that never progresses.
 (cfg
@@ -363,9 +351,8 @@
   (define (test-host-always-interrupted
     [_data : (MutPtr u8)]
     [_requested : i64]) : CryptoRandomHostStep
-    (begin
-      (set! test-host-call-count (+ test-host-call-count 1))
-      (CryptoRandomHostInterrupted))))
+    (set! test-host-call-count (+ test-host-call-count 1))
+    (CryptoRandomHostInterrupted)))
 
 ;: Inline-test adapter that reports an impossible zero-byte partial result.
 (cfg
@@ -408,9 +395,8 @@
       [view : (&mut buf bytes) (byte_buf.as-mut-bytes buf)]
       [index : i64 0]
       (while (< index (byte_buf.bytes-mut-length view))
-        (begin
-          (byte_buf.bytes-set! view index (cast 165 : u8))
-          (set! index (+ index 1)))))))
+        (byte_buf.bytes-set! view index (cast 165 : u8))
+        (set! index (+ index 1))))))
 
 ;: Assert that every test-buffer byte equals `expected`.
 (cfg
@@ -422,12 +408,11 @@
     (let
       [index : i64 0]
       (while (< index (byte_buf.len buf))
-        (begin
-          (test.assert-i64-eq
-            (cast (byte_buf.ref buf index) : i64)
-            expected
-            (clone message))
-          (set! index (+ index 1)))))))
+        (test.assert-i64-eq
+          (cast (byte_buf.ref buf index) : i64)
+          expected
+          (clone message))
+        (set! index (+ index 1))))))
 
 ;: Assert success from the checked fill driver.
 (cfg
@@ -453,9 +438,8 @@
   (define (test-assert-impossible-partial [result : ResultFillRandom]) : unit
     (match result
       [(ErrFillRandom (CryptoRandomImpossiblePartial count requested))
-        (begin
-          (test.assert-i64-eq count 0 "impossible partial count")
-          (test.assert-i64-eq requested 4 "impossible partial request"))]
+        (test.assert-i64-eq count 0 "impossible partial count")
+        (test.assert-i64-eq requested 4 "impossible partial request")]
       [_ (test.assert-true false "expected impossible partial result")])))
 
 ;: Assert invalid adapter limits and exact Linux status payloads.
@@ -464,13 +448,11 @@
   (define (test-assert-basic-error [result : ResultFillRandom] [kind : i64]) : unit
     (match result
       [(ErrFillRandom (CryptoRandomInvalidChunkLimit limit))
-        (begin
-          (test.assert-i64-eq kind 1 "invalid chunk kind")
-          (test.assert-i64-eq limit 0 "invalid chunk limit"))]
+        (test.assert-i64-eq kind 1 "invalid chunk kind")
+        (test.assert-i64-eq limit 0 "invalid chunk limit")]
       [(ErrFillRandom (CryptoRandomLinuxSystemError status))
-        (begin
-          (test.assert-i64-eq kind 2 "Linux error kind")
-          (test.assert-i64-eq status -5 "exact Linux status"))]
+        (test.assert-i64-eq kind 2 "Linux error kind")
+        (test.assert-i64-eq status -5 "exact Linux status")]
       [_ (test.assert-true false "expected basic crypto-random error")])))
 
 ;: Assert injected Windows loader/status failures retain exact payloads.
@@ -479,17 +461,14 @@
   (define (test-assert-windows-error [result : ResultFillRandom] [kind : i64]) : unit
     (match result
       [(ErrFillRandom (CryptoRandomWindowsLibraryUnavailable code))
-        (begin
-          (test.assert-i64-eq kind 1 "library error kind")
-          (test.assert-i64-eq (cast code : i64) 126 "library error code"))]
+        (test.assert-i64-eq kind 1 "library error kind")
+        (test.assert-i64-eq (cast code : i64) 126 "library error code")]
       [(ErrFillRandom (CryptoRandomWindowsSymbolUnavailable code))
-        (begin
-          (test.assert-i64-eq kind 2 "symbol error kind")
-          (test.assert-i64-eq (cast code : i64) 127 "symbol error code"))]
+        (test.assert-i64-eq kind 2 "symbol error kind")
+        (test.assert-i64-eq (cast code : i64) 127 "symbol error code")]
       [(ErrFillRandom (CryptoRandomWindowsStatus status))
-        (begin
-          (test.assert-i64-eq kind 3 "status error kind")
-          (test.assert-i64-eq (cast status : i64) -1073741811 "exact NTSTATUS"))]
+        (test.assert-i64-eq kind 3 "status error kind")
+        (test.assert-i64-eq (cast status : i64) -1073741811 "exact NTSTATUS")]
       [_
         (test.assert-true false "expected injected Windows crypto-random error")])))
 
@@ -500,115 +479,105 @@
     (begin
       (let
         [empty : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 0))]
-        (begin
-          (test-host-reset!)
-          (test-assert-fill-ok
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut empty))
-              4
-              test-host-partial))
-          (test.assert-i64-eq test-host-call-count 0 "zero length no host call")))
+        (test-host-reset!)
+        (test-assert-fill-ok
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut empty))
+            4
+            test-host-partial))
+        (test.assert-i64-eq test-host-call-count 0 "zero length no host call"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 6))]
-        (begin
-          (test-host-reset!)
-          (test-assert-fill-ok
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-partial))
-          (test.assert-i64-eq test-host-call-count 2 "partial fill call count")
-          (test.assert-i64-eq
-            (cast (byte_buf.ref buf 0) : i64)
-            40
-            "partial first byte")
-          (test.assert-i64-eq
-            (cast (byte_buf.ref buf 5) : i64)
-            53
-            "partial final byte")))
+        (test-host-reset!)
+        (test-assert-fill-ok
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-partial))
+        (test.assert-i64-eq test-host-call-count 2 "partial fill call count")
+        (test.assert-i64-eq
+          (cast (byte_buf.ref buf 0) : i64)
+          40
+          "partial first byte")
+        (test.assert-i64-eq
+          (cast (byte_buf.ref buf 5) : i64)
+          53
+          "partial final byte"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 4))]
-        (begin
-          (test-host-reset!)
-          (test-assert-fill-ok
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-interrupt-then-fill))
-          (test.assert-i64-eq test-host-call-count 3 "interruption retry count")
-          (test.assert-i64-eq
-            (cast (byte_buf.ref buf 3) : i64)
-            73
-            "interruption retry output")))
+        (test-host-reset!)
+        (test-assert-fill-ok
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-interrupt-then-fill))
+        (test.assert-i64-eq test-host-call-count 3 "interruption retry count")
+        (test.assert-i64-eq
+          (cast (byte_buf.ref buf 3) : i64)
+          73
+          "interruption retry output"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 4))]
-        (begin
-          (test-fill-sentinel! (&mut buf))
-          (test-host-reset!)
-          (test-assert-interruption-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-always-interrupted))
-          (test-assert-all-bytes (& buf) 0 "interruption failure wipes")))
+        (test-fill-sentinel! (&mut buf))
+        (test-host-reset!)
+        (test-assert-interruption-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-always-interrupted))
+        (test-assert-all-bytes (& buf) 0 "interruption failure wipes"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 4))]
-        (begin
-          (test-fill-sentinel! (&mut buf))
-          (test-assert-impossible-partial
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-zero-partial))
-          (test-assert-all-bytes (& buf) 0 "impossible partial wipes")))
+        (test-fill-sentinel! (&mut buf))
+        (test-assert-impossible-partial
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-zero-partial))
+        (test-assert-all-bytes (& buf) 0 "impossible partial wipes"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 4))]
-        (begin
-          (test-fill-sentinel! (&mut buf))
-          (test-host-reset!)
-          (test-assert-basic-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              0
-              test-host-partial)
-            1)
-          (test.assert-i64-eq
-            test-host-call-count
+        (test-fill-sentinel! (&mut buf))
+        (test-host-reset!)
+        (test-assert-basic-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
             0
-            "invalid chunk no host call")
-          (test-assert-all-bytes (& buf) 0 "invalid chunk wipes")
-          (test-fill-sentinel! (&mut buf))
-          (test-assert-basic-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-linux-error)
-            2)
-          (test-assert-all-bytes (& buf) 0 "Linux failure wipes")))
+            test-host-partial)
+          1)
+        (test.assert-i64-eq test-host-call-count 0 "invalid chunk no host call")
+        (test-assert-all-bytes (& buf) 0 "invalid chunk wipes")
+        (test-fill-sentinel! (&mut buf))
+        (test-assert-basic-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-linux-error)
+          2)
+        (test-assert-all-bytes (& buf) 0 "Linux failure wipes"))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 4))]
-        (begin
-          (test-fill-sentinel! (&mut buf))
-          (test-assert-windows-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-missing-library)
-            1)
-          (test-assert-all-bytes (& buf) 0 "missing library wipes")
-          (test-fill-sentinel! (&mut buf))
-          (test-assert-windows-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-missing-symbol)
-            2)
-          (test-assert-all-bytes (& buf) 0 "missing symbol wipes")
-          (test-fill-sentinel! (&mut buf))
-          (test-assert-windows-error
-            (fill-random-with!
-              (byte_buf.as-mut-bytes (&mut buf))
-              4
-              test-host-windows-status)
-            3)
-          (test-assert-all-bytes (& buf) 0 "status failure wipes"))))))
+        (test-fill-sentinel! (&mut buf))
+        (test-assert-windows-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-missing-library)
+          1)
+        (test-assert-all-bytes (& buf) 0 "missing library wipes")
+        (test-fill-sentinel! (&mut buf))
+        (test-assert-windows-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-missing-symbol)
+          2)
+        (test-assert-all-bytes (& buf) 0 "missing symbol wipes")
+        (test-fill-sentinel! (&mut buf))
+        (test-assert-windows-error
+          (fill-random-with!
+            (byte_buf.as-mut-bytes (&mut buf))
+            4
+            test-host-windows-status)
+          3)
+        (test-assert-all-bytes (& buf) 0 "status failure wipes")))))

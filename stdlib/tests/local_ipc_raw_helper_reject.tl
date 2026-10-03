@@ -20,6 +20,5 @@
             local_ipc.never-canceled
             16)
           local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (local_ipc.io-once (&mut connection) false 64 8)
-        42))))
+      (local_ipc.io-once (&mut connection) false 64 8)
+      42)))

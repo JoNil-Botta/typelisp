@@ -27,18 +27,13 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            acc
-            (% (+ acc (apply-op (choose i) (Pair i (+ i 1)))) 1000000007))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (% (+ acc (apply-op (choose i) (Pair i (+ i 1)))) 1000000007))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
-    (begin
-      (io.println "{}" (bench n))
-      0)))
+    (io.println "{}" (bench n))
+    0))

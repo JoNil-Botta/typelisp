@@ -6,6 +6,5 @@
   (value i64))
 
 (define (main) : i64
-  (begin
-    (format.format "{}" (MissingDisplay 1))
-    42))
+  (format.format "{}" (MissingDisplay 1))
+  42)

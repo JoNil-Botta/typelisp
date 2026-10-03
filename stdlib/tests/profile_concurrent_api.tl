@@ -7,19 +7,17 @@
   (let
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index count)
-        (begin
-          (if (or
-            (<= (profile.now-ticks) 0)
-            (< (profile.now-ms) 0)
-            (<= (profile.ticks-per-second) 0))
-            (set! ok false)
-            unit)
-          (set! index (+ index 1))))
-      (if ok
-        42
-        1))))
+    (while (< index count)
+      (if (or
+        (<= (profile.now-ticks) 0)
+        (< (profile.now-ms) 0)
+        (<= (profile.ticks-per-second) 0))
+        (set! ok false)
+        unit)
+      (set! index (+ index 1)))
+    (if ok
+      42
+      1)))
 
 (define (joined-ok? [worker : thread.Thread]) : bool
   (=
@@ -37,9 +35,8 @@
       (match (unsafe
         (thread.spawn sample-clock 100000))
         [(ThreadSpawnErr _)
-          (begin
-            (joined-ok? first)
-            2)]
+          (joined-ok? first)
+          2]
         [(ThreadSpawnOk second)
           (let
             [local-ok : bool (= (sample-clock 100000) 42)]

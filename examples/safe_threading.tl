@@ -61,7 +61,6 @@
 (define (main) : i64
   (let
     [result : i64 (run-safe-threading)]
-    (begin
-      (io.print-format "{}" "safe threading score: ")
-      (io.println "{}" result)
-      result)))
+    (io.print-format "{}" "safe threading score: ")
+    (io.println "{}" result)
+    result))

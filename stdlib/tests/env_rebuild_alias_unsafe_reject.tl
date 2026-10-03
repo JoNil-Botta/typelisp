@@ -3,6 +3,5 @@
 (import stdlib.env as e)
 
 (define (main) : i64
-  (begin
-    (e.linux-rebuild! "TYPELISP_PROOF_ALIAS" "value" true)
-    42))
+  (e.linux-rebuild! "TYPELISP_PROOF_ALIAS" "value" true)
+  42)

@@ -5,9 +5,8 @@
   (calls i64))
 
 (define (radix-counted [state : (&mut state RadixEvalState)] [value : i8]) : i8
-  (begin
-    (set! state.calls (+ state.calls 1))
-    value))
+  (set! state.calls (+ state.calls 1))
+  value)
 
 (define (radix-row-ok?
   [binary : String]

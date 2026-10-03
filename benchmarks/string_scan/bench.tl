@@ -23,12 +23,10 @@
 (define (scan-once [text : (& text str)] [n : i64] [acc : i64]) : i64
   (let
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ (* acc 131) (cast (string.string-ref text i) : i64)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ (* acc 131) (cast (string.string-ref text i) : i64)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -36,9 +34,7 @@
     [rounds : i64 (+ base-rounds (io.arg-count))]
     [acc : i64 1]
     [r : i64 0]
-    (begin
-      (while (< r rounds)
-        (begin
-          (set! acc (scan-once (& scan-text) n acc))
-          (set! r (+ r 1))))
-      (bit-and acc 255))))
+    (while (< r rounds)
+      (set! acc (scan-once (& scan-text) n acc))
+      (set! r (+ r 1)))
+    (bit-and acc 255)))

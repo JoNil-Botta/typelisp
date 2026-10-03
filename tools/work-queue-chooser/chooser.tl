@@ -95,9 +95,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (cand-builder-grow! [builder : (&mut builder CandBuilder)]) : unit
   (let
@@ -107,22 +106,19 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array Candidate) (__tl_make-array Candidate new-cap)]
-    (begin
-      (cand-builder-copy-range! (&mut bigger) (& builder.slots) builder.len)
-      (set! builder.slots bigger))))
+    (cand-builder-copy-range! (&mut bigger) (& builder.slots) builder.len)
+    (set! builder.slots bigger)))
 
 (define (cand-builder-push!
   [builder : (&mut builder CandBuilder)]
   [cand : Candidate]) : unit
-  (begin
-    (if (< builder.len (array-length builder.slots))
-      unit
-      (cand-builder-grow! builder))
-    (let
-      [index : i64 builder.len]
-      (begin
-        (set! (array-ref builder.slots index) cand)
-        (set! builder.len (+ index 1))))))
+  (if (< builder.len (array-length builder.slots))
+    unit
+    (cand-builder-grow! builder))
+  (let
+    [index : i64 builder.len]
+    (set! (array-ref builder.slots index) cand)
+    (set! builder.len (+ index 1))))
 
 (define (cand-builder-to-seq [builder : CandBuilder]) : CandSeq
   (CandSeq builder.slots builder.len))
@@ -181,25 +177,24 @@
     [i : i64 0]
     [segment-start : i64 0]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (let
-          [code : i64 (chooser-char-code-at input i)]
-          (if (> code 126)
-            (begin
-              (set!
-                out
+    (while (< i n)
+      (let
+        [code : i64 (chooser-char-code-at input i)]
+        (if (> code 126)
+          (begin
+            (set!
+              out
+              (string.append
                 (string.append
-                  (string.append
-                    out
-                    (string.substring input segment-start (- i segment-start)))
-                  "?"))
-              (set! i (+ i 1))
-              (set! segment-start i))
-            (set! i (+ i 1)))))
-      (string.append
-        out
-        (string.substring input segment-start (- n segment-start))))))
+                  out
+                  (string.substring input segment-start (- i segment-start)))
+                "?"))
+            (set! i (+ i 1))
+            (set! segment-start i))
+          (set! i (+ i 1)))))
+    (string.append
+      out
+      (string.substring input segment-start (- n segment-start)))))
 
 ;: Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
 (define (json-field-number [item : json.Json] [field : String]) : i64
@@ -241,17 +236,15 @@
     [n : i64 (json.list-count (chooser-shared-view labels))]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (begin
-          (match (json.list-get-index (chooser-shared-view labels) i)
-            [(JsonFound head)
-              (if (string.eq (json-field-string head "name") needle)
-                (set! found true)
-                unit)]
-            [(JsonMissing) unit])
-          (set! i (+ i 1))))
-      found)))
+    (while (and (not found) (< i n))
+      (match (json.list-get-index (chooser-shared-view labels) i)
+        [(JsonFound head)
+          (if (string.eq (json-field-string head "name") needle)
+            (set! found true)
+            unit)]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))
+    found))
 
 ;: PR labels use GitHub's array of objects with string `name` fields. Validate
 ;: every entry, including entries after a claim, before considering any lane.
@@ -261,22 +254,20 @@
     [count : i64 (json.list-count (chooser-shared-view labels))]
     [index : i64 0]
     [valid : bool true]
-    (begin
-      (while (and valid (< index count))
-        (begin
-          (set!
-            valid
-            (match (json.list-get-index (chooser-shared-view labels) index)
-              [(JsonFound entry)
-                (match (json.object-get entry (& name-key))
-                  [(JsonFound name)
-                    (match name
-                      [(JsonString _) true]
-                      [_ false])]
-                  [(JsonMissing) false])]
-              [(JsonMissing) false]))
-          (set! index (+ index 1))))
-      valid)))
+    (while (and valid (< index count))
+      (set!
+        valid
+        (match (json.list-get-index (chooser-shared-view labels) index)
+          [(JsonFound entry)
+            (match (json.object-get entry (& name-key))
+              [(JsonFound name)
+                (match name
+                  [(JsonString _) true]
+                  [_ false])]
+              [(JsonMissing) false])]
+          [(JsonMissing) false]))
+      (set! index (+ index 1)))
+    valid))
 
 ;: Missing labels retain legacy snapshot compatibility; explicit malformed
 ;: labels must not silently turn a reserved PR into an unclaimed candidate.
@@ -298,21 +289,19 @@
     [count : i64 (json.list-count (chooser-shared-view prs))]
     [index : i64 0]
     [invalid-index : i64 -1]
-    (begin
-      (while (and (< invalid-index 0) (< index count))
-        (begin
-          (match (json.list-get-index (chooser-shared-view prs) index)
-            [(JsonFound item)
-              (unless (pr-labels-valid? item) (set! invalid-index index))]
-            [(JsonMissing) unit])
-          (set! index (+ index 1))))
-      (if (< invalid-index 0)
-        ""
+    (while (and (< invalid-index 0) (< index count))
+      (match (json.list-get-index (chooser-shared-view prs) index)
+        [(JsonFound item)
+          (unless (pr-labels-valid? item) (set! invalid-index index))]
+        [(JsonMissing) unit])
+      (set! index (+ index 1)))
+    (if (< invalid-index 0)
+      ""
+      (string.append
+        "Error: invalid input: prs["
         (string.append
-          "Error: invalid input: prs["
-          (string.append
-            (string.int->string invalid-index)
-            "].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))))))
+          (string.int->string invalid-index)
+          "].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")))))
 
 ;: Eligibility only. Keep the raw PR in linkage and backlog accounting.
 (define (pr-review-claimed? [item : json.Json]) : bool
@@ -381,17 +370,15 @@
     [n : i64 (json.list-count (chooser-shared-view checks))]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i n))
-        (begin
-          (match (json.list-get-index (chooser-shared-view checks) i)
-            [(JsonFound head)
-              (if (pr-check-entry-complete? head)
-                unit
-                (set! ok false))]
-            [(JsonMissing) unit])
-          (set! i (+ i 1))))
-      ok)))
+    (while (and ok (< i n))
+      (match (json.list-get-index (chooser-shared-view checks) i)
+        [(JsonFound head)
+          (if (pr-check-entry-complete? head)
+            unit
+            (set! ok false))]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))
+    ok))
 
 ;: Missing or empty `statusCheckRollup` means the PR has no checks and remains
 ;: eligible. Only explicitly pending/running entries are skipped.
@@ -444,18 +431,17 @@
     [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (match (json.list-get-index (chooser-shared-view items) i)
-          [(JsonFound head)
-            (if (and
-              (not (pr-review-claimed? (chooser-shared-view head)))
-              (not (pr-draft? (chooser-shared-view head)))
-              (pr-targets-main? (chooser-shared-view head))
-              (pr-checks-complete? (chooser-shared-view head)))
-              (cand-builder-push! out (pr-candidate head))
-              unit)]
-          [(JsonMissing) unit])
-        (set! i (+ i 1))))))
+      (match (json.list-get-index (chooser-shared-view items) i)
+        [(JsonFound head)
+          (if (and
+            (not (pr-review-claimed? (chooser-shared-view head)))
+            (not (pr-draft? (chooser-shared-view head)))
+            (pr-targets-main? (chooser-shared-view head))
+            (pr-checks-complete? (chooser-shared-view head)))
+            (cand-builder-push! out (pr-candidate head))
+            unit)]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))))
 
 ;: Shortest digit run treated as an issue reference inside a branch name or PR
 ;: title. Four digits keeps `cycle28-divmod-hoist` and `perf-opt2-cycle1` from
@@ -474,66 +460,62 @@
     [m : i64 (string.string-length needle)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (if (< m claim-digit-floor)
-        unit
-        (while (and (not found) (<= (+ i m) n))
-          (let
-            [before-ok : bool
-              (if (= i 0)
-                true
-                (not (chooser-digit? (string.string-ref text (- i 1)))))]
-            [after-ok : bool
-              (if (= (+ i m) n)
-                true
-                (not (chooser-digit? (string.string-ref text (+ i m)))))]
-            (begin
-              (if (and
-                before-ok
-                after-ok
-                (string.is-string-prefix-at (& text) (& needle) i))
-                (set! found true)
-                unit)
-              (set! i (+ i 1))))))
-      found)))
+    (if (< m claim-digit-floor)
+      unit
+      (while (and (not found) (<= (+ i m) n))
+        (let
+          [before-ok : bool
+            (if (= i 0)
+              true
+              (not (chooser-digit? (string.string-ref text (- i 1)))))]
+          [after-ok : bool
+            (if (= (+ i m) n)
+              true
+              (not (chooser-digit? (string.string-ref text (+ i m)))))]
+          (if (and
+            before-ok
+            after-ok
+            (string.is-string-prefix-at (& text) (& needle) i))
+            (set! found true)
+            unit)
+          (set! i (+ i 1)))))
+    found))
 
 (define (chooser-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
 (test
   claim-matches-branch-and-title
-  (begin
-    (test.assert-true
-      (text-claims-number? "implement-5408-folding-ranges" 5408)
-      "branch name claims its issue")
-    (test.assert-true
-      (text-claims-number? "fix-5641-baseline-drift-visibility" 5641)
-      "claim may sit between separators")
-    (test.assert-true
-      (text-claims-number? "tlci-native-template-nodes-5605" 5605)
-      "claim may end the string")
-    (test.assert-true
-      (text-claims-number? "tlci native: computed dispatch (fixes #5604)" 5604)
-      "a PR title claims through its Fixes reference")))
+  (test.assert-true
+    (text-claims-number? "implement-5408-folding-ranges" 5408)
+    "branch name claims its issue")
+  (test.assert-true
+    (text-claims-number? "fix-5641-baseline-drift-visibility" 5641)
+    "claim may sit between separators")
+  (test.assert-true
+    (text-claims-number? "tlci-native-template-nodes-5605" 5605)
+    "claim may end the string")
+  (test.assert-true
+    (text-claims-number? "tlci native: computed dispatch (fixes #5604)" 5604)
+    "a PR title claims through its Fixes reference"))
 
 (test
   claim-ignores-short-and-partial-numbers
-  (begin
-    (test.assert-false
-      (text-claims-number? "cycle28-divmod-hoist" 28)
-      "a 2-digit run is below the claim floor")
-    (test.assert-false
-      (text-claims-number? "perf-opt2-cycle1" 1)
-      "a 1-digit run is below the claim floor")
-    (test.assert-false
-      (text-claims-number? "branch-56041-thing" 5604)
-      "a claim must be a maximal digit run, not a prefix")
-    (test.assert-false
-      (text-claims-number? "branch-15604-thing" 5604)
-      "a claim must be a maximal digit run, not a suffix")
-    (test.assert-false
-      (text-claims-number? "tlci-str-cat-native" 5617)
-      "a branch naming no number claims nothing")))
+  (test.assert-false
+    (text-claims-number? "cycle28-divmod-hoist" 28)
+    "a 2-digit run is below the claim floor")
+  (test.assert-false
+    (text-claims-number? "perf-opt2-cycle1" 1)
+    "a 1-digit run is below the claim floor")
+  (test.assert-false
+    (text-claims-number? "branch-56041-thing" 5604)
+    "a claim must be a maximal digit run, not a prefix")
+  (test.assert-false
+    (text-claims-number? "branch-15604-thing" 5604)
+    "a claim must be a maximal digit run, not a suffix")
+  (test.assert-false
+    (text-claims-number? "tlci-str-cat-native" 5617)
+    "a branch naming no number claims nothing"))
 
 ;: True when some open PR already claims `number` through its branch name or
 ;: title. An issue someone has opened a PR for is not work to hand to a second
@@ -543,21 +525,19 @@
     [n : i64 (json.list-count (chooser-shared-view prs))]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (begin
-          (match (json.list-get-index (chooser-shared-view prs) i)
-            [(JsonFound head)
-              (if (or
-                (text-claims-number?
-                  (json-field-string (chooser-shared-view head) "headRefName")
-                  number)
-                (text-claims-number? (json-field-string head "title") number))
-                (set! found true)
-                unit)]
-            [(JsonMissing) unit])
-          (set! i (+ i 1))))
-      found)))
+    (while (and (not found) (< i n))
+      (match (json.list-get-index (chooser-shared-view prs) i)
+        [(JsonFound head)
+          (if (or
+            (text-claims-number?
+              (json-field-string (chooser-shared-view head) "headRefName")
+              number)
+            (text-claims-number? (json-field-string head "title") number))
+            (set! found true)
+            unit)]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))
+    found))
 
 ;: Append a JSON array of issue objects as candidates, preserving source order.
 ;: Issues an open PR already claims are skipped; ready-for-implementation issues
@@ -573,20 +553,19 @@
     [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (match (json.list-get-index (chooser-shared-view items) i)
-          [(JsonFound head)
-            (if (or
-              (issue-claimed-by-pr?
-                (chooser-shared-view prs)
-                (json-field-number (chooser-shared-view head) "number"))
-              (and
-                (not implement-allowed?)
-                (issue-ready? (chooser-shared-view head))))
-              unit
-              (cand-builder-push! out (issue-candidate head)))]
-          [(JsonMissing) unit])
-        (set! i (+ i 1))))))
+      (match (json.list-get-index (chooser-shared-view items) i)
+        [(JsonFound head)
+          (if (or
+            (issue-claimed-by-pr?
+              (chooser-shared-view prs)
+              (json-field-number (chooser-shared-view head) "number"))
+            (and
+              (not implement-allowed?)
+              (issue-ready? (chooser-shared-view head))))
+            unit
+            (cand-builder-push! out (issue-candidate head)))]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))))
 
 ;: Look up the JSON array stored at `field`, or an empty sequence when absent.
 (define (json-field-array [value : json.Json] [field : String]) : json.JsonSeq
@@ -624,17 +603,15 @@
     [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     [open : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (json.list-get-index (chooser-shared-view items) i)
-            [(JsonFound head)
-              (if (json-field-bool head "isDraft")
-                unit
-                (set! open (+ open 1)))]
-            [(JsonMissing) unit])
-          (set! i (+ i 1))))
-      open)))
+    (while (< i n)
+      (match (json.list-get-index (chooser-shared-view items) i)
+        [(JsonFound head)
+          (if (json-field-bool head "isDraft")
+            unit
+            (set! open (+ open 1)))]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))
+    open))
 
 ;: Claims may explain an empty review lane at any backlog size. Count from the
 ;: complete snapshot, not the filtered candidate sequence.
@@ -643,15 +620,13 @@
     [count : i64 (json.list-count (chooser-shared-view items))]
     [index : i64 0]
     [claimed : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (json.list-get-index (chooser-shared-view items) index)
-            [(JsonFound item)
-              (when (pr-review-claimed? item) (set! claimed (+ claimed 1)))]
-            [(JsonMissing) unit])
-          (set! index (+ index 1))))
-      claimed)))
+    (while (< index count)
+      (match (json.list-get-index (chooser-shared-view items) index)
+        [(JsonFound item)
+          (when (pr-review-claimed? item) (set! claimed (+ claimed 1)))]
+        [(JsonMissing) unit])
+      (set! index (+ index 1)))
+    claimed))
 
 ;: Count issue-lane exclusions that explain an empty saturated queue. A ready
 ;: issue is "held back" only when it would otherwise be eligible; research
@@ -662,26 +637,24 @@
     [i : i64 0]
     [ready-held-back : i64 0]
     [research-claimed : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (json.list-get-index (chooser-shared-view items) i)
-            [(JsonFound head)
-              (let
-                [claimed : bool
-                  (issue-claimed-by-pr?
-                    (chooser-shared-view prs)
-                    (json-field-number (chooser-shared-view head) "number"))]
-                [ready : bool (issue-ready? (chooser-shared-view head))]
-                (cond
-                  [(and ready (not claimed))
-                    (set! ready-held-back (+ ready-held-back 1))]
-                  [(and (not ready) claimed)
-                    (set! research-claimed (+ research-claimed 1))]
-                  [else unit]))]
-            [(JsonMissing) unit])
-          (set! i (+ i 1))))
-      (SaturationCounts ready-held-back research-claimed))))
+    (while (< i n)
+      (match (json.list-get-index (chooser-shared-view items) i)
+        [(JsonFound head)
+          (let
+            [claimed : bool
+              (issue-claimed-by-pr?
+                (chooser-shared-view prs)
+                (json-field-number (chooser-shared-view head) "number"))]
+            [ready : bool (issue-ready? (chooser-shared-view head))]
+            (cond
+              [(and ready (not claimed))
+                (set! ready-held-back (+ ready-held-back 1))]
+              [(and (not ready) claimed)
+                (set! research-claimed (+ research-claimed 1))]
+              [else unit]))]
+        [(JsonMissing) unit])
+      (set! i (+ i 1)))
+    (SaturationCounts ready-held-back research-claimed)))
 
 ;: Render the stable, single-line successful signal for intentional
 ;: back-pressure. Lane names make each zero/nonzero count self-describing.
@@ -732,10 +705,9 @@
     [implement-allowed? : bool
       (<= (count-open-nondraft-prs (chooser-shared-view prs)) implement-pr-cap)]
     [out : CandBuilder (cand-builder-new)]
-    (begin
-      (pr-candidates-into (chooser-shared-view prs) (&mut out))
-      (issue-candidates-into issues prs implement-allowed? (&mut out))
-      (cand-builder-to-seq out))))
+    (pr-candidates-into (chooser-shared-view prs) (&mut out))
+    (issue-candidates-into issues prs implement-allowed? (&mut out))
+    (cand-builder-to-seq out)))
 
 ;: Number of candidates in a sequence.
 (define (cand-count [cands : (& cands CandSeq)]) : i64
@@ -772,14 +744,12 @@
     [n : i64 (cand-count cands)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (begin
-          (if (= (__tl-project-field (cand-nth cands i) kind) target-kind)
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (not found) (< i n))
+      (if (= (__tl-project-field (cand-nth cands i) kind) target-kind)
+        (set! found true)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (cfg
   test
@@ -789,9 +759,8 @@
     [number : i64]) : unit
     (match (choose-candidate text)
       [(Ok cand)
-        (begin
-          (test.assert-i64-eq cand.kind kind "selected lane")
-          (test.assert-i64-eq cand.number number "selected item"))]
+        (test.assert-i64-eq cand.kind kind "selected lane")
+        (test.assert-i64-eq cand.number number "selected item")]
       [_ (io.panic "chooser fixture expected an action")])))
 
 (cfg
@@ -816,34 +785,33 @@
 
 (test
   chooser-review-claim-removal-and-legacy-labels
-  (begin
-    (chooser-test-expect-wait
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[]}"
-      "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change")
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[]}],\"issues\":[]}"
-      kind-pr
-      40)
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[]}"
-      kind-pr
-      40)
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"bug\"}]}],\"issues\":[]}"
-      kind-pr
-      40)
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"Review-claimed\"}]}],\"issues\":[]}"
-      kind-pr
-      40)
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed \"}]}],\"issues\":[]}"
-      kind-pr
-      40)
-    (chooser-test-expect-action
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"\"}]}],\"issues\":[]}"
-      kind-pr
-      40)))
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[]}"
+    "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change")
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[]}],\"issues\":[]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"bug\"}]}],\"issues\":[]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"Review-claimed\"}]}],\"issues\":[]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed \"}]}],\"issues\":[]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"\"}]}],\"issues\":[]}"
+    kind-pr
+    40))
 
 (test
   chooser-claimed-unclaimed-and-other-pr-rules
@@ -886,65 +854,63 @@
 
 (test
   chooser-rejects-malformed-pr-label-data
-  (begin
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":null}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":0}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":true}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":{}}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":\"\"}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[\"review-claimed\"]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[null]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[[]]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":null}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":7}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":false}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":{}}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":[]}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"},{}]}],\"issues\":[]}"
-      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")))
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":null}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":0}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":true}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":{}}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":\"\"}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[\"review-claimed\"]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[null]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[[]]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":null}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":7}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":false}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":{}}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":[]}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"},{}]}],\"issues\":[]}"
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))
 
 (test
   chooser-validates-labels-before-other-pr-exclusions
-  (begin
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
-      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
-      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-    (chooser-test-expect-label-error
-      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
-      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")))
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+  (chooser-test-expect-label-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))
 
 (test
   chooser-skips-incomplete-pr-checks
@@ -955,25 +921,24 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 5)
-              unit
-              (io.panic "expected only complete/no-check PRs plus issue"))
-            (if (= (__tl-project-field (cand-nth cands 0) number) 1)
-              unit
-              (io.panic "non-draft PR without checks should remain eligible"))
-            (if (= (__tl-project-field (cand-nth cands 1) number) 2)
-              unit
-              (io.panic "empty check rollup should remain eligible"))
-            (if (= (__tl-project-field (cand-nth cands 2) number) 3)
-              unit
-              (io.panic "completed check run should remain eligible"))
-            (if (= (__tl-project-field (cand-nth cands 3) number) 6)
-              unit
-              (io.panic "terminal legacy status should remain eligible"))
-            (if (= (__tl-project-field (cand-nth cands 4) number) 7)
-              unit
-              (io.panic "issue should remain after skipped PRs"))))]
+          (if (= (cand-count cands) 5)
+            unit
+            (io.panic "expected only complete/no-check PRs plus issue"))
+          (if (= (__tl-project-field (cand-nth cands 0) number) 1)
+            unit
+            (io.panic "non-draft PR without checks should remain eligible"))
+          (if (= (__tl-project-field (cand-nth cands 1) number) 2)
+            unit
+            (io.panic "empty check rollup should remain eligible"))
+          (if (= (__tl-project-field (cand-nth cands 2) number) 3)
+            unit
+            (io.panic "completed check run should remain eligible"))
+          (if (= (__tl-project-field (cand-nth cands 3) number) 6)
+            unit
+            (io.panic "terminal legacy status should remain eligible"))
+          (if (= (__tl-project-field (cand-nth cands 4) number) 7)
+            unit
+            (io.panic "issue should remain after skipped PRs")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -985,13 +950,12 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 1)
-              unit
-              (io.panic "only the main-base PR should remain eligible"))
-            (if (= (__tl-project-field (cand-nth cands 0) number) 9)
-              unit
-              (io.panic "the stacked PR must not become a review candidate"))))]
+          (if (= (cand-count cands) 1)
+            unit
+            (io.panic "only the main-base PR should remain eligible"))
+          (if (= (__tl-project-field (cand-nth cands 0) number) 9)
+            unit
+            (io.panic "the stacked PR must not become a review candidate")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1012,35 +976,34 @@
           [triage-p0 : i64 (__tl-project-field (cand-nth cands 6) weight)]
           [triage-p1 : i64 (__tl-project-field (cand-nth cands 7) weight)]
           [triage-plain : i64 (__tl-project-field (cand-nth cands 8) weight)]
-          (begin
-            (if (= (cand-count cands) 9)
-              unit
-              (io.panic "expected one review and eight issue candidates"))
-            (if (= ready-both ready-p0)
-              unit
-              (io.panic "ready p0 should take precedence over p1"))
-            (if (= triage-both triage-p0)
-              unit
-              (io.panic "triage p0 should take precedence over p1"))
-            (if (and (> ready-p0 ready-p1) (> ready-p1 ready-plain))
-              unit
-              (io.panic "ready priorities must order p0 above p1 above plain"))
-            (if (and (> triage-p0 triage-p1) (> triage-p1 triage-plain))
-              unit
-              (io.panic "triage priorities must order p0 above p1 above plain"))
-            (if (and
-              (> ready-p0 triage-p0)
-              (> ready-p1 triage-p1)
-              (> ready-plain triage-plain))
-              unit
-              (io.panic
-                "removing ready-for-implementation must lower every priority"))
-            (if (< triage-p0 review)
-              unit
-              (io.panic "even p0 triage must stay below PR review"))
-            (if (> ready-p0 review)
-              unit
-              (io.panic "ready p0 must retain its override above PR review"))))]
+          (if (= (cand-count cands) 9)
+            unit
+            (io.panic "expected one review and eight issue candidates"))
+          (if (= ready-both ready-p0)
+            unit
+            (io.panic "ready p0 should take precedence over p1"))
+          (if (= triage-both triage-p0)
+            unit
+            (io.panic "triage p0 should take precedence over p1"))
+          (if (and (> ready-p0 ready-p1) (> ready-p1 ready-plain))
+            unit
+            (io.panic "ready priorities must order p0 above p1 above plain"))
+          (if (and (> triage-p0 triage-p1) (> triage-p1 triage-plain))
+            unit
+            (io.panic "triage priorities must order p0 above p1 above plain"))
+          (if (and
+            (> ready-p0 triage-p0)
+            (> ready-p1 triage-p1)
+            (> ready-plain triage-plain))
+            unit
+            (io.panic
+              "removing ready-for-implementation must lower every priority"))
+          (if (< triage-p0 review)
+            unit
+            (io.panic "even p0 triage must stay below PR review"))
+          (if (> ready-p0 review)
+            unit
+            (io.panic "ready p0 must retain its override above PR review")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1052,26 +1015,24 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 4)
-              unit
-              (io.panic "blocked issues should remain eligible"))
-            (if (and
-              (= (__tl-project-field (cand-nth cands 0) number) 30)
-              (= (__tl-project-field (cand-nth cands 0) kind) kind-triage))
-              unit
-              (io.panic "blocked issue should remain in the triage lane"))
-            (if (and
-              (= (__tl-project-field (cand-nth cands 1) number) 31)
-              (= (__tl-project-field (cand-nth cands 1) kind) kind-ready))
-              unit
-              (io.panic
-                "blocked ready issue should remain in the implement lane"))
-            (if (and
-              (= (__tl-project-field (cand-nth cands 2) number) 32)
-              (= (__tl-project-field (cand-nth cands 3) number) 33))
-              unit
-              (io.panic "existing issue eligibility should remain unchanged"))))]
+          (if (= (cand-count cands) 4)
+            unit
+            (io.panic "blocked issues should remain eligible"))
+          (if (and
+            (= (__tl-project-field (cand-nth cands 0) number) 30)
+            (= (__tl-project-field (cand-nth cands 0) kind) kind-triage))
+            unit
+            (io.panic "blocked issue should remain in the triage lane"))
+          (if (and
+            (= (__tl-project-field (cand-nth cands 1) number) 31)
+            (= (__tl-project-field (cand-nth cands 1) kind) kind-ready))
+            unit
+            (io.panic "blocked ready issue should remain in the implement lane"))
+          (if (and
+            (= (__tl-project-field (cand-nth cands 2) number) 32)
+            (= (__tl-project-field (cand-nth cands 3) number) 33))
+            unit
+            (io.panic "existing issue eligibility should remain unchanged")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1083,13 +1044,12 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 1)
-              unit
-              (io.panic "expected one PR candidate"))
-            (if (= (__tl-project-field (cand-nth cands 0) weight) 45)
-              unit
-              (io.panic "PR review weight should be 45"))))]
+          (if (= (cand-count cands) 1)
+            unit
+            (io.panic "expected one PR candidate"))
+          (if (= (__tl-project-field (cand-nth cands 0) weight) 45)
+            unit
+            (io.panic "PR review weight should be 45")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1101,18 +1061,17 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 2)
-              unit
-              (io.panic
-                "only the non-draft PR and the triage issue should remain"))
-            (if (= (__tl-project-field (cand-nth cands 0) number) 62)
-              unit
-              (io.panic
-                "the sole non-draft PR should be the only review candidate"))
-            (if (= (__tl-project-field (cand-nth cands 1) number) 70)
-              unit
-              (io.panic "triage issue should follow once draft PRs are dropped"))))]
+          (if (= (cand-count cands) 2)
+            unit
+            (io.panic
+              "only the non-draft PR and the triage issue should remain"))
+          (if (= (__tl-project-field (cand-nth cands 0) number) 62)
+            unit
+            (io.panic
+              "the sole non-draft PR should be the only review candidate"))
+          (if (= (__tl-project-field (cand-nth cands 1) number) 70)
+            unit
+            (io.panic "triage issue should follow once draft PRs are dropped")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1124,26 +1083,25 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 10)
-              unit
-              (io.panic
-                "nine review PRs plus the surviving triage issue expected"))
-            (if (cand-list-has-kind? cands kind-ready)
-              (io.panic
-                "ready-for-implementation issues must drop above the eight-PR cap")
-              unit)
-            (if (cand-list-has-kind? cands kind-pr)
-              unit
-              (io.panic
-                "review candidates must stay eligible above the eight-PR cap"))
-            (if (cand-list-has-kind? cands kind-triage)
-              unit
-              (io.panic
-                "research/triage issues must stay eligible above the eight-PR cap"))
-            (if (= (__tl-project-field (cand-nth cands 9) number) 51)
-              unit
-              (io.panic "triage issue should remain after the nine review PRs"))))]
+          (if (= (cand-count cands) 10)
+            unit
+            (io.panic
+              "nine review PRs plus the surviving triage issue expected"))
+          (if (cand-list-has-kind? cands kind-ready)
+            (io.panic
+              "ready-for-implementation issues must drop above the eight-PR cap")
+            unit)
+          (if (cand-list-has-kind? cands kind-pr)
+            unit
+            (io.panic
+              "review candidates must stay eligible above the eight-PR cap"))
+          (if (cand-list-has-kind? cands kind-triage)
+            unit
+            (io.panic
+              "research/triage issues must stay eligible above the eight-PR cap"))
+          (if (= (__tl-project-field (cand-nth cands 9) number) 51)
+            unit
+            (io.panic "triage issue should remain after the nine review PRs")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1155,16 +1113,15 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 10)
-              unit
-              (io.panic "eight review PRs plus both issues expected at the cap"))
-            (if (cand-list-has-kind? cands kind-ready)
-              unit
-              (io.panic "exactly eight open PRs is at the cap, not above it"))
-            (if (= (__tl-project-field (cand-nth cands 8) number) 50)
-              unit
-              (io.panic "ready issue should remain right at the PR cap"))))]
+          (if (= (cand-count cands) 10)
+            unit
+            (io.panic "eight review PRs plus both issues expected at the cap"))
+          (if (cand-list-has-kind? cands kind-ready)
+            unit
+            (io.panic "exactly eight open PRs is at the cap, not above it"))
+          (if (= (__tl-project-field (cand-nth cands 8) number) 50)
+            unit
+            (io.panic "ready issue should remain right at the PR cap")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1176,18 +1133,16 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 9)
-              unit
-              (io.panic
-                "eight non-draft review PRs plus the kept ready issue expected"))
-            (if (cand-list-has-kind? cands kind-ready)
-              unit
-              (io.panic
-                "two draft PRs must not push eight open PRs over the cap"))
-            (if (= (__tl-project-field (cand-nth cands 8) number) 50)
-              unit
-              (io.panic "ready issue should sit right after the non-draft PRs"))))]
+          (if (= (cand-count cands) 9)
+            unit
+            (io.panic
+              "eight non-draft review PRs plus the kept ready issue expected"))
+          (if (cand-list-has-kind? cands kind-ready)
+            unit
+            (io.panic "two draft PRs must not push eight open PRs over the cap"))
+          (if (= (__tl-project-field (cand-nth cands 8) number) 50)
+            unit
+            (io.panic "ready issue should sit right after the non-draft PRs")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1199,19 +1154,18 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (begin
-            (if (= (cand-count cands) 0)
-              unit
-              (io.panic
-                "saturated PRs with only ready issues should leave no work"))
-            (match (choose-candidate text)
-              [(Wait message)
-                (test.assert-true
-                  (string.eq
-                    message
-                    "wait: queue saturated; review: 9 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
-                  "ready-only saturation should report its empty lanes")]
-              [_ (io.panic "saturated queue should return the wait signal")])))]
+          (if (= (cand-count cands) 0)
+            unit
+            (io.panic
+              "saturated PRs with only ready issues should leave no work"))
+          (match (choose-candidate text)
+            [(Wait message)
+              (test.assert-true
+                (string.eq
+                  message
+                  "wait: queue saturated; review: 9 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
+                "ready-only saturation should report its empty lanes")]
+            [_ (io.panic "saturated queue should return the wait signal")]))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1347,16 +1301,13 @@
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Wait message)
-      (begin
-        (io.print-format "{}" message)
-        (io.println "")
-        0)]
+      (io.print-format "{}" message)
+      (io.println "")
+      0]
     [(Ok cand)
-      (begin
-        (io.print-format "{}" (candidate-line cand))
-        (io.println "")
-        0)]))
+      (io.print-format "{}" (candidate-line cand))
+      (io.println "")
+      0]))

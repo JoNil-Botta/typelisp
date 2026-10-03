@@ -67,32 +67,28 @@
             (= (byte_buf.bytes-ref encoded 0) (cast 0 : u8))
             (= (byte_buf.bytes-ref encoded 1) (cast 1 : u8))
             (= (byte_buf.bytes-ref encoded (+ padding-length 2)) (cast 0 : u8)))]
-        (begin
-          (while (< index padding-length)
-            (begin
-              (if (!= (byte_buf.bytes-ref encoded (+ index 2)) (cast 255 : u8))
-                (set! valid false)
-                unit)
-              (set! index (+ index 1))))
-          (set! index 0)
-          (while (< index 19)
-            (begin
-              (if (!=
-                (byte_buf.bytes-ref encoded (+ prefix-start index))
-                (array-ref rsa-sha256-digest-info-prefix index))
-                (set! valid false)
-                unit)
-              (set! index (+ index 1))))
-          (set! index 0)
-          (while (< index 32)
-            (begin
-              (if (!=
-                (byte_buf.bytes-ref encoded (+ (+ prefix-start 19) index))
-                (sha.digest-byte digest index))
-                (set! valid false)
-                unit)
-              (set! index (+ index 1))))
-          valid)))))
+        (while (< index padding-length)
+          (if (!= (byte_buf.bytes-ref encoded (+ index 2)) (cast 255 : u8))
+            (set! valid false)
+            unit)
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (< index 19)
+          (if (!=
+            (byte_buf.bytes-ref encoded (+ prefix-start index))
+            (array-ref rsa-sha256-digest-info-prefix index))
+            (set! valid false)
+            unit)
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (< index 32)
+          (if (!=
+            (byte_buf.bytes-ref encoded (+ (+ prefix-start 19) index))
+            (sha.digest-byte digest index))
+            (set! valid false)
+            unit)
+          (set! index (+ index 1)))
+        valid))))
 
 ;: RFC 8017 MGF1's 2^32-counter domain, before the smaller RSA scratch cap.
 (define (rsa-mgf1-sha256-domain-valid? [mask-length : i64]) : bool
@@ -109,49 +105,41 @@
     (let
       [input : byte_buf.ByteBuf (byte_buf.with-capacity 36)]
       [index : i64 0]
-      (begin
-        (while (< index 32)
-          (begin
-            (set! input (byte_buf.push input (byte_buf.bytes-ref seed index)))
-            (set! index (+ index 1))))
-        (set!
+      (while (< index 32)
+        (set! input (byte_buf.push input (byte_buf.bytes-ref seed index)))
+        (set! index (+ index 1)))
+      (set!
+        input
+        (byte_buf.push
           input
-          (byte_buf.push
-            input
-            (cast (bit-and (shr counter 24) (cast 255 : u64)) : u8)))
-        (set!
+          (cast (bit-and (shr counter 24) (cast 255 : u64)) : u8)))
+      (set!
+        input
+        (byte_buf.push
           input
-          (byte_buf.push
-            input
-            (cast (bit-and (shr counter 16) (cast 255 : u64)) : u8)))
-        (set!
+          (cast (bit-and (shr counter 16) (cast 255 : u64)) : u8)))
+      (set!
+        input
+        (byte_buf.push
           input
-          (byte_buf.push
-            input
-            (cast (bit-and (shr counter 8) (cast 255 : u64)) : u8)))
-        (set!
-          input
-          (byte_buf.push input (cast (bit-and counter (cast 255 : u64)) : u8)))
-        (match (sha.digest (byte_buf.as-bytes (& input)))
-          [(Sha256FinalizeErr error) (RsaMgf1HashFailure error)]
-          [(Sha256FinalizeOk digest)
-            (let
-              [next : byte_buf.ByteBuf out]
-              [used : i64 0]
-              (begin
-                (while (and
-                  (< used 32)
-                  (< (byte_buf.length (& next)) mask-length))
-                  (begin
-                    (set!
-                      next
-                      (byte_buf.push next (sha.digest-byte (& digest) used)))
-                    (set! used (+ used 1))))
-                (rsa-mgf1-sha256-with
-                  seed
-                  mask-length
-                  (+ counter (cast 1 : u64))
-                  next)))])))))
+          (cast (bit-and (shr counter 8) (cast 255 : u64)) : u8)))
+      (set!
+        input
+        (byte_buf.push input (cast (bit-and counter (cast 255 : u64)) : u8)))
+      (match (sha.digest (byte_buf.as-bytes (& input)))
+        [(Sha256FinalizeErr error) (RsaMgf1HashFailure error)]
+        [(Sha256FinalizeOk digest)
+          (let
+            [next : byte_buf.ByteBuf out]
+            [used : i64 0]
+            (while (and (< used 32) (< (byte_buf.length (& next)) mask-length))
+              (set! next (byte_buf.push next (sha.digest-byte (& digest) used)))
+              (set! used (+ used 1)))
+            (rsa-mgf1-sha256-with
+              seed
+              mask-length
+              (+ counter (cast 1 : u64))
+              next))]))))
 
 ;: RSA-internal, fixed-digest MGF1. Reject domain/cap before allocation.
 (define (rsa-mgf1-sha256 [seed : (& seed sha.Sha256Digest)] [mask-length : i64]) : RsaMgf1Result
@@ -162,18 +150,16 @@
     (let
       [seed-bytes : byte_buf.ByteBuf (byte_buf.with-capacity 32)]
       [index : i64 0]
-      (begin
-        (while (< index 32)
-          (begin
-            (set!
-              seed-bytes
-              (byte_buf.push seed-bytes (sha.digest-byte seed index)))
-            (set! index (+ index 1))))
-        (rsa-mgf1-sha256-with
-          (byte_buf.as-bytes (& seed-bytes))
-          mask-length
-          (cast 0 : u64)
-          (byte_buf.with-capacity mask-length))))))
+      (while (< index 32)
+        (set!
+          seed-bytes
+          (byte_buf.push seed-bytes (sha.digest-byte seed index)))
+        (set! index (+ index 1)))
+      (rsa-mgf1-sha256-with
+        (byte_buf.as-bytes (& seed-bytes))
+        mask-length
+        (cast 0 : u64)
+        (byte_buf.with-capacity mask-length)))))
 
 ;: Check the complete fixed-profile EMSA-PSS-SHA256 encoding.
 (define (rsa-pss-sha256-encoding-valid
@@ -199,116 +185,101 @@
           [h-bytes : (Array u8 32) (make-array u8 32)]
           [index : i64 0]
           [valid : bool true]
-          (begin
-            (while (< index prefix-length)
-              (begin
-                (if (!= (byte_buf.bytes-ref encoded index) (cast 0 : u8))
-                  (set! valid false)
-                  unit)
-                (set! index (+ index 1))))
-            (if (!= (byte_buf.bytes-ref encoded (- width 1)) (cast 0xbc : u8))
+          (while (< index prefix-length)
+            (if (!= (byte_buf.bytes-ref encoded index) (cast 0 : u8))
               (set! valid false)
               unit)
-            (if (!=
-              (bit-and
-                (byte_buf.bytes-ref encoded prefix-length)
-                (bit-not low-mask))
-              (cast 0 : u8))
-              (set! valid false)
-              unit)
-            (set! index 0)
-            (while (< index 32)
-              (begin
-                (set!
-                  (array-ref h-bytes index)
-                  (byte_buf.bytes-ref
-                    encoded
-                    (+ (+ prefix-length db-length) index)))
-                (set! index (+ index 1))))
-            (if (not valid)
-              (RsaVerifyInvalidSignature)
-              (let
-                [h : sha.Sha256Digest (sha.Sha256Digest h-bytes)]
-                (match (rsa-mgf1-sha256 (& h) db-length)
-                  [(RsaMgf1InvalidLength _) (RsaVerifyInvalidSignature)]
-                  [(RsaMgf1HashFailure error) (RsaVerifyHashFailure error)]
-                  [(RsaMgf1Ok mask)
-                    (let
-                      [db : byte_buf.ByteBuf (byte_buf.with-capacity db-length)]
-                      [db-index : i64 0]
-                      [padding-length : i64 (- db-length 33)]
-                      [padding-valid : bool true]
-                      (begin
-                        (while (< db-index db-length)
-                          (let
-                            [raw : u8
-                              (bit-xor
-                                (byte_buf.bytes-ref
-                                  encoded
-                                  (+ prefix-length db-index))
-                                (byte_buf.bytes-ref
-                                  (byte_buf.as-bytes (& mask))
-                                  db-index))]
-                            [selected : u8
-                              (if (= db-index 0)
-                                (bit-and raw low-mask)
-                                raw)]
-                            (begin
-                              (set! db (byte_buf.push db selected))
-                              (if (and
-                                (< db-index padding-length)
-                                (!= selected (cast 0 : u8)))
-                                (set! padding-valid false)
-                                unit)
-                              (set! db-index (+ db-index 1)))))
-                        (if (!=
-                          (byte_buf.bytes-ref
-                            (byte_buf.as-bytes (& db))
-                            padding-length)
-                          (cast 1 : u8))
+            (set! index (+ index 1)))
+          (if (!= (byte_buf.bytes-ref encoded (- width 1)) (cast 0xbc : u8))
+            (set! valid false)
+            unit)
+          (if (!=
+            (bit-and
+              (byte_buf.bytes-ref encoded prefix-length)
+              (bit-not low-mask))
+            (cast 0 : u8))
+            (set! valid false)
+            unit)
+          (set! index 0)
+          (while (< index 32)
+            (set!
+              (array-ref h-bytes index)
+              (byte_buf.bytes-ref encoded (+ (+ prefix-length db-length) index)))
+            (set! index (+ index 1)))
+          (if (not valid)
+            (RsaVerifyInvalidSignature)
+            (let
+              [h : sha.Sha256Digest (sha.Sha256Digest h-bytes)]
+              (match (rsa-mgf1-sha256 (& h) db-length)
+                [(RsaMgf1InvalidLength _) (RsaVerifyInvalidSignature)]
+                [(RsaMgf1HashFailure error) (RsaVerifyHashFailure error)]
+                [(RsaMgf1Ok mask)
+                  (let
+                    [db : byte_buf.ByteBuf (byte_buf.with-capacity db-length)]
+                    [db-index : i64 0]
+                    [padding-length : i64 (- db-length 33)]
+                    [padding-valid : bool true]
+                    (while (< db-index db-length)
+                      (let
+                        [raw : u8
+                          (bit-xor
+                            (byte_buf.bytes-ref
+                              encoded
+                              (+ prefix-length db-index))
+                            (byte_buf.bytes-ref
+                              (byte_buf.as-bytes (& mask))
+                              db-index))]
+                        [selected : u8
+                          (if (= db-index 0)
+                            (bit-and raw low-mask)
+                            raw)]
+                        (set! db (byte_buf.push db selected))
+                        (if (and
+                          (< db-index padding-length)
+                          (!= selected (cast 0 : u8)))
                           (set! padding-valid false)
                           unit)
-                        (if (not padding-valid)
-                          (RsaVerifyInvalidSignature)
-                          (let
-                            [m-prime : byte_buf.ByteBuf
-                              (byte_buf.with-capacity 72)]
-                            [part : i64 0]
-                            (begin
-                              (while (< part 8)
-                                (begin
-                                  (set!
-                                    m-prime
-                                    (byte_buf.push m-prime (cast 0 : u8)))
-                                  (set! part (+ part 1))))
-                              (set! part 0)
-                              (while (< part 32)
-                                (begin
-                                  (set!
-                                    m-prime
-                                    (byte_buf.push
-                                      m-prime
-                                      (sha.digest-byte message-hash part)))
-                                  (set! part (+ part 1))))
-                              (set! part 0)
-                              (while (< part 32)
-                                (begin
-                                  (set!
-                                    m-prime
-                                    (byte_buf.push
-                                      m-prime
-                                      (byte_buf.bytes-ref
-                                        (byte_buf.as-bytes (& db))
-                                        (+ (+ padding-length 1) part))))
-                                  (set! part (+ part 1))))
-                              (match (sha.digest
-                                (byte_buf.as-bytes (& m-prime)))
-                                [(Sha256FinalizeErr error)
-                                  (RsaVerifyHashFailure error)]
-                                [(Sha256FinalizeOk recomputed)
-                                  (if (sha.digest-eq? (& h) (& recomputed))
-                                    (RsaVerifyOk)
-                                    (RsaVerifyInvalidSignature))]))))))])))))))))
+                        (set! db-index (+ db-index 1))))
+                    (if (!=
+                      (byte_buf.bytes-ref
+                        (byte_buf.as-bytes (& db))
+                        padding-length)
+                      (cast 1 : u8))
+                      (set! padding-valid false)
+                      unit)
+                    (if (not padding-valid)
+                      (RsaVerifyInvalidSignature)
+                      (let
+                        [m-prime : byte_buf.ByteBuf (byte_buf.with-capacity 72)]
+                        [part : i64 0]
+                        (while (< part 8)
+                          (set! m-prime (byte_buf.push m-prime (cast 0 : u8)))
+                          (set! part (+ part 1)))
+                        (set! part 0)
+                        (while (< part 32)
+                          (set!
+                            m-prime
+                            (byte_buf.push
+                              m-prime
+                              (sha.digest-byte message-hash part)))
+                          (set! part (+ part 1)))
+                        (set! part 0)
+                        (while (< part 32)
+                          (set!
+                            m-prime
+                            (byte_buf.push
+                              m-prime
+                              (byte_buf.bytes-ref
+                                (byte_buf.as-bytes (& db))
+                                (+ (+ padding-length 1) part))))
+                          (set! part (+ part 1)))
+                        (match (sha.digest (byte_buf.as-bytes (& m-prime)))
+                          [(Sha256FinalizeErr error)
+                            (RsaVerifyHashFailure error)]
+                          [(Sha256FinalizeOk recomputed)
+                            (if (sha.digest-eq? (& h) (& recomputed))
+                              (RsaVerifyOk)
+                              (RsaVerifyInvalidSignature))]))))]))))))))
 
 ;: Verify an exact message and modulus-width RSASSA-PKCS1-v1_5/SHA-256
 ;: signature. TLS/X.509/SSH policy admission belongs to their adapters.

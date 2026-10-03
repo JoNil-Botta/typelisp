@@ -24,32 +24,27 @@
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 4096)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i hashmap-get-size)
-        (begin
-          (let
-            [key : i64 (hashmap-get-key i)]
-            (map_i64_i64.insert! m key (hashmap-get-value key)))
-          (set! i (+ i 1))))
+    (while (< i hashmap-get-size)
       (let
-        [round : i64 0]
-        (while (< round rounds)
-          (begin
+        [key : i64 (hashmap-get-key i)]
+        (map_i64_i64.insert! m key (hashmap-get-value key)))
+      (set! i (+ i 1)))
+    (let
+      [round : i64 0]
+      (while (< round rounds)
+        (let
+          [hit : i64 0]
+          (while (< hit hashmap-get-size)
             (let
-              [hit : i64 0]
-              (while (< hit hashmap-get-size)
-                (begin
-                  (let
-                    [key : i64 (hashmap-get-key hit)]
-                    (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
-                  (set! hit (+ hit 1)))))
+              [key : i64 (hashmap-get-key hit)]
+              (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
+            (set! hit (+ hit 1))))
+        (let
+          [miss : i64 0]
+          (while (< miss hashmap-get-size)
             (let
-              [miss : i64 0]
-              (while (< miss hashmap-get-size)
-                (begin
-                  (let
-                    [key : i64 (+ (hashmap-get-key miss) 1)]
-                    (set! acc (+ acc (map_i64_i64.get-value-or (& m) key 3))))
-                  (set! miss (+ miss 1)))))
-            (set! round (+ round 1)))))
-      (bit-and (+ acc (map_i64_i64.len (& m))) 255))))
+              [key : i64 (+ (hashmap-get-key miss) 1)]
+              (set! acc (+ acc (map_i64_i64.get-value-or (& m) key 3))))
+            (set! miss (+ miss 1))))
+        (set! round (+ round 1))))
+    (bit-and (+ acc (map_i64_i64.len (& m))) 255)))

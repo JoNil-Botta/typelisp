@@ -10,13 +10,11 @@
 (define (main) : i64
   (let
     [m : map_i64_string.Map (map_i64_string.with-capacity 2)]
-    (begin
-      (map_i64_string.insert! m 1 "one")
-      (let
-        [borrowed : (map_i64_string.BorrowedValueLookup m)
-          (map_i64_string.get-value-borrowed (& m) 1)]
-        (begin
-          (map_i64_string.insert! m 2 "two")
-          (if (borrowed-value-found? borrowed)
-            1
-            0))))))
+    (map_i64_string.insert! m 1 "one")
+    (let
+      [borrowed : (map_i64_string.BorrowedValueLookup m)
+        (map_i64_string.get-value-borrowed (& m) 1)]
+      (map_i64_string.insert! m 2 "two")
+      (if (borrowed-value-found? borrowed)
+        1
+        0))))

@@ -16,10 +16,9 @@
       (read-all-stdin-bytes-acc next))))
 
 (define (main) : i64
-  (begin
-    (test.assert-i64-eq
-      (read-all-stdin-bytes-acc 0)
-      pipe-stdin-expected-bytes
-      "pipe stdin byte count")
-    (test.assert-true (io.stdin-at-eof?) "pipe stdin EOF after read-all")
-    42))
+  (test.assert-i64-eq
+    (read-all-stdin-bytes-acc 0)
+    pipe-stdin-expected-bytes
+    "pipe stdin byte count")
+  (test.assert-true (io.stdin-at-eof?) "pipe stdin EOF after read-all")
+  42)

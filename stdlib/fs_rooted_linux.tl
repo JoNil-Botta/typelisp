@@ -747,36 +747,35 @@
 (cfg
   fs-rooted-linux-test-hooks
   (define (linux-rooted-test-reset!) : unit
-    (begin
-      (set! fs-linux-rooted-test-fail-kind 0)
-      (set! fs-linux-rooted-test-fail-call 0)
-      (set! fs-linux-rooted-test-fail-errno 0)
-      (set! fs-linux-rooted-test-write-max 0)
-      (set! fs-linux-rooted-test-openat-calls 0)
-      (set! fs-linux-rooted-test-mkdirat-calls 0)
-      (set! fs-linux-rooted-test-openat2-calls 0)
-      (set! fs-linux-rooted-test-fstat-calls 0)
-      (set! fs-linux-rooted-test-fchmod-calls 0)
-      (set! fs-linux-rooted-test-write-calls 0)
-      (set! fs-linux-rooted-test-fsync-calls 0)
-      (set! fs-linux-rooted-test-close-calls 0)
-      (set! fs-linux-rooted-test-reopen-calls 0)
-      (set! fs-linux-rooted-test-read-calls 0)
-      (set! fs-linux-rooted-test-renameat-calls 0)
-      (set! fs-linux-rooted-test-renameat2-calls 0)
-      (set! fs-linux-rooted-test-unlinkat-calls 0)
-      (set! fs-linux-rooted-test-rmdirat-calls 0)
-      (set! fs-linux-rooted-test-directory-fsync-calls 0)
-      (set! fs-linux-rooted-test-reopen-directory-calls 0)
-      (set! fs-linux-rooted-test-lseek-calls 0)
-      (set! fs-linux-rooted-test-guard-open-calls 0)
-      (set! fs-linux-rooted-test-flock-calls 0)
-      (set! fs-linux-rooted-test-unlock-calls 0)
-      (set! fs-linux-rooted-test-read-max 0)
-      (set! fs-linux-rooted-test-mkdir-race-enabled false)
-      (set! fs-linux-rooted-test-mkdir-race-ok false)
-      (set! fs-linux-rooted-test-after-mkdir-pause-ms 0)
-      (set! fs-linux-rooted-test-mode-drift-enabled false))))
+    (set! fs-linux-rooted-test-fail-kind 0)
+    (set! fs-linux-rooted-test-fail-call 0)
+    (set! fs-linux-rooted-test-fail-errno 0)
+    (set! fs-linux-rooted-test-write-max 0)
+    (set! fs-linux-rooted-test-openat-calls 0)
+    (set! fs-linux-rooted-test-mkdirat-calls 0)
+    (set! fs-linux-rooted-test-openat2-calls 0)
+    (set! fs-linux-rooted-test-fstat-calls 0)
+    (set! fs-linux-rooted-test-fchmod-calls 0)
+    (set! fs-linux-rooted-test-write-calls 0)
+    (set! fs-linux-rooted-test-fsync-calls 0)
+    (set! fs-linux-rooted-test-close-calls 0)
+    (set! fs-linux-rooted-test-reopen-calls 0)
+    (set! fs-linux-rooted-test-read-calls 0)
+    (set! fs-linux-rooted-test-renameat-calls 0)
+    (set! fs-linux-rooted-test-renameat2-calls 0)
+    (set! fs-linux-rooted-test-unlinkat-calls 0)
+    (set! fs-linux-rooted-test-rmdirat-calls 0)
+    (set! fs-linux-rooted-test-directory-fsync-calls 0)
+    (set! fs-linux-rooted-test-reopen-directory-calls 0)
+    (set! fs-linux-rooted-test-lseek-calls 0)
+    (set! fs-linux-rooted-test-guard-open-calls 0)
+    (set! fs-linux-rooted-test-flock-calls 0)
+    (set! fs-linux-rooted-test-unlock-calls 0)
+    (set! fs-linux-rooted-test-read-max 0)
+    (set! fs-linux-rooted-test-mkdir-race-enabled false)
+    (set! fs-linux-rooted-test-mkdir-race-ok false)
+    (set! fs-linux-rooted-test-after-mkdir-pause-ms 0)
+    (set! fs-linux-rooted-test-mode-drift-enabled false)))
 
 ;: Inject `errno-code` (zero means a zero-progress return) for one numbered
 ;: syscall attempt of `kind`. A negative code injects a positive raw result,
@@ -787,10 +786,9 @@
     [kind : i64]
     [call : i64]
     [errno-code : i64]) : unit
-    (begin
-      (set! fs-linux-rooted-test-fail-kind kind)
-      (set! fs-linux-rooted-test-fail-call call)
-      (set! fs-linux-rooted-test-fail-errno errno-code))))
+    (set! fs-linux-rooted-test-fail-kind kind)
+    (set! fs-linux-rooted-test-fail-call call)
+    (set! fs-linux-rooted-test-fail-errno errno-code)))
 
 ;: Bound each real write call to force deterministic short-write coverage.
 (cfg
@@ -885,125 +883,105 @@
       [call : i64
         (cond
           [(= kind fs-linux-rooted-syscall-kind-openat)
-            (begin
-              (set!
-                fs-linux-rooted-test-openat-calls
-                (+ fs-linux-rooted-test-openat-calls 1))
-              fs-linux-rooted-test-openat-calls)]
+            (set!
+              fs-linux-rooted-test-openat-calls
+              (+ fs-linux-rooted-test-openat-calls 1))
+            fs-linux-rooted-test-openat-calls]
           [(= kind fs-linux-rooted-syscall-kind-mkdirat)
-            (begin
-              (set!
-                fs-linux-rooted-test-mkdirat-calls
-                (+ fs-linux-rooted-test-mkdirat-calls 1))
-              fs-linux-rooted-test-mkdirat-calls)]
+            (set!
+              fs-linux-rooted-test-mkdirat-calls
+              (+ fs-linux-rooted-test-mkdirat-calls 1))
+            fs-linux-rooted-test-mkdirat-calls]
           [(= kind fs-linux-rooted-syscall-kind-openat2)
-            (begin
-              (set!
-                fs-linux-rooted-test-openat2-calls
-                (+ fs-linux-rooted-test-openat2-calls 1))
-              fs-linux-rooted-test-openat2-calls)]
+            (set!
+              fs-linux-rooted-test-openat2-calls
+              (+ fs-linux-rooted-test-openat2-calls 1))
+            fs-linux-rooted-test-openat2-calls]
           [(= kind fs-linux-rooted-syscall-kind-fstat)
-            (begin
-              (set!
-                fs-linux-rooted-test-fstat-calls
-                (+ fs-linux-rooted-test-fstat-calls 1))
-              fs-linux-rooted-test-fstat-calls)]
+            (set!
+              fs-linux-rooted-test-fstat-calls
+              (+ fs-linux-rooted-test-fstat-calls 1))
+            fs-linux-rooted-test-fstat-calls]
           [(= kind fs-linux-rooted-syscall-kind-fchmod)
-            (begin
-              (set!
-                fs-linux-rooted-test-fchmod-calls
-                (+ fs-linux-rooted-test-fchmod-calls 1))
-              fs-linux-rooted-test-fchmod-calls)]
+            (set!
+              fs-linux-rooted-test-fchmod-calls
+              (+ fs-linux-rooted-test-fchmod-calls 1))
+            fs-linux-rooted-test-fchmod-calls]
           [(= kind fs-linux-rooted-syscall-kind-write)
-            (begin
-              (set!
-                fs-linux-rooted-test-write-calls
-                (+ fs-linux-rooted-test-write-calls 1))
-              fs-linux-rooted-test-write-calls)]
+            (set!
+              fs-linux-rooted-test-write-calls
+              (+ fs-linux-rooted-test-write-calls 1))
+            fs-linux-rooted-test-write-calls]
           [(= kind fs-linux-rooted-syscall-kind-fsync)
-            (begin
-              (set!
-                fs-linux-rooted-test-fsync-calls
-                (+ fs-linux-rooted-test-fsync-calls 1))
-              fs-linux-rooted-test-fsync-calls)]
+            (set!
+              fs-linux-rooted-test-fsync-calls
+              (+ fs-linux-rooted-test-fsync-calls 1))
+            fs-linux-rooted-test-fsync-calls]
           [(= kind fs-linux-rooted-syscall-kind-close)
-            (begin
-              (set!
-                fs-linux-rooted-test-close-calls
-                (+ fs-linux-rooted-test-close-calls 1))
-              fs-linux-rooted-test-close-calls)]
+            (set!
+              fs-linux-rooted-test-close-calls
+              (+ fs-linux-rooted-test-close-calls 1))
+            fs-linux-rooted-test-close-calls]
           [(= kind fs-linux-rooted-syscall-kind-reopen)
-            (begin
-              (set!
-                fs-linux-rooted-test-reopen-calls
-                (+ fs-linux-rooted-test-reopen-calls 1))
-              fs-linux-rooted-test-reopen-calls)]
+            (set!
+              fs-linux-rooted-test-reopen-calls
+              (+ fs-linux-rooted-test-reopen-calls 1))
+            fs-linux-rooted-test-reopen-calls]
           [(= kind fs-linux-rooted-syscall-kind-read)
-            (begin
-              (set!
-                fs-linux-rooted-test-read-calls
-                (+ fs-linux-rooted-test-read-calls 1))
-              fs-linux-rooted-test-read-calls)]
+            (set!
+              fs-linux-rooted-test-read-calls
+              (+ fs-linux-rooted-test-read-calls 1))
+            fs-linux-rooted-test-read-calls]
           [(= kind fs-linux-rooted-syscall-kind-renameat)
-            (begin
-              (set!
-                fs-linux-rooted-test-renameat-calls
-                (+ fs-linux-rooted-test-renameat-calls 1))
-              fs-linux-rooted-test-renameat-calls)]
+            (set!
+              fs-linux-rooted-test-renameat-calls
+              (+ fs-linux-rooted-test-renameat-calls 1))
+            fs-linux-rooted-test-renameat-calls]
           [(= kind fs-linux-rooted-syscall-kind-renameat2)
-            (begin
-              (set!
-                fs-linux-rooted-test-renameat2-calls
-                (+ fs-linux-rooted-test-renameat2-calls 1))
-              fs-linux-rooted-test-renameat2-calls)]
+            (set!
+              fs-linux-rooted-test-renameat2-calls
+              (+ fs-linux-rooted-test-renameat2-calls 1))
+            fs-linux-rooted-test-renameat2-calls]
           [(= kind fs-linux-rooted-syscall-kind-unlinkat)
-            (begin
-              (set!
-                fs-linux-rooted-test-unlinkat-calls
-                (+ fs-linux-rooted-test-unlinkat-calls 1))
-              fs-linux-rooted-test-unlinkat-calls)]
+            (set!
+              fs-linux-rooted-test-unlinkat-calls
+              (+ fs-linux-rooted-test-unlinkat-calls 1))
+            fs-linux-rooted-test-unlinkat-calls]
           [(= kind fs-linux-rooted-syscall-kind-rmdirat)
-            (begin
-              (set!
-                fs-linux-rooted-test-rmdirat-calls
-                (+ fs-linux-rooted-test-rmdirat-calls 1))
-              fs-linux-rooted-test-rmdirat-calls)]
+            (set!
+              fs-linux-rooted-test-rmdirat-calls
+              (+ fs-linux-rooted-test-rmdirat-calls 1))
+            fs-linux-rooted-test-rmdirat-calls]
           [(= kind fs-linux-rooted-syscall-kind-directory-fsync)
-            (begin
-              (set!
-                fs-linux-rooted-test-directory-fsync-calls
-                (+ fs-linux-rooted-test-directory-fsync-calls 1))
-              fs-linux-rooted-test-directory-fsync-calls)]
+            (set!
+              fs-linux-rooted-test-directory-fsync-calls
+              (+ fs-linux-rooted-test-directory-fsync-calls 1))
+            fs-linux-rooted-test-directory-fsync-calls]
           [(= kind fs-linux-rooted-syscall-kind-reopen-directory)
-            (begin
-              (set!
-                fs-linux-rooted-test-reopen-directory-calls
-                (+ fs-linux-rooted-test-reopen-directory-calls 1))
-              fs-linux-rooted-test-reopen-directory-calls)]
+            (set!
+              fs-linux-rooted-test-reopen-directory-calls
+              (+ fs-linux-rooted-test-reopen-directory-calls 1))
+            fs-linux-rooted-test-reopen-directory-calls]
           [(= kind fs-linux-rooted-syscall-kind-lseek)
-            (begin
-              (set!
-                fs-linux-rooted-test-lseek-calls
-                (+ fs-linux-rooted-test-lseek-calls 1))
-              fs-linux-rooted-test-lseek-calls)]
+            (set!
+              fs-linux-rooted-test-lseek-calls
+              (+ fs-linux-rooted-test-lseek-calls 1))
+            fs-linux-rooted-test-lseek-calls]
           [(= kind fs-linux-rooted-syscall-kind-guard-open)
-            (begin
-              (set!
-                fs-linux-rooted-test-guard-open-calls
-                (+ fs-linux-rooted-test-guard-open-calls 1))
-              fs-linux-rooted-test-guard-open-calls)]
+            (set!
+              fs-linux-rooted-test-guard-open-calls
+              (+ fs-linux-rooted-test-guard-open-calls 1))
+            fs-linux-rooted-test-guard-open-calls]
           [(= kind fs-linux-rooted-syscall-kind-flock)
-            (begin
-              (set!
-                fs-linux-rooted-test-flock-calls
-                (+ fs-linux-rooted-test-flock-calls 1))
-              fs-linux-rooted-test-flock-calls)]
+            (set!
+              fs-linux-rooted-test-flock-calls
+              (+ fs-linux-rooted-test-flock-calls 1))
+            fs-linux-rooted-test-flock-calls]
           [(= kind fs-linux-rooted-syscall-kind-unlock)
-            (begin
-              (set!
-                fs-linux-rooted-test-unlock-calls
-                (+ fs-linux-rooted-test-unlock-calls 1))
-              fs-linux-rooted-test-unlock-calls)]
+            (set!
+              fs-linux-rooted-test-unlock-calls
+              (+ fs-linux-rooted-test-unlock-calls 1))
+            fs-linux-rooted-test-unlock-calls]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -1673,32 +1651,30 @@
     [cancel-check : (-> bool)]) : FsLinuxRootedResult
     (let
       [raw : i64 -4]
-      (begin
-        (while (and (= raw -4) (not (cancel-check)))
-          (set!
-            raw
-            (unsafe
-              (linux-rooted-raw-fchmod fd mode))))
-        (cond
-          [(= raw 0) LinuxRootedOk]
-          [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
-          [else LinuxRootedModeFailure])))))
+      (while (and (= raw -4) (not (cancel-check)))
+        (set!
+          raw
+          (unsafe
+            (linux-rooted-raw-fchmod fd mode))))
+      (cond
+        [(= raw 0) LinuxRootedOk]
+        [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+        [else LinuxRootedModeFailure]))))
 
 ;: Flush one retained fd, retrying EINTR while cancellation remains clear.
 (unsafe
   (define (linux-rooted-flush-fd [fd : i64] [cancel-check : (-> bool)]) : FsLinuxRootedResult
     (let
       [raw : i64 -4]
-      (begin
-        (while (and (= raw -4) (not (cancel-check)))
-          (set!
-            raw
-            (unsafe
-              (linux-rooted-raw-fsync fd))))
-        (cond
-          [(= raw 0) LinuxRootedOk]
-          [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
-          [else LinuxRootedFlushFailure])))))
+      (while (and (= raw -4) (not (cancel-check)))
+        (set!
+          raw
+          (unsafe
+            (linux-rooted-raw-fsync fd))))
+      (cond
+        [(= raw 0) LinuxRootedOk]
+        [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+        [else LinuxRootedFlushFailure]))))
 
 ;: Flush one retained parent directory, retrying EINTR while cancellation is
 ;: clear. A separate raw wrapper keeps directory-fsync injection independent.
@@ -1708,16 +1684,15 @@
     [cancel-check : (-> bool)]) : FsLinuxRootedResult
     (let
       [raw : i64 -4]
-      (begin
-        (while (and (= raw -4) (not (cancel-check)))
-          (set!
-            raw
-            (unsafe
-              (linux-rooted-raw-directory-fsync fd))))
-        (cond
-          [(= raw 0) LinuxRootedOk]
-          [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
-          [else LinuxRootedFlushFailure])))))
+      (while (and (= raw -4) (not (cancel-check)))
+        (set!
+          raw
+          (unsafe
+            (linux-rooted-raw-directory-fsync fd))))
+      (cond
+        [(= raw 0) LinuxRootedOk]
+        [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+        [else LinuxRootedFlushFailure]))))
 
 ;: Close one raw fd exactly once. Linux close is never retried because EINTR
 ;: leaves descriptor state unspecified and a retry could close a reused fd.
@@ -1742,12 +1717,11 @@
       [state : (MutPtr FsLinuxRootedHandleState)
         (unsafe
           (__tl_array-data states))]
-      (begin
-        (unsafe
-          (ptr-write!
-            state
-            (FsLinuxRootedHandleState fd result LinuxRootedClosed)))
-        state))))
+      (unsafe
+        (ptr-write!
+          state
+          (FsLinuxRootedHandleState fd result LinuxRootedClosed)))
+      state)))
 
 ;: Snapshot private state, failing closed for a null pointer.
 (unsafe
@@ -1778,12 +1752,11 @@
       [state : (MutPtr FsLinuxRootedHandleState)
         (unsafe
           (linux-rooted-state-new -1 result))]
-      (begin
-        (unsafe
-          (linux-rooted-state-write!
-            state
-            (FsLinuxRootedHandleState -1 result close-result)))
-        state))))
+      (unsafe
+        (linux-rooted-state-write!
+          state
+          (FsLinuxRootedHandleState -1 result close-result)))
+      state)))
 
 ;: Close one state exactly once and poison its fd before the syscall.
 (unsafe
@@ -1805,20 +1778,18 @@
             [result : FsLinuxRootedResult
               (unsafe
                 (linux-rooted-close-fd-once fd))]
-            (begin
-              (unsafe
-                (linux-rooted-state-write!
-                  state-ptr
-                  (FsLinuxRootedHandleState -1 state.result result)))
-              result)))))))
+            (unsafe
+              (linux-rooted-state-write!
+                state-ptr
+                (FsLinuxRootedHandleState -1 state.result result)))
+            result))))))
 
 ;: Cleanup-field adapter. Close failures are observable only through explicit
 ;: finish/close APIs; lexical cleanup must return unit.
 (define (linux-rooted-state-cleanup [state : (MutPtr FsLinuxRootedHandleState)]) : unit
-  (begin
-    (unsafe
-      (linux-rooted-state-close-result state))
-    unit))
+  (unsafe
+    (linux-rooted-state-close-result state))
+  unit)
 
 ;: Cleanup-owning, move-only rooted directory capability.
 (defstruct FsLinuxRootedDirectory
@@ -1851,10 +1822,9 @@
       [state : (MutPtr FsLinuxRootedGuardState)
         (unsafe
           (__tl_array-data states))]
-      (begin
-        (unsafe
-          (ptr-write! state value))
-        state))))
+      (unsafe
+        (ptr-write! state value))
+      state)))
 
 ;: Snapshot guard state, failing closed for a null pointer.
 (unsafe
@@ -2846,7 +2816,18 @@
               (linux-rooted-unlock-result-from-raw
                 (linux-rooted-raw-unlock held.fd))
               LinuxRootedClosed)]
-          (begin
+          (linux-rooted-guard-state-write!
+            guard.state
+            (FsLinuxRootedGuardState
+              -1
+              held.result
+              held.device
+              held.inode
+              unlock
+              LinuxRootedClosed))
+          (let
+            [close-result : FsLinuxRootedResult
+              (linux-rooted-close-fd-once held.fd)]
             (linux-rooted-guard-state-write!
               guard.state
               (FsLinuxRootedGuardState
@@ -2855,21 +2836,8 @@
                 held.device
                 held.inode
                 unlock
-                LinuxRootedClosed))
-            (let
-              [close-result : FsLinuxRootedResult
-                (linux-rooted-close-fd-once held.fd)]
-              (begin
-                (linux-rooted-guard-state-write!
-                  guard.state
-                  (FsLinuxRootedGuardState
-                    -1
-                    held.result
-                    held.device
-                    held.inode
-                    unlock
-                    close-result))
-                (FsLinuxRootedGuardRelease unlock close-result)))))))))
+                close-result))
+            (FsLinuxRootedGuardRelease unlock close-result)))))))
 
 ;: Construct a no-data read outcome.
 (define (linux-rooted-empty-read-result
@@ -2924,29 +2892,28 @@
               [else
                 (let
                   [raw : i64 -4]
-                  (begin
-                    (while (and (= raw -4) (not (cancel-check)))
-                      (set!
+                  (while (and (= raw -4) (not (cancel-check)))
+                    (set!
+                      raw
+                      (linux-rooted-raw-read
+                        state.fd
+                        (byte_buf.bytes-mut-data out)
+                        count)))
+                  (cond
+                    [(>= raw 0)
+                      (FsLinuxRootedReadIntoResult
+                        LinuxRootedOk
                         raw
-                        (linux-rooted-raw-read
-                          state.fd
-                          (byte_buf.bytes-mut-data out)
-                          count)))
-                    (cond
-                      [(>= raw 0)
-                        (FsLinuxRootedReadIntoResult
-                          LinuxRootedOk
-                          raw
-                          (= raw 0)
-                          (and (> raw 0) (< raw count)))]
-                      [(or (= raw -4) (= raw -125))
-                        (linux-rooted-empty-read-into-result
-                          LinuxRootedCancelled
-                          false)]
-                      [else
-                        (linux-rooted-empty-read-into-result
-                          LinuxRootedReadFailure
-                          false)])))]))]))))
+                        (= raw 0)
+                        (and (> raw 0) (< raw count)))]
+                    [(or (= raw -4) (= raw -125))
+                      (linux-rooted-empty-read-into-result
+                        LinuxRootedCancelled
+                        false)]
+                    [else
+                      (linux-rooted-empty-read-into-result
+                        LinuxRootedReadFailure
+                        false)]))]))]))))
 
 ;: Read at most one MiB from a retained regular-file descriptor. EINTR retries
 ;: only while cancellation remains clear. Short success and EOF are explicit.
@@ -2969,30 +2936,29 @@
           (let
             [slots : (__tl_dyn-array u8) (__tl_make-array u8 count)]
             [raw : i64 -4]
-            (begin
-              (while (and (= raw -4) (not (cancel-check)))
-                (set!
-                  raw
-                  (linux-rooted-raw-read state.fd (__tl_array-data slots) count)))
-              (cond
-                [(>= raw 0)
-                  (FsLinuxRootedReadResult
-                    LinuxRootedOk
-                    (byte_buf.from-array-prefix slots raw)
-                    (= raw 0)
-                    (and (> raw 0) (< raw count)))]
-                [(or (= raw -4) (= raw -125))
-                  (FsLinuxRootedReadResult
-                    LinuxRootedCancelled
-                    (byte_buf.from-array-prefix slots 0)
-                    false
-                    false)]
-                [else
-                  (FsLinuxRootedReadResult
-                    LinuxRootedReadFailure
-                    (byte_buf.from-array-prefix slots 0)
-                    false
-                    false)])))]))))
+            (while (and (= raw -4) (not (cancel-check)))
+              (set!
+                raw
+                (linux-rooted-raw-read state.fd (__tl_array-data slots) count)))
+            (cond
+              [(>= raw 0)
+                (FsLinuxRootedReadResult
+                  LinuxRootedOk
+                  (byte_buf.from-array-prefix slots raw)
+                  (= raw 0)
+                  (and (> raw 0) (< raw count)))]
+              [(or (= raw -4) (= raw -125))
+                (FsLinuxRootedReadResult
+                  LinuxRootedCancelled
+                  (byte_buf.from-array-prefix slots 0)
+                  false
+                  false)]
+              [else
+                (FsLinuxRootedReadResult
+                  LinuxRootedReadFailure
+                  (byte_buf.from-array-prefix slots 0)
+                  false
+                  false)]))]))))
 
 ;: Atomically move one exact entry, replacing the destination entry current at
 ;: syscall time. A destination symlink is replaced as an entry and not followed.
@@ -3157,30 +3123,29 @@
               (byte_buf.bytes-data contents))]
           [offset : i64 0]
           [result : FsLinuxRootedResult LinuxRootedOk]
-          (begin
-            (while (and
-              (linux-rooted-result-ok? result)
-              (< offset promised-length))
-              (if (cancel-check)
-                (set! result LinuxRootedCancelled)
-                (let
-                  [written : i64
-                    (unsafe
-                      (linux-rooted-raw-write
-                        fd
-                        (unsafe
-                          (ptr-offset data offset))
-                        (- promised-length offset)))]
-                  (cond
-                    [(> written 0) (set! offset (+ offset written))]
-                    [(= written -4) unit]
-                    [(= written -125) (set! result LinuxRootedCancelled)]
-                    [else (set! result LinuxRootedWriteFailure)]))))
-            (if (and
-              (linux-rooted-result-ok? result)
-              (not (= offset promised-length)))
-              LinuxRootedWriteFailure
-              result)))))))
+          (while (and
+            (linux-rooted-result-ok? result)
+            (< offset promised-length))
+            (if (cancel-check)
+              (set! result LinuxRootedCancelled)
+              (let
+                [written : i64
+                  (unsafe
+                    (linux-rooted-raw-write
+                      fd
+                      (unsafe
+                        (ptr-offset data offset))
+                      (- promised-length offset)))]
+                (cond
+                  [(> written 0) (set! offset (+ offset written))]
+                  [(= written -4) unit]
+                  [(= written -125) (set! result LinuxRootedCancelled)]
+                  [else (set! result LinuxRootedWriteFailure)]))))
+          (if (and
+            (linux-rooted-result-ok? result)
+            (not (= offset promised-length)))
+            LinuxRootedWriteFailure
+            result))))))
 
 ;: Return the concrete final Linux mode for one portable file intent.
 (define (linux-rooted-file-mode-value [mode : FsLinuxRootedFileMode]) : u64
@@ -3210,25 +3175,24 @@
               contents
               promised-length
               cancel-check)]
-          (begin
-            (if (linux-rooted-result-ok? operation)
-              (set!
-                operation
-                (linux-rooted-apply-mode
-                  state.fd
-                  (linux-rooted-file-mode-value mode)
-                  cancel-check))
-              unit)
-            (if (and (linux-rooted-result-ok? operation) flush)
-              (set! operation (linux-rooted-flush-fd state.fd cancel-check))
-              unit)
-            (linux-rooted-state-write!
-              file.state
-              (FsLinuxRootedHandleState state.fd operation LinuxRootedClosed))
-            (let
-              [close-result : FsLinuxRootedResult
-                (linux-rooted-state-close-result file.state)]
-              (FsLinuxRootedFinishResult operation close-result))))))))
+          (if (linux-rooted-result-ok? operation)
+            (set!
+              operation
+              (linux-rooted-apply-mode
+                state.fd
+                (linux-rooted-file-mode-value mode)
+                cancel-check))
+            unit)
+          (if (and (linux-rooted-result-ok? operation) flush)
+            (set! operation (linux-rooted-flush-fd state.fd cancel-check))
+            unit)
+          (linux-rooted-state-write!
+            file.state
+            (FsLinuxRootedHandleState state.fd operation LinuxRootedClosed))
+          (let
+            [close-result : FsLinuxRootedResult
+              (linux-rooted-state-close-result file.state)]
+            (FsLinuxRootedFinishResult operation close-result)))))))
 
 ;: Prove a live stage descriptor is a regular file whose permission and
 ;: special bits are exactly `permissions`.
@@ -3323,41 +3287,40 @@
                 source.permissions))
               (linux-rooted-stage-ownership state.fd source)
               LinuxRootedInvalidPermissions)]
-          (begin
-            (if (linux-rooted-result-ok? operation)
+          (if (linux-rooted-result-ok? operation)
+            (set!
+              operation
+              (linux-rooted-write-all
+                state.fd
+                contents
+                promised-length
+                cancel-check))
+            unit)
+          (if (linux-rooted-result-ok? operation)
+            (set!
+              operation
+              (linux-rooted-apply-mode
+                state.fd
+                (cast source.permissions : u64)
+                cancel-check))
+            unit)
+          (if (linux-rooted-result-ok? operation)
+            (begin
+              (linux-rooted-after-source-mode state.fd)
               (set!
                 operation
-                (linux-rooted-write-all
-                  state.fd
-                  contents
-                  promised-length
-                  cancel-check))
-              unit)
-            (if (linux-rooted-result-ok? operation)
-              (set!
-                operation
-                (linux-rooted-apply-mode
-                  state.fd
-                  (cast source.permissions : u64)
-                  cancel-check))
-              unit)
-            (if (linux-rooted-result-ok? operation)
-              (begin
-                (linux-rooted-after-source-mode state.fd)
-                (set!
-                  operation
-                  (linux-rooted-verify-stage-mode state.fd source.permissions)))
-              unit)
-            (if (and (linux-rooted-result-ok? operation) flush)
-              (set! operation (linux-rooted-flush-fd state.fd cancel-check))
-              unit)
-            (linux-rooted-state-write!
-              file.state
-              (FsLinuxRootedHandleState state.fd operation LinuxRootedClosed))
-            (let
-              [close-result : FsLinuxRootedResult
-                (linux-rooted-state-close-result file.state)]
-              (FsLinuxRootedFinishResult operation close-result))))))))
+                (linux-rooted-verify-stage-mode state.fd source.permissions)))
+            unit)
+          (if (and (linux-rooted-result-ok? operation) flush)
+            (set! operation (linux-rooted-flush-fd state.fd cancel-check))
+            unit)
+          (linux-rooted-state-write!
+            file.state
+            (FsLinuxRootedHandleState state.fd operation LinuxRootedClosed))
+          (let
+            [close-result : FsLinuxRootedResult
+              (linux-rooted-state-close-result file.state)]
+            (FsLinuxRootedFinishResult operation close-result)))))))
 
 ;: Explicitly close a rooted directory and report the one close attempt. This
 ;: is used when overall operation success must include directory close success;
@@ -3421,12 +3384,11 @@
       [data : (MutPtr u8)
         (unsafe
           (__tl_array-data bytes))]
-      (begin
-        (set! (array-ref bytes 0) (cast 'a' : u8))
-        (set! (array-ref bytes 1) (cast 0 : u8))
-        (set! (array-ref bytes 2) (cast 'b' : u8))
-        (unsafe
-          (string-from-bytes (ptr-cast data : (Ptr u8)) 3))))))
+      (set! (array-ref bytes 0) (cast 'a' : u8))
+      (set! (array-ref bytes 1) (cast 0 : u8))
+      (set! (array-ref bytes 2) (cast 'b' : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast data : (Ptr u8)) 3)))))
 
 (cfg
   test
@@ -3434,15 +3396,11 @@
     (let
       [bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
       [index : i64 0]
-      (begin
-        (while (< index length)
-          (begin
-            (set! (array-ref bytes index) (cast 'x' : u8))
-            (set! index (+ index 1))))
-        (unsafe
-          (string-from-bytes
-            (ptr-cast (__tl_array-data bytes) : (Ptr u8))
-            length))))))
+      (while (< index length)
+        (set! (array-ref bytes index) (cast 'x' : u8))
+        (set! index (+ index 1)))
+      (unsafe
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) length)))))
 
 (cfg
   test
@@ -3460,44 +3418,43 @@
       [data : (MutPtr u8)
         (unsafe
           (__tl_array-data bytes))]
-      (begin
-        (unsafe
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-device-offset)
-              : (MutPtr u64))
-            device)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-inode-offset)
-              : (MutPtr u64))
-            inode)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-links-offset)
-              : (MutPtr u64))
-            links)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-mode-offset)
-              : (MutPtr u32))
-            mode)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-owner-offset)
-              : (MutPtr u32))
-            owner)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-group-offset)
-              : (MutPtr u32))
-            group)
-          (ptr-write!
-            (ptr-cast
-              (ptr-offset data fs-linux-rooted-stat-size-offset)
-              : (MutPtr i64))
-            length))
-        bytes))))
+      (unsafe
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-device-offset)
+            : (MutPtr u64))
+          device)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-inode-offset)
+            : (MutPtr u64))
+          inode)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-links-offset)
+            : (MutPtr u64))
+          links)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-mode-offset)
+            : (MutPtr u32))
+          mode)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-owner-offset)
+            : (MutPtr u32))
+          owner)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-group-offset)
+            : (MutPtr u32))
+          group)
+        (ptr-write!
+          (ptr-cast
+            (ptr-offset data fs-linux-rooted-stat-size-offset)
+            : (MutPtr i64))
+          length))
+      bytes)))
 
 (cfg
   test
@@ -3545,66 +3502,59 @@
         (linux-rooted-test-snapshot 7 99 0 33184 10)]
       [negative : FsLinuxRootedSourceSnapshot
         (linux-rooted-test-snapshot 7 99 1 33184 -1)]
-      (begin
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& admitted)))
-          0
-          "regular source is admitted")
-        (test.assert-i64-eq
-          (linux-rooted-source-permissions (& admitted))
-          416
-          "admitted permissions keep exactly 0640")
-        (test.assert-i64-eq
-          (linux-rooted-source-length (& admitted))
-          10
-          "length")
-        (test.assert-true
-          (= (linux-rooted-source-links (& admitted)) (cast 2 : u64))
-          "link count")
-        (test.assert-true
-          (and
-            (= admitted.owner (cast 1000 : u32))
-            (= admitted.group (cast 1001 : u32)))
-          "owner and group")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code (linux-rooted-source-result (& empty)))
-          0
-          "an empty regular file is admitted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& directory)))
-          5
-          "directory is wrong kind")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code (linux-rooted-source-result (& fifo)))
-          5
-          "FIFO is wrong kind")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& setuid)))
-          7
-          "setuid source is not admitted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& setgid)))
-          7
-          "setgid source is not admitted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& sticky)))
-          7
-          "sticky source is not admitted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& unlinked)))
-          2
-          "an unlinked source is not found")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-result (& negative)))
-          8
-          "a negative size is an I/O failure")))))
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-result (& admitted)))
+        0
+        "regular source is admitted")
+      (test.assert-i64-eq
+        (linux-rooted-source-permissions (& admitted))
+        416
+        "admitted permissions keep exactly 0640")
+      (test.assert-i64-eq (linux-rooted-source-length (& admitted)) 10 "length")
+      (test.assert-true
+        (= (linux-rooted-source-links (& admitted)) (cast 2 : u64))
+        "link count")
+      (test.assert-true
+        (and
+          (= admitted.owner (cast 1000 : u32))
+          (= admitted.group (cast 1001 : u32)))
+        "owner and group")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-source-result (& empty)))
+        0
+        "an empty regular file is admitted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-result (& directory)))
+        5
+        "directory is wrong kind")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-source-result (& fifo)))
+        5
+        "FIFO is wrong kind")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-source-result (& setuid)))
+        7
+        "setuid source is not admitted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-source-result (& setgid)))
+        7
+        "setgid source is not admitted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-source-result (& sticky)))
+        7
+        "sticky source is not admitted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-result (& unlinked)))
+        2
+        "an unlinked source is not found")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-result (& negative)))
+        8
+        "a negative size is an I/O failure"))))
 
 (cfg
   test
@@ -3633,63 +3583,62 @@
         (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
       [now-directory : FsLinuxRootedSourceSnapshot
         (linux-rooted-test-snapshot 7 99 2 16877 10)]
-      (begin
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& same)))
-          0
-          "an unchanged source revalidates")
-        (test.assert-true
-          (linux-rooted-source-same-file? (& admitted) (& same))
-          "equal device and inode are the same file")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& other-inode)))
-          20
-          "another inode is a changed identity")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& other-device)))
-          20
-          "the same inode number on another device is a changed identity")
-        (test.assert-false
-          (linux-rooted-source-same-file? (& admitted) (& other-device))
-          "identity needs both device and inode")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& rewritten)))
-          21
-          "a size change on the same file is a changed source")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& linked)))
-          21
-          "a new hard link is a changed source")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& chmodded)))
-          21
-          "a permission change is a changed source")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& made-setuid)))
-          21
-          "a special bit added to the same file is a changed source")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& replaced-setuid)))
-          20
-          "another inode carrying a special bit is a changed identity")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& unreadable)))
-          7
-          "a failed fresh snapshot keeps its own result")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-source-compare (& admitted) (& now-directory)))
-          5
-          "a name that became a directory keeps its own result")))))
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& same)))
+        0
+        "an unchanged source revalidates")
+      (test.assert-true
+        (linux-rooted-source-same-file? (& admitted) (& same))
+        "equal device and inode are the same file")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& other-inode)))
+        20
+        "another inode is a changed identity")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& other-device)))
+        20
+        "the same inode number on another device is a changed identity")
+      (test.assert-false
+        (linux-rooted-source-same-file? (& admitted) (& other-device))
+        "identity needs both device and inode")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& rewritten)))
+        21
+        "a size change on the same file is a changed source")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& linked)))
+        21
+        "a new hard link is a changed source")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& chmodded)))
+        21
+        "a permission change is a changed source")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& made-setuid)))
+        21
+        "a special bit added to the same file is a changed source")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& replaced-setuid)))
+        20
+        "another inode carrying a special bit is a changed identity")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& unreadable)))
+        7
+        "a failed fresh snapshot keeps its own result")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-source-compare (& admitted) (& now-directory)))
+        5
+        "a name that became a directory keeps its own result"))))
 
 (cfg
   test
@@ -3727,42 +3676,41 @@
         (linux-rooted-test-sidecar 1 user 386)]
       [directory : FsLinuxRootedSourceSnapshot
         (linux-rooted-failed-source-snapshot LinuxRootedWrongKind)]
-      (begin
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& private)))
-          0
-          "a private sidecar owned by the effective user is trusted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& read-only)))
-          0
-          "a read-only sidecar can still be locked")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& aliased)))
-          7
-          "a hard-linked sidecar is not trusted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& foreign)))
-          7
-          "another user's sidecar is not trusted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& group-writable)))
-          7
-          "a group-writable sidecar is not trusted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& other-writable)))
-          7
-          "an other-writable sidecar is not trusted")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-sidecar-result (& directory)))
-          5
-          "a sidecar that is not a regular file keeps its kind result")))))
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& private)))
+        0
+        "a private sidecar owned by the effective user is trusted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& read-only)))
+        0
+        "a read-only sidecar can still be locked")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& aliased)))
+        7
+        "a hard-linked sidecar is not trusted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& foreign)))
+        7
+        "another user's sidecar is not trusted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& group-writable)))
+        7
+        "a group-writable sidecar is not trusted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& other-writable)))
+        7
+        "an other-writable sidecar is not trusted")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-sidecar-result (& directory)))
+        5
+        "a sidecar that is not a regular file keeps its kind result"))))
 
 (cfg
   test
@@ -3829,37 +3777,36 @@
         (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
       [device : u64 (cast 7 : u64)]
       [inode : u64 (cast 99 : u64)]
-      (begin
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& same)))
-          0
-          "the locked sidecar revalidates")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& other)))
-          20
-          "another file at the name is a changed identity")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& other-setuid)))
-          20
-          "another file carrying a special bit is a changed identity")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& same-setuid)))
-          7
-          "the locked sidecar newly carrying a special bit is unsupported")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& now-directory)))
-          5
-          "a name that became a directory keeps its own result")
-        (test.assert-i64-eq
-          (linux-rooted-test-result-code
-            (linux-rooted-guard-compare device inode (& unreadable)))
-          7
-          "a failed fresh snapshot keeps its own result")))))
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& same)))
+        0
+        "the locked sidecar revalidates")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& other)))
+        20
+        "another file at the name is a changed identity")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& other-setuid)))
+        20
+        "another file carrying a special bit is a changed identity")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& same-setuid)))
+        7
+        "the locked sidecar newly carrying a special bit is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& now-directory)))
+        5
+        "a name that became a directory keeps its own result")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-compare device inode (& unreadable)))
+        7
+        "a failed fresh snapshot keeps its own result"))))
 
 (cfg
   test
@@ -3872,37 +3819,36 @@
       [too-long : String
         (linux-rooted-test-long-component
           (+ fs-linux-rooted-component-max-bytes 1))]
-      (begin
-        (test.assert-true
-          (linux-rooted-component-valid? "leaf")
-          "ordinary component is valid")
-        (test.assert-true
-          (linux-rooted-component-valid? "räksmörgås")
-          "non-ASCII UTF-8 bytes are preserved")
-        (test.assert-true
-          (linux-rooted-component-valid? (& max-component))
-          "255-byte component is valid")
-        (test.assert-false
-          (linux-rooted-component-valid? "")
-          "empty component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? ".")
-          "dot component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? "..")
-          "dot-dot component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? "a/b")
-          "slash component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? "a\\b")
-          "backslash component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? (& with-nul))
-          "embedded NUL component is invalid")
-        (test.assert-false
-          (linux-rooted-component-valid? (& too-long))
-          "256-byte component is invalid")))))
+      (test.assert-true
+        (linux-rooted-component-valid? "leaf")
+        "ordinary component is valid")
+      (test.assert-true
+        (linux-rooted-component-valid? "räksmörgås")
+        "non-ASCII UTF-8 bytes are preserved")
+      (test.assert-true
+        (linux-rooted-component-valid? (& max-component))
+        "255-byte component is valid")
+      (test.assert-false
+        (linux-rooted-component-valid? "")
+        "empty component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? ".")
+        "dot component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? "..")
+        "dot-dot component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? "a/b")
+        "slash component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? "a\\b")
+        "backslash component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? (& with-nul))
+        "embedded NUL component is invalid")
+      (test.assert-false
+        (linux-rooted-component-valid? (& too-long))
+        "256-byte component is invalid"))))
 
 (cfg
   test

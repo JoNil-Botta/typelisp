@@ -13,13 +13,12 @@
   (let
     [alpha : String "alpha"]
     [m : map_string_i64.Map (map_string_i64.with-capacity 4)]
-    (begin
-      (map_string_i64.insert! m "alpha" 1)
-      (let
-        [borrowed : (map_string_i64.BorrowedValueLookup m)
-          (map_string_i64.get-value-borrowed (& m) (& alpha))]
-        [entry : (map_string_i64.MutEntry m)
-          (map_string_i64.get-mut-entry-borrowed (&mut m) (& alpha))]
-        (if (borrowed-value-found? borrowed)
-          (map_string_i64.mut-entry-value-or entry 0)
-          0)))))
+    (map_string_i64.insert! m "alpha" 1)
+    (let
+      [borrowed : (map_string_i64.BorrowedValueLookup m)
+        (map_string_i64.get-value-borrowed (& m) (& alpha))]
+      [entry : (map_string_i64.MutEntry m)
+        (map_string_i64.get-mut-entry-borrowed (&mut m) (& alpha))]
+      (if (borrowed-value-found? borrowed)
+        (map_string_i64.mut-entry-value-or entry 0)
+        0))))

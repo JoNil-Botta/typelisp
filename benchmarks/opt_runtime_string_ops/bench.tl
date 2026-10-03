@@ -20,18 +20,15 @@
     [i : i64 0]
     [acc : i64 0]
     [span : i64 48]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! acc (+ acc (string-ops-round text suffix span)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i rounds)
+      (set! acc (+ acc (string-ops-round text suffix span)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [text : String (io.arg 1)]
     [suffix : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
-    (begin
-      (io.println "{}" (string-ops-repeat text suffix rounds))
-      0)))
+    (io.println "{}" (string-ops-repeat text suffix rounds))
+    0))

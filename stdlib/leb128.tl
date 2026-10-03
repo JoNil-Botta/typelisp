@@ -72,26 +72,24 @@
     [at : i64 offset]
     [done : bool false]
     [ok : bool true]
-    (begin
-      (while (and ok (not done))
-        (if (or (>= at end) (>= (- at offset) max-length))
-          (set! ok false)
-          (let
-            [byte : i64 (cast (array-ref bytes at) : i64)]
-            [payload : i64 (bit-and byte 127)]
-            (begin
-              ;; The tenth group holds bit 63 only.
-              (if (and (= shift 63) (> payload 1))
-                (set! ok false)
-                (set! value (bit-or value (shl payload shift))))
-              (set! shift (+ shift 7))
-              (set! at (+ at 1))
-              (if (< byte 128)
-                (set! done true)
-                unit)))))
-      (if ok
-        (Decoded true value at)
-        (Decoded false 0 at)))))
+    (while (and ok (not done))
+      (if (or (>= at end) (>= (- at offset) max-length))
+        (set! ok false)
+        (let
+          [byte : i64 (cast (array-ref bytes at) : i64)]
+          [payload : i64 (bit-and byte 127)]
+          ;; The tenth group holds bit 63 only.
+          (if (and (= shift 63) (> payload 1))
+            (set! ok false)
+            (set! value (bit-or value (shl payload shift))))
+          (set! shift (+ shift 7))
+          (set! at (+ at 1))
+          (if (< byte 128)
+            (set! done true)
+            unit))))
+    (if ok
+      (Decoded true value at)
+      (Decoded false 0 at))))
 
 ;: Decode the signed LEB128 integer at `bytes[offset, end)`.
 (define (decode-signed
@@ -121,42 +119,38 @@
     [last : i64 0]
     [done : bool false]
     [ok : bool true]
-    (begin
-      (while (and ok (not done))
-        (if (or (>= at end) (>= (- at offset) max-length))
-          (set! ok false)
-          (let
-            [byte : i64 (cast (array-ref bytes at) : i64)]
-            [payload : i64 (bit-and byte 127)]
-            (begin
-              ;; The tenth group holds bit 63, and its other six bits must
-              ;; repeat it: only 0x00 and 0x7f end a 64-bit value there.
-              (if (and (= shift 63) (not (or (= payload 0) (= payload 127))))
-                (set! ok false)
-                (set! value (bit-or value (shl payload shift))))
-              (set! last byte)
-              (set! shift (+ shift 7))
-              (set! at (+ at 1))
-              (if (< byte 128)
-                (set! done true)
-                unit)))))
-      (cond
-        [(not ok) (Decoded false 0 at)]
-        [(and (< shift 64) (!= (bit-and last 64) 0))
-          (Decoded true (bit-or value (shl -1 shift)) at)]
-        [else (Decoded true value at)]))))
+    (while (and ok (not done))
+      (if (or (>= at end) (>= (- at offset) max-length))
+        (set! ok false)
+        (let
+          [byte : i64 (cast (array-ref bytes at) : i64)]
+          [payload : i64 (bit-and byte 127)]
+          ;; The tenth group holds bit 63, and its other six bits must
+          ;; repeat it: only 0x00 and 0x7f end a 64-bit value there.
+          (if (and (= shift 63) (not (or (= payload 0) (= payload 127))))
+            (set! ok false)
+            (set! value (bit-or value (shl payload shift))))
+          (set! last byte)
+          (set! shift (+ shift 7))
+          (set! at (+ at 1))
+          (if (< byte 128)
+            (set! done true)
+            unit))))
+    (cond
+      [(not ok) (Decoded false 0 at)]
+      [(and (< shift 64) (!= (bit-and last 64) 0))
+        (Decoded true (bit-or value (shl -1 shift)) at)]
+      [else (Decoded true value at)])))
 
 ;: The length of the minimal unsigned encoding of `value` (a 64-bit pattern).
 (define (unsigned-size [value : i64]) : i64
   (let
     [size : i64 1]
     [rest : i64 (leb128-shift-unsigned value)]
-    (begin
-      (while (!= rest 0)
-        (begin
-          (set! size (+ size 1))
-          (set! rest (leb128-shift-unsigned rest))))
-      size)))
+    (while (!= rest 0)
+      (set! size (+ size 1))
+      (set! rest (leb128-shift-unsigned rest)))
+    size))
 
 ;: The length of the minimal signed encoding of `value`.
 (define (signed-size [value : i64]) : i64
@@ -164,19 +158,18 @@
     [size : i64 1]
     [rest : i64 value]
     [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [byte : i64 (bit-and rest 127)]
-          [next : i64 (shr rest 7)]
-          (if (or
-            (and (= next 0) (= (bit-and byte 64) 0))
-            (and (= next -1) (!= (bit-and byte 64) 0)))
-            (set! done true)
-            (begin
-              (set! size (+ size 1))
-              (set! rest next)))))
-      size)))
+    (while (not done)
+      (let
+        [byte : i64 (bit-and rest 127)]
+        [next : i64 (shr rest 7)]
+        (if (or
+          (and (= next 0) (= (bit-and byte 64) 0))
+          (and (= next -1) (!= (bit-and byte 64) 0)))
+          (set! done true)
+          (begin
+            (set! size (+ size 1))
+            (set! rest next)))))
+    size))
 
 ;: Append the minimal unsigned encoding of `value` (a 64-bit pattern).
 (define (push-unsigned!
@@ -188,15 +181,14 @@
     (while (not done)
       (let
         [byte : i64 (bit-and rest 127)]
-        (begin
-          (set! rest (leb128-shift-unsigned rest))
-          (if (= rest 0)
-            (begin
-              (byte_buf_core.byte-buf-builder-push out (cast byte : u8))
-              (set! done true))
-            (byte_buf_core.byte-buf-builder-push
-              out
-              (cast (bit-or byte 128) : u8))))))))
+        (set! rest (leb128-shift-unsigned rest))
+        (if (= rest 0)
+          (begin
+            (byte_buf_core.byte-buf-builder-push out (cast byte : u8))
+            (set! done true))
+          (byte_buf_core.byte-buf-builder-push
+            out
+            (cast (bit-or byte 128) : u8)))))))
 
 ;: Append the minimal signed encoding of `value`.
 (define (push-signed!
@@ -228,15 +220,13 @@
       [count : i64 (/ (string-length hex) 2)]
       [bytes : (__tl_dyn-array u8) (__tl_make-array u8 count)]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (let
-            [high : i64 (leb128-test-nibble hex (* index 2))]
-            [low : i64 (leb128-test-nibble hex (+ (* index 2) 1))]
-            (begin
-              (set! (array-ref bytes index) (cast (+ (* high 16) low) : u8))
-              (set! index (+ index 1)))))
-        bytes))))
+      (while (< index count)
+        (let
+          [high : i64 (leb128-test-nibble hex (* index 2))]
+          [low : i64 (leb128-test-nibble hex (+ (* index 2) 1))]
+          (set! (array-ref bytes index) (cast (+ (* high 16) low) : u8))
+          (set! index (+ index 1))))
+      bytes)))
 
 (cfg
   test
@@ -283,96 +273,84 @@
 
 (test
   leb128-decodes-dwarf-examples
-  (begin
-    (test.assert-i64-eq (leb128-test-decode "02" false).value 2 "2")
-    (test.assert-i64-eq (leb128-test-decode "7f" false).value 127 "127")
-    (test.assert-i64-eq (leb128-test-decode "8001" false).value 128 "128")
-    (test.assert-i64-eq
-      (leb128-test-decode "e58e26" false).value
-      624485
-      "624485")
-    (test.assert-i64-eq (leb128-test-decode "7f" true).value -1 "-1")
-    (test.assert-i64-eq (leb128-test-decode "807f" true).value -128 "-128")
-    (test.assert-i64-eq
-      (leb128-test-decode "c0bb78" true).value
-      -123456
-      "-123456")
-    (test.assert-i64-eq (leb128-test-decode "3f" true).value 63 "63")
-    (test.assert-i64-eq (leb128-test-decode "c000" true).value 64 "64")
-    (test.assert-i64-eq (leb128-test-decode "e58e26ff" false).next 3 "next")))
+  (test.assert-i64-eq (leb128-test-decode "02" false).value 2 "2")
+  (test.assert-i64-eq (leb128-test-decode "7f" false).value 127 "127")
+  (test.assert-i64-eq (leb128-test-decode "8001" false).value 128 "128")
+  (test.assert-i64-eq (leb128-test-decode "e58e26" false).value 624485 "624485")
+  (test.assert-i64-eq (leb128-test-decode "7f" true).value -1 "-1")
+  (test.assert-i64-eq (leb128-test-decode "807f" true).value -128 "-128")
+  (test.assert-i64-eq
+    (leb128-test-decode "c0bb78" true).value
+    -123456
+    "-123456")
+  (test.assert-i64-eq (leb128-test-decode "3f" true).value 63 "63")
+  (test.assert-i64-eq (leb128-test-decode "c000" true).value 64 "64")
+  (test.assert-i64-eq (leb128-test-decode "e58e26ff" false).next 3 "next"))
 
 (test
   leb128-accepts-64-bit-and-padded-encodings
-  (begin
-    (test.assert-i64-eq
-      (leb128-test-decode "ffffffffffffffffff01" false).value
-      -1
-      "2^64-1 as its bit pattern")
-    (test.assert-i64-eq
-      (leb128-test-decode "80808080808080808001" false).value
-      (shl 1 63)
-      "2^63")
-    (test.assert-i64-eq
-      (leb128-test-decode "80808080808080808000" false).value
-      0
-      "ten-byte zero")
-    (test.assert-i64-eq
-      (leb128-test-decode "808000" false).value
-      0
-      "padded zero")
-    (test.assert-i64-eq
-      (leb128-test-decode "8080808080808080807f" true).value
-      (shl -1 63)
-      "-2^63")
-    (test.assert-i64-eq
-      (leb128-test-decode "ffffffffffffffffff00" true).value
-      9223372036854775807
-      "2^63-1")
-    (test.assert-i64-eq (leb128-test-decode "ff7f" true).value -1 "padded -1")))
+  (test.assert-i64-eq
+    (leb128-test-decode "ffffffffffffffffff01" false).value
+    -1
+    "2^64-1 as its bit pattern")
+  (test.assert-i64-eq
+    (leb128-test-decode "80808080808080808001" false).value
+    (shl 1 63)
+    "2^63")
+  (test.assert-i64-eq
+    (leb128-test-decode "80808080808080808000" false).value
+    0
+    "ten-byte zero")
+  (test.assert-i64-eq (leb128-test-decode "808000" false).value 0 "padded zero")
+  (test.assert-i64-eq
+    (leb128-test-decode "8080808080808080807f" true).value
+    (shl -1 63)
+    "-2^63")
+  (test.assert-i64-eq
+    (leb128-test-decode "ffffffffffffffffff00" true).value
+    9223372036854775807
+    "2^63-1")
+  (test.assert-i64-eq (leb128-test-decode "ff7f" true).value -1 "padded -1"))
 
 (test
   leb128-rejects-truncated-overlong-and-oversized
-  (begin
-    (test.assert-false (leb128-test-decode "" false).ok? "empty")
-    (test.assert-false (leb128-test-decode "80" false).ok? "truncated")
-    (test.assert-i64-eq (leb128-test-decode "8080" false).next 2 "stops at end")
-    (test.assert-false
-      (leb128-test-decode "ffffffffffffffffff02" false).ok?
-      "unsigned 65th bit")
-    (test.assert-false
-      (leb128-test-decode "8080808080808080808000" false).ok?
-      "eleven bytes")
-    (test.assert-false
-      (leb128-test-decode "80808080808080808040" true).ok?
-      "signed tenth group that does not repeat bit 63")
-    (test.assert-false
-      (leb128-test-decode "ffffffffffffffffff01" true).ok?
-      "signed tenth group 0x01")
-    (test.assert-false
-      (leb128-test-decode "8080808080808080808000" true).ok?
-      "signed eleven bytes")))
+  (test.assert-false (leb128-test-decode "" false).ok? "empty")
+  (test.assert-false (leb128-test-decode "80" false).ok? "truncated")
+  (test.assert-i64-eq (leb128-test-decode "8080" false).next 2 "stops at end")
+  (test.assert-false
+    (leb128-test-decode "ffffffffffffffffff02" false).ok?
+    "unsigned 65th bit")
+  (test.assert-false
+    (leb128-test-decode "8080808080808080808000" false).ok?
+    "eleven bytes")
+  (test.assert-false
+    (leb128-test-decode "80808080808080808040" true).ok?
+    "signed tenth group that does not repeat bit 63")
+  (test.assert-false
+    (leb128-test-decode "ffffffffffffffffff01" true).ok?
+    "signed tenth group 0x01")
+  (test.assert-false
+    (leb128-test-decode "8080808080808080808000" true).ok?
+    "signed eleven bytes"))
 
 (test
   leb128-round-trips-minimal-encodings
-  (begin
-    (test.assert-true (leb128-test-round-trip? 0 false) "unsigned 0")
-    (test.assert-true (leb128-test-round-trip? 127 false) "unsigned 127")
-    (test.assert-true (leb128-test-round-trip? 128 false) "unsigned 128")
-    (test.assert-true
-      (leb128-test-round-trip? 9223372036854775807 false)
-      "unsigned 2^63-1")
-    (test.assert-true (leb128-test-round-trip? -1 false) "unsigned 2^64-1")
-    (test.assert-true
-      (leb128-test-round-trip? (shl 1 63) false)
-      "unsigned 2^63")
-    (test.assert-i64-eq (unsigned-size -1) 10 "2^64-1 needs ten bytes")
-    (test.assert-true (leb128-test-round-trip? 0 true) "signed 0")
-    (test.assert-true (leb128-test-round-trip? 63 true) "signed 63")
-    (test.assert-true (leb128-test-round-trip? 64 true) "signed 64")
-    (test.assert-true (leb128-test-round-trip? -64 true) "signed -64")
-    (test.assert-true (leb128-test-round-trip? -65 true) "signed -65")
-    (test.assert-true
-      (leb128-test-round-trip? 9223372036854775807 true)
-      "signed 2^63-1")
-    (test.assert-true (leb128-test-round-trip? (shl -1 63) true) "signed -2^63")
-    (test.assert-i64-eq (signed-size (shl -1 63)) 10 "-2^63 needs ten bytes")))
+  (test.assert-true (leb128-test-round-trip? 0 false) "unsigned 0")
+  (test.assert-true (leb128-test-round-trip? 127 false) "unsigned 127")
+  (test.assert-true (leb128-test-round-trip? 128 false) "unsigned 128")
+  (test.assert-true
+    (leb128-test-round-trip? 9223372036854775807 false)
+    "unsigned 2^63-1")
+  (test.assert-true (leb128-test-round-trip? -1 false) "unsigned 2^64-1")
+  (test.assert-true (leb128-test-round-trip? (shl 1 63) false) "unsigned 2^63")
+  (test.assert-i64-eq (unsigned-size -1) 10 "2^64-1 needs ten bytes")
+  (test.assert-true (leb128-test-round-trip? 0 true) "signed 0")
+  (test.assert-true (leb128-test-round-trip? 63 true) "signed 63")
+  (test.assert-true (leb128-test-round-trip? 64 true) "signed 64")
+  (test.assert-true (leb128-test-round-trip? -64 true) "signed -64")
+  (test.assert-true (leb128-test-round-trip? -65 true) "signed -65")
+  (test.assert-true
+    (leb128-test-round-trip? 9223372036854775807 true)
+    "signed 2^63-1")
+  (test.assert-true (leb128-test-round-trip? (shl -1 63) true) "signed -2^63")
+  (test.assert-i64-eq (signed-size (shl -1 63)) 10 "-2^63 needs ten bytes"))

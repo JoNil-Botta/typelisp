@@ -6,6 +6,5 @@
     outer)
   (let
     [inner : map_string_string.Map (map_string_string.with-capacity 4)]
-    (begin
-      (map_string_string.insert! inner "alpha" "red")
-      (map_string_string.get-value-borrowed (& inner) (& key)))))
+    (map_string_string.insert! inner "alpha" "red")
+    (map_string_string.get-value-borrowed (& inner) (& key))))

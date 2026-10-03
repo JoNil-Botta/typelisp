@@ -39,32 +39,29 @@
           authority
           registry.concurrency-family-channel-i64
           2))]
-    (begin
-      (unsafe
-        (atomic-fetch-add! (ptr-addr-of registry-test-ready) 1))
-      (if (not lease.ok)
-        1
-        (begin
-          (while (=
-            (unsafe
-              (atomic-load
-                (ptr-cast (ptr-addr-of registry-test-go) : (Ptr i64))))
-            0)
-            unit)
-          (if (unsafe
-            (registry.concurrency-release lease))
-            42
-            2))))))
+    (unsafe
+      (atomic-fetch-add! (ptr-addr-of registry-test-ready) 1))
+    (if (not lease.ok)
+      1
+      (begin
+        (while (=
+          (unsafe
+            (atomic-load (ptr-cast (ptr-addr-of registry-test-go) : (Ptr i64))))
+          0)
+          unit)
+        (if (unsafe
+          (registry.concurrency-release lease))
+          42
+          2)))))
 
 (define (registry-test-worker [_context : i64]) : i64
   (match (registry.concurrency-share
     (& registry-test-authority)
     registry.concurrency-family-channel-i64)
     [(ConcurrencyShareErr)
-      (begin
-        (unsafe
-          (atomic-fetch-add! (ptr-addr-of registry-test-ready) 1))
-        1)]
+      (unsafe
+        (atomic-fetch-add! (ptr-addr-of registry-test-ready) 1))
+      1]
     [(ConcurrencyShared alias)
       (with
         ([held alias registry.cleanup-concurrency-authority])
@@ -84,45 +81,42 @@
       (match (unsafe
         (thread.spawn registry-test-worker 0))
         [(ThreadSpawnErr _)
-          (begin
-            (registry-test-open-gate!)
-            (registry-test-join-code first)
-            2)]
+          (registry-test-open-gate!)
+          (registry-test-join-code first)
+          2]
         [(ThreadSpawnOk second)
           (let
             [spins : i64 0]
-            (begin
-              (while (and (< spins 100000000) (< (registry-test-ready-count) 2))
-                (set! spins (+ spins 1)))
+            (while (and (< spins 100000000) (< (registry-test-ready-count) 2))
+              (set! spins (+ spins 1)))
+            (let
+              [ready : bool (= (registry-test-ready-count) 2)]
+              [busy-close : registry.ConcurrencyClaim
+                (unsafe
+                  (registry.concurrency-close
+                    (& registry-test-authority)
+                    registry.concurrency-family-channel-i64
+                    2))]
+              (registry-test-open-gate!)
               (let
-                [ready : bool (= (registry-test-ready-count) 2)]
-                [busy-close : registry.ConcurrencyClaim
+                [first-code : i64 (registry-test-join-code first)]
+                [second-code : i64 (registry-test-join-code second)]
+                [closed : registry.ConcurrencyClaim
                   (unsafe
                     (registry.concurrency-close
                       (& registry-test-authority)
                       registry.concurrency-family-channel-i64
                       2))]
-                (begin
-                  (registry-test-open-gate!)
-                  (let
-                    [first-code : i64 (registry-test-join-code first)]
-                    [second-code : i64 (registry-test-join-code second)]
-                    [closed : registry.ConcurrencyClaim
-                      (unsafe
-                        (registry.concurrency-close
-                          (& registry-test-authority)
-                          registry.concurrency-family-channel-i64
-                          2))]
-                    (if (and
-                      ready
-                      (not busy-close.ok)
-                      (= first-code 42)
-                      (= second-code 42)
-                      closed.ok
-                      (= closed.field0 17)
-                      (= closed.field1 29))
-                      42
-                      3))))))])]))
+                (if (and
+                  ready
+                  (not busy-close.ok)
+                  (= first-code 42)
+                  (= second-code 42)
+                  closed.ok
+                  (= closed.field0 17)
+                  (= closed.field1 29))
+                  42
+                  3))))])]))
 
 (define (main) : i64
   (registry-test-concurrent-close))

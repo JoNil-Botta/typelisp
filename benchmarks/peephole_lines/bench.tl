@@ -268,10 +268,9 @@
 (define (pl-line-end [i : i64] [n : i64]) : i64
   (let
     [scan : i64 i]
-    (begin
-      (while (and (< scan n) (not (= (pl-byte-at scan) 10)))
-        (set! scan (+ scan 1)))
-      scan)))
+    (while (and (< scan n) (not (= (pl-byte-at scan) 10)))
+      (set! scan (+ scan 1)))
+    scan))
 
 ;; compiler-backend-peephole-ranges-eq?
 (define (pl-ranges-eq?
@@ -285,37 +284,32 @@
       [i : i64 0]
       [n : i64 (- a-end a-start)]
       [same : bool true]
-      (begin
-        (while (and same (< i n))
-          (begin
-            (when
-              (not (= (pl-byte-at (+ a-start i)) (pl-byte-at (+ b-start i))))
-              (set! same false))
-            (set! i (+ i 1))))
-        same))))
+      (while (and same (< i n))
+        (when
+          (not (= (pl-byte-at (+ a-start i)) (pl-byte-at (+ b-start i))))
+          (set! same false))
+        (set! i (+ i 1)))
+      same)))
 
 ;; compiler-backend-peephole-token-len
 (define (pl-token-len [i : i64] [end : i64]) : i64
   (let
     [scan : i64 i]
-    (begin
-      (while (and (< scan end) (not (= (pl-byte-at scan) 32)))
-        (set! scan (+ scan 1)))
-      (- scan i))))
+    (while (and (< scan end) (not (= (pl-byte-at scan) 32)))
+      (set! scan (+ scan 1)))
+    (- scan i)))
 
 ;; compiler-backend-peephole-find-comma-space-range
 (define (pl-find-comma-space [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< (+ i 1) end))
-        (begin
-          (when
-            (and (= (pl-byte-at i) 44) (= (pl-byte-at (+ i 1)) 32))
-            (set! found i))
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< found 0) (< (+ i 1) end))
+      (when
+        (and (= (pl-byte-at i) 44) (= (pl-byte-at (+ i 1)) 32))
+        (set! found i))
+      (set! i (+ i 1)))
+    found))
 
 ;; compiler-backend-peephole-movq-prefix-at-range?
 (define (pl-movq-prefix? [start : i64] [end : i64]) : bool
@@ -477,16 +471,14 @@
   (let
     [cut : i64 -1]
     [i : i64 start]
-    (begin
-      (while (< (+ i 1) end)
-        (begin
-          (when
-            (and (= (pl-byte-at i) 44) (= (pl-byte-at (+ i 1)) 32))
-            (set! cut i))
-          (set! i (+ i 1))))
-      (if (< cut 0)
-        -1
-        (pl-reg-index (+ cut 2) end)))))
+    (while (< (+ i 1) end)
+      (when
+        (and (= (pl-byte-at i) 44) (= (pl-byte-at (+ i 1)) 32))
+        (set! cut i))
+      (set! i (+ i 1)))
+    (if (< cut 0)
+      -1
+      (pl-reg-index (+ cut 2) end))))
 
 ;; compiler-backend-peephole-memory-base-range: 0 none, 1 rbp, 2 rsp, 3 rip,
 ;; 4 r10 -- the six-byte suffix the backend emits for a fixed base.
@@ -520,15 +512,13 @@
           (+ start 1)
           start)]
       [ok : bool true]
-      (begin
-        (when (>= i end) (set! ok false))
-        (while (and ok (< i end))
-          (let
-            [b : i64 (pl-byte-at i)]
-            (begin
-              (when (or (< b 48) (> b 57)) (set! ok false))
-              (set! i (+ i 1)))))
-        ok))))
+      (when (>= i end) (set! ok false))
+      (while (and ok (< i end))
+        (let
+          [b : i64 (pl-byte-at i)]
+          (when (or (< b 48) (> b 57)) (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
 
 (define (pl-decimal-value [start : i64] [end : i64]) : i64
   (let
@@ -538,14 +528,12 @@
         (+ start 1)
         start)]
     [value : i64 0]
-    (begin
-      (while (< i end)
-        (begin
-          (set! value (+ (* value 10) (- (pl-byte-at i) 48)))
-          (set! i (+ i 1))))
-      (if negative
-        (- 0 value)
-        value))))
+    (while (< i end)
+      (set! value (+ (* value 10) (- (pl-byte-at i) 48)))
+      (set! i (+ i 1)))
+    (if negative
+      (- 0 value)
+      value)))
 
 ;; compiler-backend-peephole-stack-owner-key-from-parts
 (define (pl-stack-owner-key [base : i64] [offset : i64] [explicit : bool]) : i64
@@ -585,24 +573,22 @@
   (let
     [i : i64 start]
     [bits : i64 0]
-    (begin
-      (while (<= (+ i 6) end)
-        (begin
-          (when
-            (and
-              (= (pl-byte-at i) 40)
-              (= (pl-byte-at (+ i 1)) 37)
-              (= (pl-byte-at (+ i 2)) 114)
-              (= (pl-byte-at (+ i 4)) 112)
-              (= (pl-byte-at (+ i 5)) 41))
-            (let
-              [b3 : i64 (pl-byte-at (+ i 3))]
-              (cond
-                [(= b3 98) (set! bits (bit-or bits 1))]
-                [(= b3 115) (set! bits (bit-or bits 2))]
-                [else unit])))
-          (set! i (+ i 1))))
-      bits)))
+    (while (<= (+ i 6) end)
+      (when
+        (and
+          (= (pl-byte-at i) 40)
+          (= (pl-byte-at (+ i 1)) 37)
+          (= (pl-byte-at (+ i 2)) 114)
+          (= (pl-byte-at (+ i 4)) 112)
+          (= (pl-byte-at (+ i 5)) 41))
+        (let
+          [b3 : i64 (pl-byte-at (+ i 3))]
+          (cond
+            [(= b3 98) (set! bits (bit-or bits 1))]
+            [(= b3 115) (set! bits (bit-or bits 2))]
+            [else unit])))
+      (set! i (+ i 1)))
+    bits))
 
 ;; compiler-backend-peephole-operand-flags
 (define (pl-operand-flags
@@ -657,22 +643,21 @@
   (let
     [i : i64 start]
     [e : i64 end]
-    (begin
-      (while (and (< i end) (= (pl-byte-at i) 32))
-        (set! i (+ i 1)))
-      (while (and (> e i) (= (pl-byte-at (- e 1)) 32))
-        (set! e (- e 1)))
-      (and
-        (> (- e i) 5)
-        (= (pl-byte-at i) 99)
-        (= (pl-byte-at (+ i 1)) 97)
-        (= (pl-byte-at (+ i 2)) 108)
-        (= (pl-byte-at (+ i 3)) 108)
-        (= (pl-byte-at (+ i 4)) 32)
-        (= (pl-byte-at (+ i 5)) 116)
-        (= (pl-byte-at (+ i 6)) 108)
-        (= (pl-byte-at (+ i 7)) 95)
-        (pl-suffix-abort? (+ i 8) e)))))
+    (while (and (< i end) (= (pl-byte-at i) 32))
+      (set! i (+ i 1)))
+    (while (and (> e i) (= (pl-byte-at (- e 1)) 32))
+      (set! e (- e 1)))
+    (and
+      (> (- e i) 5)
+      (= (pl-byte-at i) 99)
+      (= (pl-byte-at (+ i 1)) 97)
+      (= (pl-byte-at (+ i 2)) 108)
+      (= (pl-byte-at (+ i 3)) 108)
+      (= (pl-byte-at (+ i 4)) 32)
+      (= (pl-byte-at (+ i 5)) 116)
+      (= (pl-byte-at (+ i 6)) 108)
+      (= (pl-byte-at (+ i 7)) 95)
+      (pl-suffix-abort? (+ i 8) e))))
 
 (define (pl-suffix-abort? [start : i64] [end : i64]) : bool
   (and
@@ -691,155 +676,149 @@
   [newline : bool]) : unit
   (let
     [ms : i64 start]
-    (begin
-      (while (and (< ms end) (= (pl-byte-at ms) 32))
-        (set! ms (+ ms 1)))
+    (while (and (< ms end) (= (pl-byte-at ms) 32))
+      (set! ms (+ ms 1)))
+    (let
+      [mlen : i64 (pl-token-len ms end)]
+      [operand-start : i64 (+ ms mlen)]
+      [has-operands : bool false]
+      [comma : i64 -1]
+      [movq-prefix? : bool (pl-movq-prefix? start end)]
+      [zext? : bool (pl-mnemonic-zext? ms mlen)]
+      (when
+        (or movq-prefix? zext?)
+        (while (and (< operand-start end) (= (pl-byte-at operand-start) 32))
+          (set! operand-start (+ operand-start 1)))
+        (set! comma (pl-find-comma-space operand-start end))
+        (when
+          (and (> comma operand-start) (< (+ comma 2) end))
+          (set! has-operands true)))
       (let
-        [mlen : i64 (pl-token-len ms end)]
-        [operand-start : i64 (+ ms mlen)]
-        [has-operands : bool false]
-        [comma : i64 -1]
-        [movq-prefix? : bool (pl-movq-prefix? start end)]
-        [zext? : bool (pl-mnemonic-zext? ms mlen)]
-        (begin
-          (when
-            (or movq-prefix? zext?)
-            (begin
-              (while (and
-                (< operand-start end)
-                (= (pl-byte-at operand-start) 32))
-                (set! operand-start (+ operand-start 1)))
-              (set! comma (pl-find-comma-space operand-start end))
-              (when
-                (and (> comma operand-start) (< (+ comma 2) end))
-                (set! has-operands true))))
-          (let
-            [is-movq : bool (and has-operands movq-prefix?)]
-            [src-start : i64 operand-start]
-            [src-end : i64
-              (if has-operands
-                comma
-                operand-start)]
-            [dst-start : i64
-              (if has-operands
-                (+ comma 2)
-                end)]
-            [is-label : bool (and (< ms end) (= (pl-byte-at (- end 1)) 58))]
-            [cmp? : bool (pl-cmp-or-test? ms mlen)]
-            [clears : bool
-              (cond
-                [(>= ms end) false]
-                [is-label true]
-                [(= (pl-byte-at ms) 46) false]
-                [(= (pl-byte-at ms) 106) false]
-                [cmp? false]
-                [else true])]
-            [call? : bool (pl-mnemonic-call? ms mlen)]
-            [single? : bool
-              (and
-                (not is-movq)
-                (not is-label)
-                clears
-                (not call?)
-                (pl-single-dest? ms mlen))]
-            [last-reg : i64
-              (if (or single? zext?)
-                (pl-last-operand-reg start end)
-                -1)]
-            [src-base : i64
-              (if is-movq
-                (pl-memory-base src-start src-end)
-                0)]
-            [dst-base : i64
-              (if is-movq
-                (pl-memory-base dst-start end)
-                0)]
-            [src-key : i64
-              (if is-movq
-                (pl-owner-key src-start src-end src-base)
-                0)]
-            [dst-key : i64
-              (if is-movq
-                (pl-owner-key dst-start end dst-base)
-                0)]
-            (begin
-              (set! (array-ref slot pl-f-start) start)
-              (set! (array-ref slot pl-f-end) end)
-              (set!
-                (array-ref slot pl-f-newline)
-                (if newline
-                  1
-                  0))
-              (set! (array-ref slot pl-f-owned) 0)
-              (set! (array-ref slot pl-f-mn-start) ms)
-              (set! (array-ref slot pl-f-mn-len) mlen)
-              (set!
-                (array-ref slot pl-f-movq)
-                (if is-movq
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-label)
-                (if is-label
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-abort)
-                (if (and call? (pl-noreturn-abort? start end))
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-clears)
-                (if clears
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-call)
-                (if call?
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-single)
-                (if single?
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-zext)
-                (if zext?
-                  1
-                  0))
-              (set!
-                (array-ref slot pl-f-hasops)
-                (if has-operands
-                  1
-                  0))
-              (set! (array-ref slot pl-f-src-start) src-start)
-              (set! (array-ref slot pl-f-src-end) src-end)
-              (set! (array-ref slot pl-f-dst-start) dst-start)
-              (set! (array-ref slot pl-f-dst-end) end)
-              (set! (array-ref slot pl-f-src-key) src-key)
-              (set! (array-ref slot pl-f-dst-key) dst-key)
-              (set!
-                (array-ref slot pl-f-src-flags)
-                (if is-movq
-                  (pl-operand-flags src-start src-end src-key src-base)
-                  0))
-              (set!
-                (array-ref slot pl-f-dst-flags)
-                (if is-movq
-                  (pl-operand-flags dst-start end dst-key dst-base)
-                  0))
-              (set!
-                (array-ref slot pl-f-src-reg)
-                (if is-movq
-                  (pl-reg-index src-start src-end)
-                  -1))
-              (set!
-                (array-ref slot pl-f-dst-reg)
-                (if is-movq
-                  (pl-reg-index dst-start end)
-                  -1))
-              (set! (array-ref slot pl-f-last-reg) last-reg))))))))
+        [is-movq : bool (and has-operands movq-prefix?)]
+        [src-start : i64 operand-start]
+        [src-end : i64
+          (if has-operands
+            comma
+            operand-start)]
+        [dst-start : i64
+          (if has-operands
+            (+ comma 2)
+            end)]
+        [is-label : bool (and (< ms end) (= (pl-byte-at (- end 1)) 58))]
+        [cmp? : bool (pl-cmp-or-test? ms mlen)]
+        [clears : bool
+          (cond
+            [(>= ms end) false]
+            [is-label true]
+            [(= (pl-byte-at ms) 46) false]
+            [(= (pl-byte-at ms) 106) false]
+            [cmp? false]
+            [else true])]
+        [call? : bool (pl-mnemonic-call? ms mlen)]
+        [single? : bool
+          (and
+            (not is-movq)
+            (not is-label)
+            clears
+            (not call?)
+            (pl-single-dest? ms mlen))]
+        [last-reg : i64
+          (if (or single? zext?)
+            (pl-last-operand-reg start end)
+            -1)]
+        [src-base : i64
+          (if is-movq
+            (pl-memory-base src-start src-end)
+            0)]
+        [dst-base : i64
+          (if is-movq
+            (pl-memory-base dst-start end)
+            0)]
+        [src-key : i64
+          (if is-movq
+            (pl-owner-key src-start src-end src-base)
+            0)]
+        [dst-key : i64
+          (if is-movq
+            (pl-owner-key dst-start end dst-base)
+            0)]
+        (set! (array-ref slot pl-f-start) start)
+        (set! (array-ref slot pl-f-end) end)
+        (set!
+          (array-ref slot pl-f-newline)
+          (if newline
+            1
+            0))
+        (set! (array-ref slot pl-f-owned) 0)
+        (set! (array-ref slot pl-f-mn-start) ms)
+        (set! (array-ref slot pl-f-mn-len) mlen)
+        (set!
+          (array-ref slot pl-f-movq)
+          (if is-movq
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-label)
+          (if is-label
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-abort)
+          (if (and call? (pl-noreturn-abort? start end))
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-clears)
+          (if clears
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-call)
+          (if call?
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-single)
+          (if single?
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-zext)
+          (if zext?
+            1
+            0))
+        (set!
+          (array-ref slot pl-f-hasops)
+          (if has-operands
+            1
+            0))
+        (set! (array-ref slot pl-f-src-start) src-start)
+        (set! (array-ref slot pl-f-src-end) src-end)
+        (set! (array-ref slot pl-f-dst-start) dst-start)
+        (set! (array-ref slot pl-f-dst-end) end)
+        (set! (array-ref slot pl-f-src-key) src-key)
+        (set! (array-ref slot pl-f-dst-key) dst-key)
+        (set!
+          (array-ref slot pl-f-src-flags)
+          (if is-movq
+            (pl-operand-flags src-start src-end src-key src-base)
+            0))
+        (set!
+          (array-ref slot pl-f-dst-flags)
+          (if is-movq
+            (pl-operand-flags dst-start end dst-key dst-base)
+            0))
+        (set!
+          (array-ref slot pl-f-src-reg)
+          (if is-movq
+            (pl-reg-index src-start src-end)
+            -1))
+        (set!
+          (array-ref slot pl-f-dst-reg)
+          (if is-movq
+            (pl-reg-index dst-start end)
+            -1))
+        (set! (array-ref slot pl-f-last-reg) last-reg)))))
 
 ;; compiler-backend-peephole-owned-line for the synthesized `    movq SRC, DST`
 ;; that rules 3 and 4 and the cross-register reload rewrite build. The two
@@ -857,36 +836,35 @@
     [dst-base : i64 (pl-memory-base dst-start dst-end)]
     [src-key : i64 (pl-owner-key src-start src-end src-base)]
     [dst-key : i64 (pl-owner-key dst-start dst-end dst-base)]
-    (begin
-      (set! (array-ref slot pl-f-start) -1)
-      (set! (array-ref slot pl-f-end) -1)
-      (set! (array-ref slot pl-f-newline) newline)
-      (set! (array-ref slot pl-f-owned) 1)
-      (set! (array-ref slot pl-f-mn-start) -1)
-      (set! (array-ref slot pl-f-mn-len) 4)
-      (set! (array-ref slot pl-f-movq) 1)
-      (set! (array-ref slot pl-f-label) 0)
-      (set! (array-ref slot pl-f-abort) 0)
-      (set! (array-ref slot pl-f-clears) 1)
-      (set! (array-ref slot pl-f-call) 0)
-      (set! (array-ref slot pl-f-single) 0)
-      (set! (array-ref slot pl-f-zext) 0)
-      (set! (array-ref slot pl-f-hasops) 1)
-      (set! (array-ref slot pl-f-src-start) src-start)
-      (set! (array-ref slot pl-f-src-end) src-end)
-      (set! (array-ref slot pl-f-dst-start) dst-start)
-      (set! (array-ref slot pl-f-dst-end) dst-end)
-      (set! (array-ref slot pl-f-src-key) src-key)
-      (set! (array-ref slot pl-f-dst-key) dst-key)
-      (set!
-        (array-ref slot pl-f-src-flags)
-        (pl-operand-flags src-start src-end src-key src-base))
-      (set!
-        (array-ref slot pl-f-dst-flags)
-        (pl-operand-flags dst-start dst-end dst-key dst-base))
-      (set! (array-ref slot pl-f-src-reg) (pl-reg-index src-start src-end))
-      (set! (array-ref slot pl-f-dst-reg) (pl-reg-index dst-start dst-end))
-      (set! (array-ref slot pl-f-last-reg) -1))))
+    (set! (array-ref slot pl-f-start) -1)
+    (set! (array-ref slot pl-f-end) -1)
+    (set! (array-ref slot pl-f-newline) newline)
+    (set! (array-ref slot pl-f-owned) 1)
+    (set! (array-ref slot pl-f-mn-start) -1)
+    (set! (array-ref slot pl-f-mn-len) 4)
+    (set! (array-ref slot pl-f-movq) 1)
+    (set! (array-ref slot pl-f-label) 0)
+    (set! (array-ref slot pl-f-abort) 0)
+    (set! (array-ref slot pl-f-clears) 1)
+    (set! (array-ref slot pl-f-call) 0)
+    (set! (array-ref slot pl-f-single) 0)
+    (set! (array-ref slot pl-f-zext) 0)
+    (set! (array-ref slot pl-f-hasops) 1)
+    (set! (array-ref slot pl-f-src-start) src-start)
+    (set! (array-ref slot pl-f-src-end) src-end)
+    (set! (array-ref slot pl-f-dst-start) dst-start)
+    (set! (array-ref slot pl-f-dst-end) dst-end)
+    (set! (array-ref slot pl-f-src-key) src-key)
+    (set! (array-ref slot pl-f-dst-key) dst-key)
+    (set!
+      (array-ref slot pl-f-src-flags)
+      (pl-operand-flags src-start src-end src-key src-base))
+    (set!
+      (array-ref slot pl-f-dst-flags)
+      (pl-operand-flags dst-start dst-end dst-key dst-base))
+    (set! (array-ref slot pl-f-src-reg) (pl-reg-index src-start src-end))
+    (set! (array-ref slot pl-f-dst-reg) (pl-reg-index dst-start dst-end))
+    (set! (array-ref slot pl-f-last-reg) -1)))
 
 ;; compiler-backend-peephole-line-copy
 (define (pl-copy-line
@@ -895,9 +873,8 @@
   (let
     [i : i64 0]
     (while (< i pl-f-count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
+      (set! (array-ref dst i) (array-ref src i))
+      (set! i (+ i 1)))))
 
 ;; compiler-backend-peephole-line-self-move-desc?
 (define (pl-self-move? [slot : (&mut slot (Array i64 25))]) : bool
@@ -1005,9 +982,8 @@
   (let
     [i : i64 0]
     (while (< i 14)
-      (begin
-        (when (= (pl-ref pl-owners i) slot) (pl-set! pl-owners i 0))
-        (set! i (+ i 1))))))
+      (when (= (pl-ref pl-owners i) slot) (pl-set! pl-owners i 0))
+      (set! i (+ i 1)))))
 
 ;; compiler-backend-peephole-owners-find-reg-for-slot-index
 (define (pl-owners-find-reg [slot : i64] [exclude : i64]) : i64
@@ -1016,14 +992,12 @@
     (let
       [i : i64 0]
       [found : i64 -1]
-      (begin
-        (while (and (< found 0) (< i 14))
-          (begin
-            (when
-              (and (not (= i exclude)) (= (pl-ref pl-owners i) slot))
-              (set! found i))
-            (set! i (+ i 1))))
-        found))))
+      (while (and (< found 0) (< i 14))
+        (when
+          (and (not (= i exclude)) (= (pl-ref pl-owners i) slot))
+          (set! found i))
+        (set! i (+ i 1)))
+      found)))
 
 ;; compiler-backend-peephole-owners-clear-call-clobbers: only %rbx, %r12..%r15
 ;; keep a stack-slot owner across a call.
@@ -1031,19 +1005,17 @@
   (let
     [i : i64 0]
     (while (< i 14)
-      (begin
-        (if (or (= i 3) (>= i 10))
-          (when (not (> (pl-ref pl-owners i) 0)) (pl-set! pl-owners i 0))
-          (pl-set! pl-owners i 0))
-        (set! i (+ i 1))))))
+      (if (or (= i 3) (>= i 10))
+        (when (not (> (pl-ref pl-owners i) 0)) (pl-set! pl-owners i 0))
+        (pl-set! pl-owners i 0))
+      (set! i (+ i 1)))))
 
 (define (pl-owners-empty) : unit
   (let
     [i : i64 0]
     (while (< i 14)
-      (begin
-        (pl-set! pl-owners i 0)
-        (set! i (+ i 1))))))
+      (pl-set! pl-owners i 0)
+      (set! i (+ i 1)))))
 
 ;; compiler-backend-peephole-movq-owners-transfer-keyed-index
 (define (pl-owners-transfer
@@ -1053,11 +1025,10 @@
   [dst-key : i64]) : unit
   (cond
     [(> dst-key 0)
-      (begin
-        (pl-owners-clear-slot dst-key)
-        (when
-          (and (>= src-reg 0) (= (pl-ref pl-owners src-reg) 0))
-          (pl-set! pl-owners src-reg dst-key)))]
+      (pl-owners-clear-slot dst-key)
+      (when
+        (and (>= src-reg 0) (= (pl-ref pl-owners src-reg) 0))
+        (pl-set! pl-owners src-reg dst-key))]
     [(>= dst-reg 0) (pl-set! pl-owners dst-reg src-key)]
     [else (pl-owners-empty)]))
 
@@ -1093,103 +1064,100 @@
     [read : i64 pl-none]
     [width : i64 8]
     [value : i64 0]
-    (begin
-      (when
-        (= (array-ref slot pl-f-label) 1)
-        (set! flags (bit-or flags pl-sw-label)))
-      (when
-        (and
-          (= (array-ref slot pl-f-owned) 0)
-          (= mlen 4)
-          (= (pl-byte-at ms) 108)
-          (= (pl-byte-at (+ ms 1)) 101)
-          (= (pl-byte-at (+ ms 2)) 97)
-          (= (pl-byte-at (+ ms 3)) 113))
-        (set! flags (bit-or flags pl-sw-leaq)))
-      (when
-        (and
-          (= (array-ref slot pl-f-owned) 0)
-          (>= mlen 4)
-          (= (pl-byte-at ms) 112)
-          (= (pl-byte-at (+ ms 1)) 117)
-          (= (pl-byte-at (+ ms 2)) 115)
-          (= (pl-byte-at (+ ms 3)) 104))
-        (set! flags (bit-or flags pl-sw-push)))
-      (when
-        (and
-          (= (array-ref slot pl-f-owned) 0)
-          (>= mlen 3)
-          (= (pl-byte-at ms) 112)
-          (= (pl-byte-at (+ ms 1)) 111)
-          (= (pl-byte-at (+ ms 2)) 112))
-        (set! flags (bit-or flags pl-sw-pop)))
-      (when
-        (and (>= mlen 4) (= (array-ref slot pl-f-owned) 0))
-        (let
-          [b0 : i64 (pl-byte-at ms)]
-          [b1 : i64 (pl-byte-at (+ ms 1))]
-          [b2 : i64 (pl-byte-at (+ ms 2))]
-          (when
-            (or
-              (and (= b0 115) (= b1 117) (= b2 98))
-              (and (= b0 97) (= b1 100) (= b2 100)))
-            (let
-              [operand : i64 (+ ms mlen)]
-              (begin
-                (while (and (< operand end) (= (pl-byte-at operand) 32))
-                  (set! operand (+ operand 1)))
+    (when
+      (= (array-ref slot pl-f-label) 1)
+      (set! flags (bit-or flags pl-sw-label)))
+    (when
+      (and
+        (= (array-ref slot pl-f-owned) 0)
+        (= mlen 4)
+        (= (pl-byte-at ms) 108)
+        (= (pl-byte-at (+ ms 1)) 101)
+        (= (pl-byte-at (+ ms 2)) 97)
+        (= (pl-byte-at (+ ms 3)) 113))
+      (set! flags (bit-or flags pl-sw-leaq)))
+    (when
+      (and
+        (= (array-ref slot pl-f-owned) 0)
+        (>= mlen 4)
+        (= (pl-byte-at ms) 112)
+        (= (pl-byte-at (+ ms 1)) 117)
+        (= (pl-byte-at (+ ms 2)) 115)
+        (= (pl-byte-at (+ ms 3)) 104))
+      (set! flags (bit-or flags pl-sw-push)))
+    (when
+      (and
+        (= (array-ref slot pl-f-owned) 0)
+        (>= mlen 3)
+        (= (pl-byte-at ms) 112)
+        (= (pl-byte-at (+ ms 1)) 111)
+        (= (pl-byte-at (+ ms 2)) 112))
+      (set! flags (bit-or flags pl-sw-pop)))
+    (when
+      (and (>= mlen 4) (= (array-ref slot pl-f-owned) 0))
+      (let
+        [b0 : i64 (pl-byte-at ms)]
+        [b1 : i64 (pl-byte-at (+ ms 1))]
+        [b2 : i64 (pl-byte-at (+ ms 2))]
+        (when
+          (or
+            (and (= b0 115) (= b1 117) (= b2 98))
+            (and (= b0 97) (= b1 100) (= b2 100)))
+          (let
+            [operand : i64 (+ ms mlen)]
+            (while (and (< operand end) (= (pl-byte-at operand) 32))
+              (set! operand (+ operand 1)))
+            (when
+              (and (= (pl-byte-at operand) 36) (pl-tail-is-rsp? end))
+              (let
+                [comma : i64 (pl-find-comma-space operand end)]
                 (when
-                  (and (= (pl-byte-at operand) 36) (pl-tail-is-rsp? end))
-                  (let
-                    [comma : i64 (pl-find-comma-space operand end)]
-                    (when
-                      (and
-                        (> comma (+ operand 1))
-                        (pl-decimal-valid? (+ operand 1) comma))
-                      (begin
-                        (set! flags (bit-or flags pl-sw-tracked))
-                        (set! flags (bit-or flags pl-sw-rsp-dst))
-                        (when (= b0 115) (set! flags (bit-or flags pl-sw-subq)))
-                        (set! value (pl-decimal-value (+ operand 1) comma)))))))))))
-      (when
-        (and
-          (= (array-ref slot pl-f-owned) 0)
-          (pl-tail-is-rsp? end)
-          (= (bit-and flags pl-sw-tracked) 0))
-        (set! flags (bit-or flags pl-sw-rsp-dst)))
-      (when
-        (and (= (array-ref slot pl-f-owned) 0) (pl-indexed-rsp? start end))
-        (set! flags (bit-or flags pl-sw-fatal)))
-      (set! width (pl-access-width slot))
-      (when
-        (and
-          (= (array-ref slot pl-f-movq) 1)
-          (=
-            (pl-memory-base
-              (array-ref slot pl-f-dst-start)
-              (array-ref slot pl-f-dst-end))
-            2)
-          (> (array-ref slot pl-f-dst-key) 0)
-          (= (bit-and (array-ref slot pl-f-src-flags) pl-op-stack) 0))
-        (set!
-          cand
-          (pl-rsp-displacement
+                  (and
+                    (> comma (+ operand 1))
+                    (pl-decimal-valid? (+ operand 1) comma))
+                  (set! flags (bit-or flags pl-sw-tracked))
+                  (set! flags (bit-or flags pl-sw-rsp-dst))
+                  (when (= b0 115) (set! flags (bit-or flags pl-sw-subq)))
+                  (set! value (pl-decimal-value (+ operand 1) comma)))))))))
+    (when
+      (and
+        (= (array-ref slot pl-f-owned) 0)
+        (pl-tail-is-rsp? end)
+        (= (bit-and flags pl-sw-tracked) 0))
+      (set! flags (bit-or flags pl-sw-rsp-dst)))
+    (when
+      (and (= (array-ref slot pl-f-owned) 0) (pl-indexed-rsp? start end))
+      (set! flags (bit-or flags pl-sw-fatal)))
+    (set! width (pl-access-width slot))
+    (when
+      (and
+        (= (array-ref slot pl-f-movq) 1)
+        (=
+          (pl-memory-base
             (array-ref slot pl-f-dst-start)
-            (array-ref slot pl-f-dst-end))))
-      (when
-        (= cand pl-none)
-        (set!
-          read
-          (if (= (array-ref slot pl-f-owned) 0)
-            (pl-first-rsp-read start end)
-            (pl-first-rsp-read
-              (array-ref slot pl-f-src-start)
-              (array-ref slot pl-f-src-end)))))
-      (pl-set! pl-rec-flags index flags)
-      (pl-set! pl-rec-cand index cand)
-      (pl-set! pl-rec-read index read)
-      (pl-set! pl-rec-width index width)
-      (pl-set! pl-rec-value index value))))
+            (array-ref slot pl-f-dst-end))
+          2)
+        (> (array-ref slot pl-f-dst-key) 0)
+        (= (bit-and (array-ref slot pl-f-src-flags) pl-op-stack) 0))
+      (set!
+        cand
+        (pl-rsp-displacement
+          (array-ref slot pl-f-dst-start)
+          (array-ref slot pl-f-dst-end))))
+    (when
+      (= cand pl-none)
+      (set!
+        read
+        (if (= (array-ref slot pl-f-owned) 0)
+          (pl-first-rsp-read start end)
+          (pl-first-rsp-read
+            (array-ref slot pl-f-src-start)
+            (array-ref slot pl-f-src-end)))))
+    (pl-set! pl-rec-flags index flags)
+    (pl-set! pl-rec-cand index cand)
+    (pl-set! pl-rec-read index read)
+    (pl-set! pl-rec-width index width)
+    (pl-set! pl-rec-value index value)))
 
 ;; Does the line end with the bare `%rsp` destination operand?
 (define (pl-tail-is-rsp? [end : i64]) : bool
@@ -1205,20 +1173,18 @@
   (let
     [i : i64 start]
     [found : bool false]
-    (begin
-      (while (and (not found) (<= (+ i 6) end))
-        (begin
-          (when
-            (and
-              (= (pl-byte-at i) 40)
-              (= (pl-byte-at (+ i 1)) 37)
-              (= (pl-byte-at (+ i 2)) 114)
-              (= (pl-byte-at (+ i 3)) 115)
-              (= (pl-byte-at (+ i 4)) 112)
-              (= (pl-byte-at (+ i 5)) 44))
-            (set! found true))
-          (set! i (+ i 1))))
-      found)))
+    (while (and (not found) (<= (+ i 6) end))
+      (when
+        (and
+          (= (pl-byte-at i) 40)
+          (= (pl-byte-at (+ i 1)) 37)
+          (= (pl-byte-at (+ i 2)) 114)
+          (= (pl-byte-at (+ i 3)) 115)
+          (= (pl-byte-at (+ i 4)) 112)
+          (= (pl-byte-at (+ i 5)) 44))
+        (set! found true))
+      (set! i (+ i 1)))
+    found))
 
 ;; Access width from the mnemonic's size suffix.
 (define (pl-access-width [slot : (&mut slot (Array i64 25))]) : i64
@@ -1252,35 +1218,32 @@
   (let
     [i : i64 start]
     [found : i64 pl-none]
-    (begin
-      (while (and (= found pl-none) (<= (+ i 6) end))
-        (begin
-          (when
-            (and
-              (= (pl-byte-at i) 40)
-              (= (pl-byte-at (+ i 1)) 37)
-              (= (pl-byte-at (+ i 2)) 114)
-              (= (pl-byte-at (+ i 3)) 115)
-              (= (pl-byte-at (+ i 4)) 112)
-              (= (pl-byte-at (+ i 5)) 41))
+    (while (and (= found pl-none) (<= (+ i 6) end))
+      (when
+        (and
+          (= (pl-byte-at i) 40)
+          (= (pl-byte-at (+ i 1)) 37)
+          (= (pl-byte-at (+ i 2)) 114)
+          (= (pl-byte-at (+ i 3)) 115)
+          (= (pl-byte-at (+ i 4)) 112)
+          (= (pl-byte-at (+ i 5)) 41))
+        (let
+          [digits : i64 i]
+          (while (and
+            (> digits start)
             (let
-              [digits : i64 i]
-              (begin
-                (while (and
-                  (> digits start)
-                  (let
-                    [b : i64 (pl-byte-at (- digits 1))]
-                    (or (and (>= b 48) (<= b 57)) (= b 45))))
-                  (set! digits (- digits 1)))
-                (set!
-                  found
-                  (if (= digits i)
-                    0
-                    (if (pl-decimal-valid? digits i)
-                      (pl-decimal-value digits i)
-                      0))))))
-          (set! i (+ i 1))))
-      found)))
+              [b : i64 (pl-byte-at (- digits 1))]
+              (or (and (>= b 48) (<= b 57)) (= b 45))))
+            (set! digits (- digits 1)))
+          (set!
+            found
+            (if (= digits i)
+              0
+              (if (pl-decimal-valid? digits i)
+                (pl-decimal-value digits i)
+                0)))))
+      (set! i (+ i 1)))
+    found))
 
 ;; compiler-backend-peephole-emit-line-desc-record: reload elision, the
 ;; cross-register reuse rewrite, and the record push.
@@ -1298,21 +1261,18 @@
         (if (and is-slot (not dst-owns) (>= dst-reg 0))
           (pl-owners-find-reg src-key dst-reg)
           -1)]
-      (begin
-        (cond
-          [dst-owns
-            (begin
-              (set! pl-elided (+ pl-elided 1))
-              (set! pl-dropped (+ pl-dropped 1)))]
-          [(>= reuse 0)
-            (begin
-              (set! pl-reused (+ pl-reused 1))
-              (pl-push-record slot)
-              ;; The pushed line becomes `movq %rY, DST`, a register source, so
-              ;; it no longer reads the frame slot the sweep would have seen.
-              (pl-set! pl-rec-read (- pl-rec-len 1) pl-none))]
-          [else (pl-push-record slot)])
-        (pl-owners-transfer src-reg dst-reg src-key dst-key)))
+      (cond
+        [dst-owns
+          (set! pl-elided (+ pl-elided 1))
+          (set! pl-dropped (+ pl-dropped 1))]
+        [(>= reuse 0)
+          (set! pl-reused (+ pl-reused 1))
+          (pl-push-record slot)
+          ;; The pushed line becomes `movq %rY, DST`, a register source, so
+          ;; it no longer reads the frame slot the sweep would have seen.
+          (pl-set! pl-rec-read (- pl-rec-len 1) pl-none)]
+        [else (pl-push-record slot)])
+      (pl-owners-transfer src-reg dst-reg src-key dst-key))
     (begin
       (pl-push-record slot)
       (pl-clobber-owners slot prev-abort))))
@@ -1320,16 +1280,15 @@
 (define (pl-push-record [slot : (&mut slot (Array i64 25))]) : unit
   (let
     [index : i64 pl-rec-len]
-    (begin
-      (pl-set! pl-rec-owned index (array-ref slot pl-f-owned))
-      (pl-set! pl-rec-src-start index (array-ref slot pl-f-src-start))
-      (pl-set! pl-rec-src-end index (array-ref slot pl-f-src-end))
-      (pl-set! pl-rec-dst-start index (array-ref slot pl-f-dst-start))
-      (pl-set! pl-rec-dst-end index (array-ref slot pl-f-dst-end))
-      (pl-set! pl-rec-live index 1)
-      (pl-record-sweep slot index)
-      (set! pl-rec-len (+ pl-rec-len 1))
-      (set! pl-kept (+ pl-kept 1)))))
+    (pl-set! pl-rec-owned index (array-ref slot pl-f-owned))
+    (pl-set! pl-rec-src-start index (array-ref slot pl-f-src-start))
+    (pl-set! pl-rec-src-end index (array-ref slot pl-f-src-end))
+    (pl-set! pl-rec-dst-start index (array-ref slot pl-f-dst-start))
+    (pl-set! pl-rec-dst-end index (array-ref slot pl-f-dst-end))
+    (pl-set! pl-rec-live index 1)
+    (pl-record-sweep slot index)
+    (set! pl-rec-len (+ pl-rec-len 1))
+    (set! pl-kept (+ pl-kept 1))))
 
 ;; compiler-backend-deadstore-sweep-records! / -sweep-region-records!: replay
 ;; the rsp delta, collect pure frame stores and frame reads, then drop stores
@@ -1342,88 +1301,83 @@
     [cand-count : i64 0]
     [read-count : i64 0]
     [i : i64 0]
-    (begin
-      (while (and sweepable (< i pl-rec-len))
-        (let
-          [flags : i64 (pl-ref pl-rec-flags i)]
-          [cand : i64 (pl-ref pl-rec-cand i)]
-          [read : i64 (pl-ref pl-rec-read i)]
+    (while (and sweepable (< i pl-rec-len))
+      (let
+        [flags : i64 (pl-ref pl-rec-flags i)]
+        [cand : i64 (pl-ref pl-rec-cand i)]
+        [read : i64 (pl-ref pl-rec-read i)]
+        (if (not (= (bit-and flags pl-sw-label) 0))
+          (set! delta 0)
           (begin
-            (if (not (= (bit-and flags pl-sw-label) 0))
-              (set! delta 0)
+            (when
+              (not (= (bit-and flags pl-sw-fatal) 0))
+              (set! sweepable false))
+            (when
+              (and
+                (not (= (bit-and flags pl-sw-leaq) 0))
+                (not (= read pl-none)))
+              (let
+                [address : i64 (- read delta)]
+                (when (< address watermark) (set! watermark address))))
+            (when
+              (and (not (= cand pl-none)) (< cand-count 4096))
               (begin
-                (when
-                  (not (= (bit-and flags pl-sw-fatal) 0))
-                  (set! sweepable false))
+                (pl-set! pl-sweep-cand-pos cand-count i)
+                (pl-set! pl-sweep-cand-off cand-count (- cand delta))
+                (set! cand-count (+ cand-count 1))))
+            (when
+              (and
+                (= cand pl-none)
+                (not (= read pl-none))
+                (= (bit-and flags pl-sw-leaq) 0)
+                (< read-count 4096))
+              (begin
+                (pl-set! pl-sweep-read-lo read-count (- read delta))
+                (pl-set!
+                  pl-sweep-read-hi
+                  read-count
+                  (+ (- read delta) (pl-ref pl-rec-width i)))
+                (set! read-count (+ read-count 1))))
+            (when
+              (not (= (bit-and flags pl-sw-push) 0))
+              (set! delta (+ delta 8)))
+            (when
+              (not (= (bit-and flags pl-sw-pop) 0))
+              (set! delta (- delta 8)))
+            (when
+              (not (= (bit-and flags pl-sw-rsp-dst) 0))
+              (if (not (= (bit-and flags pl-sw-tracked) 0))
+                (if (not (= (bit-and flags pl-sw-subq) 0))
+                  (set! delta (+ delta (pl-ref pl-rec-value i)))
+                  (set! delta (- delta (pl-ref pl-rec-value i))))
+                (set! sweepable false)))))
+        (set! i (+ i 1))))
+    (when
+      (and sweepable (> cand-count 0))
+      (let
+        [k : i64 0]
+        (while (< k cand-count)
+          (let
+            [offset : i64 (pl-ref pl-sweep-cand-off k)]
+            [position : i64 (pl-ref pl-sweep-cand-pos k)]
+            [r : i64 0]
+            [observed : bool false]
+            (when
+              (< offset watermark)
+              (while (and (not observed) (< r read-count))
                 (when
                   (and
-                    (not (= (bit-and flags pl-sw-leaq) 0))
-                    (not (= read pl-none)))
-                  (let
-                    [address : i64 (- read delta)]
-                    (when (< address watermark) (set! watermark address))))
-                (when
-                  (and (not (= cand pl-none)) (< cand-count 4096))
-                  (begin
-                    (pl-set! pl-sweep-cand-pos cand-count i)
-                    (pl-set! pl-sweep-cand-off cand-count (- cand delta))
-                    (set! cand-count (+ cand-count 1))))
-                (when
-                  (and
-                    (= cand pl-none)
-                    (not (= read pl-none))
-                    (= (bit-and flags pl-sw-leaq) 0)
-                    (< read-count 4096))
-                  (begin
-                    (pl-set! pl-sweep-read-lo read-count (- read delta))
-                    (pl-set!
-                      pl-sweep-read-hi
-                      read-count
-                      (+ (- read delta) (pl-ref pl-rec-width i)))
-                    (set! read-count (+ read-count 1))))
-                (when
-                  (not (= (bit-and flags pl-sw-push) 0))
-                  (set! delta (+ delta 8)))
-                (when
-                  (not (= (bit-and flags pl-sw-pop) 0))
-                  (set! delta (- delta 8)))
-                (when
-                  (not (= (bit-and flags pl-sw-rsp-dst) 0))
-                  (if (not (= (bit-and flags pl-sw-tracked) 0))
-                    (if (not (= (bit-and flags pl-sw-subq) 0))
-                      (set! delta (+ delta (pl-ref pl-rec-value i)))
-                      (set! delta (- delta (pl-ref pl-rec-value i))))
-                    (set! sweepable false)))))
-            (set! i (+ i 1)))))
-      (when
-        (and sweepable (> cand-count 0))
-        (let
-          [k : i64 0]
-          (while (< k cand-count)
-            (let
-              [offset : i64 (pl-ref pl-sweep-cand-off k)]
-              [position : i64 (pl-ref pl-sweep-cand-pos k)]
-              [r : i64 0]
-              [observed : bool false]
-              (begin
-                (when
-                  (< offset watermark)
-                  (begin
-                    (while (and (not observed) (< r read-count))
-                      (begin
-                        (when
-                          (and
-                            (< (pl-ref pl-sweep-read-lo r) (+ offset 8))
-                            (< offset (pl-ref pl-sweep-read-hi r)))
-                          (set! observed true))
-                        (set! r (+ r 1))))
-                    (unless
-                      observed
-                      (begin
-                        (pl-set! pl-rec-live position 0)
-                        (set! pl-swept (+ pl-swept 1))
-                        (set! pl-kept (- pl-kept 1))))))
-                (set! k (+ k 1))))))))))
+                    (< (pl-ref pl-sweep-read-lo r) (+ offset 8))
+                    (< offset (pl-ref pl-sweep-read-hi r)))
+                  (set! observed true))
+                (set! r (+ r 1)))
+              (unless
+                observed
+                (begin
+                  (pl-set! pl-rec-live position 0)
+                  (set! pl-swept (+ pl-swept 1))
+                  (set! pl-kept (- pl-kept 1)))))
+            (set! k (+ k 1))))))))
 
 ;; compiler-backend-drop-fallthrough-jumps
 (define (pl-drop-fallthrough [start : i64] [stop : i64]) : unit
@@ -1440,27 +1394,24 @@
             (+ end 1)
             end)]
         [consumed? : bool false]
-        (begin
+        (when
+          pending?
+          (if (pl-label-def-line? i end)
+            (begin
+              (set! consumed? true)
+              (when
+                (pl-ranges-eq? target-start target-stop i (- end 1))
+                (set! pl-fallthrough (+ pl-fallthrough 1))
+                (set! pending? false)))
+            (set! pending? false)))
+        (unless
+          consumed?
           (when
-            pending?
-            (if (pl-label-def-line? i end)
-              (begin
-                (set! consumed? true)
-                (when
-                  (pl-ranges-eq? target-start target-stop i (- end 1))
-                  (begin
-                    (set! pl-fallthrough (+ pl-fallthrough 1))
-                    (set! pending? false))))
-              (set! pending? false)))
-          (unless
-            consumed?
-            (when
-              (pl-direct-jmp-line? i end)
-              (begin
-                (set! pending? true)
-                (set! target-start (+ i 8))
-                (set! target-stop end))))
-          (set! i next-start))))))
+            (pl-direct-jmp-line? i end)
+            (set! pending? true)
+            (set! target-start (+ i 8))
+            (set! target-stop end)))
+        (set! i next-start)))))
 
 ;; compiler-backend-asm-label-def-line?
 (define (pl-label-def-line? [start : i64] [end : i64]) : bool
@@ -1472,14 +1423,12 @@
         [limit : i64 (- end 1)]
         [i : i64 start]
         [ok : bool true]
-        (begin
-          (while (and ok (< i limit))
-            (let
-              [b : i64 (pl-byte-at i)]
-              (begin
-                (when (or (= b 32) (= b 9) (= b 58)) (set! ok false))
-                (set! i (+ i 1)))))
-          ok)))))
+        (while (and ok (< i limit))
+          (let
+            [b : i64 (pl-byte-at i)]
+            (when (or (= b 32) (= b 9) (= b 58)) (set! ok false))
+            (set! i (+ i 1))))
+        ok))))
 
 ;; compiler-backend-asm-direct-jmp-line?
 (define (pl-direct-jmp-line? [start : i64] [end : i64]) : bool
@@ -1501,16 +1450,14 @@
         (let
           [i : i64 operand-start]
           [ok : bool true]
-          (begin
-            (while (and ok (< i end))
-              (let
-                [b : i64 (pl-byte-at i)]
-                (begin
-                  (when
-                    (or (= b 32) (= b 9) (= b 42) (= b 37) (= b 40) (= b 44))
-                    (set! ok false))
-                  (set! i (+ i 1)))))
-            ok))))))
+          (while (and ok (< i end))
+            (let
+              [b : i64 (pl-byte-at i)]
+              (when
+                (or (= b 32) (= b 9) (= b 42) (= b 37) (= b 40) (= b 44))
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok)))))
 
 ;; compiler-backend-peephole-asm-once-records-chunks over one chunk.
 (define (pl-run-chunk [start : i64] [stop : i64]) : i64
@@ -1523,94 +1470,86 @@
     [has-pending : bool false]
     [prev-abort : i64 0]
     [hash : i64 pl-hash-basis]
-    (begin
-      (set! pl-rec-len 0)
-      (pl-owners-empty)
-      (pl-drop-fallthrough start stop)
-      (while (< i stop)
-        (let
-          [end : i64 (pl-line-end i stop)]
-          [next-start : i64
-            (if (< end stop)
-              (+ end 1)
-              end)]
-          [newline : i64
-            (if (< end stop)
-              1
-              0)]
+    (set! pl-rec-len 0)
+    (pl-owners-empty)
+    (pl-drop-fallthrough start stop)
+    (while (< i stop)
+      (let
+        [end : i64 (pl-line-end i stop)]
+        [next-start : i64
+          (if (< end stop)
+            (+ end 1)
+            end)]
+        [newline : i64
+          (if (< end stop)
+            1
+            0)]
+        (if has-pending
+          (let
+            [action : i64 0]
+            (pl-parse-line (&mut next) i end (= newline 1))
+            (set! action (pl-pair-action (&mut pending) (&mut next)))
+            (cond
+              [(= action 1)
+                (set! pl-rule1 (+ pl-rule1 1))
+                (set! pl-dropped (+ pl-dropped 1))
+                (pl-copy-line (&mut pending) (&mut next))]
+              [(= action 2)
+                (set! pl-rule2 (+ pl-rule2 1))
+                (set! pl-dropped (+ pl-dropped 1))]
+              [(= action 3)
+                (set! pl-rule3 (+ pl-rule3 1))
+                (pl-emit-record (&mut pending) prev-abort)
+                (set! prev-abort (array-ref pending pl-f-abort))
+                (let
+                  [src-start : i64 (array-ref pending pl-f-src-start)]
+                  [src-end : i64 (array-ref pending pl-f-src-end)]
+                  [dst-start : i64 (array-ref next pl-f-dst-start)]
+                  [dst-end : i64 (array-ref next pl-f-dst-end)]
+                  (pl-owned-line
+                    (&mut pending)
+                    src-start
+                    src-end
+                    dst-start
+                    dst-end
+                    newline))]
+              [(= action 4)
+                (set! pl-rule4 (+ pl-rule4 1))
+                (let
+                  [src-start : i64 (array-ref next pl-f-src-start)]
+                  [src-end : i64 (array-ref next pl-f-src-end)]
+                  [dst-start : i64 (array-ref next pl-f-dst-start)]
+                  [dst-end : i64 (array-ref next pl-f-dst-end)]
+                  (pl-owned-line
+                    (&mut pending)
+                    src-start
+                    src-end
+                    dst-start
+                    dst-end
+                    newline))]
+              [else
+                (pl-emit-record (&mut pending) prev-abort)
+                (set! prev-abort (array-ref pending pl-f-abort))
+                (pl-copy-line (&mut pending) (&mut next))]))
           (begin
-            (if has-pending
-              (let
-                [action : i64 0]
-                (begin
-                  (pl-parse-line (&mut next) i end (= newline 1))
-                  (set! action (pl-pair-action (&mut pending) (&mut next)))
-                  (cond
-                    [(= action 1)
-                      (begin
-                        (set! pl-rule1 (+ pl-rule1 1))
-                        (set! pl-dropped (+ pl-dropped 1))
-                        (pl-copy-line (&mut pending) (&mut next)))]
-                    [(= action 2)
-                      (begin
-                        (set! pl-rule2 (+ pl-rule2 1))
-                        (set! pl-dropped (+ pl-dropped 1)))]
-                    [(= action 3)
-                      (begin
-                        (set! pl-rule3 (+ pl-rule3 1))
-                        (pl-emit-record (&mut pending) prev-abort)
-                        (set! prev-abort (array-ref pending pl-f-abort))
-                        (let
-                          [src-start : i64 (array-ref pending pl-f-src-start)]
-                          [src-end : i64 (array-ref pending pl-f-src-end)]
-                          [dst-start : i64 (array-ref next pl-f-dst-start)]
-                          [dst-end : i64 (array-ref next pl-f-dst-end)]
-                          (pl-owned-line
-                            (&mut pending)
-                            src-start
-                            src-end
-                            dst-start
-                            dst-end
-                            newline)))]
-                    [(= action 4)
-                      (begin
-                        (set! pl-rule4 (+ pl-rule4 1))
-                        (let
-                          [src-start : i64 (array-ref next pl-f-src-start)]
-                          [src-end : i64 (array-ref next pl-f-src-end)]
-                          [dst-start : i64 (array-ref next pl-f-dst-start)]
-                          [dst-end : i64 (array-ref next pl-f-dst-end)]
-                          (pl-owned-line
-                            (&mut pending)
-                            src-start
-                            src-end
-                            dst-start
-                            dst-end
-                            newline)))]
-                    [else
-                      (begin
-                        (pl-emit-record (&mut pending) prev-abort)
-                        (set! prev-abort (array-ref pending pl-f-abort))
-                        (pl-copy-line (&mut pending) (&mut next)))])))
-              (begin
-                (set! has-pending true)
-                (pl-parse-line (&mut pending) i end (= newline 1))))
-            (set! i next-start))))
-      (when
-        (and has-pending (not (pl-self-move? (&mut pending))))
-        (pl-emit-record (&mut pending) prev-abort))
-      (pl-sweep-region)
-      (set! hash (pl-mix hash pl-rec-len))
-      (set! hash (pl-mix hash pl-kept))
-      (set! hash (pl-mix hash pl-dropped))
-      (set! hash (pl-mix hash pl-rule1))
-      (set! hash (pl-mix hash pl-rule2))
-      (set! hash (pl-mix hash pl-rule3))
-      (set! hash (pl-mix hash pl-rule4))
-      (set! hash (pl-mix hash pl-elided))
-      (set! hash (pl-mix hash pl-reused))
-      (set! hash (pl-mix hash pl-fallthrough))
-      (pl-mix hash pl-swept))))
+            (set! has-pending true)
+            (pl-parse-line (&mut pending) i end (= newline 1))))
+        (set! i next-start)))
+    (when
+      (and has-pending (not (pl-self-move? (&mut pending))))
+      (pl-emit-record (&mut pending) prev-abort))
+    (pl-sweep-region)
+    (set! hash (pl-mix hash pl-rec-len))
+    (set! hash (pl-mix hash pl-kept))
+    (set! hash (pl-mix hash pl-dropped))
+    (set! hash (pl-mix hash pl-rule1))
+    (set! hash (pl-mix hash pl-rule2))
+    (set! hash (pl-mix hash pl-rule3))
+    (set! hash (pl-mix hash pl-rule4))
+    (set! hash (pl-mix hash pl-elided))
+    (set! hash (pl-mix hash pl-reused))
+    (set! hash (pl-mix hash pl-fallthrough))
+    (pl-mix hash pl-swept)))
 
 (define (pl-bench [path : String] [rounds : i64]) : i64
   (let
@@ -1619,109 +1558,103 @@
     [round : i64 0]
     [start : i64 0]
     [acc : i64 pl-hash-basis]
-    (begin
-      (set!
-        pl-text
-        (byte_buf.to-string (io.read-file-or (& path) (byte_buf.new))))
-      (set! pl-len (string.string-length pl-text))
-      (set! acc (pl-mix acc pl-len))
-      (set! pl-chunk-start (pl-zero-vec (+ (/ pl-len 16) 4)))
-      (set! pl-chunk-end (pl-zero-vec (+ (/ pl-len 16) 4)))
-      (let
-        [i : i64 0]
-        [chunk-begin : i64 0]
-        [lines : i64 0]
-        (begin
-          (while (< i pl-len)
-            (let
-              [end : i64 (pl-line-end i pl-len)]
-              [next-start : i64
-                (if (< end pl-len)
-                  (+ end 1)
-                  end)]
-              (begin
-                (when
-                  (and (pl-globl-line? i end) (> i chunk-begin))
-                  (begin
-                    (pl-set! pl-chunk-start chunks chunk-begin)
-                    (pl-set! pl-chunk-end chunks i)
-                    (when (> lines max-lines) (set! max-lines lines))
-                    (set! chunks (+ chunks 1))
-                    (set! chunk-begin i)
-                    (set! lines 0)))
-                (set! lines (+ lines 1))
-                (set! i next-start))))
+    (set!
+      pl-text
+      (byte_buf.to-string (io.read-file-or (& path) (byte_buf.new))))
+    (set! pl-len (string.string-length pl-text))
+    (set! acc (pl-mix acc pl-len))
+    (set! pl-chunk-start (pl-zero-vec (+ (/ pl-len 16) 4)))
+    (set! pl-chunk-end (pl-zero-vec (+ (/ pl-len 16) 4)))
+    (let
+      [i : i64 0]
+      [chunk-begin : i64 0]
+      [lines : i64 0]
+      (while (< i pl-len)
+        (let
+          [end : i64 (pl-line-end i pl-len)]
+          [next-start : i64
+            (if (< end pl-len)
+              (+ end 1)
+              end)]
           (when
-            (> pl-len chunk-begin)
+            (and (pl-globl-line? i end) (> i chunk-begin))
             (begin
               (pl-set! pl-chunk-start chunks chunk-begin)
-              (pl-set! pl-chunk-end chunks pl-len)
+              (pl-set! pl-chunk-end chunks i)
               (when (> lines max-lines) (set! max-lines lines))
-              (set! chunks (+ chunks 1))))))
-      (set! pl-chunk-count chunks)
-      (set! pl-rec-owned (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-src-start (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-src-end (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-dst-start (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-dst-end (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-flags (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-cand (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-read (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-width (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-value (pl-zero-vec (+ max-lines 2)))
-      (set! pl-rec-live (pl-zero-vec (+ max-lines 2)))
-      (set! pl-sweep-cand-pos (pl-zero-vec 4097))
-      (set! pl-sweep-cand-off (pl-zero-vec 4097))
-      (set! pl-sweep-read-lo (pl-zero-vec 4097))
-      (set! pl-sweep-read-hi (pl-zero-vec 4097))
-      (while (< round rounds)
-        (let
-          [step : i64 0]
-          [index : i64 0]
-          (begin
-            (set! acc (pl-mix acc round))
-            (set! pl-kept 0)
-            (set! pl-dropped 0)
-            (set! pl-rule1 0)
-            (set! pl-rule2 0)
-            (set! pl-rule3 0)
-            (set! pl-rule4 0)
-            (set! pl-elided 0)
-            (set! pl-reused 0)
-            (set! pl-fallthrough 0)
-            (set! pl-swept 0)
-            (while (< step chunks)
-              (begin
-                (set! index (+ start step))
-                (when (>= index chunks) (set! index (- index chunks)))
-                (set!
-                  acc
-                  (pl-mix
-                    acc
-                    (pl-run-chunk
-                      (pl-ref pl-chunk-start index)
-                      (pl-ref pl-chunk-end index))))
-                (set! step (+ step 1))))
-            (set! start (+ start 1))
-            (when (>= start chunks) (set! start 0))
-            (set! round (+ round 1)))))
-      acc)))
+              (set! chunks (+ chunks 1))
+              (set! chunk-begin i)
+              (set! lines 0)))
+          (set! lines (+ lines 1))
+          (set! i next-start)))
+      (when
+        (> pl-len chunk-begin)
+        (begin
+          (pl-set! pl-chunk-start chunks chunk-begin)
+          (pl-set! pl-chunk-end chunks pl-len)
+          (when (> lines max-lines) (set! max-lines lines))
+          (set! chunks (+ chunks 1)))))
+    (set! pl-chunk-count chunks)
+    (set! pl-rec-owned (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-src-start (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-src-end (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-dst-start (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-dst-end (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-flags (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-cand (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-read (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-width (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-value (pl-zero-vec (+ max-lines 2)))
+    (set! pl-rec-live (pl-zero-vec (+ max-lines 2)))
+    (set! pl-sweep-cand-pos (pl-zero-vec 4097))
+    (set! pl-sweep-cand-off (pl-zero-vec 4097))
+    (set! pl-sweep-read-lo (pl-zero-vec 4097))
+    (set! pl-sweep-read-hi (pl-zero-vec 4097))
+    (while (< round rounds)
+      (let
+        [step : i64 0]
+        [index : i64 0]
+        (set! acc (pl-mix acc round))
+        (set! pl-kept 0)
+        (set! pl-dropped 0)
+        (set! pl-rule1 0)
+        (set! pl-rule2 0)
+        (set! pl-rule3 0)
+        (set! pl-rule4 0)
+        (set! pl-elided 0)
+        (set! pl-reused 0)
+        (set! pl-fallthrough 0)
+        (set! pl-swept 0)
+        (while (< step chunks)
+          (set! index (+ start step))
+          (when (>= index chunks) (set! index (- index chunks)))
+          (set!
+            acc
+            (pl-mix
+              acc
+              (pl-run-chunk
+                (pl-ref pl-chunk-start index)
+                (pl-ref pl-chunk-end index))))
+          (set! step (+ step 1)))
+        (set! start (+ start 1))
+        (when (>= start chunks) (set! start 0))
+        (set! round (+ round 1))))
+    acc))
 
 ;; A chunk boundary: the first non-space bytes of the line are `.globl`.
 (define (pl-globl-line? [start : i64] [end : i64]) : bool
   (let
     [i : i64 start]
-    (begin
-      (while (and (< i end) (= (pl-byte-at i) 32))
-        (set! i (+ i 1)))
-      (and
-        (<= (+ i 6) end)
-        (= (pl-byte-at i) 46)
-        (= (pl-byte-at (+ i 1)) 103)
-        (= (pl-byte-at (+ i 2)) 108)
-        (= (pl-byte-at (+ i 3)) 111)
-        (= (pl-byte-at (+ i 4)) 98)
-        (= (pl-byte-at (+ i 5)) 108)))))
+    (while (and (< i end) (= (pl-byte-at i) 32))
+      (set! i (+ i 1)))
+    (and
+      (<= (+ i 6) end)
+      (= (pl-byte-at i) 46)
+      (= (pl-byte-at (+ i 1)) 103)
+      (= (pl-byte-at (+ i 2)) 108)
+      (= (pl-byte-at (+ i 3)) 111)
+      (= (pl-byte-at (+ i 4)) 98)
+      (= (pl-byte-at (+ i 5)) 108))))
 
 ;; The corpus path and round count are read defensively so that a run with no
 ;; arguments, or with a corpus this checkout does not have, still prints one
@@ -1740,6 +1673,5 @@
       (if (> count 2)
         (string.>int (io.arg 2))
         0)]
-    (begin
-      (io.println "{}" (pl-bench path rounds))
-      0)))
+    (io.println "{}" (pl-bench path rounds))
+    0))

@@ -40,14 +40,13 @@
         (let
           [i : i64 0]
           [ok : bool true]
-          (begin
-            (while (and ok (< i prefix-len))
-              (if (=
-                (string.string-ref text (+ start i))
-                (string.string-ref prefix i))
-                (set! i (+ i 1))
-                (set! ok false)))
-            ok))))))
+          (while (and ok (< i prefix-len))
+            (if (=
+              (string.string-ref text (+ start i))
+              (string.string-ref prefix i))
+              (set! i (+ i 1))
+              (set! ok false)))
+          ok)))))
 
 (define (doc-site-expand-find-prefix
   [text : (& text str)]
@@ -57,14 +56,12 @@
     [i : i64 from]
     [n : i64 (string.string-length text)]
     [found : i64 n]
-    (begin
-      (while (and (< i n) (= found n))
-        (begin
-          (if (doc-site-expand-prefix-at? text prefix i)
-            (set! found i)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (= found n))
+      (if (doc-site-expand-prefix-at? text prefix i)
+        (set! found i)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (doc-site-expand-string-contains?
   [text : (& text str)]
@@ -96,14 +93,10 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String "\""]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat out (doc-site-expand-json-escape-one text i)))
-          (set! i (+ i 1))))
-      (str_cat.str-cat out "\""))))
+    (while (< i n)
+      (set! out (str_cat.str-cat out (doc-site-expand-json-escape-one text i)))
+      (set! i (+ i 1)))
+    (str_cat.str-cat out "\"")))
 
 (define (doc-site-expand-record!
   [identity : String]
@@ -141,14 +134,13 @@
   (let
     [module : String (string.copy module-name)]
     [identity : String (doc_bridge.bridge-doc-render-anchor (& module))]
-    (begin
-      (set! doc-site-expand-current-module (string.copy (& module)))
-      (doc-site-expand-record!
-        identity
-        "module"
-        module-name
-        ""
-        "Generated module API."))))
+    (set! doc-site-expand-current-module (string.copy (& module)))
+    (doc-site-expand-record!
+      identity
+      "module"
+      module-name
+      ""
+      "Generated module API.")))
 
 (define (doc-site-expand-html-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -165,14 +157,10 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat out (doc-site-expand-html-escape-one text i)))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set! out (str_cat.str-cat out (doc-site-expand-html-escape-one text i)))
+      (set! i (+ i 1)))
+    out))
 
 (define (doc-site-expand-code-block [source : (& source str)]) : String
   (str_cat.str-cat
@@ -205,28 +193,27 @@
   [doc-text : String]) : String
   (let
     [anchor : String (doc-site-expand-item-anchor name)]
-    (begin
-      (doc-site-expand-record!
-        (string.copy (& anchor))
-        (string.copy (& kind))
-        name
-        (string.copy (& signature))
-        (string.copy (& doc-text)))
-      (str_cat.str-cat
-        "<a id=\""
-        (string.copy (& anchor))
-        "\"></a>\n<section class=\"tl-doc-item\" data-doc-identity=\""
-        (string.copy (& anchor))
-        "\">\n<h3><a href=\"#"
-        anchor
-        "\">"
-        (doc-site-expand-html-escape name)
-        "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
-        (doc-site-expand-html-escape kind)
-        "</dd></dl>\n"
-        (doc-site-expand-code-block signature)
-        (doc-site-expand-doc-block doc-text)
-        "</section>\n"))))
+    (doc-site-expand-record!
+      (string.copy (& anchor))
+      (string.copy (& kind))
+      name
+      (string.copy (& signature))
+      (string.copy (& doc-text)))
+    (str_cat.str-cat
+      "<a id=\""
+      (string.copy (& anchor))
+      "\"></a>\n<section class=\"tl-doc-item\" data-doc-identity=\""
+      (string.copy (& anchor))
+      "\">\n<h3><a href=\"#"
+      anchor
+      "\">"
+      (doc-site-expand-html-escape name)
+      "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
+      (doc-site-expand-html-escape kind)
+      "</dd></dl>\n"
+      (doc-site-expand-code-block signature)
+      (doc-site-expand-doc-block doc-text)
+      "</section>\n")))
 
 (define (doc-site-expand-module-section
   [module-name : (& module-name str)]
@@ -544,12 +531,11 @@
   (let
     [module-name : String
       (str_cat.str-cat "stdlib.vector.generated." type-name)]
-    (begin
-      (doc-site-expand-begin-module! (& module-name))
-      (doc-site-expand-module-section
-        module-name
-        (doc-site-expand-vector-nav)
-        (doc-site-expand-vector-items type-name alias)))))
+    (doc-site-expand-begin-module! (& module-name))
+    (doc-site-expand-module-section
+      module-name
+      (doc-site-expand-vector-nav)
+      (doc-site-expand-vector-items type-name alias))))
 
 (define (doc-site-expand-vector-sections) : String
   (str_cat.str-cat
@@ -755,12 +741,11 @@
   (let
     [module-name : String
       (str_cat.str-cat "stdlib.queue.deque.generated." type-name)]
-    (begin
-      (doc-site-expand-begin-module! (& module-name))
-      (doc-site-expand-module-section
-        module-name
-        (doc-site-expand-queue-nav)
-        (doc-site-expand-queue-items type-name alias)))))
+    (doc-site-expand-begin-module! (& module-name))
+    (doc-site-expand-module-section
+      module-name
+      (doc-site-expand-queue-nav)
+      (doc-site-expand-queue-items type-name alias))))
 
 (define (doc-site-expand-queue-sections) : String
   (doc-site-expand-queue-module "i64" "deque_i64"))
@@ -825,34 +810,31 @@
   [site-dir : (& site-dir str)]
   [source : String]
   [output : String]) : unit
-  (begin
-    (set! doc-site-expand-current-module "")
-    (set! doc-site-expand-current-output (string.copy (& output)))
-    (set! doc-site-expand-search-records "")
-    (let
-      [sections : String (doc-site-expand-generated-sections source)]
-      (if (= (string.string-length sections) 0)
-        unit
-        (let
-          [path : String (doc-site-expand-path-join site-dir output)]
-          [status : i64 (io.read-file-status (string.copy (& path)))]
-          (if (= status doc-site-expand-status-ok)
-            (let
-              [html : String
-                (byte_buf.to-string (io.read-file (string.copy (& path))))]
-              (begin
-                (if (doc-site-expand-string-contains?
-                  (& html)
-                  "generated-module-import")
-                  unit
-                  (doc-site-expand-write-text
-                    (& path)
-                    (doc-site-expand-insert-before-main-close (& html) sections)))
-                (doc-site-expand-search-index-append
-                  site-dir
-                  (& doc-site-expand-search-records))))
-            (io.panic
-              (str_cat.str-cat "doc-site-expand: missing page: " path ""))))))))
+  (set! doc-site-expand-current-module "")
+  (set! doc-site-expand-current-output (string.copy (& output)))
+  (set! doc-site-expand-search-records "")
+  (let
+    [sections : String (doc-site-expand-generated-sections source)]
+    (if (= (string.string-length sections) 0)
+      unit
+      (let
+        [path : String (doc-site-expand-path-join site-dir output)]
+        [status : i64 (io.read-file-status (string.copy (& path)))]
+        (if (= status doc-site-expand-status-ok)
+          (let
+            [html : String
+              (byte_buf.to-string (io.read-file (string.copy (& path))))]
+            (if (doc-site-expand-string-contains?
+              (& html)
+              "generated-module-import")
+              unit
+              (doc-site-expand-write-text
+                (& path)
+                (doc-site-expand-insert-before-main-close (& html) sections)))
+            (doc-site-expand-search-index-append
+              site-dir
+              (& doc-site-expand-search-records)))
+          (io.panic (str_cat.str-cat "doc-site-expand: missing page: " path "")))))))
 
 (define (doc-site-expand-page
   [site-dir : (& site-dir str)]
@@ -868,16 +850,13 @@
       (stdlib_manifest.doc-site-stdlib-module-names)]
     [count : i64 (stdlib_manifest.doc-site-stdlib-module-count (& names))]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (let
-          [name : String
-            (stdlib_manifest.doc-site-stdlib-module-name (& names) i)]
-          [source : String
-            (stdlib_manifest.doc-site-stdlib-module-source (& name))]
-          [output : String
-            (stdlib_manifest.doc-site-stdlib-module-page (& name))]
-          (begin
-            (doc-site-expand-page site-dir source output)
-            (set! i (+ i 1)))))
-      0)))
+    (while (< i count)
+      (let
+        [name : String
+          (stdlib_manifest.doc-site-stdlib-module-name (& names) i)]
+        [source : String
+          (stdlib_manifest.doc-site-stdlib-module-source (& name))]
+        [output : String (stdlib_manifest.doc-site-stdlib-module-page (& name))]
+        (doc-site-expand-page site-dir source output)
+        (set! i (+ i 1))))
+    0))

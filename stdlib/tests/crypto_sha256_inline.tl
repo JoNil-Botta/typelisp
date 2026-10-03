@@ -6,9 +6,8 @@
 (cfg
   test
   (define (test-zero-digest [message : String]) : sha.Sha256Digest
-    (begin
-      (test.assert-true false message)
-      (sha.Sha256Digest (make-array u8 32)))))
+    (test.assert-true false message)
+    (sha.Sha256Digest (make-array u8 32))))
 
 ;: Require one successful streaming update.
 (cfg
@@ -44,16 +43,15 @@
     (let
       [result : sha.Sha256Digest (test-digest input)]
       [actual : String (sha.to-hex (& result))]
-      (begin
-        (test.assert-i64-eq
-          (array-length (sha.digest-bytes (& result)))
-          32
-          "SHA-256 digest width")
-        (test.assert-i64-eq
-          (string-length (& actual))
-          64
-          "SHA-256 hexadecimal width")
-        (test.assert-string-eq (& actual) (& expected) message)))))
+      (test.assert-i64-eq
+        (array-length (sha.digest-bytes (& result)))
+        32
+        "SHA-256 digest width")
+      (test.assert-i64-eq
+        (string-length (& actual))
+        64
+        "SHA-256 hexadecimal width")
+      (test.assert-string-eq (& actual) (& expected) message))))
 
 ;: Assert one borrowed text vector.
 (cfg
@@ -71,12 +69,10 @@
     (let
       [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 count))]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (set! buf (byte_buf.set! buf index value))
-            (set! index (+ index 1))))
-        buf))))
+      (while (< index count)
+        (set! buf (byte_buf.set! buf index value))
+        (set! index (+ index 1)))
+      buf)))
 
 ;: Assert one repeated-byte boundary vector.
 (cfg
@@ -97,42 +93,36 @@
       [expected : sha.Sha256Digest (test-digest input)]
       [input-length : i64 (byte_buf.bytes-length input)]
       [split : i64 0]
-      (begin
-        (while (<= split input-length)
-          (let
-            [state : sha.Sha256State (sha.new)]
-            [left : (& input bytes) (byte_buf.bytes-slice-view input 0 split)]
-            [right : (& input bytes)
-              (byte_buf.bytes-slice-view input split (- input-length split))]
-            (begin
-              (test-require-update (sha.update! (&mut state) left))
-              (test-require-update
-                (sha.update! (&mut state) (byte_buf.bytes-slice-view input 0 0)))
-              (test-require-update (sha.update! (&mut state) right))
-              (let
-                [actual : sha.Sha256Digest
-                  (test-require-finalize (sha.finalize! (&mut state)))]
-                (test.assert-true
-                  (sha.digest-eq? (& actual) (& expected))
-                  "SHA-256 split digest"))
-              (set! split (+ split 1)))))
+      (while (<= split input-length)
         (let
           [state : sha.Sha256State (sha.new)]
-          [index : i64 0]
-          (begin
-            (while (< index input-length)
-              (begin
-                (test-require-update
-                  (sha.update!
-                    (&mut state)
-                    (byte_buf.bytes-slice-view input index 1)))
-                (set! index (+ index 1))))
-            (let
-              [actual : sha.Sha256Digest
-                (test-require-finalize (sha.finalize! (&mut state)))]
-              (test.assert-true
-                (sha.digest-eq? (& actual) (& expected))
-                "SHA-256 byte-at-a-time digest"))))))))
+          [left : (& input bytes) (byte_buf.bytes-slice-view input 0 split)]
+          [right : (& input bytes)
+            (byte_buf.bytes-slice-view input split (- input-length split))]
+          (test-require-update (sha.update! (&mut state) left))
+          (test-require-update
+            (sha.update! (&mut state) (byte_buf.bytes-slice-view input 0 0)))
+          (test-require-update (sha.update! (&mut state) right))
+          (let
+            [actual : sha.Sha256Digest
+              (test-require-finalize (sha.finalize! (&mut state)))]
+            (test.assert-true
+              (sha.digest-eq? (& actual) (& expected))
+              "SHA-256 split digest"))
+          (set! split (+ split 1))))
+      (let
+        [state : sha.Sha256State (sha.new)]
+        [index : i64 0]
+        (while (< index input-length)
+          (test-require-update
+            (sha.update! (&mut state) (byte_buf.bytes-slice-view input index 1)))
+          (set! index (+ index 1)))
+        (let
+          [actual : sha.Sha256Digest
+            (test-require-finalize (sha.finalize! (&mut state)))]
+          (test.assert-true
+            (sha.digest-eq? (& actual) (& expected))
+            "SHA-256 byte-at-a-time digest"))))))
 
 ;: Require one lifecycle error from an update after finalization.
 (cfg
@@ -253,10 +243,9 @@
       [empty : String ""]
       [abc : String "abc"]
       [many : byte_buf.ByteBuf (test-repeated-bytes 130 (cast 'z' : u8))]
-      (begin
-        (test-streaming-splits (byte_buf.str-as-bytes (& empty)))
-        (test-streaming-splits (byte_buf.str-as-bytes (& abc)))
-        (test-streaming-splits (byte_buf.as-bytes (& many)))))))
+      (test-streaming-splits (byte_buf.str-as-bytes (& empty)))
+      (test-streaming-splits (byte_buf.str-as-bytes (& abc)))
+      (test-streaming-splits (byte_buf.as-bytes (& many))))))
 
 (cfg
   test
@@ -266,22 +255,20 @@
       [chunk : byte_buf.ByteBuf (test-repeated-bytes 1000 (cast 'a' : u8))]
       [state : sha.Sha256State (sha.new)]
       [count : i64 0]
-      (begin
-        (while (< count 1000)
-          (begin
-            (test-require-update
-              (sha.update! (&mut state) (byte_buf.as-bytes (& chunk))))
-            (set! count (+ count 1))))
-        (let
-          [result : sha.Sha256Digest
-            (test-require-finalize (sha.finalize! (&mut state)))]
-          [actual : String (sha.to-hex (& result))]
-          [expected : String
-            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"]
-          (test.assert-string-eq
-            (& actual)
-            (& expected)
-            "SHA-256 million-a vector"))))))
+      (while (< count 1000)
+        (test-require-update
+          (sha.update! (&mut state) (byte_buf.as-bytes (& chunk))))
+        (set! count (+ count 1)))
+      (let
+        [result : sha.Sha256Digest
+          (test-require-finalize (sha.finalize! (&mut state)))]
+        [actual : String (sha.to-hex (& result))]
+        [expected : String
+          "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"]
+        (test.assert-string-eq
+          (& actual)
+          (& expected)
+          "SHA-256 million-a vector")))))
 
 (cfg
   test
@@ -304,70 +291,65 @@
       (let
         [state : sha.Sha256State (sha.new)]
         [one-byte : String "x"]
-        (begin
-          ; Synthetic valid bookkeeping reaches the FIPS limit without a huge
-          ; allocation; max-byte-length modulo 64 is 63.
-          (set! state.byte-length (sha.max-byte-length))
-          (set! state.block-length 63)
-          (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
-            [(Sha256UpdateErr (Sha256MessageTooLong _ _)) unit]
-            [_
-              (test.assert-true
-                false
-                "SHA-256 update should reject the first out-of-domain byte")])
-          (test.assert-true
-            (= state.byte-length (sha.max-byte-length))
-            "SHA-256 rejected update preserves length")
-          (test.assert-i64-eq
-            state.block-length
-            63
-            "SHA-256 rejected update preserves block cursor")))
+        ; Synthetic valid bookkeeping reaches the FIPS limit without a huge
+        ; allocation; max-byte-length modulo 64 is 63.
+        (set! state.byte-length (sha.max-byte-length))
+        (set! state.block-length 63)
+        (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
+          [(Sha256UpdateErr (Sha256MessageTooLong _ _)) unit]
+          [_
+            (test.assert-true
+              false
+              "SHA-256 update should reject the first out-of-domain byte")])
+        (test.assert-true
+          (= state.byte-length (sha.max-byte-length))
+          "SHA-256 rejected update preserves length")
+        (test.assert-i64-eq
+          state.block-length
+          63
+          "SHA-256 rejected update preserves block cursor"))
       (let
         [invalid : sha.Sha256State (sha.new)]
         [empty : String ""]
-        (begin
-          (set! invalid.block-length 1)
-          (test-assert-state-error
-            (sha.update! (&mut invalid) (byte_buf.str-as-bytes (& empty))))
-          (test.assert-i64-eq
-            invalid.block-length
-            1
-            "SHA-256 invalid state remains unchanged")))
+        (set! invalid.block-length 1)
+        (test-assert-state-error
+          (sha.update! (&mut invalid) (byte_buf.str-as-bytes (& empty))))
+        (test.assert-i64-eq
+          invalid.block-length
+          1
+          "SHA-256 invalid state remains unchanged"))
       (let
         [block : (Array u8 64) (make-array u8 64)]
-        (begin
-          (sha.write-bit-length! (&mut block) (cast 1 : u64))
-          (test.assert-i64-eq
-            (cast (array-ref block 62) : i64)
-            0
-            "SHA-256 encoded bit-length high byte")
-          (test.assert-i64-eq
-            (cast (array-ref block 63) : i64)
-            8
-            "SHA-256 encoded bit-length low byte")))
+        (sha.write-bit-length! (&mut block) (cast 1 : u64))
+        (test.assert-i64-eq
+          (cast (array-ref block 62) : i64)
+          0
+          "SHA-256 encoded bit-length high byte")
+        (test.assert-i64-eq
+          (cast (array-ref block 63) : i64)
+          8
+          "SHA-256 encoded bit-length low byte"))
       (let
         [state : sha.Sha256State (sha.new)]
         [empty : String ""]
-        (begin
-          (let
-            [first : sha.Sha256Digest
-              (test-require-finalize (sha.finalize! (&mut state)))]
-            (begin
-              (sha.wipe-digest! (&mut first))
-              (test.assert-i64-eq
-                (cast (sha.digest-byte (& first) 0) : i64)
-                0
-                "SHA-256 digest wipe")))
-          (test.assert-true state.finalized "SHA-256 finalized state poison")
-          (test.assert-true
-            (= state.byte-length (cast 0 : u64))
-            "SHA-256 finalized state clears length")
-          (test.assert-true
-            (= (array-ref state.words 0) (cast 0 : u32))
-            "SHA-256 finalized state clears words")
-          (test-assert-finalized-update
-            (sha.update! (&mut state) (byte_buf.str-as-bytes (& empty))))
-          (test-assert-finalized-finalize (sha.finalize! (&mut state))))))))
+        (let
+          [first : sha.Sha256Digest
+            (test-require-finalize (sha.finalize! (&mut state)))]
+          (sha.wipe-digest! (&mut first))
+          (test.assert-i64-eq
+            (cast (sha.digest-byte (& first) 0) : i64)
+            0
+            "SHA-256 digest wipe"))
+        (test.assert-true state.finalized "SHA-256 finalized state poison")
+        (test.assert-true
+          (= state.byte-length (cast 0 : u64))
+          "SHA-256 finalized state clears length")
+        (test.assert-true
+          (= (array-ref state.words 0) (cast 0 : u32))
+          "SHA-256 finalized state clears words")
+        (test-assert-finalized-update
+          (sha.update! (&mut state) (byte_buf.str-as-bytes (& empty))))
+        (test-assert-finalized-finalize (sha.finalize! (&mut state)))))))
 
 (cfg
   test
@@ -386,103 +368,94 @@
       [sink : (MutPtr u8)
         (unsafe
           (ptr-cast (ptr-addr-of output) : (MutPtr u8)))]
-      (begin
+      (test-require-update
+        (unsafe
+          (sha.update-from-pointer!
+            (&mut state)
+            source
+            (byte_buf.bytes-length input))))
+      (test-require-finalize-into
+        (unsafe
+          (sha.consume-finalize-into! (&mut state) sink 32)))
+      (let
+        [actual : sha.Sha256Digest (sha.Sha256Digest output)]
+        (test.assert-true
+          (sha.digest-eq? (& actual) (& expected))
+          "SHA-256 raw source/sink equivalence"))
+      (test.assert-true state.finalized "SHA-256 consumed state poison")
+      (test.assert-true
+        (= (array-ref state.words 0) (cast 0 : u32))
+        "SHA-256 consumed state wipe")
+      (let
+        [duplicate-output : (Array u8 32) (make-array u8 32)]
+        [duplicate-sink : (MutPtr u8)
+          (unsafe
+            (ptr-cast (ptr-addr-of duplicate-output) : (MutPtr u8)))]
+        (set! (array-ref duplicate-output 0) (cast 165 : u8))
+        (test-assert-finalize-into-closed
+          (unsafe
+            (sha.consume-finalize-into! (&mut state) duplicate-sink 32)))
+        (test.assert-i64-eq
+          (cast (array-ref duplicate-output 0) : i64)
+          165
+          "SHA-256 duplicate finalize leaves sink unchanged"))
+      (let
+        [rejected-state : sha.Sha256State (sha.new)]
+        [rejected-output : (Array u8 33) (make-array u8 33)]
+        [rejected-sink : (MutPtr u8)
+          (unsafe
+            (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
+        (set! (array-ref rejected-output 0) (cast 60 : u8))
+        (set! (array-ref rejected-output 32) (cast 195 : u8))
+        (test-assert-output-error
+          (unsafe
+            (sha.consume-finalize-into! (&mut rejected-state) rejected-sink 33)))
+        (test.assert-i64-eq
+          (cast (array-ref rejected-output 0) : i64)
+          60
+          "SHA-256 rejected sink start unchanged")
+        (test.assert-i64-eq
+          (cast (array-ref rejected-output 32) : i64)
+          195
+          "SHA-256 rejected sink end unchanged")
+        (test.assert-true
+          rejected-state.finalized
+          "SHA-256 rejected sink consumes state"))
+      (let
+        [null-sink-state : sha.Sha256State (sha.new)]
+        (test-assert-output-error
+          (unsafe
+            (sha.consume-finalize-into!
+              (&mut null-sink-state)
+              (ptr-null : (MutPtr u8))
+              32)))
+        (test.assert-true
+          null-sink-state.finalized
+          "SHA-256 null sink consumes state"))
+      (let
+        [invalid-source-state : sha.Sha256State (sha.new)]
+        (test-assert-source-error
+          (unsafe
+            (sha.update-from-pointer!
+              (&mut invalid-source-state)
+              (ptr-null : (Ptr u8))
+              1)))
+        (test-assert-source-error
+          (unsafe
+            (sha.update-from-pointer!
+              (&mut invalid-source-state)
+              (ptr-null : (Ptr u8))
+              -1)))
+        (test.assert-i64-eq
+          invalid-source-state.block-length
+          0
+          "SHA-256 invalid source leaves state unchanged"))
+      (let
+        [empty-state : sha.Sha256State (sha.new)]
         (test-require-update
           (unsafe
             (sha.update-from-pointer!
-              (&mut state)
-              source
-              (byte_buf.bytes-length input))))
-        (test-require-finalize-into
-          (unsafe
-            (sha.consume-finalize-into! (&mut state) sink 32)))
-        (let
-          [actual : sha.Sha256Digest (sha.Sha256Digest output)]
-          (test.assert-true
-            (sha.digest-eq? (& actual) (& expected))
-            "SHA-256 raw source/sink equivalence"))
-        (test.assert-true state.finalized "SHA-256 consumed state poison")
-        (test.assert-true
-          (= (array-ref state.words 0) (cast 0 : u32))
-          "SHA-256 consumed state wipe")
-        (let
-          [duplicate-output : (Array u8 32) (make-array u8 32)]
-          [duplicate-sink : (MutPtr u8)
-            (unsafe
-              (ptr-cast (ptr-addr-of duplicate-output) : (MutPtr u8)))]
-          (begin
-            (set! (array-ref duplicate-output 0) (cast 165 : u8))
-            (test-assert-finalize-into-closed
-              (unsafe
-                (sha.consume-finalize-into! (&mut state) duplicate-sink 32)))
-            (test.assert-i64-eq
-              (cast (array-ref duplicate-output 0) : i64)
-              165
-              "SHA-256 duplicate finalize leaves sink unchanged")))
-        (let
-          [rejected-state : sha.Sha256State (sha.new)]
-          [rejected-output : (Array u8 33) (make-array u8 33)]
-          [rejected-sink : (MutPtr u8)
-            (unsafe
-              (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
-          (begin
-            (set! (array-ref rejected-output 0) (cast 60 : u8))
-            (set! (array-ref rejected-output 32) (cast 195 : u8))
-            (test-assert-output-error
-              (unsafe
-                (sha.consume-finalize-into!
-                  (&mut rejected-state)
-                  rejected-sink
-                  33)))
-            (test.assert-i64-eq
-              (cast (array-ref rejected-output 0) : i64)
-              60
-              "SHA-256 rejected sink start unchanged")
-            (test.assert-i64-eq
-              (cast (array-ref rejected-output 32) : i64)
-              195
-              "SHA-256 rejected sink end unchanged")
-            (test.assert-true
-              rejected-state.finalized
-              "SHA-256 rejected sink consumes state")))
-        (let
-          [null-sink-state : sha.Sha256State (sha.new)]
-          (begin
-            (test-assert-output-error
-              (unsafe
-                (sha.consume-finalize-into!
-                  (&mut null-sink-state)
-                  (ptr-null : (MutPtr u8))
-                  32)))
-            (test.assert-true
-              null-sink-state.finalized
-              "SHA-256 null sink consumes state")))
-        (let
-          [invalid-source-state : sha.Sha256State (sha.new)]
-          (begin
-            (test-assert-source-error
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut invalid-source-state)
-                  (ptr-null : (Ptr u8))
-                  1)))
-            (test-assert-source-error
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut invalid-source-state)
-                  (ptr-null : (Ptr u8))
-                  -1)))
-            (test.assert-i64-eq
-              invalid-source-state.block-length
-              0
-              "SHA-256 invalid source leaves state unchanged")))
-        (let
-          [empty-state : sha.Sha256State (sha.new)]
-          (begin
-            (test-require-update
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut empty-state)
-                  (ptr-null : (Ptr u8))
-                  0)))
-            (sha.wipe-state! (&mut empty-state))))))))
+              (&mut empty-state)
+              (ptr-null : (Ptr u8))
+              0)))
+        (sha.wipe-state! (&mut empty-state))))))

@@ -8,27 +8,23 @@
     [slots (i64vec.slots-mut xs)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref slots i) (% (+ (* i 13) 5) 97))
-        (set! i (+ i 1))))))
+      (set! (array-ref slots i) (% (+ (* i 13) 5) 97))
+      (set! i (+ i 1)))))
 
 (define (sum-array [xs : (& xs i64vec.Vec)] [n : i64]) : i64
   (let
     [slots (i64vec.slots xs)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref slots i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref slots i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [xs : i64vec.Vec (i64vec.Vec (__tl_make-array i64 n) n)]
-    (begin
-      (fill (&mut xs) n)
-      (io.println "{}" (sum-array (& xs) n))
-      0)))
+    (fill (&mut xs) n)
+    (io.println "{}" (sum-array (& xs) n))
+    0))

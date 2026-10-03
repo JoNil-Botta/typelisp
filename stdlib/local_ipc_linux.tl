@@ -514,26 +514,24 @@
     (let
       [slot : i64 0]
       [found : i64 -1]
-      (begin
-        (while (and (< found 0) (< slot slot-capacity))
-          (let
-            [word : i64
+      (while (and (< found 0) (< slot slot-capacity))
+        (let
+          [word : i64
+            (unsafe
+              (atomic-load (slot-word slot 0)))]
+          (if (and
+            (= (% word 8) state-free)
+            (=
               (unsafe
-                (atomic-load (slot-word slot 0)))]
-            (begin
-              (if (and
-                (= (% word 8) state-free)
-                (=
-                  (unsafe
-                    (atomic-cas!
-                      (slot-word slot 0)
-                      word
-                      (+ (- word state-free) state-reserved)))
-                  word))
-                (set! found slot)
-                unit)
-              (set! slot (+ slot 1)))))
-        found))))
+                (atomic-cas!
+                  (slot-word slot 0)
+                  word
+                  (+ (- word state-free) state-reserved)))
+              word))
+            (set! found slot)
+            unit)
+          (set! slot (+ slot 1))))
+      found)))
 
 ;: Return a reserved slot that published nothing.
 (unsafe
@@ -611,23 +609,21 @@
               (atomic-fetch-add! (slot-word slot 2) 1))]
           (cond
             [(not
-                (=
-                  (unsafe
-                    (atomic-load (slot-word slot 0)))
-                  expected))
-              (begin
+              (=
                 (unsafe
-                  (lease-release! slot))
-                lease-stale)]
+                  (atomic-load (slot-word slot 0)))
+                expected))
+              (unsafe
+                (lease-release! slot))
+              lease-stale]
             [(not
-                (=
-                  (unsafe
-                    (atomic-load (slot-word slot 3)))
-                  poison-none))
-              (begin
+              (=
                 (unsafe
-                  (lease-release! slot))
-                lease-poisoned)]
+                  (atomic-load (slot-word slot 3)))
+                poison-none))
+              (unsafe
+                (lease-release! slot))
+              lease-poisoned]
             [else
               (unsafe
                 (atomic-load (slot-word slot 1)))]))))))
@@ -699,22 +695,21 @@
             0
             (unsafe
               (host syscall-close fd 0 0 0 0 0)))]
-        (begin
-          (unsafe
-            (atomic-store! (slot-word slot 1) -1))
-          (unsafe
-            (atomic-store! (slot-word slot 3) poison-none))
-          (unsafe
-            (atomic-store!
-              (slot-word slot 0)
-              (+ (- word state-closing) state-free)))
-          (cond
-            [lost (Err (corrupt))]
-            ;; Linux releases the descriptor even when close reports EINTR, so
-            ;; it is never retried.
-            [(or (= result 0) (= (host-errno result) eintr)) (Ok)]
-            [(= (host-errno result) 0) (Err (corrupt))]
-            [else (Err (connection-error (host-errno result)))]))))))
+        (unsafe
+          (atomic-store! (slot-word slot 1) -1))
+        (unsafe
+          (atomic-store! (slot-word slot 3) poison-none))
+        (unsafe
+          (atomic-store!
+            (slot-word slot 0)
+            (+ (- word state-closing) state-free)))
+        (cond
+          [lost (Err (corrupt))]
+          ;; Linux releases the descriptor even when close reports EINTR, so
+          ;; it is never retried.
+          [(or (= result 0) (= (host-errno result) eintr)) (Ok)]
+          [(= (host-errno result) 0) (Err (corrupt))]
+          [else (Err (connection-error (host-errno result)))])))))
 
 ;: Close the connection a token names. The slot stops accepting leases first;
 ;: the descriptor is closed now if no lease is held, else by the last lease,
@@ -752,10 +747,9 @@
 ;: the attempt's own outcome is.
 (unsafe
   (define (close-construction [fd : i64]) : unit
-    (begin
-      (unsafe
-        (host syscall-close fd 0 0 0 0 0))
-      unit)))
+    (unsafe
+      (host syscall-close fd 0 0 0 0 0))
+    unit))
 
 ;: Copy the validated name into zeroed `sockaddr_un` storage.
 ;:
@@ -766,16 +760,14 @@
     (let
       [index : i64 0]
       [length : i64 (byte_buf.bytes-length name)]
-      (begin
+      (unsafe
+        (ptr-write! address (cast af-unix : u8)))
+      (while (< index length)
         (unsafe
-          (ptr-write! address (cast af-unix : u8)))
-        (while (< index length)
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset address (+ sockaddr-path-offset index))
-                (byte_buf.bytes-ref name index)))
-            (set! index (+ index 1))))))))
+          (ptr-write!
+            (ptr-offset address (+ sockaddr-path-offset index))
+            (byte_buf.bytes-ref name index)))
+        (set! index (+ index 1))))))
 
 ;: The pathname check of one attempt, on the NUL-terminated path in `address`.
 (unsafe
@@ -841,15 +833,14 @@
                 (Connected token)))
             (let
               [code : i64 (host-errno result)]
-              (begin
-                (unsafe
-                  (close-construction fd))
-                (unsafe
-                  (slot-unreserve! slot))
-                (cond
-                  [(or (= code eagain) (= code eintr)) (RetryConnect)]
-                  [(= code 0) (ConnectFailed (corrupt))]
-                  [else (ConnectFailed (construction-error code))])))))))))
+              (unsafe
+                (close-construction fd))
+              (unsafe
+                (slot-unreserve! slot))
+              (cond
+                [(or (= code eagain) (= code eintr)) (RetryConnect)]
+                [(= code 0) (ConnectFailed (corrupt))]
+                [else (ConnectFailed (construction-error code))]))))))))
 
 ;: True when a handed buffer's live length fits its storage.
 (define (buffer-sound? [buffer : (& buffer byte_buf.ByteBuf)]) : bool
@@ -874,21 +865,20 @@
       [(not (local_ipc.unix-path-bytes-valid? name))
         (ConnectFailed (local_ipc.make-error (InvalidEndpoint) 0))]
       [else
-        (begin
-          (unsafe
-            (address-fill! address name))
-          (match (unsafe
-            (path-check policy address status))
-            [(Err failure) (ConnectFailed failure)]
-            [(Ok)
-              (let
-                [slot : i64
-                  (unsafe
-                    (slot-reserve!))]
-                (if (< slot 0)
-                  (ConnectFailed (local_ipc.make-error (ResourceExhausted) 0))
-                  (unsafe
-                    (socket-connect slot address (byte_buf.bytes-length name)))))]))])))
+        (unsafe
+          (address-fill! address name))
+        (match (unsafe
+          (path-check policy address status))
+          [(Err failure) (ConnectFailed failure)]
+          [(Ok)
+            (let
+              [slot : i64
+                (unsafe
+                  (slot-reserve!))]
+              (if (< slot 0)
+                (ConnectFailed (local_ipc.make-error (ResourceExhausted) 0))
+                (unsafe
+                  (socket-connect slot address (byte_buf.bytes-length name)))))])])))
 
 ;: Adapter `connect-attempt` under `policy`. Any code holding the adapter can
 ;: call this with any family and bytes.
@@ -962,15 +952,14 @@
           [seen-length : LinuxSockLen
             (unsafe
               (ptr-read (ptr-cast length-ptr : (Ptr LinuxSockLen))))]
-          (begin
-            (unsafe
-              (lease-release! (token-slot handle)))
-            (peer-step
-              result
-              (cast seen-length.value : i64)
-              (cast seen.pid : i64)
-              (cast seen.uid : i64)
-              (cast seen.gid : i64))))])))
+          (unsafe
+            (lease-release! (token-slot handle)))
+          (peer-step
+            result
+            (cast seen-length.value : i64)
+            (cast seen.pid : i64)
+            (cast seen.uid : i64)
+            (cast seen.gid : i64)))])))
 
 ;: A data or readiness step and the poison it leaves on the slot.
 (defstruct LinuxIoOutcome
@@ -1028,12 +1017,11 @@
                     (host syscall-read fd data requested 0 0 0)))]
               [outcome : LinuxIoOutcome
                 (transfer-outcome result requested writing)]
-              (begin
-                (unsafe
-                  (slot-poison! (token-slot handle) outcome.poison))
-                (unsafe
-                  (lease-release! (token-slot handle)))
-                outcome.step))])))))
+              (unsafe
+                (slot-poison! (token-slot handle) outcome.poison))
+              (unsafe
+                (lease-release! (token-slot handle)))
+              outcome.step)])))))
 
 ;: Adapter `read-once`: `read` into the front of `buffer`.
 (define (linux-read-once
@@ -1169,12 +1157,11 @@
                 (cast seen.fd : i64)
                 (bit-and (cast seen.events : i64) 65535)
                 (bit-and (cast seen.revents : i64) 65535))]
-            (begin
-              (unsafe
-                (slot-poison! (token-slot handle) outcome.poison))
-              (unsafe
-                (lease-release! (token-slot handle)))
-              outcome.step))]))))
+            (unsafe
+              (slot-poison! (token-slot handle) outcome.poison))
+            (unsafe
+              (lease-release! (token-slot handle)))
+            outcome.step)]))))
 
 ;: Adapter `delay`: `poll` with no descriptors for one bounded slice. It
 ;: returns 0 or EINTR; anything else is corruption.
@@ -1263,16 +1250,13 @@
   (define (test-reset!) : unit
     (let
       [index : i64 0]
-      (begin
-        (while (< index test-number-limit)
-          (begin
-            (set! (array-ref test-calls index) 0)
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index (* test-row-capacity test-row-words))
-          (begin
-            (set! (array-ref test-rows index) 0)
-            (set! index (+ index 1))))))))
+      (while (< index test-number-limit)
+        (set! (array-ref test-calls index) 0)
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (* test-row-capacity test-row-words))
+        (set! (array-ref test-rows index) 0)
+        (set! index (+ index 1))))))
 
 ;: Calls of syscall `number` since the last reset.
 (cfg
@@ -1294,28 +1278,25 @@
     (let
       [row : i64 0]
       [placed : bool false]
-      (begin
-        (while (and (not placed) (< row test-row-capacity))
-          (let
-            [base : i64 (* row test-row-words)]
-            (begin
-              (if (= (array-ref test-rows (+ base 1)) 0)
-                (begin
-                  (set! (array-ref test-rows base) number)
-                  (set! (array-ref test-rows (+ base 1)) call)
-                  (set! (array-ref test-rows (+ base 2)) result)
-                  (set! (array-ref test-rows (+ base 3)) out0)
-                  (set! (array-ref test-rows (+ base 4)) out1)
-                  (set! (array-ref test-rows (+ base 5)) out2)
-                  (set! (array-ref test-rows (+ base 6)) out3)
-                  (set! placed true))
-                unit)
-              (set! row (+ row 1)))))
-        (if placed
-          unit
-          (begin
-            (/ 1 0)
-            unit))))))
+      (while (and (not placed) (< row test-row-capacity))
+        (let
+          [base : i64 (* row test-row-words)]
+          (when
+            (= (array-ref test-rows (+ base 1)) 0)
+            (set! (array-ref test-rows base) number)
+            (set! (array-ref test-rows (+ base 1)) call)
+            (set! (array-ref test-rows (+ base 2)) result)
+            (set! (array-ref test-rows (+ base 3)) out0)
+            (set! (array-ref test-rows (+ base 4)) out1)
+            (set! (array-ref test-rows (+ base 5)) out2)
+            (set! (array-ref test-rows (+ base 6)) out3)
+            (set! placed true))
+          (set! row (+ row 1))))
+      (if placed
+        unit
+        (begin
+          (/ 1 0)
+          unit)))))
 
 ;: Script only a result.
 (cfg
@@ -1365,31 +1346,28 @@
         [out3 : i64 (array-ref test-rows (+ base 6))]
         (cond
           [(= number syscall-newfstatat)
-            (begin
-              (unsafe
-                (test-put-u32! c stat-mode-offset out0))
-              (unsafe
-                (test-put-u32! c stat-uid-offset out1))
-              (unsafe
-                (test-put-u32! c stat-gid-offset out2)))]
+            (unsafe
+              (test-put-u32! c stat-mode-offset out0))
+            (unsafe
+              (test-put-u32! c stat-uid-offset out1))
+            (unsafe
+              (test-put-u32! c stat-gid-offset out2))]
           [(= number syscall-getsockopt)
-            (begin
-              (unsafe
-                (test-put-u32! e 0 out0))
-              (unsafe
-                (test-put-u32! d 0 out1))
-              (unsafe
-                (test-put-u32! d 4 out2))
-              (unsafe
-                (test-put-u32! d 8 out3)))]
+            (unsafe
+              (test-put-u32! e 0 out0))
+            (unsafe
+              (test-put-u32! d 0 out1))
+            (unsafe
+              (test-put-u32! d 4 out2))
+            (unsafe
+              (test-put-u32! d 8 out3))]
           [(and (= number syscall-poll) (not (= a 0)))
-            (begin
-              (unsafe
-                (test-put-u32! a 0 out0))
-              (unsafe
-                (test-put-i16! a 4 out1))
-              (unsafe
-                (test-put-i16! a 6 out2)))]
+            (unsafe
+              (test-put-u32! a 0 out0))
+            (unsafe
+              (test-put-i16! a 4 out1))
+            (unsafe
+              (test-put-i16! a 6 out2))]
           [else unit])))))
 
 ;: `host` under `typelisp test`.
@@ -1408,25 +1386,22 @@
         [call : i64 (+ (array-ref test-calls number) 1)]
         [row : i64 0]
         [scripted : i64 -1]
-        (begin
-          (set! (array-ref test-calls number) call)
-          (while (and (< scripted 0) (< row test-row-capacity))
-            (let
-              [base : i64 (* row test-row-words)]
-              (begin
-                (if (and
-                  (= (array-ref test-rows base) number)
-                  (= (array-ref test-rows (+ base 1)) call)
-                  (= (array-ref test-rows (+ base 7)) 0))
-                  (begin
-                    (set! (array-ref test-rows (+ base 7)) 1)
-                    (set! scripted base))
-                  unit)
-                (set! row (+ row 1)))))
-          (if (< scripted 0)
+        (set! (array-ref test-calls number) call)
+        (while (and (< scripted 0) (< row test-row-capacity))
+          (let
+            [base : i64 (* row test-row-words)]
+            (when
+              (and
+                (= (array-ref test-rows base) number)
+                (= (array-ref test-rows (+ base 1)) call)
+                (= (array-ref test-rows (+ base 7)) 0))
+              (set! (array-ref test-rows (+ base 7)) 1)
+              (set! scripted base))
+            (set! row (+ row 1))))
+        (if (< scripted 0)
+          (unsafe
+            (host-raw number a b c d e f))
+          (begin
             (unsafe
-              (host-raw number a b c d e f))
-            (begin
-              (unsafe
-                (test-write-outputs! number a c d e scripted))
-              (array-ref test-rows (+ scripted 2)))))))))
+              (test-write-outputs! number a c d e scripted))
+            (array-ref test-rows (+ scripted 2))))))))

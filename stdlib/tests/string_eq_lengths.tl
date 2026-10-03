@@ -14,33 +14,29 @@
     (let
       [i : i64 0]
       [ok : bool true]
-      (begin
-        (while (and ok (< i (string.string-length a)))
-          (begin
-            (when
-              (not (= (string.string-ref a i) (string.string-ref b i)))
-              (set! ok false))
-            (set! i (+ i 1))))
-        ok))))
+      (while (and ok (< i (string.string-length a)))
+        (when
+          (not (= (string.string-ref a i) (string.string-ref b i)))
+          (set! ok false))
+        (set! i (+ i 1)))
+      ok)))
 
 (define (make [len : i64] [seed : i64]) : String
   (let
     [out : text_buf.TextBuf (text_buf.empty)]
     [i : i64 0]
     [st : i64 seed]
-    (begin
-      (while (< i len)
-        (begin
-          (set! st (+ (* st 6364136223846793005) 1442695040888963407))
-          (set!
-            out
-            (text_buf.append
-              out
-              (if (= (bit-and (shr st 40) 1) 0)
-                "a"
-                "b")))
-          (set! i (+ i 1))))
-      (text_buf.render out))))
+    (while (< i len)
+      (set! st (+ (* st 6364136223846793005) 1442695040888963407))
+      (set!
+        out
+        (text_buf.append
+          out
+          (if (= (bit-and (shr st 40) 1) 0)
+            "a"
+            "b")))
+      (set! i (+ i 1)))
+    (text_buf.render out)))
 
 (define (flip [s : (& s str)] [at : i64]) : String
   (text_buf.render
@@ -56,30 +52,27 @@
   (let
     [len : i64 0]
     [bad : i64 0]
-    (begin
-      (while (<= len 40)
-        (let
-          [a : String (make len (+ len 17))]
-          [b : String (make len (+ len 17))]
-          [pos : i64 0]
-          (begin
-            (when (not (string.eq (& a) (& b))) (set! bad (+ bad 1)))
-            (when (not (string.eq (& a) (& a))) (set! bad (+ bad 1)))
-            (while (< pos len)
-              (let
-                [c : String (flip (& a) pos)]
-                (begin
-                  (when
-                    (not (= (string.eq (& a) (& c)) (ref-eq (& a) (& c))))
-                    (set! bad (+ bad 1)))
-                  (when (string.eq (& c) (& a)) (set! bad (+ bad 1)))
-                  (set! pos (+ pos 1)))))
+    (while (<= len 40)
+      (let
+        [a : String (make len (+ len 17))]
+        [b : String (make len (+ len 17))]
+        [pos : i64 0]
+        (when (not (string.eq (& a) (& b))) (set! bad (+ bad 1)))
+        (when (not (string.eq (& a) (& a))) (set! bad (+ bad 1)))
+        (while (< pos len)
+          (let
+            [c : String (flip (& a) pos)]
             (when
-              (> len 0)
-              (let
-                [d : String (make (- len 1) (+ len 17))]
-                (when (string.eq (& a) (& d)) (set! bad (+ bad 1)))))
-            (set! len (+ len 1)))))
-      (if (= bad 0)
-        42
-        1))))
+              (not (= (string.eq (& a) (& c)) (ref-eq (& a) (& c))))
+              (set! bad (+ bad 1)))
+            (when (string.eq (& c) (& a)) (set! bad (+ bad 1)))
+            (set! pos (+ pos 1))))
+        (when
+          (> len 0)
+          (let
+            [d : String (make (- len 1) (+ len 17))]
+            (when (string.eq (& a) (& d)) (set! bad (+ bad 1)))))
+        (set! len (+ len 1))))
+    (if (= bad 0)
+      42
+      1)))

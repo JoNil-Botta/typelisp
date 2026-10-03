@@ -6,9 +6,8 @@
   (calls i64))
 
 (define (debug-counted [state : (&mut state DebugEvalState)] [value : i16]) : i16
-  (begin
-    (set! state.calls (+ state.calls 1))
-    value))
+  (set! state.calls (+ state.calls 1))
+  value)
 
 (define (debug-shared-i16 [value : (& value i16)]) : String
   (format.format "{:?}" value))

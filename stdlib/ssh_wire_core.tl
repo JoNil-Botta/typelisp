@@ -214,13 +214,12 @@
 
 ;: Return `limits`, trapping unless it satisfies `limits-valid?`.
 (define (require-valid-limits [limits : SshWireLimits]) : SshWireLimits
-  (begin
-    (check-equal
-      (if (limits-valid? (& limits))
-        1
-        0)
-      1)
-    limits))
+  (check-equal
+    (if (limits-valid? (& limits))
+      1
+      0)
+    1)
+  limits)
 
 ;; --- big-endian access ---------------------------------------------------------
 ;: The big-endian unsigned integer of `width` bytes (at most 7) at `offset` of
@@ -229,30 +228,24 @@
   (let
     [value : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index width)
-        (begin
-          (set!
-            value
-            (bit-or
-              (shl value 8)
-              (cast (byte_buf.bytes-ref view (+ offset index)) : i64)))
-          (set! index (+ index 1))))
-      value)))
+    (while (< index width)
+      (set!
+        value
+        (bit-or
+          (shl value 8)
+          (cast (byte_buf.bytes-ref view (+ offset index)) : i64)))
+      (set! index (+ index 1)))
+    value))
 
 ;: Append the low `width` bytes of `value`, most significant first.
 (define (push-be [buf : byte_buf.ByteBuf] [value : i64] [width : i64]) : byte_buf.ByteBuf
   (let
     [out : byte_buf.ByteBuf buf]
     [shift : i64 (* 8 (- width 1))]
-    (begin
-      (while (>= shift 0)
-        (begin
-          (set!
-            out
-            (byte_buf.push out (cast (bit-and (shr value shift) 255) : u8)))
-          (set! shift (- shift 8))))
-      out)))
+    (while (>= shift 0)
+      (set! out (byte_buf.push out (cast (bit-and (shr value shift) 255) : u8)))
+      (set! shift (- shift 8)))
+    out))
 
 ;; --- decoding cursor -------------------------------------------------------------
 ;: A range of a borrowed view: `count` bytes from `start`.
@@ -280,16 +273,14 @@
     [count : i64 (byte_buf.bytes-length expected)]
     [index : i64 0]
     [same : bool (= count span.count)]
-    (begin
-      (while (and same (< index count))
-        (begin
-          (when
-            (!=
-              (byte_buf.bytes-ref view (+ span.start index))
-              (byte_buf.bytes-ref expected index))
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index count))
+      (when
+        (!=
+          (byte_buf.bytes-ref view (+ span.start index))
+          (byte_buf.bytes-ref expected index))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 ;: A cursor over `[pos, end)` of one borrowed view, which every call receives
 ;: again. The first failure is kept; later reads return zero values without
@@ -313,9 +304,8 @@
 (define (decoder-fail! [d : (&mut d SshDecoder)] [code : i64] [offset : i64]) : unit
   (when
     (not d.failed)
-    (begin
-      (set! d.failed true)
-      (set! d.error (SshWireError code offset)))))
+    (set! d.failed true)
+    (set! d.error (SshWireError code offset))))
 
 ;: The bytes left before the cursor's end.
 (define (decoder-remaining [d : (& d SshDecoder)]) : i64
@@ -326,15 +316,13 @@
   (cond
     [d.failed 0]
     [(> count (- d.end d.pos))
-      (begin
-        (decoder-fail! d error-truncated d.pos)
-        0)]
+      (decoder-fail! d error-truncated d.pos)
+      0]
     [else
       (let
         [at : i64 d.pos]
-        (begin
-          (set! d.pos (+ at count))
-          at))]))
+        (set! d.pos (+ at count))
+        at)]))
 
 ;: Read a `byte`.
 (define (decoder-byte! [d : (&mut d SshDecoder)] [view : (& view bytes)]) : i64
@@ -362,18 +350,16 @@
     [at : i64 (decoder-take! d 8)]
     [value : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (when
-        (not d.failed)
-        (while (< index 8)
-          (begin
-            (set!
-              value
-              (bit-or
-                (shl value (cast 8 : u64))
-                (cast (byte_buf.bytes-ref view (+ at index)) : u64)))
-            (set! index (+ index 1)))))
-      value)))
+    (when
+      (not d.failed)
+      (while (< index 8)
+        (set!
+          value
+          (bit-or
+            (shl value (cast 8 : u64))
+            (cast (byte_buf.bytes-ref view (+ at index)) : u64)))
+        (set! index (+ index 1))))
+    value))
 
 ;: Read a `string` of at most `max` bytes and return the span of its data.
 ;: The length is checked before anything else, so a hostile prefix costs no
@@ -388,9 +374,8 @@
     (cond
       [d.failed (SshSpan 0 0)]
       [(> length max)
-        (begin
-          (decoder-fail! d error-length-range prefix-at)
-          (SshSpan 0 0))]
+        (decoder-fail! d error-length-range prefix-at)
+        (SshSpan 0 0)]
       [else
         (let
           [at : i64 (decoder-take! d length)]
@@ -432,38 +417,33 @@
     [index : i64 start]
     [end : i64 (+ start count)]
     [failed : bool false]
-    (begin
-      (when
-        (> count 0)
-        (while (and (not failed) (<= index end))
-          (begin
-            (if (or
-              (= index end)
-              (= (cast (byte_buf.bytes-ref view index) : i64) 44))
-              (let
-                [length : i64 (- index name-start)]
-                (cond
-                  [(or (= length 0) (> length max-name-bytes))
-                    (begin
-                      (decoder-fail! d error-name-list name-start)
-                      (set! failed true))]
-                  [(>= names max-names)
-                    (begin
-                      (decoder-fail! d error-too-many-names name-start)
-                      (set! failed true))]
-                  [else
-                    (begin
-                      (set! names (+ names 1))
-                      (set! name-start (+ index 1)))]))
-              (when
-                (not (name-byte? (cast (byte_buf.bytes-ref view index) : i64)))
-                (begin
-                  (decoder-fail! d error-name-list index)
-                  (set! failed true))))
-            (set! index (+ index 1)))))
-      (if failed
-        -1
-        names))))
+    (when
+      (> count 0)
+      (while (and (not failed) (<= index end))
+        (if (or
+          (= index end)
+          (= (cast (byte_buf.bytes-ref view index) : i64) 44))
+          (let
+            [length : i64 (- index name-start)]
+            (cond
+              [(or (= length 0) (> length max-name-bytes))
+                (decoder-fail! d error-name-list name-start)
+                (set! failed true)]
+              [(>= names max-names)
+                (decoder-fail! d error-too-many-names name-start)
+                (set! failed true)]
+              [else
+                (set! names (+ names 1))
+                (set! name-start (+ index 1))]))
+          (when
+            (not (name-byte? (cast (byte_buf.bytes-ref view index) : i64)))
+            (begin
+              (decoder-fail! d error-name-list index)
+              (set! failed true))))
+        (set! index (+ index 1))))
+    (if failed
+      -1
+      names)))
 
 ;: Read a `name-list` under `limits`. The list is validated completely before
 ;: its exact array of name spans is allocated.
@@ -491,23 +471,20 @@
             [name-start : i64 data.start]
             [index : i64 data.start]
             [end : i64 (+ data.start data.count)]
-            (begin
-              (when
-                (> count 0)
-                (while (<= index end)
-                  (begin
-                    (when
-                      (or
-                        (= index end)
-                        (= (cast (byte_buf.bytes-ref view index) : i64) 44))
-                      (begin
-                        (set!
-                          (array-ref names slot)
-                          (SshSpan name-start (- index name-start)))
-                        (set! slot (+ slot 1))
-                        (set! name-start (+ index 1))))
-                    (set! index (+ index 1)))))
-              (SshNameList data names))))))))
+            (when
+              (> count 0)
+              (while (<= index end)
+                (when
+                  (or
+                    (= index end)
+                    (= (cast (byte_buf.bytes-ref view index) : i64) 44))
+                  (set!
+                    (array-ref names slot)
+                    (SshSpan name-start (- index name-start)))
+                  (set! slot (+ slot 1))
+                  (set! name-start (+ index 1)))
+                (set! index (+ index 1))))
+            (SshNameList data names)))))))
 
 ;; --- mpint -------------------------------------------------------------------------
 ;: A positive `mpint`: the span of its encoded data, which a transcript hashes,
@@ -530,27 +507,22 @@
     (cond
       [d.failed (SshMpint (SshSpan 0 0) (SshSpan 0 0))]
       [(= data.count 0)
-        (begin
-          (decoder-fail! d error-mpint-zero prefix-at)
-          (SshMpint (SshSpan 0 0) (SshSpan 0 0)))]
+        (decoder-fail! d error-mpint-zero prefix-at)
+        (SshMpint (SshSpan 0 0) (SshSpan 0 0))]
       [else
         (let
           [first : i64 (cast (byte_buf.bytes-ref view data.start) : i64)]
           (cond
             [(>= first 128)
-              (begin
-                (decoder-fail! d error-mpint-negative data.start)
-                (SshMpint (SshSpan 0 0) (SshSpan 0 0)))]
+              (decoder-fail! d error-mpint-negative data.start)
+              (SshMpint (SshSpan 0 0) (SshSpan 0 0))]
             [(and
-                (= first 0)
-                (or
-                  (= data.count 1)
-                  (<
-                    (cast (byte_buf.bytes-ref view (+ data.start 1)) : i64)
-                    128)))
-              (begin
-                (decoder-fail! d error-mpint-noncanonical data.start)
-                (SshMpint (SshSpan 0 0) (SshSpan 0 0)))]
+              (= first 0)
+              (or
+                (= data.count 1)
+                (< (cast (byte_buf.bytes-ref view (+ data.start 1)) : i64) 128)))
+              (decoder-fail! d error-mpint-noncanonical data.start)
+              (SshMpint (SshSpan 0 0) (SshSpan 0 0))]
             [(= first 0)
               (SshMpint data (SshSpan (+ data.start 1) (- data.count 1)))]
             [else (SshMpint data data)]))])))
@@ -558,9 +530,8 @@
 ;; --- encoders --------------------------------------------------------------------
 ;: Append a `byte`; traps unless `value` is in 0..255.
 (define (push-byte [out : byte_buf.ByteBuf] [value : i64]) : byte_buf.ByteBuf
-  (begin
-    (byte_buf.check-range 255 0 value)
-    (push-be out value 1)))
+  (byte_buf.check-range 255 0 value)
+  (push-be out value 1))
 
 ;: Append a `boolean` as 1 or 0.
 (define (push-boolean [out : byte_buf.ByteBuf] [value : bool]) : byte_buf.ByteBuf
@@ -573,35 +544,29 @@
 
 ;: Append a `uint32`; traps unless `value` is in 0..2^32-1.
 (define (push-uint32 [out : byte_buf.ByteBuf] [value : i64]) : byte_buf.ByteBuf
-  (begin
-    (byte_buf.check-range max-uint32 0 value)
-    (push-be out value 4)))
+  (byte_buf.check-range max-uint32 0 value)
+  (push-be out value 4))
 
 ;: Append a `uint64`.
 (define (push-uint64 [out : byte_buf.ByteBuf] [value : u64]) : byte_buf.ByteBuf
   (let
     [result : byte_buf.ByteBuf out]
     [shift : i64 56]
-    (begin
-      (while (>= shift 0)
-        (begin
-          (set!
-            result
-            (byte_buf.push
-              result
-              (cast
-                (bit-and (shr value (cast shift : u64)) (cast 255 : u64))
-                : u8)))
-          (set! shift (- shift 8))))
-      result)))
+    (while (>= shift 0)
+      (set!
+        result
+        (byte_buf.push
+          result
+          (cast (bit-and (shr value (cast shift : u64)) (cast 255 : u64)) : u8)))
+      (set! shift (- shift 8)))
+    result))
 
 ;: Append `data` as a `string`.
 (define (push-string [out : byte_buf.ByteBuf] [data : (& data bytes)]) : byte_buf.ByteBuf
   (let
     [length : i64 (byte_buf.bytes-length data)]
-    (begin
-      (byte_buf.check-range max-uint32 0 length)
-      (byte_buf.append-bytes (push-be out length 4) data))))
+    (byte_buf.check-range max-uint32 0 length)
+    (byte_buf.append-bytes (push-be out length 4) data)))
 
 ;: Append `names` as a `name-list`; traps unless every name is valid for
 ;: `name-list-scan!`.
@@ -611,28 +576,24 @@
   (let
     [data : byte_buf.ByteBuf (byte_buf.new)]
     [index : i64 0]
-    (begin
-      (while (< index (array-length names))
-        (let
-          [name : (& names bytes)
-            (byte_buf.str-as-bytes (& (array-ref names index)))]
-          [length : i64 (byte_buf.bytes-length name)]
-          [byte-index : i64 0]
-          (begin
-            (byte_buf.check-range max-name-bytes 1 (- length 1))
-            (while (< byte-index length)
-              (begin
-                (check-equal
-                  (if (name-byte?
-                    (cast (byte_buf.bytes-ref name byte-index) : i64))
-                    1
-                    0)
-                  1)
-                (set! byte-index (+ byte-index 1))))
-            (when (> index 0) (set! data (byte_buf.push data (cast 44 : u8))))
-            (set! data (byte_buf.append-bytes data name))
-            (set! index (+ index 1)))))
-      (push-string out (byte_buf.as-bytes (& data))))))
+    (while (< index (array-length names))
+      (let
+        [name : (& names bytes)
+          (byte_buf.str-as-bytes (& (array-ref names index)))]
+        [length : i64 (byte_buf.bytes-length name)]
+        [byte-index : i64 0]
+        (byte_buf.check-range max-name-bytes 1 (- length 1))
+        (while (< byte-index length)
+          (check-equal
+            (if (name-byte? (cast (byte_buf.bytes-ref name byte-index) : i64))
+              1
+              0)
+            1)
+          (set! byte-index (+ byte-index 1)))
+        (when (> index 0) (set! data (byte_buf.push data (cast 44 : u8))))
+        (set! data (byte_buf.append-bytes data name))
+        (set! index (+ index 1))))
+    (push-string out (byte_buf.as-bytes (& data)))))
 
 ;: Append the positive integer whose big-endian magnitude is `magnitude` as a
 ;: minimal `mpint`. Leading zero bytes are dropped and one is added back when
@@ -643,33 +604,31 @@
   (let
     [length : i64 (byte_buf.bytes-length magnitude)]
     [first : i64 0]
-    (begin
-      (while (and
-        (< first length)
-        (= (cast (byte_buf.bytes-ref magnitude first) : i64) 0))
-        (set! first (+ first 1)))
-      (check-equal
-        (if (< first length)
-          1
-          0)
-        1)
-      (let
-        [digits : (& magnitude bytes)
-          (byte_buf.bytes-slice-view magnitude first (- length first))]
-        [high : bool (>= (cast (byte_buf.bytes-ref magnitude first) : i64) 128)]
-        [count : i64
-          (+
-            (- length first)
-            (if high
-              1
-              0))]
-        (begin
-          (byte_buf.check-range max-uint32 0 count)
-          (byte_buf.append-bytes
-            (if high
-              (byte_buf.push (push-be out count 4) (cast 0 : u8))
-              (push-be out count 4))
-            digits))))))
+    (while (and
+      (< first length)
+      (= (cast (byte_buf.bytes-ref magnitude first) : i64) 0))
+      (set! first (+ first 1)))
+    (check-equal
+      (if (< first length)
+        1
+        0)
+      1)
+    (let
+      [digits : (& magnitude bytes)
+        (byte_buf.bytes-slice-view magnitude first (- length first))]
+      [high : bool (>= (cast (byte_buf.bytes-ref magnitude first) : i64) 128)]
+      [count : i64
+        (+
+          (- length first)
+          (if high
+            1
+            0))]
+      (byte_buf.check-range max-uint32 0 count)
+      (byte_buf.append-bytes
+        (if high
+          (byte_buf.push (push-be out count 4) (cast 0 : u8))
+          (push-be out count 4))
+        digits))))
 
 ;; --- reader buffers ----------------------------------------------------------------
 ;: Grow the storage of `buf` to hold at least `capacity` bytes, at least
@@ -696,20 +655,19 @@
   [count : i64]) : unit
   (let
     [old-len : i64 buf.len]
-    (begin
-      (byte_buf.check-range (byte_buf.bytes-length src) start count)
-      (buffer-reserve! buf (+ old-len count))
-      ;; The source range was checked above and the storage now holds
-      ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
-      ;; makes, into storage reached through `&mut`.
-      (string.str-copy-bytes-into
-        (unsafe
-          (ptr-offset (byte_buf.bytes-data src) start))
-        (unsafe
-          (__tl_array-data buf.slots))
-        old-len
-        count)
-      (set! buf.len (+ old-len count)))))
+    (byte_buf.check-range (byte_buf.bytes-length src) start count)
+    (buffer-reserve! buf (+ old-len count))
+    ;; The source range was checked above and the storage now holds
+    ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
+    ;; makes, into storage reached through `&mut`.
+    (string.str-copy-bytes-into
+      (unsafe
+        (ptr-offset (byte_buf.bytes-data src) start))
+      (unsafe
+        (__tl_array-data buf.slots))
+      old-len
+      count)
+    (set! buf.len (+ old-len count))))
 
 ;; --- identification exchange ---------------------------------------------------------
 ;: The fields of an identification line `SSH-protoversion-softwareversion
@@ -740,69 +698,63 @@
   (let
     [length : i64 (byte_buf.bytes-length line)]
     [dash : i64 4]
-    (begin
+    (when
+      (not (ssh-prefix? line))
+      (return (SshIdentParseErr (SshWireError error-identification base))))
+    (while (and
+      (< dash length)
+      (!= (cast (byte_buf.bytes-ref line dash) : i64) 45))
+      (set! dash (+ dash 1)))
+    (when
+      (>= dash length)
+      (return (SshIdentParseErr (SshWireError error-identification base))))
+    (let
+      [protoversion : SshSpan (SshSpan 4 (- dash 4))]
+      [software-start : i64 (+ dash 1)]
+      [software-end : i64 software-start]
       (when
-        (not (ssh-prefix? line))
-        (return (SshIdentParseErr (SshWireError error-identification base))))
+        (not
+          (or
+            (span-equals? line (& protoversion) "2.0")
+            (span-equals? line (& protoversion) "1.99")))
+        (return
+          (SshIdentParseErr (SshWireError error-protocol-version (+ base 4)))))
       (while (and
-        (< dash length)
-        (!= (cast (byte_buf.bytes-ref line dash) : i64) 45))
-        (set! dash (+ dash 1)))
+        (< software-end length)
+        (!= (cast (byte_buf.bytes-ref line software-end) : i64) 32))
+        (let
+          [code : i64 (cast (byte_buf.bytes-ref line software-end) : i64)]
+          (when
+            (or (<= code 32) (>= code 127) (= code 45))
+            (return
+              (SshIdentParseErr
+                (SshWireError error-identification (+ base software-end)))))
+          (set! software-end (+ software-end 1))))
       (when
-        (>= dash length)
-        (return (SshIdentParseErr (SshWireError error-identification base))))
+        (= software-end software-start)
+        (return
+          (SshIdentParseErr
+            (SshWireError error-identification (+ base software-start)))))
       (let
-        [protoversion : SshSpan (SshSpan 4 (- dash 4))]
-        [software-start : i64 (+ dash 1)]
-        [software-end : i64 software-start]
-        (begin
-          (when
-            (not
-              (or
-                (span-equals? line (& protoversion) "2.0")
-                (span-equals? line (& protoversion) "1.99")))
-            (return
-              (SshIdentParseErr
-                (SshWireError error-protocol-version (+ base 4)))))
-          (while (and
-            (< software-end length)
-            (!= (cast (byte_buf.bytes-ref line software-end) : i64) 32))
-            (let
-              [code : i64 (cast (byte_buf.bytes-ref line software-end) : i64)]
-              (begin
-                (when
-                  (or (<= code 32) (>= code 127) (= code 45))
-                  (return
-                    (SshIdentParseErr
-                      (SshWireError error-identification (+ base software-end)))))
-                (set! software-end (+ software-end 1)))))
-          (when
-            (= software-end software-start)
-            (return
-              (SshIdentParseErr
-                (SshWireError error-identification (+ base software-start)))))
+        [comment-start : i64 (+ software-end 1)]
+        [index : i64 comment-start]
+        (while (< index length)
           (let
-            [comment-start : i64 (+ software-end 1)]
-            [index : i64 comment-start]
-            (begin
-              (while (< index length)
-                (let
-                  [code : i64 (cast (byte_buf.bytes-ref line index) : i64)]
-                  (begin
-                    (when
-                      (or (< code 32) (>= code 127))
-                      (return
-                        (SshIdentParseErr
-                          (SshWireError error-identification (+ base index)))))
-                    (set! index (+ index 1)))))
-              (SshIdentParseOk
-                (SshIdentification
-                  protoversion
-                  (SshSpan software-start (- software-end software-start))
-                  (< software-end length)
-                  (if (< software-end length)
-                    (SshSpan comment-start (- length comment-start))
-                    (SshSpan length 0)))))))))))
+            [code : i64 (cast (byte_buf.bytes-ref line index) : i64)]
+            (when
+              (or (< code 32) (>= code 127))
+              (return
+                (SshIdentParseErr
+                  (SshWireError error-identification (+ base index)))))
+            (set! index (+ index 1))))
+        (SshIdentParseOk
+          (SshIdentification
+            protoversion
+            (SshSpan software-start (- software-end software-start))
+            (< software-end length)
+            (if (< software-end length)
+              (SshSpan comment-start (- length comment-start))
+              (SshSpan length 0))))))))
 
 ;: One step of `ident-reader-next!`: `consumed` input bytes were taken.
 ;: `SshIdentBanner` means a whole line other than the identification was
@@ -853,10 +805,9 @@
 (define (ident-reader-fail!
   [reader : (&mut reader SshIdentReader)]
   [error : SshWireError]) : SshIdentStep
-  (begin
-    (set! reader.failed true)
-    (set! reader.error (copy-error (& error)))
-    (SshIdentFailed error)))
+  (set! reader.failed true)
+  (set! reader.error (copy-error (& error)))
+  (SshIdentFailed error))
 
 ;: Whether `line` is shorter than 4 bytes and every byte it has matches
 ;: `SSH-`, so it may still become an identification line.
@@ -867,16 +818,12 @@
     [prefix : (& text bytes) (byte_buf.str-as-bytes (& text))]
     [index : i64 0]
     [same : bool (< length 4)]
-    (begin
-      (while (and same (< index length))
-        (begin
-          (when
-            (!=
-              (byte_buf.bytes-ref line index)
-              (byte_buf.bytes-ref prefix index))
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index length))
+      (when
+        (!= (byte_buf.bytes-ref line index) (byte_buf.bytes-ref prefix index))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 ;: The most bytes the current line may grow to, its terminator included: the
 ;: identification limit for a line that starts with `SSH-`, the banner line
@@ -904,101 +851,88 @@
 (define (ident-reader-next!
   [reader : (&mut reader SshIdentReader)]
   [input : (& input bytes)]) : SshIdentStep
-  (begin
-    (when reader.failed (return (SshIdentFailed (copy-error (& reader.error)))))
-    (when reader.complete (return (SshIdentComplete 0)))
-    (when
-      reader.line-done
-      (begin
-        (set!
-          reader.line-start
-          (+ reader.line-start (byte_buf.len (& reader.line))))
-        (set! reader.line.len 0)
-        (set! reader.line-done false)))
+  (when reader.failed (return (SshIdentFailed (copy-error (& reader.error)))))
+  (when reader.complete (return (SshIdentComplete 0)))
+  (when
+    reader.line-done
+    (set!
+      reader.line-start
+      (+ reader.line-start (byte_buf.len (& reader.line))))
+    (set! reader.line.len 0)
+    (set! reader.line-done false))
+  (let
+    [available : i64 (byte_buf.bytes-length input)]
+    [cap : i64 (ident-reader-line-cap reader)]
+    [room : i64 (- cap (byte_buf.len (& reader.line)))]
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index available) (< index room))
+      (if (= (cast (byte_buf.bytes-ref input index) : i64) 10)
+        (set! found true)
+        (set! index (+ index 1))))
     (let
-      [available : i64 (byte_buf.bytes-length input)]
-      [cap : i64 (ident-reader-line-cap reader)]
-      [room : i64 (- cap (byte_buf.len (& reader.line)))]
-      [index : i64 0]
-      [found : bool false]
-      (begin
-        (while (and (not found) (< index available) (< index room))
-          (if (= (cast (byte_buf.bytes-ref input index) : i64) 10)
-            (set! found true)
-            (set! index (+ index 1))))
-        (let
-          [take : i64
-            (if found
-              (+ index 1)
-              index)]
-          (begin
-            (buffer-append! (&mut reader.line) input 0 take)
-            (when
-              (not found)
-              (return
-                (if (>=
-                  (byte_buf.len (& reader.line))
-                  (ident-reader-line-cap reader))
-                  (ident-reader-fail!
-                    reader
-                    (SshWireError error-line-too-long reader.line-start))
-                  (SshIdentNeedMore take))))
-            (let
-              [raw : (& reader bytes) (byte_buf.as-bytes (& reader.line))]
-              [raw-length : i64 (byte_buf.bytes-length raw)]
-              (if (ssh-prefix? raw)
-                (cond
-                  [(> raw-length reader.limits.max-identification-bytes)
-                    (ident-reader-fail!
-                      reader
-                      (SshWireError error-line-too-long reader.line-start))]
-                  [(or
-                      (< raw-length 2)
-                      (!=
-                        (cast (byte_buf.bytes-ref raw (- raw-length 2)) : i64)
-                        13))
-                    (ident-reader-fail!
-                      reader
-                      (SshWireError
-                        error-identification
-                        (+ reader.line-start (- raw-length 1))))]
-                  [else
-                    (match (parse-identification
-                      (byte_buf.bytes-slice-view raw 0 (- raw-length 2))
-                      reader.line-start)
-                      [(SshIdentParseErr error)
-                        (ident-reader-fail! reader error)]
-                      [(SshIdentParseOk identification)
-                        (begin
-                          (set! reader.identification identification)
-                          (set! reader.complete true)
-                          (set! reader.line-done true)
-                          (SshIdentComplete take))])])
-                (cond
-                  [(not reader.accept-banner)
-                    (ident-reader-fail!
-                      reader
-                      (SshWireError error-identification reader.line-start))]
-                  [(> raw-length reader.limits.max-banner-line-bytes)
-                    (ident-reader-fail!
-                      reader
-                      (SshWireError error-line-too-long reader.line-start))]
-                  [(or
-                      (>= reader.banner-lines reader.limits.max-banner-lines)
-                      (>
-                        (+ reader.banner-bytes raw-length)
-                        reader.limits.max-banner-bytes))
-                    (ident-reader-fail!
-                      reader
-                      (SshWireError error-banner-limit reader.line-start))]
-                  [else
-                    (begin
-                      (set! reader.banner-lines (+ reader.banner-lines 1))
-                      (set!
-                        reader.banner-bytes
-                        (+ reader.banner-bytes raw-length))
-                      (set! reader.line-done true)
-                      (SshIdentBanner take))])))))))))
+      [take : i64
+        (if found
+          (+ index 1)
+          index)]
+      (buffer-append! (&mut reader.line) input 0 take)
+      (when
+        (not found)
+        (return
+          (if (>= (byte_buf.len (& reader.line)) (ident-reader-line-cap reader))
+            (ident-reader-fail!
+              reader
+              (SshWireError error-line-too-long reader.line-start))
+            (SshIdentNeedMore take))))
+      (let
+        [raw : (& reader bytes) (byte_buf.as-bytes (& reader.line))]
+        [raw-length : i64 (byte_buf.bytes-length raw)]
+        (if (ssh-prefix? raw)
+          (cond
+            [(> raw-length reader.limits.max-identification-bytes)
+              (ident-reader-fail!
+                reader
+                (SshWireError error-line-too-long reader.line-start))]
+            [(or
+                (< raw-length 2)
+                (!= (cast (byte_buf.bytes-ref raw (- raw-length 2)) : i64) 13))
+              (ident-reader-fail!
+                reader
+                (SshWireError
+                  error-identification
+                  (+ reader.line-start (- raw-length 1))))]
+            [else
+              (match (parse-identification
+                (byte_buf.bytes-slice-view raw 0 (- raw-length 2))
+                reader.line-start)
+                [(SshIdentParseErr error) (ident-reader-fail! reader error)]
+                [(SshIdentParseOk identification)
+                  (set! reader.identification identification)
+                  (set! reader.complete true)
+                  (set! reader.line-done true)
+                  (SshIdentComplete take)])])
+          (cond
+            [(not reader.accept-banner)
+              (ident-reader-fail!
+                reader
+                (SshWireError error-identification reader.line-start))]
+            [(> raw-length reader.limits.max-banner-line-bytes)
+              (ident-reader-fail!
+                reader
+                (SshWireError error-line-too-long reader.line-start))]
+            [(or
+                (>= reader.banner-lines reader.limits.max-banner-lines)
+                (>
+                  (+ reader.banner-bytes raw-length)
+                  reader.limits.max-banner-bytes))
+              (ident-reader-fail!
+                reader
+                (SshWireError error-banner-limit reader.line-start))]
+            [else
+              (set! reader.banner-lines (+ reader.banner-lines 1))
+              (set! reader.banner-bytes (+ reader.banner-bytes raw-length))
+              (set! reader.line-done true)
+              (SshIdentBanner take)]))))))
 
 ;: The line the last `SshIdentBanner` or `SshIdentComplete` step finished,
 ;: without its line terminator: for the identification, exactly the bytes the
@@ -1044,33 +978,32 @@
     [line : byte_buf.ByteBuf (byte_buf.from-string "SSH-2.0-")]
     [software-bytes : (& software bytes) (byte_buf.str-as-bytes (& software))]
     [comment-bytes : (& comments bytes) (byte_buf.str-as-bytes (& comments))]
-    (begin
-      (set! line (byte_buf.append-bytes line software-bytes))
-      (when
-        (> (byte_buf.bytes-length comment-bytes) 0)
-        (set!
-          line
-          (byte_buf.append-bytes
-            (byte_buf.push line (cast 32 : u8))
-            comment-bytes)))
-      (match (parse-identification (byte_buf.as-bytes (& line)) 0)
-        [(SshIdentParseErr _) (check-equal 0 1)]
-        [(SshIdentParseOk identification)
-          (check-equal
-            (if (=
-              identification.software.count
-              (byte_buf.bytes-length software-bytes))
-              1
-              0)
-            1)])
-      (byte_buf.check-range
-        (- max-identification-line 2)
-        0
-        (byte_buf.len (& line)))
-      (let
-        [terminated : byte_buf.ByteBuf
-          (byte_buf.push (byte_buf.push line (cast 13 : u8)) (cast 10 : u8))]
-        (byte_buf.append-bytes out (byte_buf.as-bytes (& terminated)))))))
+    (set! line (byte_buf.append-bytes line software-bytes))
+    (when
+      (> (byte_buf.bytes-length comment-bytes) 0)
+      (set!
+        line
+        (byte_buf.append-bytes
+          (byte_buf.push line (cast 32 : u8))
+          comment-bytes)))
+    (match (parse-identification (byte_buf.as-bytes (& line)) 0)
+      [(SshIdentParseErr _) (check-equal 0 1)]
+      [(SshIdentParseOk identification)
+        (check-equal
+          (if (=
+            identification.software.count
+            (byte_buf.bytes-length software-bytes))
+            1
+            0)
+          1)])
+    (byte_buf.check-range
+      (- max-identification-line 2)
+      0
+      (byte_buf.len (& line)))
+    (let
+      [terminated : byte_buf.ByteBuf
+        (byte_buf.push (byte_buf.push line (cast 13 : u8)) (cast 10 : u8))]
+      (byte_buf.append-bytes out (byte_buf.as-bytes (& terminated))))))
 
 ;; --- binary packet framing -------------------------------------------------------------
 ;: How packets are aligned and sealed (RFC 4253 section 6, RFC 5647).
@@ -1144,16 +1077,14 @@
       (let
         [padding : i64 min-padding-length]
         [packet-length : i64 (+ (+ 1 payload-length) min-padding-length)]
-        (begin
-          (while (or
-            (not (packet-length-aligned? mode packet-length))
-            (< packet-length (mode-min-packet-length mode)))
-            (begin
-              (set! padding (+ padding 1))
-              (set! packet-length (+ packet-length 1))))
-          (if (> packet-length limits.max-packet-length)
-            (SshFramePlanErr (SshWireError error-packet-length 0))
-            (SshFramePlanOk (SshFramePlan packet-length padding)))))]))
+        (while (or
+          (not (packet-length-aligned? mode packet-length))
+          (< packet-length (mode-min-packet-length mode)))
+          (set! padding (+ padding 1))
+          (set! packet-length (+ packet-length 1)))
+        (if (> packet-length limits.max-packet-length)
+          (SshFramePlanErr (SshWireError error-packet-length 0))
+          (SshFramePlanOk (SshFramePlan packet-length padding))))]))
 
 ;: The outcome of `encode-frame`: the packet without its tag, or why none
 ;: was built.
@@ -1272,28 +1203,26 @@
 (define (packet-reader-fail!
   [reader : (&mut reader SshPacketReader)]
   [error : SshWireError]) : SshPacketStep
-  (begin
-    (set! reader.failed true)
-    (set! reader.error (copy-error (& error)))
-    (SshPacketFailed error)))
+  (set! reader.failed true)
+  (set! reader.error (copy-error (& error)))
+  (SshPacketFailed error))
 
 ;: Drop the completed packet so the next one can start.
 (define (packet-reader-release! [reader : (&mut reader SshPacketReader)]) : unit
-  (begin
-    (set!
+  (set!
+    reader.stream-offset
+    (+
       reader.stream-offset
-      (+
-        reader.stream-offset
-        (+ frame-header-length (byte_buf.len (& reader.body)))))
-    (set!
-      reader.sequence
-      (if (= reader.sequence max-uint32)
-        0
-        (+ reader.sequence 1)))
-    (set! reader.header.len 0)
-    (set! reader.body.len 0)
-    (set! reader.header-done false)
-    (set! reader.ready false)))
+      (+ frame-header-length (byte_buf.len (& reader.body)))))
+  (set!
+    reader.sequence
+    (if (= reader.sequence max-uint32)
+      0
+      (+ reader.sequence 1)))
+  (set! reader.header.len 0)
+  (set! reader.body.len 0)
+  (set! reader.header-done false)
+  (set! reader.ready false))
 
 ;: Whether part of a packet is buffered, which at the end of the stream means
 ;: the peer truncated it.
@@ -1305,13 +1234,12 @@
 (define (packet-reader-set-mode!
   [reader : (&mut reader SshPacketReader)]
   [mode : SshFrameMode]) : unit
-  (begin
-    (check-equal
-      (if (packet-reader-mid-packet? reader)
-        0
-        1)
+  (check-equal
+    (if (packet-reader-mid-packet? reader)
+      0
       1)
-    (set! reader.mode mode)))
+    1)
+  (set! reader.mode mode))
 
 ;: Take bytes of `input` into the current packet, stopping at its end: returns
 ;: `SshPacketComplete` once the packet is whole, `SshPacketNeedMore` when
@@ -1321,87 +1249,73 @@
 (define (packet-reader-next!
   [reader : (&mut reader SshPacketReader)]
   [input : (& input bytes)]) : SshPacketStep
-  (begin
+  (when reader.failed (return (SshPacketFailed (copy-error (& reader.error)))))
+  (when reader.ready (packet-reader-release! reader))
+  (let
+    [available : i64 (byte_buf.bytes-length input)]
+    [consumed : i64 0]
     (when
-      reader.failed
-      (return (SshPacketFailed (copy-error (& reader.error)))))
-    (when reader.ready (packet-reader-release! reader))
-    (let
-      [available : i64 (byte_buf.bytes-length input)]
-      [consumed : i64 0]
-      (begin
+      (not reader.header-done)
+      (let
+        [want : i64 (- frame-header-length (byte_buf.len (& reader.header)))]
+        [take : i64
+          (if (< want available)
+            want
+            available)]
+        (buffer-append! (&mut reader.header) input 0 take)
+        (set! consumed take)
         (when
-          (not reader.header-done)
-          (let
-            [want : i64
-              (- frame-header-length (byte_buf.len (& reader.header)))]
-            [take : i64
-              (if (< want available)
-                want
-                available)]
-            (begin
-              (buffer-append! (&mut reader.header) input 0 take)
-              (set! consumed take)
-              (when
-                (< (byte_buf.len (& reader.header)) frame-header-length)
-                (return (SshPacketNeedMore consumed)))
-              (let
-                [length : i64
-                  (read-be
-                    (byte_buf.as-bytes (& reader.header))
-                    0
-                    frame-header-length)]
-                (cond
-                  [(or
-                      (< length (mode-min-packet-length (& reader.mode)))
-                      (> length reader.limits.max-packet-length))
-                    (return
-                      (packet-reader-fail!
-                        reader
-                        (SshWireError error-packet-length reader.stream-offset)))]
-                  [(not (packet-length-aligned? (& reader.mode) length))
-                    (return
-                      (packet-reader-fail!
-                        reader
-                        (SshWireError
-                          error-packet-alignment
-                          reader.stream-offset)))]
-                  [else
-                    (begin
-                      (buffer-reserve!
-                        (&mut reader.body)
-                        (+ length (mode-tag-length (& reader.mode))))
-                      (set! reader.packet-length length)
-                      (set! reader.header-done true))])))))
+          (< (byte_buf.len (& reader.header)) frame-header-length)
+          (return (SshPacketNeedMore consumed)))
         (let
-          [total : i64
-            (+ reader.packet-length (mode-tag-length (& reader.mode)))]
-          [want : i64 (- total (byte_buf.len (& reader.body)))]
-          [left : i64 (- available consumed)]
-          [take : i64
-            (if (< want left)
-              want
-              left)]
-          (begin
-            (buffer-append! (&mut reader.body) input consumed take)
-            (set! consumed (+ consumed take))
-            (cond
-              [(< (byte_buf.len (& reader.body)) total)
-                (SshPacketNeedMore consumed)]
-              [(= (mode-tag-length (& reader.mode)) 0)
-                (match (open-plain-body
-                  (byte_buf.as-bytes (& reader.body))
-                  (+ reader.stream-offset frame-header-length))
-                  [(SshBodyErr error) (packet-reader-fail! reader error)]
-                  [(SshBodyOk body)
-                    (begin
-                      (set! reader.plain body)
-                      (set! reader.ready true)
-                      (SshPacketComplete consumed))])]
-              [else
-                (begin
-                  (set! reader.ready true)
-                  (SshPacketComplete consumed))])))))))
+          [length : i64
+            (read-be
+              (byte_buf.as-bytes (& reader.header))
+              0
+              frame-header-length)]
+          (cond
+            [(or
+                (< length (mode-min-packet-length (& reader.mode)))
+                (> length reader.limits.max-packet-length))
+              (return
+                (packet-reader-fail!
+                  reader
+                  (SshWireError error-packet-length reader.stream-offset)))]
+            [(not (packet-length-aligned? (& reader.mode) length))
+              (return
+                (packet-reader-fail!
+                  reader
+                  (SshWireError error-packet-alignment reader.stream-offset)))]
+            [else
+              (buffer-reserve!
+                (&mut reader.body)
+                (+ length (mode-tag-length (& reader.mode))))
+              (set! reader.packet-length length)
+              (set! reader.header-done true)]))))
+    (let
+      [total : i64 (+ reader.packet-length (mode-tag-length (& reader.mode)))]
+      [want : i64 (- total (byte_buf.len (& reader.body)))]
+      [left : i64 (- available consumed)]
+      [take : i64
+        (if (< want left)
+          want
+          left)]
+      (buffer-append! (&mut reader.body) input consumed take)
+      (set! consumed (+ consumed take))
+      (cond
+        [(< (byte_buf.len (& reader.body)) total) (SshPacketNeedMore consumed)]
+        [(= (mode-tag-length (& reader.mode)) 0)
+          (match (open-plain-body
+            (byte_buf.as-bytes (& reader.body))
+            (+ reader.stream-offset frame-header-length))
+            [(SshBodyErr error) (packet-reader-fail! reader error)]
+            [(SshBodyOk body)
+              (set! reader.plain body)
+              (set! reader.ready true)
+              (SshPacketComplete consumed)])]
+        [else
+          (set! reader.ready true)
+          (SshPacketComplete consumed)]))))
 
 ;: The sequence number of the packet the last step completed, or of the next
 ;: packet before one completes.

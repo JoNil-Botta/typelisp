@@ -67,7 +67,6 @@
     [inner : Sexpr (Call (Sym "*") (array (Int 2) (Int 3)))]
     [prog : Sexpr (Call (Sym "+") (array (Int 1) (List (box inner))))]
     [result : i64 (eval-sexpr (& prog))]
-    (begin
-      (io.print-format "{}" "nested evaluator result: ")
-      (io.println "{}" result)
-      result)))
+    (io.print-format "{}" "nested evaluator result: ")
+    (io.println "{}" result)
+    result))

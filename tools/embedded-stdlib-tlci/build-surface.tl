@@ -26,16 +26,13 @@
           build-hash
           (string.eq target "windows"))
           [(Err message)
-            (begin
-              (io.print-error
-                (str_cat.str-cat "prelude surface: " message "\n"))
-              1)]
+            (io.print-error (str_cat.str-cat "prelude surface: " message "\n"))
+            1]
           [(Ok bytes)
             (let
               [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-              (begin
-                (io.write-file output (byte_buf.as-bytes (& contents)))
-                0))])
+              (io.write-file output (byte_buf.as-bytes (& contents)))
+              0)])
         (begin
           (io.print-error (str_cat.str-cat "invalid host target: " target "\n"))
           2)))))

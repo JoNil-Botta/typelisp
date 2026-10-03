@@ -148,10 +148,9 @@
   false)
 
 (define (compiler-symbols-clear-last-error!) : unit
-  (begin
-    (set! compiler-symbols-last-error-path "")
-    (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
-    (set! compiler-symbols-last-error-has-span false)))
+  (set! compiler-symbols-last-error-path "")
+  (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
+  (set! compiler-symbols-last-error-has-span false))
 
 ;; A macro symbol generation can build this short-lived side channel in a
 ;; scratch arena, while its caller converts the returned String error into a
@@ -167,9 +166,8 @@
   [span : ast.AstSourceSpan]) : unit
   (let
     [has-span : bool (> (ast.ast-source-span-start-line span) 0)]
-    (begin
-      (set! compiler-symbols-last-error-span span)
-      (set! compiler-symbols-last-error-has-span has-span))))
+    (set! compiler-symbols-last-error-span span)
+    (set! compiler-symbols-last-error-has-span has-span)))
 
 ;; The span of the first source-span wrapper reached from EXPR-ID through
 ;; unary, annotation, cast and borrow nodes. A wrapper's own span is its
@@ -198,44 +196,35 @@
 (define (compiler-symbols-note-last-error-fallback!
   [decl : ast.AstDecl]
   [path : (& path str)]) : unit
-  (begin
-    (set! compiler-symbols-last-error-path (string.copy path))
-    (match (compiler-symbols-decl-maybe-span decl)
-      [(Some span)
-        (begin
-          (set! compiler-symbols-last-error-span span)
-          (set! compiler-symbols-last-error-has-span true))]
-      [(No)
-        (begin
-          (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
-          (set! compiler-symbols-last-error-has-span false))])))
+  (set! compiler-symbols-last-error-path (string.copy path))
+  (match (compiler-symbols-decl-maybe-span decl)
+    [(Some span)
+      (set! compiler-symbols-last-error-span span)
+      (set! compiler-symbols-last-error-has-span true)]
+    [(No)
+      (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
+      (set! compiler-symbols-last-error-has-span false)]))
 
 (define (compiler-symbols-note-last-error!
   [origin-key : i64]
   [origin-slot : i64]
   [decl : ast.AstDecl]
   [path : String]) : unit
-  (begin
-    (set! compiler-symbols-last-error-path path)
-    (match (parser.compiler-parse-decl-origin-span-key-slot
-      origin-key
-      origin-slot)
-      [(Some span)
-        (begin
+  (set! compiler-symbols-last-error-path path)
+  (match (parser.compiler-parse-decl-origin-span-key-slot
+    origin-key
+    origin-slot)
+    [(Some span)
+      (set! compiler-symbols-last-error-span span)
+      (set! compiler-symbols-last-error-has-span true)]
+    [(None)
+      (match (compiler-symbols-decl-maybe-span decl)
+        [(Some span)
           (set! compiler-symbols-last-error-span span)
-          (set! compiler-symbols-last-error-has-span true))]
-      [(None)
-        (match (compiler-symbols-decl-maybe-span decl)
-          [(Some span)
-            (begin
-              (set! compiler-symbols-last-error-span span)
-              (set! compiler-symbols-last-error-has-span true))]
-          [(No)
-            (begin
-              (set!
-                compiler-symbols-last-error-span
-                (ast.ast-decl-span-fallback))
-              (set! compiler-symbols-last-error-has-span false))])])))
+          (set! compiler-symbols-last-error-has-span true)]
+        [(No)
+          (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
+          (set! compiler-symbols-last-error-has-span false)])]))
 
 (define (compiler-symbols-last-error-diagnostic [message : String]) : cdiag.CompilerDiagnostic
   (if compiler-symbols-last-error-has-span
@@ -374,10 +363,9 @@
 (define (compiler-symbol-map-round-capacity [requested : i64]) : i64
   (let
     [capacity : i64 4]
-    (begin
-      (while (< capacity requested)
-        (set! capacity (* capacity 2)))
-      capacity)))
+    (while (< capacity requested)
+      (set! capacity (* capacity 2)))
+    capacity))
 
 (define (compiler-symbol-map-with-capacity [requested : i64]) : CompilerSymbolMap
   (let
@@ -423,23 +411,22 @@
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
-        (begin
-          ;; Put grows before occupied+tombstone slots reach 75%, so every
-          ;; table always contains an empty slot. Probing therefore terminates
-          ;; on zero without a redundant full-capacity counter in this hot loop.
-          (while true
-            (let
-              [present : i64
-                (unsafe
-                  (ptr-read (ptr-offset key-data slot)))]
-              (cond
-                [(= present 0) (return (compiler-symbol-map-missing-handle))]
-                [(= present encoded)
-                  (return
-                    (unsafe
-                      (ptr-read (ptr-offset value-data slot))))]
-                [else (set! slot (bit-and (+ slot 1) mask))])))
-          (compiler-symbol-map-missing-handle))))))
+        ;; Put grows before occupied+tombstone slots reach 75%, so every
+        ;; table always contains an empty slot. Probing therefore terminates
+        ;; on zero without a redundant full-capacity counter in this hot loop.
+        (while true
+          (let
+            [present : i64
+              (unsafe
+                (ptr-read (ptr-offset key-data slot)))]
+            (cond
+              [(= present 0) (return (compiler-symbol-map-missing-handle))]
+              [(= present encoded)
+                (return
+                  (unsafe
+                    (ptr-read (ptr-offset value-data slot))))]
+              [else (set! slot (bit-and (+ slot 1) mask))])))
+        (compiler-symbol-map-missing-handle)))))
 
 (define (compiler-symbol-map-put-no-grow!
   [map : (&mut map CompilerSymbolMap)]
@@ -459,42 +446,38 @@
     [encoded : i64 (+ key 1)]
     [slot : i64 (compiler-symbol-map-first-slot key capacity)]
     [first-deleted : i64 -1]
-    (begin
-      ;; Growth keeps one empty slot in every probe sequence.
-      (while true
-        (let
-          [present : i64
+    ;; Growth keeps one empty slot in every probe sequence.
+    (while true
+      (let
+        [present : i64
+          (unsafe
+            (ptr-read (ptr-offset key-data slot)))]
+        (cond
+          [(= present 0)
+            (let
+              [target : i64
+                (if (>= first-deleted 0)
+                  first-deleted
+                  slot)]
+              (unsafe
+                (ptr-write! (ptr-offset key-data target) encoded)
+                (ptr-write! (ptr-offset value-data target) handle))
+              (set! map.len (+ map.len 1))
+              (if (>= first-deleted 0)
+                (set! map.deleted (- map.deleted 1))
+                unit)
+              (return unit))]
+          [(= present -1)
+            (if (< first-deleted 0)
+              (set! first-deleted slot)
+              unit)
+            (set! slot (bit-and (+ slot 1) mask))]
+          [(= present encoded)
             (unsafe
-              (ptr-read (ptr-offset key-data slot)))]
-          (cond
-            [(= present 0)
-              (let
-                [target : i64
-                  (if (>= first-deleted 0)
-                    first-deleted
-                    slot)]
-                (begin
-                  (unsafe
-                    (ptr-write! (ptr-offset key-data target) encoded)
-                    (ptr-write! (ptr-offset value-data target) handle))
-                  (set! map.len (+ map.len 1))
-                  (if (>= first-deleted 0)
-                    (set! map.deleted (- map.deleted 1))
-                    unit)
-                  (return unit)))]
-            [(= present -1)
-              (begin
-                (if (< first-deleted 0)
-                  (set! first-deleted slot)
-                  unit)
-                (set! slot (bit-and (+ slot 1) mask)))]
-            [(= present encoded)
-              (begin
-                (unsafe
-                  (ptr-write! (ptr-offset value-data slot) handle))
-                (return unit))]
-            [else (set! slot (bit-and (+ slot 1) mask))])))
-      unit)))
+              (ptr-write! (ptr-offset value-data slot) handle))
+            (return unit)]
+          [else (set! slot (bit-and (+ slot 1) mask))])))
+    unit))
 
 (define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
   (let
@@ -506,22 +489,20 @@
         (* old-capacity 2)
         4)]
     [i : i64 0]
-    (begin
-      (set! map.keys (__tl_make-array i64 new-capacity))
-      (set! map.values (__tl_make-array i64 new-capacity))
-      (set! map.len 0)
-      (set! map.deleted 0)
-      (while (< i old-capacity)
-        (let
-          [encoded : i64 (array-ref old-keys i)]
-          (begin
-            (if (> encoded 0)
-              (compiler-symbol-map-put-no-grow!
-                map
-                (- encoded 1)
-                (array-ref old-values i))
-              unit)
-            (set! i (+ i 1))))))))
+    (set! map.keys (__tl_make-array i64 new-capacity))
+    (set! map.values (__tl_make-array i64 new-capacity))
+    (set! map.len 0)
+    (set! map.deleted 0)
+    (while (< i old-capacity)
+      (let
+        [encoded : i64 (array-ref old-keys i)]
+        (if (> encoded 0)
+          (compiler-symbol-map-put-no-grow!
+            map
+            (- encoded 1)
+            (array-ref old-values i))
+          unit)
+        (set! i (+ i 1))))))
 
 (define (compiler-symbol-map-put!
   [map : (&mut map CompilerSymbolMap)]
@@ -530,11 +511,10 @@
   (let
     [capacity : i64 (array-length map.keys)]
     [used : i64 (+ map.len map.deleted)]
-    (begin
-      (if (or (<= capacity 0) (>= (* used 4) (* capacity 3)))
-        (compiler-symbol-map-grow! map)
-        unit)
-      (compiler-symbol-map-put-no-grow! map key handle))))
+    (if (or (<= capacity 0) (>= (* used 4) (* capacity 3)))
+      (compiler-symbol-map-grow! map)
+      unit)
+    (compiler-symbol-map-put-no-grow! map key handle)))
 
 (define (compiler-symbol-map-remove-id!
   [map : (&mut map CompilerSymbolMap)]
@@ -547,23 +527,20 @@
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [walked : i64 0]
-        (begin
-          (while (< walked capacity)
-            (let
-              [present : i64 (array-ref map.keys slot)]
-              (cond
-                [(= present 0) (return false)]
-                [(= present encoded)
-                  (begin
-                    (set! (array-ref map.keys slot) -1)
-                    (set! map.len (- map.len 1))
-                    (set! map.deleted (+ map.deleted 1))
-                    (return true))]
-                [else
-                  (begin
-                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                    (set! walked (+ walked 1)))])))
-          false)))))
+        (while (< walked capacity)
+          (let
+            [present : i64 (array-ref map.keys slot)]
+            (cond
+              [(= present 0) (return false)]
+              [(= present encoded)
+                (set! (array-ref map.keys slot) -1)
+                (set! map.len (- map.len 1))
+                (set! map.deleted (+ map.deleted 1))
+                (return true)]
+              [else
+                (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                (set! walked (+ walked 1))])))
+        false))))
 
 (define (compiler-symbol-map-lookup-id
   [map : (& map CompilerSymbolMap)]
@@ -591,23 +568,21 @@
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
-    (begin
-      (while (< index decl-count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
-          (begin
-            (match decl
-              [(Import decl-meta _) unit]
-              [(Module _) unit]
-              [(ModuleBody _ body-box)
-                (set!
-                  count
-                  (+ count (compiler-decl-list-index-count (deref body-box))))]
-              [(Test _ _ _ _) unit]
-              [_ (set! count (+ count 1))])
-            (set! index (+ index 1)))))
-      count)))
+    (while (< index decl-count)
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
+        (match decl
+          [(Import decl-meta _) unit]
+          [(Module _) unit]
+          [(ModuleBody _ body-box)
+            (set!
+              count
+              (+ count (compiler-decl-list-index-count (deref body-box))))]
+          [(Test _ _ _ _) unit]
+          [_ (set! count (+ count 1))])
+        (set! index (+ index 1))))
+    count))
 
 (define (compiler-symbols-empty-with-decls-and-capacity
   [decl-count : i64]
@@ -637,12 +612,11 @@
   0)
 
 (define (compiler-registries-fresh-identity!) : i64
-  (begin
-    (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
-    (set!
-      compiler-registries-next-identity
-      (+ compiler-registries-next-identity 1))
-    compiler-registries-next-identity))
+  (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
+  (set!
+    compiler-registries-next-identity
+    (+ compiler-registries-next-identity 1))
+  compiler-registries-next-identity)
 
 (define (compiler-registries-empty) : CompilerRegistries
   (CompilerRegistries
@@ -791,24 +765,22 @@
             [next-owner-module-ids : (__tl_dyn-array i64)
               (__tl_make-array i64 (* next-capacity 2))]
             [index : i64 0]
-            (begin
-              (while (< index decl-count)
-                (begin
-                  (set! (array-ref next-decls index) (array-ref decls index))
-                  (set!
-                    (array-ref next-owner-module-ids index)
-                    (array-ref owner-module-ids index))
-                  (set!
-                    (array-ref next-owner-module-ids (+ next-capacity index))
-                    (array-ref owner-module-ids (+ capacity index)))
-                  (set! index (+ index 1))))
-              (CompilerSymbols
-                values
-                types
-                macros
-                next-decls
-                next-owner-module-ids
-                decl-count)))))]))
+            (while (< index decl-count)
+              (set! (array-ref next-decls index) (array-ref decls index))
+              (set!
+                (array-ref next-owner-module-ids index)
+                (array-ref owner-module-ids index))
+              (set!
+                (array-ref next-owner-module-ids (+ next-capacity index))
+                (array-ref owner-module-ids (+ capacity index)))
+              (set! index (+ index 1)))
+            (CompilerSymbols
+              values
+              types
+              macros
+              next-decls
+              next-owner-module-ids
+              decl-count))))]))
 
 (define (compiler-symbols-with-decl-count
   [symbols : CompilerSymbols]
@@ -1174,10 +1146,9 @@
                   decl-count)))
             (Err (compiler-symbols-duplicate-macro-message display-name)))]
         [(None)
-          (begin
-            (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
-            (Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
+          (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+          (Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))])]))
 
 (define (compiler-symbols-add-root-value-id
   [symbols : CompilerSymbols]
@@ -1201,10 +1172,9 @@
                   decl-count)))
             (Err (compiler-symbols-duplicate-value-message display-name)))]
         [(None)
-          (begin
-            (compiler-symbol-map-bind-id! (&mut values) name-id handle)
-            (Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
+          (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+          (Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))])]))
 
 (define (compiler-symbols-add-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1271,10 +1241,9 @@
               (compiler-symbols-duplicate-value-message
                 (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(None)
-          (begin
-            (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-            (Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
+          (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+          (Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
   [symbols : CompilerSymbols]
@@ -1295,10 +1264,9 @@
               (compiler-symbols-duplicate-value-message
                 (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(None)
-          (begin
-            (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-            (Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
+          (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+          (Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))])]))
 
 (define (compiler-symbols-add-variant-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1380,13 +1348,12 @@
               enum-index
               (+ variant-index 1))]
           [(Err message)
-            (begin
-              (compiler-symbols-note-last-error-member-span!
-                (parser.compiler-parse-variant-def-list-span-get
-                  (& variants)
-                  variant-index
-                  (ast.ast-decl-span-fallback)))
-              (Err message))])])))
+            (compiler-symbols-note-last-error-member-span!
+              (parser.compiler-parse-variant-def-list-span-get
+                (& variants)
+                variant-index
+                (ast.ast-decl-span-fallback)))
+            (Err message)])])))
 
 (define (compiler-symbols-add-macro-in-module-id
   [symbols : CompilerSymbols]
@@ -1899,30 +1866,28 @@
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
-    (begin
-      (while (< index decl-count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
-          [decl-for-add : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
-          (begin
-            (match decl
-              [(Module next-module) (set! cur-module next-module)]
-              [(Import decl-meta _) unit]
-              [(IncludeStr _ _) unit]
-              [(IncludeStrComptime _ _) unit]
-              [(IncludeStrLzss _ _) unit]
-              [(IncludeBin _ _) unit]
-              [(Test _ _ _ _) unit]
-              [_
-                (set!
-                  cur-modules
-                  (compiler-symbols-macro-module-set-add-decl
-                    cur-modules
-                    cur-module
-                    decl-for-add))])
-            (set! index (+ index 1)))))
-      cur-modules)))
+    (while (< index decl-count)
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
+        [decl-for-add : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
+        (match decl
+          [(Module next-module) (set! cur-module next-module)]
+          [(Import decl-meta _) unit]
+          [(IncludeStr _ _) unit]
+          [(IncludeStrComptime _ _) unit]
+          [(IncludeStrLzss _ _) unit]
+          [(IncludeBin _ _) unit]
+          [(Test _ _ _ _) unit]
+          [_
+            (set!
+              cur-modules
+              (compiler-symbols-macro-module-set-add-decl
+                cur-modules
+                cur-module
+                decl-for-add))])
+        (set! index (+ index 1))))
+    cur-modules))
 
 (define (compiler-symbols-macro-module-set [decls : ast.AstDeclList]) : sym_i64_env.SymI64Env
   (compiler-symbols-macro-module-set-list
@@ -1965,15 +1930,14 @@
     -1
     (let
       [suffix-id : i64 (ci.intern-dotted-tail-id path-owner-id)]
-      (begin
-        (while (>= suffix-id 0)
-          (let
-            [suffix-owner : i64
-              (sym_i64_env.sym-i64-lookup-id-or modules suffix-id -1)]
-            (if (>= suffix-owner 0)
-              (return suffix-owner)
-              (set! suffix-id (ci.intern-dotted-tail-id suffix-id)))))
-        -1))))
+      (while (>= suffix-id 0)
+        (let
+          [suffix-owner : i64
+            (sym_i64_env.sym-i64-lookup-id-or modules suffix-id -1)]
+          (if (>= suffix-owner 0)
+            (return suffix-owner)
+            (set! suffix-id (ci.intern-dotted-tail-id suffix-id)))))
+      -1)))
 
 (define (compiler-symbols-dotted-path-owner-module-id
   [modules : (& modules sym_i64_env.SymI64Env)]
@@ -2000,46 +1964,43 @@
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
-    (begin
-      (while (< index decl-count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
-          [decl-for-add : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
-          (begin
-            (match decl
-              [(Module next-module) (set! cur-module next-module)]
-              [(Import decl-meta (Spec _ _ (Some target-module) _ _))
-                (set!
-                  dotted-modules
-                  (compiler-symbols-dotted-import-module-set-add-target
-                    dotted-modules
-                    target-module))]
-              [(Import decl-meta _) unit]
-              [(ModuleBody name body-box)
-                (let
-                  [nested : CompilerSymbolsModuleSets
-                    (compiler-symbols-module-sets-list
-                      (deref body-box)
-                      name
-                      (CompilerSymbolsModuleSets macro-modules dotted-modules))]
-                  (begin
-                    (set! macro-modules nested.macro-modules)
-                    (set! dotted-modules nested.dotted-modules)))]
-              [(IncludeStr _ _) unit]
-              [(IncludeStrComptime _ _) unit]
-              [(IncludeStrLzss _ _) unit]
-              [(IncludeBin _ _) unit]
-              [(Test _ _ _ _) unit]
-              [_
-                (set!
-                  macro-modules
-                  (compiler-symbols-macro-module-set-add-decl
-                    macro-modules
-                    cur-module
-                    decl-for-add))])
-            (set! index (+ index 1)))))
-      (CompilerSymbolsModuleSets macro-modules dotted-modules))))
+    (while (< index decl-count)
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
+        [decl-for-add : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
+        (match decl
+          [(Module next-module) (set! cur-module next-module)]
+          [(Import decl-meta (Spec _ _ (Some target-module) _ _))
+            (set!
+              dotted-modules
+              (compiler-symbols-dotted-import-module-set-add-target
+                dotted-modules
+                target-module))]
+          [(Import decl-meta _) unit]
+          [(ModuleBody name body-box)
+            (let
+              [nested : CompilerSymbolsModuleSets
+                (compiler-symbols-module-sets-list
+                  (deref body-box)
+                  name
+                  (CompilerSymbolsModuleSets macro-modules dotted-modules))]
+              (set! macro-modules nested.macro-modules)
+              (set! dotted-modules nested.dotted-modules))]
+          [(IncludeStr _ _) unit]
+          [(IncludeStrComptime _ _) unit]
+          [(IncludeStrLzss _ _) unit]
+          [(IncludeBin _ _) unit]
+          [(Test _ _ _ _) unit]
+          [_
+            (set!
+              macro-modules
+              (compiler-symbols-macro-module-set-add-decl
+                macro-modules
+                cur-module
+                decl-for-add))])
+        (set! index (+ index 1))))
+    (CompilerSymbolsModuleSets macro-modules dotted-modules)))
 
 (define (compiler-symbols-module-sets [decls : ast.AstDeclList]) : CompilerSymbolsModuleSets
   (compiler-symbols-module-sets-list
@@ -2094,14 +2055,13 @@
   (let
     [i : i64 0]
     [slot : i64 -1]
-    (begin
-      (while (< i num-modules)
-        (if (= (array-ref mod-ids i) module-id)
-          (begin
-            (set! slot i)
-            (set! i num-modules))
-          (set! i (+ i 1))))
-      slot)))
+    (while (< i num-modules)
+      (if (= (array-ref mod-ids i) module-id)
+        (begin
+          (set! slot i)
+          (set! i num-modules))
+        (set! i (+ i 1))))
+    slot))
 
 (define (compiler-symbols-build-module-decl-index
   [decls : (& decls ast.AstDeclList)]) : ModuleDeclIndex
@@ -2128,55 +2088,50 @@
     ;; memo stale. Slot assignment order (first appearance) is unchanged.
     [cur-slot : i64 -1]
     [position : i64 0]
-    (begin
-      (while (< position decl-count)
-        (begin
-          (match (array-ref slots (+ decl-offset position))
-            [(Import decl-meta _) unit]
-            [(IncludeStr _ _) unit]
-            [(IncludeStrComptime _ _) unit]
-            [(IncludeStrLzss _ _) unit]
-            [(IncludeBin _ _) unit]
-            [(Module next-module)
+    (while (< position decl-count)
+      (match (array-ref slots (+ decl-offset position))
+        [(Import decl-meta _) unit]
+        [(IncludeStr _ _) unit]
+        [(IncludeStrComptime _ _) unit]
+        [(IncludeStrLzss _ _) unit]
+        [(IncludeBin _ _) unit]
+        [(Module next-module)
+          (set! cur-module next-module)
+          (set! cur-slot -1)]
+        [(Test _ _ _ _) unit]
+        [_
+          (let
+            [slot : i64
+              (if (>= cur-slot 0)
+                cur-slot
+                (compiler-module-index-find-slot
+                  (& mod-ids)
+                  num-modules
+                  cur-module))]
+            (when
+              (< slot 0)
+              (set! slot num-modules)
+              (set! (array-ref mod-ids num-modules) cur-module)
+              (set! (array-ref mod-head num-modules) -1)
+              (set! (array-ref mod-tail num-modules) -1)
+              (set! num-modules (+ num-modules 1)))
+            (set! cur-slot slot)
+            (set! (array-ref ent-pos num-entries) position)
+            (set! (array-ref ent-ridx num-entries) real-index)
+            (set! (array-ref ent-next num-entries) -1)
+            (if (< (array-ref mod-head slot) 0)
               (begin
-                (set! cur-module next-module)
-                (set! cur-slot -1))]
-            [(Test _ _ _ _) unit]
-            [_
-              (let
-                [slot : i64
-                  (if (>= cur-slot 0)
-                    cur-slot
-                    (compiler-module-index-find-slot
-                      (& mod-ids)
-                      num-modules
-                      cur-module))]
-                (begin
-                  (if (< slot 0)
-                    (begin
-                      (set! slot num-modules)
-                      (set! (array-ref mod-ids num-modules) cur-module)
-                      (set! (array-ref mod-head num-modules) -1)
-                      (set! (array-ref mod-tail num-modules) -1)
-                      (set! num-modules (+ num-modules 1)))
-                    unit)
-                  (set! cur-slot slot)
-                  (set! (array-ref ent-pos num-entries) position)
-                  (set! (array-ref ent-ridx num-entries) real-index)
-                  (set! (array-ref ent-next num-entries) -1)
-                  (if (< (array-ref mod-head slot) 0)
-                    (begin
-                      (set! (array-ref mod-head slot) num-entries)
-                      (set! (array-ref mod-tail slot) num-entries))
-                    (begin
-                      (set!
-                        (array-ref ent-next (array-ref mod-tail slot))
-                        num-entries)
-                      (set! (array-ref mod-tail slot) num-entries)))
-                  (set! num-entries (+ num-entries 1))
-                  (set! real-index (+ real-index 1))))])
-          (set! position (+ position 1))))
-      (ModuleDeclIndex mod-ids mod-head num-modules ent-pos ent-ridx ent-next))))
+                (set! (array-ref mod-head slot) num-entries)
+                (set! (array-ref mod-tail slot) num-entries))
+              (begin
+                (set!
+                  (array-ref ent-next (array-ref mod-tail slot))
+                  num-entries)
+                (set! (array-ref mod-tail slot) num-entries)))
+            (set! num-entries (+ num-entries 1))
+            (set! real-index (+ real-index 1)))])
+      (set! position (+ position 1)))
+    (ModuleDeclIndex mod-ids mod-head num-modules ent-pos ent-ridx ent-next)))
 
 (define (compiler-module-decl-index-head
   [index : (& index ModuleDeclIndex)]
@@ -2187,14 +2142,13 @@
         [module-count : i64 num-modules]
         [i : i64 0]
         [head : i64 -1]
-        (begin
-          (while (< i module-count)
-            (if (= (array-ref mod-ids i) module-id)
-              (begin
-                (set! head (array-ref mod-head i))
-                (set! i module-count))
-              (set! i (+ i 1))))
-          head))]))
+        (while (< i module-count)
+          (if (= (array-ref mod-ids i) module-id)
+            (begin
+              (set! head (array-ref mod-head i))
+              (set! i module-count))
+            (set! i (+ i 1))))
+        head)]))
 
 (define (compiler-symbols-module-has-macro-map?
   [symbols : (& symbols CompilerSymbols)]
@@ -2204,26 +2158,25 @@
       (let
         [capacity : i64 (array-length macros.keys)]
         [index : i64 0]
-        (begin
-          (while (< index capacity)
-            (if (> (array-ref macros.keys index) 0)
-              (let
-                [handle : i64 (array-ref macros.values index)]
-                (when
-                  (and
-                    (=
-                      (compiler-symbol-handle-kind handle)
-                      (compiler-symbol-kind-defmacro))
-                    (=
-                      (compiler-symbols-owner-module-id-at-index-or
-                        symbols
-                        (compiler-symbol-handle-index handle)
-                        (compiler-symbol-root-module-id))
-                      target-module-id))
-                  (return true)))
-              unit)
-            (set! index (+ index 1)))
-          false))]))
+        (while (< index capacity)
+          (if (> (array-ref macros.keys index) 0)
+            (let
+              [handle : i64 (array-ref macros.values index)]
+              (when
+                (and
+                  (=
+                    (compiler-symbol-handle-kind handle)
+                    (compiler-symbol-kind-defmacro))
+                  (=
+                    (compiler-symbols-owner-module-id-at-index-or
+                      symbols
+                      (compiler-symbol-handle-index handle)
+                      (compiler-symbol-root-module-id))
+                    target-module-id))
+                (return true)))
+            unit)
+          (set! index (+ index 1)))
+        false)]))
 
 (define (compiler-symbols-remove-module-macro-aliases-from-map
   [symbols : CompilerSymbols]
@@ -2235,34 +2188,33 @@
         (let
           [capacity : i64 (array-length macros.keys)]
           [index : i64 0]
-          (begin
-            (while (< index capacity)
-              (if (> (array-ref macros.keys index) 0)
-                (let
-                  [handle : i64 (array-ref macros.values index)]
-                  [decl-index : i64 (compiler-symbol-handle-index handle)]
-                  (if (and
-                    (>= decl-index 0)
-                    (< decl-index (compiler-symbols-decl-count cur-symbols))
-                    (=
-                      (compiler-symbol-handle-kind handle)
-                      (compiler-symbol-kind-defmacro))
-                    (=
-                      (compiler-symbols-owner-module-id-at-index-or
-                        cur-symbols
-                        decl-index
-                        (compiler-symbol-root-module-id))
-                      target-module-id))
-                    (set!
+          (while (< index capacity)
+            (if (> (array-ref macros.keys index) 0)
+              (let
+                [handle : i64 (array-ref macros.values index)]
+                [decl-index : i64 (compiler-symbol-handle-index handle)]
+                (if (and
+                  (>= decl-index 0)
+                  (< decl-index (compiler-symbols-decl-count cur-symbols))
+                  (=
+                    (compiler-symbol-handle-kind handle)
+                    (compiler-symbol-kind-defmacro))
+                  (=
+                    (compiler-symbols-owner-module-id-at-index-or
                       cur-symbols
-                      (compiler-symbols-remove-decl-macro-alias
-                        cur-symbols
-                        (ast.ast-array-shared-view decls decl-index)
-                        decl-index))
-                    unit))
-                unit)
-              (set! index (+ index 1)))
-            cur-symbols))])))
+                      decl-index
+                      (compiler-symbol-root-module-id))
+                    target-module-id))
+                  (set!
+                    cur-symbols
+                    (compiler-symbols-remove-decl-macro-alias
+                      cur-symbols
+                      (ast.ast-array-shared-view decls decl-index)
+                      decl-index))
+                  unit))
+              unit)
+            (set! index (+ index 1)))
+          cur-symbols)])))
 
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
@@ -2282,26 +2234,24 @@
           [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
           [cur-symbols : CompilerSymbols symbols]
           [k : i64 head]
-          (begin
-            (if (< k 0)
-              (set!
+          (if (< k 0)
+            (set!
+              cur-symbols
+              (compiler-symbols-remove-module-macro-aliases-from-map
                 cur-symbols
-                (compiler-symbols-remove-module-macro-aliases-from-map
-                  cur-symbols
-                  target-module-id))
-              unit)
-            (while (>= k 0)
-              (begin
-                (set!
-                  cur-symbols
-                  (compiler-symbols-remove-decl-macro-alias
-                    cur-symbols
-                    (ast.ast-array-shared-view
-                      slots
-                      (+ decl-offset (array-ref ent-pos k)))
-                    (+ handle-index-offset (array-ref ent-ridx k))))
-                (set! k (array-ref ent-next k))))
-            cur-symbols))])))
+                target-module-id))
+            unit)
+          (while (>= k 0)
+            (set!
+              cur-symbols
+              (compiler-symbols-remove-decl-macro-alias
+                cur-symbols
+                (ast.ast-array-shared-view
+                  slots
+                  (+ decl-offset (array-ref ent-pos k)))
+                (+ handle-index-offset (array-ref ent-ridx k))))
+            (set! k (array-ref ent-next k)))
+          cur-symbols)])))
 
 (define (compiler-symbols-add-module-aliases-indexed
   [symbols : CompilerSymbols]
@@ -2319,20 +2269,18 @@
           [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
           [cur-symbols : CompilerSymbols symbols]
           [k : i64 head]
-          (begin
-            (while (>= k 0)
-              (begin
-                (set!
-                  cur-symbols
-                  (compiler-symbols-add-decl-alias-in-module
-                    cur-symbols
-                    alias-id
-                    (ast.ast-array-shared-view
-                      slots
-                      (+ decl-offset (array-ref ent-pos k)))
-                    (+ handle-index-offset (array-ref ent-ridx k))))
-                (set! k (array-ref ent-next k))))
-            cur-symbols))])))
+          (while (>= k 0)
+            (set!
+              cur-symbols
+              (compiler-symbols-add-decl-alias-in-module
+                cur-symbols
+                alias-id
+                (ast.ast-array-shared-view
+                  slots
+                  (+ decl-offset (array-ref ent-pos k)))
+                (+ handle-index-offset (array-ref ent-ridx k))))
+            (set! k (array-ref ent-next k)))
+          cur-symbols)])))
 
 (define (compiler-symbols-import-alias-key-id
   [importer-module : i64]
@@ -2395,61 +2343,58 @@
     [decl-offset : i64 decls.offset]
     [decl-index : ModuleDeclIndex
       (compiler-symbols-build-module-decl-index all-decls)]
-    (begin
-      (while (< index decl-count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
-          [decl-for-module : ast.AstDecl
-            (compiler-symbols-decl-shared-view decl)]
-          [next-symbols : CompilerSymbols
-            (match decl
-              [(Import
-                  decl-meta
-                  (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
-                (compiler-symbols-add-selected-item-alias
-                  (compiler-symbols-shared-view cur-symbols)
-                  target-module
-                  item
-                  cur-module-id
-                  alias)]
-              [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
-                (let
-                  [target-module-id : i64 target-module]
-                  [target-has-macros : bool
-                    (or
-                      (sym_i64_env.sym-i64-contains-id
-                        macro-modules
-                        target-module-id)
-                      (compiler-symbols-module-has-macro-map?
-                        cur-symbols
-                        target-module-id))]
-                  [without-bare-macros : CompilerSymbols
-                    (if target-has-macros
-                      (compiler-symbols-remove-module-macro-aliases-indexed
-                        (compiler-symbols-shared-view cur-symbols)
-                        all-decls
-                        (ast.ast-place-shared-view decl-index)
-                        target-module-id
-                        handle-index-offset)
-                      (compiler-symbols-shared-view cur-symbols))]
-                  (if (= alias cbi.compiler-builtin-id-fix-empty)
-                    (compiler-symbols-add-module-aliases-indexed
-                      without-bare-macros
+    (while (< index decl-count)
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
+        [decl-for-module : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
+        [next-symbols : CompilerSymbols
+          (match decl
+            [(Import
+                decl-meta
+                (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
+              (compiler-symbols-add-selected-item-alias
+                (compiler-symbols-shared-view cur-symbols)
+                target-module
+                item
+                cur-module-id
+                alias)]
+            [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
+              (let
+                [target-module-id : i64 target-module]
+                [target-has-macros : bool
+                  (or
+                    (sym_i64_env.sym-i64-contains-id
+                      macro-modules
+                      target-module-id)
+                    (compiler-symbols-module-has-macro-map?
+                      cur-symbols
+                      target-module-id))]
+                [without-bare-macros : CompilerSymbols
+                  (if target-has-macros
+                    (compiler-symbols-remove-module-macro-aliases-indexed
+                      (compiler-symbols-shared-view cur-symbols)
                       all-decls
                       (ast.ast-place-shared-view decl-index)
                       target-module-id
-                      cur-module-id
                       handle-index-offset)
-                    without-bare-macros))]
-              [_ (compiler-symbols-shared-view cur-symbols)])]
-          (begin
-            (set! cur-symbols next-symbols)
-            (match decl-for-module
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      cur-symbols)))
+                    (compiler-symbols-shared-view cur-symbols))]
+                (if (= alias cbi.compiler-builtin-id-fix-empty)
+                  (compiler-symbols-add-module-aliases-indexed
+                    without-bare-macros
+                    all-decls
+                    (ast.ast-place-shared-view decl-index)
+                    target-module-id
+                    cur-module-id
+                    handle-index-offset)
+                  without-bare-macros))]
+            [_ (compiler-symbols-shared-view cur-symbols)])]
+        (set! cur-symbols next-symbols)
+        (match decl-for-module
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_ unit])
+        (set! index (+ index 1))))
+    cur-symbols))
 
 (define (build-compiler-symbol-aliases-list
   [all-decls : ast.AstDeclList]
@@ -2507,16 +2452,14 @@
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-            (&mut out)
-            (string.copy (& path))
-            owner-id
-            provenance-id)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+        (&mut out)
+        (string.copy (& path))
+        owner-id
+        provenance-id)
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-symbol-path-at-index-head
   [decl : ast.AstDecl]
@@ -2754,20 +2697,13 @@
     [(CompilerSymbols values types macros decls owner-module-ids decl-count)
       (let
         [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
-        (begin
-          (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
-          (set! (array-ref decls index) indexed)
-          (set! (array-ref owner-module-ids index) module-id)
-          (set!
-            (array-ref owner-module-ids (+ (array-length decls) index))
-            provenance-id)
-          (CompilerSymbols
-            values
-            types
-            macros
-            decls
-            owner-module-ids
-            decl-count)))]))
+        (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
+        (set! (array-ref decls index) indexed)
+        (set! (array-ref owner-module-ids index) module-id)
+        (set!
+          (array-ref owner-module-ids (+ (array-length decls) index))
+          provenance-id)
+        (CompilerSymbols values types macros decls owner-module-ids decl-count))]))
 
 (define (compiler-symbols-owner-module-id-at-index-or
   [symbols : (& symbols CompilerSymbols)]
@@ -2964,28 +2900,27 @@
               index
               module-id)]
           [_
-            (begin
-              (set!
+            (set!
+              symbols
+              (compiler-symbols-index-decl
                 symbols
-                (compiler-symbols-index-decl
-                  symbols
-                  decl-for-index
-                  index
-                  module-id
-                  cbi.compiler-builtin-id-fix-empty))
-              (match (compiler-symbols-add-decl-in-module
-                symbols
+                decl-for-index
+                index
                 module-id
-                decl-for-add
-                index)
-                [(Ok next-symbols)
-                  (build-compiler-symbol-list-in-module
-                    all-decls
-                    rest
-                    next-symbols
-                    (+ index 1)
-                    module-id)]
-                [(Err message) (Err message)]))]))]))
+                cbi.compiler-builtin-id-fix-empty))
+            (match (compiler-symbols-add-decl-in-module
+              symbols
+              module-id
+              decl-for-add
+              index)
+              [(Ok next-symbols)
+                (build-compiler-symbol-list-in-module
+                  all-decls
+                  rest
+                  next-symbols
+                  (+ index 1)
+                  module-id)]
+              [(Err message) (Err message)])]))]))
 
 (define (build-compiler-symbol-list-with-paths-in-module
   [all-decls : ast.AstDeclList]
@@ -3012,183 +2947,166 @@
     [cur-module-id : i64 module-id]
     [result : ResultCompilerSymbols (Err "symbols: internal decls walk")]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur-decls)
-          [(Nil) (return (Ok cur-symbols))]
-          [(Cons decl rest)
-            (let
-              [rest : ast.AstDeclList rest]
-              [decl-master : ast.AstDecl
-                (compiler-symbols-decl-shared-view decl)]
-              [decl-path : String
-                (ast.ast-decl-path-list-get (& cur-paths) 0 "")]
-              [path-owner-id : i64
-                (ast.ast-decl-path-list-owner-id
-                  (& cur-paths)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              [path-provenance-id : i64
-                (ast.ast-decl-path-list-provenance-id
-                  (& cur-paths)
-                  0
-                  cbi.compiler-builtin-id-fix-empty)]
-              [rest-paths : ast.AstDeclPathList
-                (ast.ast-decl-path-list-tail
-                  (ast.ast-place-shared-view cur-paths))]
-              (match decl
-                [(Import decl-meta _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [(IncludeStr _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [(IncludeStrComptime _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [(IncludeStrLzss _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [(IncludeBin _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [(Module next-module)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1))
-                    (set! cur-module-id next-module))]
-                [(ModuleBody name body-box)
-                  (let
-                    [body : ast.AstDeclList (deref body-box)]
-                    [body-count : i64 (compiler-decl-list-index-count body)]
-                    [body-paths : ast.AstDeclPathList
-                      (compiler-symbol-path-list-repeat-with-provenance
-                        body
-                        decl-path
-                        (ast.ast-decl-path-list-owner-id
-                          (& cur-paths)
-                          0
-                          cbi.compiler-builtin-id-fix-empty)
-                        path-provenance-id)]
-                    (match (build-compiler-symbol-list-with-paths-in-module
-                      (ast.ast-place-shared-view all-decls)
-                      (ast.ast-place-shared-view all-paths)
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil) (return (Ok cur-symbols))]
+        [(Cons decl rest)
+          (let
+            [rest : ast.AstDeclList rest]
+            [decl-master : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
+            [decl-path : String (ast.ast-decl-path-list-get (& cur-paths) 0 "")]
+            [path-owner-id : i64
+              (ast.ast-decl-path-list-owner-id
+                (& cur-paths)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            [path-provenance-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& cur-paths)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            [rest-paths : ast.AstDeclPathList
+              (ast.ast-decl-path-list-tail
+                (ast.ast-place-shared-view cur-paths))]
+            (match decl
+              [(Import decl-meta _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [(IncludeStr _ _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [(IncludeStrComptime _ _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [(IncludeStrLzss _ _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [(IncludeBin _ _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [(Module next-module)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))
+                (set! cur-module-id next-module)]
+              [(ModuleBody name body-box)
+                (let
+                  [body : ast.AstDeclList (deref body-box)]
+                  [body-count : i64 (compiler-decl-list-index-count body)]
+                  [body-paths : ast.AstDeclPathList
+                    (compiler-symbol-path-list-repeat-with-provenance
                       body
-                      body-paths
-                      (compiler-symbols-shared-view cur-symbols)
-                      cur-dotted-modules
-                      cur-index
-                      name)
-                      [(Ok next-symbols)
-                        (begin
-                          (set! cur-decls rest)
-                          (set! cur-paths rest-paths)
-                          (set! cur-position (+ cur-position 1))
-                          (set! cur-symbols next-symbols)
-                          (set! cur-index (+ cur-index body-count)))]
-                      [(Err message)
-                        (begin
-                          (set! result (Err message))
-                          (set! done true))]))]
-                [(Test _ _ _ _)
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-position (+ cur-position 1)))]
-                [_
-                  (match (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
-                    (& cur-symbols)
+                      decl-path
+                      (ast.ast-decl-path-list-owner-id
+                        (& cur-paths)
+                        0
+                        cbi.compiler-builtin-id-fix-empty)
+                      path-provenance-id)]
+                  (match (build-compiler-symbol-list-with-paths-in-module
                     (ast.ast-place-shared-view all-decls)
                     (ast.ast-place-shared-view all-paths)
-                    cur-module-id
-                    (compiler-symbols-decl-shared-view decl-master)
+                    body
+                    body-paths
+                    (compiler-symbols-shared-view cur-symbols)
+                    cur-dotted-modules
                     cur-index
-                    (string.copy (& decl-path)))
-                    [(CompilerSomeString message)
-                      (begin
-                        (compiler-symbols-note-last-error!
-                          decl-origin-key
-                          (+ decl-origin-offset cur-position)
-                          decl-master
-                          (string.copy (& decl-path)))
-                        (set! result (Err message))
-                        (set! done true))]
-                    [CompilerNoString
-                      (begin
-                        ;; Keep the cheap expression/member fallback current for
-                        ;; later registry diagnostics. Cold declaration-origin
-                        ;; lookup is deferred until this add actually fails.
-                        (compiler-symbols-note-last-error-fallback!
-                          (compiler-symbols-decl-shared-view decl-master)
-                          (& decl-path))
-                        (set!
-                          cur-symbols
-                          (compiler-symbols-index-decl
-                            cur-symbols
-                            (compiler-symbols-decl-shared-view decl-master)
-                            cur-index
-                            (if (and
-                              ;; Source nominal declarations loaded through a
-                              ;; legacy path retain their flat lookup aliases but
-                              ;; share the dotted import's canonical owner.
-                              (not (ast.ast-decl-comptime-only? decl-master))
-                              (match (compiler-symbols-decl-shared-view
-                                decl-master)
-                                [(DefEnum decl-meta _ _ _) true]
-                                [(DefEnumLifetimes decl-meta _ _ _ _) true]
-                                [_ false]))
-                              (let
-                                [resolved-owner : i64
-                                  (compiler-symbols-dotted-path-owner-module-id
+                    name)
+                    [(Ok next-symbols)
+                      (set! cur-decls rest)
+                      (set! cur-paths rest-paths)
+                      (set! cur-position (+ cur-position 1))
+                      (set! cur-symbols next-symbols)
+                      (set! cur-index (+ cur-index body-count))]
+                    [(Err message)
+                      (set! result (Err message))
+                      (set! done true)]))]
+              [(Test _ _ _ _)
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)
+                (set! cur-position (+ cur-position 1))]
+              [_
+                (match (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
+                  (& cur-symbols)
+                  (ast.ast-place-shared-view all-decls)
+                  (ast.ast-place-shared-view all-paths)
+                  cur-module-id
+                  (compiler-symbols-decl-shared-view decl-master)
+                  cur-index
+                  (string.copy (& decl-path)))
+                  [(CompilerSomeString message)
+                    (compiler-symbols-note-last-error!
+                      decl-origin-key
+                      (+ decl-origin-offset cur-position)
+                      decl-master
+                      (string.copy (& decl-path)))
+                    (set! result (Err message))
+                    (set! done true)]
+                  [CompilerNoString
+                    ;; Keep the cheap expression/member fallback current for
+                    ;; later registry diagnostics. Cold declaration-origin
+                    ;; lookup is deferred until this add actually fails.
+                    (compiler-symbols-note-last-error-fallback!
+                      (compiler-symbols-decl-shared-view decl-master)
+                      (& decl-path))
+                    (set!
+                      cur-symbols
+                      (compiler-symbols-index-decl
+                        cur-symbols
+                        (compiler-symbols-decl-shared-view decl-master)
+                        cur-index
+                        (if (and
+                          ;; Source nominal declarations loaded through a
+                          ;; legacy path retain their flat lookup aliases but
+                          ;; share the dotted import's canonical owner.
+                          (not (ast.ast-decl-comptime-only? decl-master))
+                          (match (compiler-symbols-decl-shared-view decl-master)
+                            [(DefEnum decl-meta _ _ _) true]
+                            [(DefEnumLifetimes decl-meta _ _ _ _) true]
+                            [_ false]))
+                          (let
+                            [resolved-owner : i64
+                              (compiler-symbols-dotted-path-owner-module-id
+                                cur-dotted-modules
+                                path-owner-id)]
+                            (if (>= resolved-owner 0)
+                              (begin
+                                (set!
+                                  cur-dotted-modules
+                                  (sym_i64_env.sym-i64-bind-id
                                     cur-dotted-modules
-                                    path-owner-id)]
-                                (if (>= resolved-owner 0)
-                                  (begin
-                                    (set!
-                                      cur-dotted-modules
-                                      (sym_i64_env.sym-i64-bind-id
-                                        cur-dotted-modules
-                                        path-owner-id
-                                        resolved-owner))
-                                    resolved-owner)
-                                  cur-module-id))
-                              cur-module-id)
-                            path-provenance-id))
-                        (match (compiler-symbols-add-decl-in-module
-                          cur-symbols
-                          cur-module-id
-                          (compiler-symbols-decl-shared-view decl-master)
-                          cur-index)
-                          [(Ok next-symbols)
-                            (begin
-                              (set! cur-decls rest)
-                              (set! cur-paths rest-paths)
-                              (set! cur-position (+ cur-position 1))
-                              (set! cur-symbols next-symbols)
-                              (set! cur-index (+ cur-index 1)))]
-                          [(Err message)
-                            (begin
-                              (if compiler-symbols-last-error-has-span
-                                unit
-                                (compiler-symbols-note-last-error!
-                                  decl-origin-key
-                                  (+ decl-origin-offset cur-position)
-                                  decl-master
-                                  (string.copy (& decl-path))))
-                              (set! result (Err message))
-                              (set! done true))]))])]))]))
-      result)))
+                                    path-owner-id
+                                    resolved-owner))
+                                resolved-owner)
+                              cur-module-id))
+                          cur-module-id)
+                        path-provenance-id))
+                    (match (compiler-symbols-add-decl-in-module
+                      cur-symbols
+                      cur-module-id
+                      (compiler-symbols-decl-shared-view decl-master)
+                      cur-index)
+                      [(Ok next-symbols)
+                        (set! cur-decls rest)
+                        (set! cur-paths rest-paths)
+                        (set! cur-position (+ cur-position 1))
+                        (set! cur-symbols next-symbols)
+                        (set! cur-index (+ cur-index 1))]
+                      [(Err message)
+                        (if compiler-symbols-last-error-has-span
+                          unit
+                          (compiler-symbols-note-last-error!
+                            decl-origin-key
+                            (+ decl-origin-offset cur-position)
+                            decl-master
+                            (string.copy (& decl-path))))
+                        (set! result (Err message))
+                        (set! done true)])])]))]))
+    result))
 
 (define (build-compiler-symbols [program : (& program ast.AstProgram)]) : ResultCompilerSymbols
   (match (compiler-symbols-program-shared-view program)
@@ -3259,26 +3177,19 @@
 (define (build-compiler-symbols-diagnostic-with-paths
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : ResultCompilerSymbolsDiagnostic
-  (begin
-    (compiler-symbols-clear-last-error!)
-    (match (build-compiler-symbols-with-paths program paths)
-      [(Ok symbols) (Ok symbols)]
-      [(Err message)
-        (Err (box (compiler-symbols-last-error-diagnostic message)))])))
+  (compiler-symbols-clear-last-error!)
+  (match (build-compiler-symbols-with-paths program paths)
+    [(Ok symbols) (Ok symbols)]
+    [(Err message) (Err (box (compiler-symbols-last-error-diagnostic message)))]))
 
 (define (build-compiler-symbols-diagnostic-with-paths-and-capacity
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [capacity : i64]) : ResultCompilerSymbolsDiagnostic
-  (begin
-    (compiler-symbols-clear-last-error!)
-    (match (build-compiler-symbols-with-paths-and-capacity
-      program
-      paths
-      capacity)
-      [(Ok symbols) (Ok symbols)]
-      [(Err message)
-        (Err (box (compiler-symbols-last-error-diagnostic message)))])))
+  (compiler-symbols-clear-last-error!)
+  (match (build-compiler-symbols-with-paths-and-capacity program paths capacity)
+    [(Ok symbols) (Ok symbols)]
+    [(Err message) (Err (box (compiler-symbols-last-error-diagnostic message)))]))
 
 ;; Extend the owned symbol storage with one additive splice. Existing handles
 ;; remain stable; new declarations receive handles at the old logical end. The
@@ -3709,20 +3620,18 @@
           [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
           [cur-registries : CompilerRegistries registries]
           [k : i64 head]
-          (begin
-            (while (>= k 0)
-              (begin
-                (set!
-                  cur-registries
-                  (compiler-registries-add-decl-alias-in-module
-                    cur-registries
-                    alias-id
-                    (ast.ast-array-shared-view
-                      slots
-                      (+ decl-offset (array-ref ent-pos k)))
-                    (+ handle-index-offset (array-ref ent-ridx k))))
-                (set! k (array-ref ent-next k))))
-            cur-registries))])))
+          (while (>= k 0)
+            (set!
+              cur-registries
+              (compiler-registries-add-decl-alias-in-module
+                cur-registries
+                alias-id
+                (ast.ast-array-shared-view
+                  slots
+                  (+ decl-offset (array-ref ent-pos k)))
+                (+ handle-index-offset (array-ref ent-ridx k))))
+            (set! k (array-ref ent-next k)))
+          cur-registries)])))
 
 (define (build-compiler-registry-aliases-list-with-index-offset
   [all-decls : ast.AstDeclList]
@@ -3748,41 +3657,36 @@
         [index : i64 0]
         [decl-count : i64 (ast.ast-decl-list-len (& decls))]
         [decl-offset : i64 decls.offset]
-        (begin
-          (while (< index decl-count)
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
-              [decl-for-module : ast.AstDecl
-                (compiler-symbols-decl-shared-view decl)]
-              [next-registries : CompilerRegistries
-                (match decl
-                  [(Import
-                      decl-meta
-                      (Spec _ _ (Some target-module) (Some alias) _))
-                    (if (= alias cbi.compiler-builtin-id-fix-empty)
-                      (compiler-registries-add-module-aliases-indexed
-                        (compiler-registries-shared-view cur-registries)
-                        all-decls
-                        (ast.ast-place-shared-view decl-index)
-                        target-module
-                        (compiler-symbols-import-alias-key-id
-                          cur-module-id
-                          alias)
-                        handle-index-offset)
-                      (compiler-registries-shared-view cur-registries))]
-                  [_ (compiler-registries-shared-view cur-registries)])]
-              (begin
-                (set! cur-registries next-registries)
-                (match decl-for-module
-                  [(Module next-module) (set! cur-module-id next-module)]
-                  [_ unit])
-                (set! index (+ index 1)))))
-          cur-registries))]
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy index-arena))
-      result)))
+        (while (< index decl-count)
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-array-shared-view decls.slots (+ decl-offset index))]
+            [decl-for-module : ast.AstDecl
+              (compiler-symbols-decl-shared-view decl)]
+            [next-registries : CompilerRegistries
+              (match decl
+                [(Import
+                    decl-meta
+                    (Spec _ _ (Some target-module) (Some alias) _))
+                  (if (= alias cbi.compiler-builtin-id-fix-empty)
+                    (compiler-registries-add-module-aliases-indexed
+                      (compiler-registries-shared-view cur-registries)
+                      all-decls
+                      (ast.ast-place-shared-view decl-index)
+                      target-module
+                      (compiler-symbols-import-alias-key-id cur-module-id alias)
+                      handle-index-offset)
+                    (compiler-registries-shared-view cur-registries))]
+                [_ (compiler-registries-shared-view cur-registries)])]
+            (set! cur-registries next-registries)
+            (match decl-for-module
+              [(Module next-module) (set! cur-module-id next-module)]
+              [_ unit])
+            (set! index (+ index 1))))
+        cur-registries)]
+    (unsafe
+      (arena.tl_arena_destroy index-arena))
+    result))
 
 (define (build-compiler-registry-aliases-list
   [all-decls : ast.AstDeclList]
@@ -3828,14 +3732,13 @@
               enum-index
               (+ variant-index 1))]
           [(Err message)
-            (begin
-              (set! compiler-symbols-last-error-path path)
-              (compiler-symbols-note-last-error-member-span!
-                (parser.compiler-parse-variant-def-list-span-get
-                  (& variants)
-                  variant-index
-                  (ast.ast-decl-span-fallback)))
-              (Err message))])])))
+            (set! compiler-symbols-last-error-path path)
+            (compiler-symbols-note-last-error-member-span!
+              (parser.compiler-parse-variant-def-list-span-get
+                (& variants)
+                variant-index
+                (ast.ast-decl-span-fallback)))
+            (Err message)])])))
 
 (define (build-compiler-field-registry-list
   [fields : ast.AstFieldDefList]
@@ -3885,14 +3788,13 @@
                   struct-index
                   (+ field-index 1))]
               [(Err message)
-                (begin
-                  (set! compiler-symbols-last-error-path path)
-                  (compiler-symbols-note-last-error-member-span!
-                    (parser.compiler-parse-field-def-list-span-get
-                      (& fields)
-                      field-index
-                      (ast.ast-decl-span-fallback)))
-                  (Err message))])))])))
+                (set! compiler-symbols-last-error-path path)
+                (compiler-symbols-note-last-error-member-span!
+                  (parser.compiler-parse-field-def-list-span-get
+                    (& fields)
+                    field-index
+                    (ast.ast-decl-span-fallback)))
+                (Err message)])))])))
 
 (define (build-compiler-registry-list-in-module
   [decls : ast.AstDeclList]
@@ -3909,132 +3811,119 @@
     [decl-offset : i64 decls.offset]
     [result : ResultCompilerRegistries (Err "symbols: internal registry walk")]
     [done : bool false]
-    (begin
-      (while (not done)
-        (if (>= position decl-count)
-          (return (Ok cur-registries))
-          (let
-            [decl : ast.AstDecl
-              (ast.ast-array-shared-view decls.slots (+ decl-offset position))]
-            [decl-path : String
-              (ast.ast-decl-path-list-get (& paths) position "")]
-            (match decl
-              [(Import decl-meta _) (set! position (+ position 1))]
-              [(IncludeStr _ _) (set! position (+ position 1))]
-              [(IncludeStrComptime _ _) (set! position (+ position 1))]
-              [(IncludeStrLzss _ _) (set! position (+ position 1))]
-              [(IncludeBin _ _) (set! position (+ position 1))]
-              [(Module next-module)
-                (begin
-                  (set! position (+ position 1))
-                  (set! cur-module-id next-module))]
-              [(ModuleBody name body-box)
-                (let
-                  [body : ast.AstDeclList (deref body-box)]
-                  [body-count : i64 (compiler-decl-list-index-count body)]
-                  [body-paths : ast.AstDeclPathList
-                    (compiler-symbol-path-list-repeat
-                      body
-                      decl-path
-                      (ast.ast-decl-path-list-owner-id
-                        (& paths)
-                        position
-                        cbi.compiler-builtin-id-fix-empty))]
-                  (match (build-compiler-registry-list-in-module
+    (while (not done)
+      (if (>= position decl-count)
+        (return (Ok cur-registries))
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decl-offset position))]
+          [decl-path : String
+            (ast.ast-decl-path-list-get (& paths) position "")]
+          (match decl
+            [(Import decl-meta _) (set! position (+ position 1))]
+            [(IncludeStr _ _) (set! position (+ position 1))]
+            [(IncludeStrComptime _ _) (set! position (+ position 1))]
+            [(IncludeStrLzss _ _) (set! position (+ position 1))]
+            [(IncludeBin _ _) (set! position (+ position 1))]
+            [(Module next-module)
+              (set! position (+ position 1))
+              (set! cur-module-id next-module)]
+            [(ModuleBody name body-box)
+              (let
+                [body : ast.AstDeclList (deref body-box)]
+                [body-count : i64 (compiler-decl-list-index-count body)]
+                [body-paths : ast.AstDeclPathList
+                  (compiler-symbol-path-list-repeat
                     body
-                    body-paths
-                    (compiler-registries-shared-view cur-registries)
-                    cur-index
-                    name)
-                    [(Ok next-registries)
-                      (begin
-                        (set! position (+ position 1))
-                        (set! cur-registries next-registries)
-                        (set! cur-index (+ cur-index body-count)))]
-                    [(Err message)
-                      (begin
-                        (set! result (Err message))
-                        (set! done true))]))]
-              [(Test _ _ _ _) (set! position (+ position 1))]
-              [(DefEnum decl-meta name _ variants)
-                (match (build-compiler-variant-registry-list-in-module
-                  variants
+                    decl-path
+                    (ast.ast-decl-path-list-owner-id
+                      (& paths)
+                      position
+                      cbi.compiler-builtin-id-fix-empty))]
+                (match (build-compiler-registry-list-in-module
+                  body
+                  body-paths
                   (compiler-registries-shared-view cur-registries)
-                  cur-module-id
-                  decl-path
-                  name
                   cur-index
-                  0)
+                  name)
                   [(Ok next-registries)
-                    (begin
-                      (set! position (+ position 1))
-                      (set! cur-registries next-registries)
-                      (set! cur-index (+ cur-index 1)))]
+                    (set! position (+ position 1))
+                    (set! cur-registries next-registries)
+                    (set! cur-index (+ cur-index body-count))]
                   [(Err message)
-                    (begin
-                      (set! result (Err message))
-                      (set! done true))])]
-              [(DefEnumLifetimes decl-meta name _ _ variants)
-                (match (build-compiler-variant-registry-list-in-module
-                  variants
-                  (compiler-registries-shared-view cur-registries)
-                  cur-module-id
-                  decl-path
-                  name
-                  cur-index
-                  0)
-                  [(Ok next-registries)
-                    (begin
-                      (set! position (+ position 1))
-                      (set! cur-registries next-registries)
-                      (set! cur-index (+ cur-index 1)))]
-                  [(Err message)
-                    (begin
-                      (set! result (Err message))
-                      (set! done true))])]
-              [(DefStruct decl-meta name _ _ fields)
-                (match (build-compiler-field-registry-list
-                  fields
-                  (compiler-registries-shared-view cur-registries)
-                  (sym_i64_env.sym-i64-empty)
-                  cur-module-id
-                  decl-path
-                  name
-                  cur-index
-                  0)
-                  [(Ok next-registries)
-                    (begin
-                      (set! position (+ position 1))
-                      (set! cur-registries next-registries)
-                      (set! cur-index (+ cur-index 1)))]
-                  [(Err message)
-                    (begin
-                      (set! result (Err message))
-                      (set! done true))])]
-              [(DefStructLifetimes decl-meta name _ _ _ fields)
-                (match (build-compiler-field-registry-list
-                  fields
-                  (compiler-registries-shared-view cur-registries)
-                  (sym_i64_env.sym-i64-empty)
-                  cur-module-id
-                  decl-path
-                  name
-                  cur-index
-                  0)
-                  [(Ok next-registries)
-                    (begin
-                      (set! position (+ position 1))
-                      (set! cur-registries next-registries)
-                      (set! cur-index (+ cur-index 1)))]
-                  [(Err message)
-                    (begin
-                      (set! result (Err message))
-                      (set! done true))])]
-              [_
-                (begin
+                    (set! result (Err message))
+                    (set! done true)]))]
+            [(Test _ _ _ _) (set! position (+ position 1))]
+            [(DefEnum decl-meta name _ variants)
+              (match (build-compiler-variant-registry-list-in-module
+                variants
+                (compiler-registries-shared-view cur-registries)
+                cur-module-id
+                decl-path
+                name
+                cur-index
+                0)
+                [(Ok next-registries)
                   (set! position (+ position 1))
-                  (set! cur-index (+ cur-index 1)))]))))
-      result)))
+                  (set! cur-registries next-registries)
+                  (set! cur-index (+ cur-index 1))]
+                [(Err message)
+                  (set! result (Err message))
+                  (set! done true)])]
+            [(DefEnumLifetimes decl-meta name _ _ variants)
+              (match (build-compiler-variant-registry-list-in-module
+                variants
+                (compiler-registries-shared-view cur-registries)
+                cur-module-id
+                decl-path
+                name
+                cur-index
+                0)
+                [(Ok next-registries)
+                  (set! position (+ position 1))
+                  (set! cur-registries next-registries)
+                  (set! cur-index (+ cur-index 1))]
+                [(Err message)
+                  (set! result (Err message))
+                  (set! done true)])]
+            [(DefStruct decl-meta name _ _ fields)
+              (match (build-compiler-field-registry-list
+                fields
+                (compiler-registries-shared-view cur-registries)
+                (sym_i64_env.sym-i64-empty)
+                cur-module-id
+                decl-path
+                name
+                cur-index
+                0)
+                [(Ok next-registries)
+                  (set! position (+ position 1))
+                  (set! cur-registries next-registries)
+                  (set! cur-index (+ cur-index 1))]
+                [(Err message)
+                  (set! result (Err message))
+                  (set! done true)])]
+            [(DefStructLifetimes decl-meta name _ _ _ fields)
+              (match (build-compiler-field-registry-list
+                fields
+                (compiler-registries-shared-view cur-registries)
+                (sym_i64_env.sym-i64-empty)
+                cur-module-id
+                decl-path
+                name
+                cur-index
+                0)
+                [(Ok next-registries)
+                  (set! position (+ position 1))
+                  (set! cur-registries next-registries)
+                  (set! cur-index (+ cur-index 1))]
+                [(Err message)
+                  (set! result (Err message))
+                  (set! done true)])]
+            [_
+              (set! position (+ position 1))
+              (set! cur-index (+ cur-index 1))]))))
+    result))
 
 (define (build-compiler-registries-for-decls-with-paths
   [decls : ast.AstDeclList]
@@ -4098,16 +3987,15 @@
   [program : ast.AstProgram]
   [_symbols : CompilerSymbols]
   [paths : ast.AstDeclPathList]) : ResultCompilerRegistriesDiagnostic
-  (begin
-    (compiler-symbols-clear-last-error!)
-    (match program
-      [(Program decls-box)
-        (let
-          [decls : ast.AstDeclList (deref decls-box)]
-          (match (build-compiler-registries-for-decls-with-paths decls paths)
-            [(Ok registries) (Ok registries)]
-            [(Err message)
-              (Err (box (compiler-symbols-last-error-diagnostic message)))]))])))
+  (compiler-symbols-clear-last-error!)
+  (match program
+    [(Program decls-box)
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        (match (build-compiler-registries-for-decls-with-paths decls paths)
+          [(Ok registries) (Ok registries)]
+          [(Err message)
+            (Err (box (compiler-symbols-last-error-diagnostic message)))]))]))
 
 (define (build-compiler-registries [program : (& program ast.AstProgram)]) : ResultCompilerRegistries
   (match (build-compiler-symbols program)

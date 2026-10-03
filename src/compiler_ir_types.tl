@@ -246,41 +246,37 @@
   (let
     [retired : i64 compiler-ir-label-generation-arena-handle]
     [generation : i64 (arena.tl_arena_make)]
-    (begin
-      (in-arena
-        (arena.Arena generation)
-        (let
-          [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
-          [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
-          [position : i64 0]
-          [id : i64 0]
-          (begin
-            (while (< position (array-length index))
-              (begin
-                (set! (array-ref index position) -1)
-                (set! position (+ position 1))))
-            (while (< id compiler-ir-label-count)
-              (let
-                [text : String
-                  (compiler-ir-array-shared-view compiler-ir-label-slots id)]
-                (begin
-                  (set! (array-ref slots id) text)
-                  ;; Spellings are distinct, so each id takes the first empty
-                  ;; position of its probe sequence.
-                  (set! position (compiler-ir-label-home (& text) (& index)))
-                  (while (>= (array-ref index position) 0)
-                    (set!
-                      position
-                      (bit-and (+ position 1) (- (array-length index) 1))))
-                  (set! (array-ref index position) id)
-                  (set! id (+ id 1)))))
-            (set! compiler-ir-label-slots slots)
-            (set! compiler-ir-label-index index))))
-      (set! compiler-ir-label-generation-arena-handle generation)
-      (if (= retired 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+    (in-arena
+      (arena.Arena generation)
+      (let
+        [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+        [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
+        [position : i64 0]
+        [id : i64 0]
+        (while (< position (array-length index))
+          (set! (array-ref index position) -1)
+          (set! position (+ position 1)))
+        (while (< id compiler-ir-label-count)
+          (let
+            [text : String
+              (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+            (set! (array-ref slots id) text)
+            ;; Spellings are distinct, so each id takes the first empty
+            ;; position of its probe sequence.
+            (set! position (compiler-ir-label-home (& text) (& index)))
+            (while (>= (array-ref index position) 0)
+              (set!
+                position
+                (bit-and (+ position 1) (- (array-length index) 1))))
+            (set! (array-ref index position) id)
+            (set! id (+ id 1))))
+        (set! compiler-ir-label-slots slots)
+        (set! compiler-ir-label-index index)))
+    (set! compiler-ir-label-generation-arena-handle generation)
+    (if (= retired 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy retired)))))
 
 ;; `name`'s first probe position in `index`, whose length is a power of two.
 (define (compiler-ir-label-home
@@ -297,19 +293,18 @@
     [mask : i64 (- (array-length compiler-ir-label-index) 1)]
     [position : i64 (compiler-ir-label-home name (& compiler-ir-label-index))]
     [found : bool false]
-    (begin
-      (while (not found)
-        (let
-          [id : i64 (array-ref compiler-ir-label-index position)]
-          (if (< id 0)
-            (set! found true)
-            (let
-              [text : String
-                (compiler-ir-array-shared-view compiler-ir-label-slots id)]
-              (if (string.eq (& text) name)
-                (set! found true)
-                (set! position (bit-and (+ position 1) mask)))))))
-      position)))
+    (while (not found)
+      (let
+        [id : i64 (array-ref compiler-ir-label-index position)]
+        (if (< id 0)
+          (set! found true)
+          (let
+            [text : String
+              (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+            (if (string.eq (& text) name)
+              (set! found true)
+              (set! position (bit-and (+ position 1) mask)))))))
+    position))
 
 ;; The spellings outlive every lowering/optimizer scratch arena and every intern
 ;; floor reset -- an id handed to the backend must still render -- so they are
@@ -322,24 +317,21 @@
   compiler-ir-label-arena-handle)
 
 (define (compiler-ir-label-arena) : i64
-  (begin
-    (if (= compiler-ir-label-arena-handle 0)
-      (set! compiler-ir-label-arena-handle (arena.tl_arena_make))
-      unit)
-    compiler-ir-label-arena-handle))
+  (if (= compiler-ir-label-arena-handle 0)
+    (set! compiler-ir-label-arena-handle (arena.tl_arena_make))
+    unit)
+  compiler-ir-label-arena-handle)
 
 (define (compiler-ir-label-seed!) : unit
-  (if compiler-ir-label-seeded
-    unit
-    (begin
-      (set! compiler-ir-label-count 0)
-      (compiler-ir-label-generation-install! 1024)
-      (set! compiler-ir-label-seeded true))))
+  (unless
+    compiler-ir-label-seeded
+    (set! compiler-ir-label-count 0)
+    (compiler-ir-label-generation-install! 1024)
+    (set! compiler-ir-label-seeded true)))
 
 (define (compiler-ir-label [name : String]) : i64
-  (begin
-    (compiler-ir-label-seed!)
-    (compiler-ir-label-lookup name)))
+  (compiler-ir-label-seed!)
+  (compiler-ir-label-lookup name))
 
 (define (compiler-ir-label-lookup [name : String]) : i64
   (let
@@ -349,21 +341,19 @@
       existing
       (let
         [id : i64 compiler-ir-label-count]
-        (begin
-          (if (< id (array-length compiler-ir-label-slots))
-            unit
-            (begin
-              (compiler-ir-label-generation-install!
-                (* 2 (array-length compiler-ir-label-slots)))
-              (set! position (compiler-ir-label-position (& name)))))
-          (set!
-            (array-ref compiler-ir-label-slots id)
-            (in-arena
-              (arena.Arena (compiler-ir-label-arena))
-              (string.copy (& name))))
-          (set! (array-ref compiler-ir-label-index position) id)
-          (set! compiler-ir-label-count (+ id 1))
-          id)))))
+        (unless
+          (< id (array-length compiler-ir-label-slots))
+          (compiler-ir-label-generation-install!
+            (* 2 (array-length compiler-ir-label-slots)))
+          (set! position (compiler-ir-label-position (& name))))
+        (set!
+          (array-ref compiler-ir-label-slots id)
+          (in-arena
+            (arena.Arena (compiler-ir-label-arena))
+            (string.copy (& name))))
+        (set! (array-ref compiler-ir-label-index position) id)
+        (set! compiler-ir-label-count (+ id 1))
+        id))))
 
 ;: The id `name` already has, or -1 when it was never interned. Unlike
 ;: `compiler-ir-label` this never creates an id: a query that asks about a
@@ -459,14 +449,10 @@
     [old-len : i64 (array-length compiler-ir-symbol-slots)]
     [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
     [index : i64 0]
-    (begin
-      (while (< index old-len)
-        (begin
-          (set!
-            (array-ref next index)
-            (array-ref compiler-ir-symbol-slots index))
-          (set! index (+ index 1))))
-      (set! compiler-ir-symbol-slots next))))
+    (while (< index old-len)
+      (set! (array-ref next index) (array-ref compiler-ir-symbol-slots index))
+      (set! index (+ index 1)))
+    (set! compiler-ir-symbol-slots next)))
 
 ;; Same arena rationale as the label table above: a symbol id handed to the
 ;; backend must still render after every lowering/optimizer scratch arena is
@@ -480,31 +466,28 @@
   compiler-ir-symbol-arena-handle)
 
 (define (compiler-ir-symbol-arena) : i64
-  (begin
-    (if (= compiler-ir-symbol-arena-handle 0)
-      (set! compiler-ir-symbol-arena-handle (arena.tl_arena_make))
-      unit)
-    compiler-ir-symbol-arena-handle))
+  (if (= compiler-ir-symbol-arena-handle 0)
+    (set! compiler-ir-symbol-arena-handle (arena.tl_arena_make))
+    unit)
+  compiler-ir-symbol-arena-handle)
 
 (define (compiler-ir-symbol-seed!) : unit
   (if compiler-ir-symbol-seeded
     unit
     (let
       [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (compiler-ir-symbol-arena)))
-        (set! compiler-ir-symbol-slots (__tl_make-array String 1024))
-        (set! compiler-ir-symbol-ids (ir_label_map.with-capacity 2048))
-        (set! compiler-ir-symbol-count 0)
-        (set! compiler-ir-symbol-seeded true)
-        (unsafe
-          (arena.tl_arena_set previous-arena))))))
+      (unsafe
+        (arena.tl_arena_set (compiler-ir-symbol-arena)))
+      (set! compiler-ir-symbol-slots (__tl_make-array String 1024))
+      (set! compiler-ir-symbol-ids (ir_label_map.with-capacity 2048))
+      (set! compiler-ir-symbol-count 0)
+      (set! compiler-ir-symbol-seeded true)
+      (unsafe
+        (arena.tl_arena_set previous-arena)))))
 
 (define (compiler-ir-symbol [name : String]) : i64
-  (begin
-    (compiler-ir-symbol-seed!)
-    (compiler-ir-symbol-lookup name)))
+  (compiler-ir-symbol-seed!)
+  (compiler-ir-symbol-lookup name))
 
 ;; Resolution order, and the reason for it: this table's own answer first, so a
 ;; spelling it has already answered for never changes id; then the intern pool's
@@ -533,24 +516,22 @@
     [index : i64 compiler-ir-symbol-count]
     [id : i64 (compiler-ir-symbol-domain-id-for-index index)]
     [previous-arena : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set (compiler-ir-symbol-arena)))
-      (if (< index (array-length compiler-ir-symbol-slots))
-        unit
-        (compiler-ir-symbol-grow!))
-      (let
-        [owned : String (string.copy (& name))]
-        (begin
-          (set! (array-ref compiler-ir-symbol-slots index) owned)
-          (ir_label_map.insert-ref!
-            (&mut compiler-ir-symbol-ids)
-            (string.copy (& (array-ref compiler-ir-symbol-slots index)))
-            id)))
-      (set! compiler-ir-symbol-count (+ index 1))
-      (unsafe
-        (arena.tl_arena_set previous-arena))
-      id)))
+    (unsafe
+      (arena.tl_arena_set (compiler-ir-symbol-arena)))
+    (if (< index (array-length compiler-ir-symbol-slots))
+      unit
+      (compiler-ir-symbol-grow!))
+    (let
+      [owned : String (string.copy (& name))]
+      (set! (array-ref compiler-ir-symbol-slots index) owned)
+      (ir_label_map.insert-ref!
+        (&mut compiler-ir-symbol-ids)
+        (string.copy (& (array-ref compiler-ir-symbol-slots index)))
+        id))
+    (set! compiler-ir-symbol-count (+ index 1))
+    (unsafe
+      (arena.tl_arena_set previous-arena))
+    id))
 
 ;: Number of distinct derived symbols interned so far. Dense indices cover
 ;: [0, count), so a side table indexed by derived symbol needs this many slots.
@@ -697,17 +678,15 @@
     [source value-seq.slots]
     [out (compiler-ir-value-storage count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref out index)
-            (,mapper
-              ,@contexts
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data source) index)))))
-          (set! index (+ index 1))))
-      (compiler-ir-value-seq-of out count))))
+    (while (< index count)
+      (set!
+        (array-ref out index)
+        (,mapper
+          ,@contexts
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))))
+      (set! index (+ index 1)))
+    (compiler-ir-value-seq-of out count)))
 
 (defmacro (compiler-ir-value-seq-visit
   [values : Expr]
@@ -719,12 +698,11 @@
     [source value-seq.slots]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (,visitor
-          ,@contexts
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data source) index))))
-        (set! index (+ index 1))))))
+      (,visitor
+        ,@contexts
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data source) index))))
+      (set! index (+ index 1)))))
 
 (defmacro (compiler-ir-call-args-map
   [args : Expr]
@@ -746,33 +724,29 @@
           [count : i64 (array-length values)]
           [out (compiler-ir-value-storage count)]
           [index : i64 0]
-          (begin
-            (while (< index count)
-              (begin
-                (set!
-                  (array-ref out index)
-                  (,mapper
-                    ,@contexts
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data values) index)))))
-                (set! index (+ index 1))))
-            (compiler_ir_types.CompilerIrCallArgs.Array out)))]
+          (while (< index count)
+            (set!
+              (array-ref out index)
+              (,mapper
+                ,@contexts
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data values) index)))))
+            (set! index (+ index 1)))
+          (compiler_ir_types.CompilerIrCallArgs.Array out))]
       [(compiler_ir_types.CompilerIrCallArgs.Sret values sret-index)
         (let
           [count : i64 (array-length values)]
           [out (compiler-ir-value-storage count)]
           [index : i64 0]
-          (begin
-            (while (< index count)
-              (begin
-                (set!
-                  (array-ref out index)
-                  (,mapper
-                    ,@contexts
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data values) index)))))
-                (set! index (+ index 1))))
-            (compiler_ir_types.CompilerIrCallArgs.Sret out sret-index)))])))
+          (while (< index count)
+            (set!
+              (array-ref out index)
+              (,mapper
+                ,@contexts
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data values) index)))))
+            (set! index (+ index 1)))
+          (compiler_ir_types.CompilerIrCallArgs.Sret out sret-index))])))
 
 (defmacro (compiler-ir-call-args-visit
   [args : Expr]
@@ -785,31 +759,28 @@
       [(compiler_ir_types.CompilerIrCallArgs.One value)
         (,visitor ,@contexts value)]
       [(compiler_ir_types.CompilerIrCallArgs.Two a b)
-        (begin
-          (,visitor ,@contexts a)
-          (,visitor ,@contexts b))]
+        (,visitor ,@contexts a)
+        (,visitor ,@contexts b)]
       [(compiler_ir_types.CompilerIrCallArgs.Array values)
         (let
           [count : i64 (array-length values)]
           [index : i64 0]
           (while (< index count)
-            (begin
-              (,visitor
-                ,@contexts
-                (unsafe
-                  (ptr-read (ptr-offset (__tl_array-data values) index))))
-              (set! index (+ index 1)))))]
+            (,visitor
+              ,@contexts
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data values) index))))
+            (set! index (+ index 1))))]
       [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
         (let
           [count : i64 (array-length values)]
           [index : i64 0]
           (while (< index count)
-            (begin
-              (,visitor
-                ,@contexts
-                (unsafe
-                  (ptr-read (ptr-offset (__tl_array-data values) index))))
-              (set! index (+ index 1)))))])))
+            (,visitor
+              ,@contexts
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data values) index))))
+            (set! index (+ index 1))))])))
 
 ;; SPMD mapping changes only each value. The IR-owned mechanics preserve the
 ;; value class and type metadata, visit exactly logical [0, len), and allocate
@@ -825,20 +796,18 @@
     [source spmd-args.slots]
     [out (compiler-ir-spmd-call-arg-storage count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (unsafe
-            (ptr-read (ptr-offset (__tl_array-data source) index)))
-            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
-              (set!
-                (array-ref out index)
-                (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-                  class
-                  (,mapper ,@contexts class value)
-                  ty))])
-          (set! index (+ index 1))))
-      (compiler-ir-spmd-call-arg-seq-of out count))))
+    (while (< index count)
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data source) index)))
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
+          (set!
+            (array-ref out index)
+            (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+              class
+              (,mapper ,@contexts class value)
+              ty))])
+      (set! index (+ index 1)))
+    (compiler-ir-spmd-call-arg-seq-of out count)))
 
 (defmacro (compiler-ir-spmd-call-args-visit
   [args : Expr]
@@ -850,12 +819,11 @@
     [source spmd-args.slots]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (match (unsafe
-          (ptr-read (ptr-offset (__tl_array-data source) index)))
-          [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
-            (,visitor ,@contexts class value)])
-        (set! index (+ index 1))))))
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data source) index)))
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
+          (,visitor ,@contexts class value)])
+      (set! index (+ index 1)))))
 
 (defenum CompilerIrSpmdCallResult
   (Unit)
@@ -1327,10 +1295,9 @@
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
       (__tl_make-array CompilerIrSpmdCallArg 2)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (CompilerIrSpmdCallArgSeq slots 2))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (CompilerIrSpmdCallArgSeq slots 2)))
 
 ;; The growable `{slots, len}` builders behind the IR sequences share one
 ;; implementation. `(compiler-ir-dense-builder T Builder Seq prefix to-seq
@@ -1407,9 +1374,8 @@
     [exact-copy : Expr
       `(let
         [slots : (__tl_dyn-array ,T) (__tl_make-array ,T builder.len)]
-        (begin
-          (,copy-range-name (&mut slots) (& builder.slots) builder.len)
-          ,seq-of-slots))]
+        (,copy-range-name (&mut slots) (& builder.slots) builder.len)
+        ,seq-of-slots)]
     [to-seq-decls : ExprList
       (match to-seq-shape
         ["share"
@@ -1448,9 +1414,8 @@
         (let
           [index : i64 0]
           (while (< index count)
-            (begin
-              (set! (array-ref dst index) (array-ref src index))
-              (set! index (+ index 1))))))
+            (set! (array-ref dst index) (array-ref src index))
+            (set! index (+ index 1)))))
       (define (,grow-name [builder : (&mut builder ,builder-type)]) : unit
         (let
           [old-cap : i64 (array-length builder.slots)]
@@ -1459,19 +1424,16 @@
               1
               (* old-cap 2))]
           [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
-          (begin
-            (,copy-range-name (&mut bigger) (& builder.slots) builder.len)
-            (set! builder.slots bigger))))
+          (,copy-range-name (&mut bigger) (& builder.slots) builder.len)
+          (set! builder.slots bigger)))
       (define (,push-name [builder : (&mut builder ,builder-type)] [item : ,T]) : unit
-        (begin
-          (if (< builder.len (array-length builder.slots))
-            unit
-            (,grow-name builder))
-          (let
-            [index : i64 builder.len]
-            (begin
-              (set! (array-ref builder.slots index) item)
-              (set! builder.len (+ index 1))))))
+        (if (< builder.len (array-length builder.slots))
+          unit
+          (,grow-name builder))
+        (let
+          [index : i64 builder.len]
+          (set! (array-ref builder.slots index) item)
+          (set! builder.len (+ index 1))))
       ,@to-seq-decls
       ,@snapshot-decls)))
 
@@ -1489,13 +1451,12 @@
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
       (__tl_make-array CompilerIrSpmdCallArg (+ args.len 1))]
-    (begin
-      (compiler-ir-spmd-call-arg-builder-copy-range!
-        (&mut slots)
-        (& args.slots)
-        args.len)
-      (set! (array-ref slots args.len) extra)
-      (CompilerIrSpmdCallArgSeq slots (+ args.len 1)))))
+    (compiler-ir-spmd-call-arg-builder-copy-range!
+      (&mut slots)
+      (& args.slots)
+      args.len)
+    (set! (array-ref slots args.len) extra)
+    (CompilerIrSpmdCallArgSeq slots (+ args.len 1))))
 
 (define (ir-instr-spmd-call-with-origin
   [callee : i64]
@@ -1786,18 +1747,16 @@
     [value-seq ,values]
     [source value-seq.slots]
     [index : i64 0]
-    (begin
-      (while (< index value-seq.len)
-        (begin
-          (set!
-            fold-acc
-            (,folder
-              ,@contexts
-              fold-acc
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data source) index)))))
-          (set! index (+ index 1))))
-      fold-acc)))
+    (while (< index value-seq.len)
+      (set!
+        fold-acc
+        (,folder
+          ,@contexts
+          fold-acc
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))))
+      (set! index (+ index 1)))
+    fold-acc))
 
 (defmacro (compiler-ir-call-args-fold
   [args : Expr]
@@ -1806,24 +1765,22 @@
   [contexts : Expr ...]) : Expr
   `(let
     [fold-acc ,acc]
-    (begin
-      (match ,args
-        [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
-        [(compiler_ir_types.CompilerIrCallArgs.One value)
-          (set! fold-acc (,folder ,@contexts fold-acc value))]
-        [(compiler_ir_types.CompilerIrCallArgs.Two a b)
-          (begin
-            (set! fold-acc (,folder ,@contexts fold-acc a))
-            (set! fold-acc (,folder ,@contexts fold-acc b)))]
-        [(compiler_ir_types.CompilerIrCallArgs.Array values)
-          (set!
-            fold-acc
-            (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))]
-        [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
-          (set!
-            fold-acc
-            (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))])
-      fold-acc)))
+    (match ,args
+      [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
+      [(compiler_ir_types.CompilerIrCallArgs.One value)
+        (set! fold-acc (,folder ,@contexts fold-acc value))]
+      [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+        (set! fold-acc (,folder ,@contexts fold-acc a))
+        (set! fold-acc (,folder ,@contexts fold-acc b))]
+      [(compiler_ir_types.CompilerIrCallArgs.Array values)
+        (set!
+          fold-acc
+          (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))]
+      [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+        (set!
+          fold-acc
+          (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))])
+    fold-acc))
 
 (defmacro (compiler-ir-value-array-fold
   [values : Expr]
@@ -1835,18 +1792,16 @@
     [source ,values]
     [count : i64 (array-length source)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            fold-acc
-            (,folder
-              ,@contexts
-              fold-acc
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data source) index)))))
-          (set! index (+ index 1))))
-      fold-acc)))
+    (while (< index count)
+      (set!
+        fold-acc
+        (,folder
+          ,@contexts
+          fold-acc
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))))
+      (set! index (+ index 1)))
+    fold-acc))
 
 ;; Shared loop of the phi-input visit and fold. `acc` is `_` to visit, or the
 ;; accumulator variable to fold. With `role` `_` the callback receives the
@@ -1893,9 +1848,8 @@
                 (ptr-offset
                   (__tl_array-data phi-slots)
                   (+ phi-inputs.start phi-index))))]
-          (begin
-            ,step
-            (set! phi-index (+ phi-index 1))))))))
+          ,step
+          (set! phi-index (+ phi-index 1)))))))
 
 ;; phi-inputs-map with an optional operand role passed to the value mapper
 ;; before the value (`_` passes none).
@@ -1946,21 +1900,19 @@
         [phi-slots phi-inputs.slots]
         [phi-out (compiler-ir-phi-input-storage phi-inputs.len)]
         [phi-index : i64 0]
-        (begin
-          (while (< phi-index phi-inputs.len)
-            (let
-              [input
-                (unsafe
-                  (ptr-read
-                    (ptr-offset
-                      (__tl_array-data phi-slots)
-                      (+ phi-inputs.start phi-index))))]
-              (begin
-                (set!
-                  (array-ref phi-out phi-index)
-                  (compiler-ir-phi-input-of ,value-out ,label-out))
-                (set! phi-index (+ phi-index 1)))))
-          (compiler-ir-phi-input-seq-of phi-out 0 phi-inputs.len))))))
+        (while (< phi-index phi-inputs.len)
+          (let
+            [input
+              (unsafe
+                (ptr-read
+                  (ptr-offset
+                    (__tl_array-data phi-slots)
+                    (+ phi-inputs.start phi-index))))]
+            (set!
+              (array-ref phi-out phi-index)
+              (compiler-ir-phi-input-of ,value-out ,label-out))
+            (set! phi-index (+ phi-index 1))))
+        (compiler-ir-phi-input-seq-of phi-out 0 phi-inputs.len)))))
 
 ;; Switch case target labels in case order: (visitor ctx... label).
 (defmacro (compiler-ir-switch-cases-visit
@@ -1972,12 +1924,11 @@
     [case-slots switch-cases.slots]
     [case-index : i64 0]
     (while (< case-index switch-cases.len)
-      (begin
-        (match (unsafe
-          (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
-          [(compiler_ir_types.CompilerIrSwitchCase.Case _ case-label)
-            (,visitor ,@contexts case-label)])
-        (set! case-index (+ case-index 1))))))
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
+        [(compiler_ir_types.CompilerIrSwitchCase.Case _ case-label)
+          (,visitor ,@contexts case-label)])
+      (set! case-index (+ case-index 1)))))
 
 ;; Per-operand steps of the instruction macros below. `shape` is a bare name:
 ;; `value`, `maybe` (a CompilerIrMaybeValue), `values` (a CompilerIrValueSeq),
@@ -2045,15 +1996,14 @@
           [spmd-slots spmd-args.slots]
           [spmd-index : i64 0]
           (while (< spmd-index spmd-args.len)
-            (begin
-              (match (unsafe
-                (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
-                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
-                    use-class
-                    use-value
-                    _)
-                  ,spmd-step])
-              (set! spmd-index (+ spmd-index 1)))))]
+            (match (unsafe
+              (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
+              [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                  use-class
+                  use-value
+                  _)
+                ,spmd-step])
+            (set! spmd-index (+ spmd-index 1))))]
       ["phi-inputs"
         `(compiler-ir-phi-inputs-walk
           ,operand
@@ -2173,23 +2123,21 @@
         [spmd-slots spmd-args.slots]
         [spmd-out (compiler-ir-spmd-call-arg-storage spmd-args.len)]
         [spmd-index : i64 0]
-        (begin
-          (while (< spmd-index spmd-args.len)
-            (begin
-              (match (unsafe
-                (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
-                [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
-                    arg-class
-                    arg-value
-                    arg-ty)
-                  (set!
-                    (array-ref spmd-out spmd-index)
-                    (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-                      arg-class
-                      ,value-out
-                      ,type-out))])
-              (set! spmd-index (+ spmd-index 1))))
-          (compiler-ir-spmd-call-arg-seq-of spmd-out spmd-args.len))))))
+        (while (< spmd-index spmd-args.len)
+          (match (unsafe
+            (ptr-read (ptr-offset (__tl_array-data spmd-slots) spmd-index)))
+            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                arg-class
+                arg-value
+                arg-ty)
+              (set!
+                (array-ref spmd-out spmd-index)
+                (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                  arg-class
+                  ,value-out
+                  ,type-out))])
+          (set! spmd-index (+ spmd-index 1)))
+        (compiler-ir-spmd-call-arg-seq-of spmd-out spmd-args.len)))))
 
 (defmacro (compiler-ir-map-spmd-result
   [result : Expr]
@@ -2228,19 +2176,17 @@
     [case-slots switch-cases.slots]
     [case-out (compiler-ir-switch-case-storage switch-cases.len)]
     [case-index : i64 0]
-    (begin
-      (while (< case-index switch-cases.len)
-        (begin
-          (match (unsafe
-            (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
-            [(compiler_ir_types.CompilerIrSwitchCase.Case tag case-label)
-              (set!
-                (array-ref case-out case-index)
-                (compiler_ir_types.CompilerIrSwitchCase.Case
-                  tag
-                  (,label-mapper ,@contexts case-label)))])
-          (set! case-index (+ case-index 1))))
-      (compiler-ir-switch-case-seq-of case-out switch-cases.len))))
+    (while (< case-index switch-cases.len)
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data case-slots) case-index)))
+        [(compiler_ir_types.CompilerIrSwitchCase.Case tag case-label)
+          (set!
+            (array-ref case-out case-index)
+            (compiler_ir_types.CompilerIrSwitchCase.Case
+              tag
+              (,label-mapper ,@contexts case-label)))])
+      (set! case-index (+ case-index 1)))
+    (compiler-ir-switch-case-seq-of case-out switch-cases.len)))
 
 (defmacro (compiler-ir-map-c-abi-slots
   [slots : Expr]
@@ -2262,19 +2208,17 @@
     [slot-items return-slots.slots]
     [slot-out (compiler-ir-c-abi-return-slot-storage return-slots.len)]
     [slot-index : i64 0]
-    (begin
-      (while (< slot-index return-slots.len)
-        (begin
-          (match (unsafe
-            (ptr-read (ptr-offset (__tl_array-data slot-items) slot-index)))
-            [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot slot-ty offset)
-              (set!
-                (array-ref slot-out slot-index)
-                (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
-                  (,type-mapper ,@contexts slot-ty)
-                  offset))])
-          (set! slot-index (+ slot-index 1))))
-      (compiler-ir-c-abi-return-slot-seq-of slot-out return-slots.len))))
+    (while (< slot-index return-slots.len)
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data slot-items) slot-index)))
+        [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot slot-ty offset)
+          (set!
+            (array-ref slot-out slot-index)
+            (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot
+              (,type-mapper ,@contexts slot-ty)
+              offset))])
+      (set! slot-index (+ slot-index 1)))
+    (compiler-ir-c-abi-return-slot-seq-of slot-out return-slots.len)))
 
 ;; Shared body of visit-uses and fold-uses; `acc` is `_` to visit.
 (defmacro (compiler-ir-instr-walk-uses
@@ -2302,35 +2246,29 @@
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
       [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
       [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
-        (begin
-          (compiler-ir-use-step value ,address base ,@tail)
-          (compiler-ir-use-step value ,scalar offset ,@tail))]
+        (compiler-ir-use-step value ,address base ,@tail)
+        (compiler-ir-use-step value ,scalar offset ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Load _ src _)
         (compiler-ir-use-step value ,address src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.StoreOwned ptr value _)
-        (begin
-          (compiler-ir-use-step value ,address ptr ,@tail)
-          (compiler-ir-use-step value ,scalar value ,@tail))]
+        (compiler-ir-use-step value ,address ptr ,@tail)
+        (compiler-ir-use-step value ,scalar value ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.StorePtr ptr value _)
-        (begin
-          (compiler-ir-use-step value ,address ptr ,@tail)
-          (compiler-ir-use-step value ,scalar value ,@tail))]
+        (compiler-ir-use-step value ,address ptr ,@tail)
+        (compiler-ir-use-step value ,scalar value ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.CopyBytes ptr src _)
-        (begin
-          (compiler-ir-use-step value ,address ptr ,@tail)
-          (compiler-ir-use-step value ,address src ,@tail))]
+        (compiler-ir-use-step value ,address ptr ,@tail)
+        (compiler-ir-use-step value ,address src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length _)
-        (begin
-          (compiler-ir-use-step value ,scalar index ,@tail)
-          (compiler-ir-use-step value ,scalar length ,@tail))]
+        (compiler-ir-use-step value ,scalar index ,@tail)
+        (compiler-ir-use-step value ,scalar length ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Cast _ src _ _)
         (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Bitcast _ src _ _)
         (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
-        (begin
-          (compiler-ir-use-step value ,scalar lhs ,@tail)
-          (compiler-ir-use-step value ,scalar rhs ,@tail))]
+        (compiler-ir-use-step value ,scalar lhs ,@tail)
+        (compiler-ir-use-step value ,scalar rhs ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.UnOp _ _ src _)
         (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) unit]
@@ -2339,27 +2277,23 @@
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,vector payload.lhs ,@tail)
-            (compiler-ir-use-step value ,vector payload.rhs ,@tail)))]
+          (compiler-ir-use-step value ,vector payload.lhs ,@tail)
+          (compiler-ir-use-step value ,vector payload.rhs ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,vector payload.src ,@tail)
-            (compiler-ir-use-step value ,scalar payload.carry ,@tail)))]
+          (compiler-ir-use-step value ,vector payload.src ,@tail)
+          (compiler-ir-use-step value ,scalar payload.carry ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ src _ _)
         (compiler-ir-use-step value ,vector src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,vector payload.lhs ,@tail)
-            (compiler-ir-use-step value ,vector payload.rhs ,@tail)))]
+          (compiler-ir-use-step value ,vector payload.lhs ,@tail)
+          (compiler-ir-use-step value ,vector payload.rhs ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-        (begin
-          (compiler-ir-use-step value ,mask lhs ,@tail)
-          (compiler-ir-use-step value ,mask rhs ,@tail))]
+        (compiler-ir-use-step value ,mask lhs ,@tail)
+        (compiler-ir-use-step value ,mask rhs ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.MaskNot _ src _)
         (compiler-ir-use-step value ,mask src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ src _)
@@ -2367,62 +2301,53 @@
       [(compiler_ir_types.CompilerIrInstr.Select payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,mask payload.mask ,@tail)
-            (compiler-ir-use-step value ,vector payload.on-true ,@tail)
-            (compiler-ir-use-step value ,vector payload.on-false ,@tail)))]
+          (compiler-ir-use-step value ,mask payload.mask ,@tail)
+          (compiler-ir-use-step value ,vector payload.on-true ,@tail)
+          (compiler-ir-use-step value ,vector payload.on-false ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.VectorLoad _ base index _ _)
-        (begin
-          (compiler-ir-use-step value ,address base ,@tail)
-          (compiler-ir-use-step value ,scalar index ,@tail))]
+        (compiler-ir-use-step value ,address base ,@tail)
+        (compiler-ir-use-step value ,scalar index ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step value ,scalar payload.index ,@tail)
-            (compiler-ir-use-step value ,vector payload.value ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step value ,scalar payload.index ,@tail)
+          (compiler-ir-use-step value ,vector payload.value ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step value ,scalar payload.index ,@tail)
-            (compiler-ir-use-step value ,vector payload.value ,@tail)
-            (compiler-ir-use-step value ,mask payload.mask ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step value ,scalar payload.index ,@tail)
+          (compiler-ir-use-step value ,vector payload.value ,@tail)
+          (compiler-ir-use-step value ,mask payload.mask ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step value ,scalar payload.index ,@tail)
-            (compiler-ir-use-step value ,mask payload.mask ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step value ,scalar payload.index ,@tail)
+          (compiler-ir-use-step value ,mask payload.mask ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step value ,address payload.index-base ,@tail)
-            (compiler-ir-use-step value ,scalar payload.index ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step value ,address payload.index-base ,@tail)
+          (compiler-ir-use-step value ,scalar payload.index ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,vector payload.source ,@tail)
-            (compiler-ir-use-step value ,vector payload.selector-low ,@tail)
-            (compiler-ir-use-step maybe ,vector payload.selector-high ,@tail)
-            (compiler-ir-use-step value ,scalar payload.active-lanes ,@tail)))]
+          (compiler-ir-use-step value ,vector payload.source ,@tail)
+          (compiler-ir-use-step value ,vector payload.selector-low ,@tail)
+          (compiler-ir-use-step maybe ,vector payload.selector-high ,@tail)
+          (compiler-ir-use-step value ,scalar payload.active-lanes ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.TailMask _ index len _)
-        (begin
-          (compiler-ir-use-step value ,scalar index ,@tail)
-          (compiler-ir-use-step value ,scalar len ,@tail))]
+        (compiler-ir-use-step value ,scalar index ,@tail)
+        (compiler-ir-use-step value ,scalar len ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.EntryArgc _) unit]
       [(compiler_ir_types.CompilerIrInstr.EntryArgv _) unit]
       [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) unit]
       [(compiler_ir_types.CompilerIrInstr.CpuId _ leaf subleaf _)
-        (begin
-          (compiler-ir-use-step value ,scalar leaf ,@tail)
-          (compiler-ir-use-step value ,scalar subleaf ,@tail))]
+        (compiler-ir-use-step value ,scalar leaf ,@tail)
+        (compiler-ir-use-step value ,scalar subleaf ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Xgetbv _ index)
         (compiler-ir-use-step value ,scalar index ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Syscall _ args)
@@ -2430,33 +2355,28 @@
       [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
         (compiler-ir-use-step args ,call-arg args ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.CallIndirect _ callee args _)
-        (begin
-          (compiler-ir-use-step value ,address callee ,@tail)
-          (compiler-ir-use-step args ,call-arg args ,@tail))]
+        (compiler-ir-use-step value ,address callee ,@tail)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
-        (begin
-          (compiler-ir-use-step value ,address callee ,@tail)
-          (compiler-ir-use-step args ,call-arg args ,@tail))]
+        (compiler-ir-use-step value ,address callee ,@tail)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step args ,call-arg payload.args ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step args ,call-arg payload.args ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
           payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,address payload.base ,@tail)
-            (compiler-ir-use-step value ,address payload.callee ,@tail)
-            (compiler-ir-use-step args ,call-arg payload.args ,@tail)))]
+          (compiler-ir-use-step value ,address payload.base ,@tail)
+          (compiler-ir-use-step value ,address payload.callee ,@tail)
+          (compiler-ir-use-step args ,call-arg payload.args ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
         (let
           [payload (compiler-ir-box-shared-view payload-box)]
-          (begin
-            (compiler-ir-use-step value ,mask payload.active-mask ,@tail)
-            (compiler-ir-use-step spmd-args _ payload.args ,@tail)))]
+          (compiler-ir-use-step value ,mask payload.active-mask ,@tail)
+          (compiler-ir-use-step spmd-args _ payload.args ,@tail))]
       [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
         (compiler-ir-use-step args ,call-arg args ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Store _ value _)
@@ -2475,9 +2395,8 @@
       [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
         (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.TailCallIndirect callee args _)
-        (begin
-          (compiler-ir-use-step value ,address callee ,@tail)
-          (compiler-ir-use-step args ,call-arg args ,@tail))]
+        (compiler-ir-use-step value ,address callee ,@tail)
+        (compiler-ir-use-step args ,call-arg args ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Switch index _ _ _)
         (compiler-ir-use-step value ,condition index ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
@@ -2499,9 +2418,8 @@
   [contexts : Expr ...]) : Expr
   `(let
     [fold-acc ,acc]
-    (begin
-      (compiler-ir-instr-walk-uses ,instr fold-acc ,folder ,@contexts)
-      fold-acc)))
+    (compiler-ir-instr-walk-uses ,instr fold-acc ,folder ,@contexts)
+    fold-acc))
 
 ;: Rebuild `instr` with each use, def, type and label passed through its
 ;: mapper; slots and fixed fields are copied. A mapper given as `_` is the
@@ -2981,37 +2899,33 @@
     [(compiler_ir_types.CompilerIrInstr.Store _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Jump label) (,visitor ,@contexts label)]
     [(compiler_ir_types.CompilerIrInstr.Branch _ true-label false-label)
-      (begin
-        (,visitor ,@contexts true-label)
-        (,visitor ,@contexts false-label))]
+      (,visitor ,@contexts true-label)
+      (,visitor ,@contexts false-label)]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
-        _
-        true-label
-        false-label)
-      (begin
-        (,visitor ,@contexts true-label)
-        (,visitor ,@contexts false-label))]
+      _
+      true-label
+      false-label)
+      (,visitor ,@contexts true-label)
+      (,visitor ,@contexts false-label)]
     [(compiler_ir_types.CompilerIrInstr.Return _) unit]
     [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Switch _ _ cases default-label)
-      (begin
-        (,visitor ,@contexts default-label)
-        (compiler-ir-switch-cases-visit cases ,visitor ,@contexts))]
+      (,visitor ,@contexts default-label)
+      (compiler-ir-switch-cases-visit cases ,visitor ,@contexts)]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
-        _
-        _
-        cases
-        default-label
-        trap-label)
-      (begin
-        (,visitor ,@contexts default-label)
-        (if (= trap-label (compiler_ir_types.compiler-ir-label-none))
-          unit
-          (,visitor ,@contexts trap-label))
-        (compiler-ir-switch-cases-visit cases ,visitor ,@contexts))]))
+      _
+      _
+      cases
+      default-label
+      trap-label)
+      (,visitor ,@contexts default-label)
+      (if (= trap-label (compiler_ir_types.compiler-ir-label-none))
+        unit
+        (,visitor ,@contexts trap-label))
+      (compiler-ir-switch-cases-visit cases ,visitor ,@contexts)]))
 
 ;; Op equality for compiler-ir-instr-zip-eq; a shift's count types compare
 ;; with `(type-eq ctx... a b)`.
@@ -3121,16 +3035,14 @@
   (let
     [same : bool (= a.len b.len)]
     [index : i64 0]
-    (begin
-      (while (and same (< index a.len))
-        (begin
-          (match (compiler-ir-switch-case-seq-ref a index)
-            [(Case a-tag a-label)
-              (match (compiler-ir-switch-case-seq-ref b index)
-                [(Case b-tag b-label)
-                  (set! same (and (= a-tag b-tag) (= a-label b-label)))])])
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index a.len))
+      (match (compiler-ir-switch-case-seq-ref a index)
+        [(Case a-tag a-label)
+          (match (compiler-ir-switch-case-seq-ref b index)
+            [(Case b-tag b-label)
+              (set! same (and (= a-tag b-tag) (= a-label b-label)))])])
+      (set! index (+ index 1)))
+    same))
 
 ;; Pairwise use equality for compiler-ir-instr-zip-eq: `(value-eq ctx... a b)`
 ;; per value pair of the shape (`value`, `maybe`, `values`, `args` or
@@ -3217,19 +3129,17 @@
             [b-inputs ,b]
             [same : bool (= a-inputs.len b-inputs.len)]
             [index : i64 0]
-            (begin
-              (while (and same (< index a-inputs.len))
-                (let
-                  [a-input (compiler-ir-phi-input-seq-ref a-inputs index)]
-                  [b-input (compiler-ir-phi-input-seq-ref b-inputs index)]
-                  (begin
-                    (set!
-                      same
-                      (and
-                        (= a-input.label b-input.label)
-                        (,value-eq ,@contexts a-input.value b-input.value)))
-                    (set! index (+ index 1)))))
-              same))]
+            (while (and same (< index a-inputs.len))
+              (let
+                [a-input (compiler-ir-phi-input-seq-ref a-inputs index)]
+                [b-input (compiler-ir-phi-input-seq-ref b-inputs index)]
+                (set!
+                  same
+                  (and
+                    (= a-input.label b-input.label)
+                    (,value-eq ,@contexts a-input.value b-input.value)))
+                (set! index (+ index 1))))
+            same)]
         [_ 'compiler-ir-unknown-operand-shape])]
     [_ 'compiler-ir-unknown-operand-shape]))
 
@@ -3245,19 +3155,17 @@
     [b-slots ,b]
     [same : bool true]
     [index : i64 0]
-    (begin
-      (while (and same (< index slot-count))
-        (begin
-          (set!
-            same
-            (,value-eq
-              ,@contexts
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data a-slots) index)))
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data b-slots) index)))))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index slot-count))
+      (set!
+        same
+        (,value-eq
+          ,@contexts
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data a-slots) index)))
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data b-slots) index)))))
+      (set! index (+ index 1)))
+    same))
 
 (defmacro (compiler-ir-zip-type
   [a : Expr]
@@ -3278,20 +3186,18 @@
     [b-items b-slots.slots]
     [same : bool (= a-slots.len b-slots.len)]
     [index : i64 0]
-    (begin
-      (while (and same (< index a-slots.len))
-        (begin
+    (while (and same (< index a-slots.len))
+      (match (unsafe
+        (ptr-read (ptr-offset (__tl_array-data a-items) index)))
+        [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot a-ty a-offset)
           (match (unsafe
-            (ptr-read (ptr-offset (__tl_array-data a-items) index)))
-            [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot a-ty a-offset)
-              (match (unsafe
-                (ptr-read (ptr-offset (__tl_array-data b-items) index)))
-                [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot b-ty b-offset)
-                  (set!
-                    same
-                    (and (= a-offset b-offset) (,type-eq ,@contexts a-ty b-ty)))])])
-          (set! index (+ index 1))))
-      same)))
+            (ptr-read (ptr-offset (__tl_array-data b-items) index)))
+            [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot b-ty b-offset)
+              (set!
+                same
+                (and (= a-offset b-offset) (,type-eq ,@contexts a-ty b-ty)))])])
+      (set! index (+ index 1)))
+    same))
 
 ;: Structural instruction equality: the same variant and fixed fields, with
 ;: `(value-eq ctx... a b)` for every use pair and `(type-eq ctx... a b)` for
@@ -3997,14 +3903,12 @@
   (let
     [count : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index abi.params.len)
-        (begin
-          (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
-            [(Param _ (Source _ _ _) _) (set! count (+ count 1))]
-            [_ unit])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index abi.params.len)
+      (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
+        [(Param _ (Source _ _ _) _) (set! count (+ count 1))]
+        [_ unit])
+      (set! index (+ index 1)))
+    count))
 
 ;; --- clone ---
 (define (compiler-ir-clone-spmd-private-param
@@ -4031,32 +3935,30 @@
     [params : CompilerIrSpmdPrivateParamSeq
       (compiler-ir-spmd-private-param-seq-with-capacity abi.params.len)]
     [index : i64 0]
-    (begin
-      (while (< index abi.params.len)
-        (begin
-          (compiler-ir-spmd-private-param-seq-push!
-            (&mut params)
-            (compiler-ir-clone-spmd-private-param
-              pools
-              (compiler-ir-spmd-private-param-seq-ref abi.params index)))
-          (set! index (+ index 1))))
-      (CompilerIrSpmdPrivateAbi
-        (match abi.schema
-          [(V1) (V1)])
-        (compiler-ir-symbol-clone abi.callee)
-        (compiler-ir-clone-spmd-backend abi.backend)
-        abi.lanes
-        params
-        (match abi.index
-          [(None) (None)]
-          [(ReuseSource source) (ReuseSource source)]
-          [(Appended ordinal) (Appended ordinal)])
-        (match abi.result
-          [(Unit) (Unit)]
-          [(Value class ty)
-            (Value
-              (compiler-ir-clone-spmd-value-class class)
-              (compiler-ir-clone-type pools ty))])))))
+    (while (< index abi.params.len)
+      (compiler-ir-spmd-private-param-seq-push!
+        (&mut params)
+        (compiler-ir-clone-spmd-private-param
+          pools
+          (compiler-ir-spmd-private-param-seq-ref abi.params index)))
+      (set! index (+ index 1)))
+    (CompilerIrSpmdPrivateAbi
+      (match abi.schema
+        [(V1) (V1)])
+      (compiler-ir-symbol-clone abi.callee)
+      (compiler-ir-clone-spmd-backend abi.backend)
+      abi.lanes
+      params
+      (match abi.index
+        [(None) (None)]
+        [(ReuseSource source) (ReuseSource source)]
+        [(Appended ordinal) (Appended ordinal)])
+      (match abi.result
+        [(Unit) (Unit)]
+        [(Value class ty)
+          (Value
+            (compiler-ir-clone-spmd-value-class class)
+            (compiler-ir-clone-type pools ty))]))))
 
 (define (compiler-ir-clone-function-abi
   [pools : ast.AstNodePoolContext]
@@ -4195,17 +4097,15 @@
     (let
       [same : bool true]
       [index : i64 0]
-      (begin
-        (while (and same (< index left.params.len))
-          (begin
-            (set!
-              same
-              (compiler-ir-spmd-private-param-eq?
-                bases
-                (compiler-ir-spmd-private-param-seq-ref left.params index)
-                (compiler-ir-spmd-private-param-seq-ref right.params index)))
-            (set! index (+ index 1))))
-        same))
+      (while (and same (< index left.params.len))
+        (set!
+          same
+          (compiler-ir-spmd-private-param-eq?
+            bases
+            (compiler-ir-spmd-private-param-seq-ref left.params index)
+            (compiler-ir-spmd-private-param-seq-ref right.params index)))
+        (set! index (+ index 1)))
+      same)
     (compiler-ir-spmd-private-index-eq? left.index right.index)
     (compiler-ir-spmd-private-result-eq? bases left.result right.result)))
 
@@ -4257,43 +4157,41 @@
           (string.int->string abi.lanes)
           " ["))]
     [index : i64 0]
-    (begin
-      (while (< index abi.params.len)
-        (begin
-          (if (> index 0)
-            (set! buf (text_buf.append buf ", "))
-            unit)
-          (set!
-            buf
-            (text_buf.append
-              buf
-              (compiler-ir-spmd-private-param-render
-                structural-session
-                type-segment-bases
-                (compiler-ir-spmd-private-param-seq-ref abi.params index))))
-          (set! index (+ index 1))))
-      (text_buf.render
+    (while (< index abi.params.len)
+      (if (> index 0)
+        (set! buf (text_buf.append buf ", "))
+        unit)
+      (set!
+        buf
         (text_buf.append
           buf
-          (str_cat.str-cat
-            "] index "
-            (match abi.index
-              [(None) "none"]
-              [(ReuseSource source)
-                (str_cat.str-cat "source " (string.int->string source))]
-              [(Appended ordinal)
-                (str_cat.str-cat "appended " (string.int->string ordinal))])
-            " result "
-            (match abi.result
-              [(Unit) "unit"]
-              [(Value class ty)
-                (str_cat.str-cat
-                  (compiler-ir-spmd-value-class-render class)
-                  " "
-                  (compiler-ir-type-render
-                    structural-session
-                    type-segment-bases
-                    ty))])))))))
+          (compiler-ir-spmd-private-param-render
+            structural-session
+            type-segment-bases
+            (compiler-ir-spmd-private-param-seq-ref abi.params index))))
+      (set! index (+ index 1)))
+    (text_buf.render
+      (text_buf.append
+        buf
+        (str_cat.str-cat
+          "] index "
+          (match abi.index
+            [(None) "none"]
+            [(ReuseSource source)
+              (str_cat.str-cat "source " (string.int->string source))]
+            [(Appended ordinal)
+              (str_cat.str-cat "appended " (string.int->string ordinal))])
+          " result "
+          (match abi.result
+            [(Unit) "unit"]
+            [(Value class ty)
+              (str_cat.str-cat
+                (compiler-ir-spmd-value-class-render class)
+                " "
+                (compiler-ir-type-render
+                  structural-session
+                  type-segment-bases
+                  ty))]))))))
 
 ;; --- integrity ---
 (define (compiler-ir-spmd-type-bool? [ty : ast.AstType]) : bool
@@ -4486,26 +4384,24 @@
       [(> (string.string-length lanes-error) 0) lanes-error]
       [(< abi.params.len 1) "descriptor has no active mask parameter"]
       [else
-        (begin
-          (while (and
-            (= (string.string-length param-error) 0)
-            (< index abi.params.len))
-            (begin
-              (set!
-                param-error
-                (compiler-ir-spmd-private-param-shape-error
-                  (compiler-ir-global-shared-view abi)
-                  index))
-              (set! index (+ index 1))))
-          (if (> (string.string-length param-error) 0)
+        (while (and
+          (= (string.string-length param-error) 0)
+          (< index abi.params.len))
+          (set!
             param-error
-            (let
-              [index-error : String
-                (compiler-ir-spmd-private-index-error
-                  (compiler-ir-global-shared-view abi))]
-              (if (> (string.string-length index-error) 0)
-                index-error
-                (compiler-ir-spmd-private-result-shape-error abi.result)))))])))
+            (compiler-ir-spmd-private-param-shape-error
+              (compiler-ir-global-shared-view abi)
+              index))
+          (set! index (+ index 1)))
+        (if (> (string.string-length param-error) 0)
+          param-error
+          (let
+            [index-error : String
+              (compiler-ir-spmd-private-index-error
+                (compiler-ir-global-shared-view abi))]
+            (if (> (string.string-length index-error) 0)
+              index-error
+              (compiler-ir-spmd-private-result-shape-error abi.result))))])))
 
 ;; The helper side: the descriptor must be well formed, name this function, and
 ;; agree with the actual signature parameter by parameter and on the return type.
@@ -4521,67 +4417,55 @@
         (compiler-ir-global-shared-view abi))]
     [problem : String ""]
     [index : i64 0]
-    (begin
-      (cond
-        [(> (string.string-length shape-error) 0) (set! problem shape-error)]
-        [(not (compiler-ir-symbol-eq? abi.callee name))
-          (set!
-            problem
-            (str_cat.str-cat
-              "descriptor names callee @"
-              (compiler-ir-symbol-text abi.callee)))]
-        [(not (= params.len abi.params.len))
-          (set!
-            problem
-            (str_cat.str-cat
-              "descriptor has "
-              (string.int->string abi.params.len)
-              " physical parameters, the signature has "
-              (string.int->string params.len)))]
-        [else
-          (begin
-            (while (and
-              (= (string.string-length problem) 0)
-              (< index params.len))
-              (begin
-                (match (compiler-ir-param-seq-ref params index)
-                  [(Param _ param-ty _)
-                    (match (compiler-ir-spmd-private-param-seq-ref
-                      abi.params
-                      index)
-                      [(Param _ _ abi-ty)
-                        (if (ast.ast-type-eq-with-seg-bases?
-                          bases
-                          param-ty
-                          abi-ty)
-                          unit
-                          (set!
-                            problem
-                            (str_cat.str-cat
-                              "physical parameter "
-                              (string.int->string index)
-                              " type differs from the signature")))])])
-                (set! index (+ index 1))))
-            (if (> (string.string-length problem) 0)
-              unit
-              (match abi.result
-                [(Unit)
-                  (if (compiler-ir-spmd-type-unit? ret)
+    (cond
+      [(> (string.string-length shape-error) 0) (set! problem shape-error)]
+      [(not (compiler-ir-symbol-eq? abi.callee name))
+        (set!
+          problem
+          (str_cat.str-cat
+            "descriptor names callee @"
+            (compiler-ir-symbol-text abi.callee)))]
+      [(not (= params.len abi.params.len))
+        (set!
+          problem
+          (str_cat.str-cat
+            "descriptor has "
+            (string.int->string abi.params.len)
+            " physical parameters, the signature has "
+            (string.int->string params.len)))]
+      [else
+        (while (and (= (string.string-length problem) 0) (< index params.len))
+          (match (compiler-ir-param-seq-ref params index)
+            [(Param _ param-ty _)
+              (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
+                [(Param _ _ abi-ty)
+                  (if (ast.ast-type-eq-with-seg-bases? bases param-ty abi-ty)
                     unit
                     (set!
                       problem
-                      "unit result but the signature returns a value"))]
-                [(Value _ ty)
-                  (if (ast.ast-type-eq-with-seg-bases? bases ret ty)
-                    unit
-                    (set! problem "result type differs from the signature"))])))])
-      (if (= (string.string-length problem) 0)
-        ""
-        (str_cat.str-cat
-          "private SPMD ABI of @"
-          (compiler-ir-symbol-text name)
-          ": "
-          problem)))))
+                      (str_cat.str-cat
+                        "physical parameter "
+                        (string.int->string index)
+                        " type differs from the signature")))])])
+          (set! index (+ index 1)))
+        (if (> (string.string-length problem) 0)
+          unit
+          (match abi.result
+            [(Unit)
+              (if (compiler-ir-spmd-type-unit? ret)
+                unit
+                (set! problem "unit result but the signature returns a value"))]
+            [(Value _ ty)
+              (if (ast.ast-type-eq-with-seg-bases? bases ret ty)
+                unit
+                (set! problem "result type differs from the signature"))]))])
+    (if (= (string.string-length problem) 0)
+      ""
+      (str_cat.str-cat
+        "private SPMD ABI of @"
+        (compiler-ir-symbol-text name)
+        ": "
+        problem))))
 
 (define (compiler-ir-spmd-private-call-arg-error
   [bases : i64]
@@ -4637,92 +4521,86 @@
         (compiler-ir-global-shared-view abi))]
     [problem : String ""]
     [index : i64 0]
-    (begin
-      (cond
-        [(> (string.string-length shape-error) 0) (set! problem shape-error)]
-        [(not (compiler-ir-symbol-eq? payload.callee abi.callee))
+    (cond
+      [(> (string.string-length shape-error) 0) (set! problem shape-error)]
+      [(not (compiler-ir-symbol-eq? payload.callee abi.callee))
+        (set!
+          problem
+          (str_cat.str-cat
+            "the descriptor names callee @"
+            (compiler-ir-symbol-text abi.callee)))]
+      [(not (compiler-ir-spmd-backend-eq? payload.backend abi.backend))
+        (set!
+          problem
+          (str_cat.str-cat
+            "call backend "
+            (compiler-ir-spmd-backend-render payload.backend)
+            ", the descriptor says "
+            (compiler-ir-spmd-backend-render abi.backend)))]
+      [(not (= payload.lanes abi.lanes))
+        (set!
+          problem
+          (str_cat.str-cat
+            "call has "
+            (string.int->string payload.lanes)
+            " lanes, the descriptor "
+            (string.int->string abi.lanes)))]
+      [(not
+          (match payload.active-mask
+            [(Var _) true]
+            [(Bool _) true]
+            [_ false]))
+        (set! problem "active mask is not a bool value")]
+      [(not (= payload.args.len (- abi.params.len 1)))
+        (set!
+          problem
+          (str_cat.str-cat
+            "call has "
+            (string.int->string payload.args.len)
+            " arguments, the descriptor "
+            (string.int->string (- abi.params.len 1))))]
+      [else
+        (while (and
+          (= (string.string-length problem) 0)
+          (< index payload.args.len))
           (set!
             problem
-            (str_cat.str-cat
-              "the descriptor names callee @"
-              (compiler-ir-symbol-text abi.callee)))]
-        [(not (compiler-ir-spmd-backend-eq? payload.backend abi.backend))
-          (set!
-            problem
-            (str_cat.str-cat
-              "call backend "
-              (compiler-ir-spmd-backend-render payload.backend)
-              ", the descriptor says "
-              (compiler-ir-spmd-backend-render abi.backend)))]
-        [(not (= payload.lanes abi.lanes))
-          (set!
-            problem
-            (str_cat.str-cat
-              "call has "
-              (string.int->string payload.lanes)
-              " lanes, the descriptor "
-              (string.int->string abi.lanes)))]
-        [(not
-            (match payload.active-mask
-              [(Var _) true]
-              [(Bool _) true]
-              [_ false]))
-          (set! problem "active mask is not a bool value")]
-        [(not (= payload.args.len (- abi.params.len 1)))
-          (set!
-            problem
-            (str_cat.str-cat
-              "call has "
-              (string.int->string payload.args.len)
-              " arguments, the descriptor "
-              (string.int->string (- abi.params.len 1))))]
-        [else
-          (begin
-            (while (and
-              (= (string.string-length problem) 0)
-              (< index payload.args.len))
-              (begin
-                (set!
-                  problem
-                  (compiler-ir-spmd-private-call-arg-error
-                    bases
-                    (compiler-ir-global-shared-view abi)
-                    payload.args
-                    index))
-                (set! index (+ index 1))))
-            (if (> (string.string-length problem) 0)
-              unit
-              (match payload.result
-                [(Unit)
-                  (match abi.result
-                    [(Unit) unit]
-                    [_ (set! problem "unit call of a valued helper")])]
-                [(Value _ class ty)
-                  (match abi.result
-                    [(Unit) (set! problem "valued call of a unit helper")]
-                    [(Value abi-class abi-ty)
-                      (cond
-                        [(not
-                            (compiler-ir-spmd-value-class-eq? class abi-class))
-                          (set!
-                            problem
-                            (str_cat.str-cat
-                              "result is "
-                              (compiler-ir-spmd-value-class-render class)
-                              ", the descriptor says "
-                              (compiler-ir-spmd-value-class-render abi-class)))]
-                        [(not (ast.ast-type-eq-with-seg-bases? bases ty abi-ty))
-                          (set!
-                            problem
-                            "result type differs from the descriptor")]
-                        [else unit])])])))])
-      (if (= (string.string-length problem) 0)
-        ""
-        (str_cat.str-cat
-          "private SPMD call to @"
-          (compiler-ir-symbol-text payload.callee)
-          ": "
-          problem)))))
+            (compiler-ir-spmd-private-call-arg-error
+              bases
+              (compiler-ir-global-shared-view abi)
+              payload.args
+              index))
+          (set! index (+ index 1)))
+        (if (> (string.string-length problem) 0)
+          unit
+          (match payload.result
+            [(Unit)
+              (match abi.result
+                [(Unit) unit]
+                [_ (set! problem "unit call of a valued helper")])]
+            [(Value _ class ty)
+              (match abi.result
+                [(Unit) (set! problem "valued call of a unit helper")]
+                [(Value abi-class abi-ty)
+                  (cond
+                    [(not (compiler-ir-spmd-value-class-eq? class abi-class))
+                      (set!
+                        problem
+                        (str_cat.str-cat
+                          "result is "
+                          (compiler-ir-spmd-value-class-render class)
+                          ", the descriptor says "
+                          (compiler-ir-spmd-value-class-render abi-class)))]
+                    [(not (ast.ast-type-eq-with-seg-bases? bases ty abi-ty))
+                      (set! problem "result type differs from the descriptor")]
+                    [else unit])])]))])
+    (if (= (string.string-length problem) 0)
+      ""
+      (str_cat.str-cat
+        "private SPMD call to @"
+        (compiler-ir-symbol-text payload.callee)
+        ": "
+        problem))))
 
 ;; --- whole program ---
 ;; Whether any function in `functions` has symbol `name`. Only failed private
@@ -4733,14 +4611,12 @@
   (let
     [found : bool false]
     [index : i64 0]
-    (begin
-      (while (and (not found) (< index functions.len))
-        (begin
-          (match (compiler-ir-array-shared-view functions.slots index)
-            [(Function function-name _ _ _ _ _)
-              (set! found (compiler-ir-symbol-eq? function-name name))])
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index functions.len))
+      (match (compiler-ir-array-shared-view functions.slots index)
+        [(Function function-name _ _ _ _ _)
+          (set! found (compiler-ir-symbol-eq? function-name name))])
+      (set! index (+ index 1)))
+    found))
 
 (define (compiler-ir-spmd-private-call-callee-error
   [functions : (& CompilerIrFunctionSeq)]
@@ -4806,21 +4682,19 @@
   (let
     [problem : String ""]
     [index : i64 0]
-    (begin
-      (while (and (= (string.string-length problem) 0) (< index instrs.len))
-        (begin
-          (match (compiler-ir-array-shared-view instrs.slots index)
-            [(SpmdCall payload-box)
-              (set!
-                problem
-                (compiler-ir-spmd-private-call-callee-error
-                  functions
-                  private-index
-                  caller
-                  (deref payload-box)))]
-            [_ unit])
-          (set! index (+ index 1))))
-      problem)))
+    (while (and (= (string.string-length problem) 0) (< index instrs.len))
+      (match (compiler-ir-array-shared-view instrs.slots index)
+        [(SpmdCall payload-box)
+          (set!
+            problem
+            (compiler-ir-spmd-private-call-callee-error
+              functions
+              private-index
+              caller
+              (deref payload-box)))]
+        [_ unit])
+      (set! index (+ index 1)))
+    problem))
 
 (define (compiler-ir-spmd-private-block-list-error
   [functions : (& CompilerIrFunctionSeq)]
@@ -4832,20 +4706,18 @@
       (let
         [problem : String ""]
         [index : i64 0]
-        (begin
-          (while (and (= (string.string-length problem) 0) (< index seq.len))
-            (begin
-              (match (compiler-ir-array-shared-view seq.slots index)
-                [(Block _ instrs)
-                  (set!
-                    problem
-                    (compiler-ir-spmd-private-instr-seq-error
-                      functions
-                      private-index
-                      caller
-                      instrs))])
-              (set! index (+ index 1))))
-          problem))]))
+        (while (and (= (string.string-length problem) 0) (< index seq.len))
+          (match (compiler-ir-array-shared-view seq.slots index)
+            [(Block _ instrs)
+              (set!
+                problem
+                (compiler-ir-spmd-private-instr-seq-error
+                  functions
+                  private-index
+                  caller
+                  instrs))])
+          (set! index (+ index 1)))
+        problem)]))
 
 ;; Whole-program private SPMD ABI admission. Every private helper's descriptor
 ;; must match its own signature; every same-program call must pass its payload
@@ -4858,41 +4730,37 @@
     [private-index : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
     [problem : String ""]
     [index : i64 0]
-    (begin
-      (while (and (= (string.string-length problem) 0) (< index functions.len))
-        (begin
-          (match (compiler-ir-array-shared-view functions.slots index)
-            [(Function name params ret _ _ function-abi)
-              (match function-abi
-                [(Ordinary) unit]
-                [(SpmdPrivate private-box)
-                  (begin
-                    (set!
-                      problem
-                      (compiler-ir-spmd-private-abi-signature-error
-                        name
-                        params
-                        ret
-                        (deref private-box)))
-                    (ir_i64_i64_map.insert-ref!
-                      (&mut private-index)
-                      (compiler-ir-symbol-id name)
-                      index))])])
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (and (= (string.string-length problem) 0) (< index functions.len))
-        (begin
-          (match (compiler-ir-array-shared-view functions.slots index)
-            [(Function name _ _ _ blocks _)
+    (while (and (= (string.string-length problem) 0) (< index functions.len))
+      (match (compiler-ir-array-shared-view functions.slots index)
+        [(Function name params ret _ _ function-abi)
+          (match function-abi
+            [(Ordinary) unit]
+            [(SpmdPrivate private-box)
               (set!
                 problem
-                (compiler-ir-spmd-private-block-list-error
-                  functions
-                  private-index
+                (compiler-ir-spmd-private-abi-signature-error
                   name
-                  blocks))])
-          (set! index (+ index 1))))
-      problem)))
+                  params
+                  ret
+                  (deref private-box)))
+              (ir_i64_i64_map.insert-ref!
+                (&mut private-index)
+                (compiler-ir-symbol-id name)
+                index)])])
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (and (= (string.string-length problem) 0) (< index functions.len))
+      (match (compiler-ir-array-shared-view functions.slots index)
+        [(Function name _ _ _ blocks _)
+          (set!
+            problem
+            (compiler-ir-spmd-private-block-list-error
+              functions
+              private-index
+              name
+              blocks))])
+      (set! index (+ index 1)))
+    problem))
 
 ;; Compare segments without assembling temporary strings on every optimizer
 ;; integrity pass. The imported catalog is immutable; successful verification
@@ -5193,18 +5061,16 @@
   (let
     [slots : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue 1)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (CompilerIrValueSeq slots 1))))
+    (set! (array-ref slots 0) a)
+    (CompilerIrValueSeq slots 1)))
 
 (define (compiler-ir-value-seq2 [a : CompilerIrValue] [b : CompilerIrValue]) : CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue 2)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (CompilerIrValueSeq slots 2))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (CompilerIrValueSeq slots 2)))
 
 (define (compiler-ir-value-seq3
   [a : CompilerIrValue]
@@ -5213,11 +5079,10 @@
   (let
     [slots : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue 3)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (set! (array-ref slots 2) c)
-      (CompilerIrValueSeq slots 3))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (set! (array-ref slots 2) c)
+    (CompilerIrValueSeq slots 3)))
 
 (define (compiler-ir-value-seq4
   [a : CompilerIrValue]
@@ -5227,12 +5092,11 @@
   (let
     [slots : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue 4)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (set! (array-ref slots 2) c)
-      (set! (array-ref slots 3) d)
-      (CompilerIrValueSeq slots 4))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (set! (array-ref slots 2) c)
+    (set! (array-ref slots 3) d)
+    (CompilerIrValueSeq slots 4)))
 
 (define (compiler-ir-value-seq-count [values : (& values CompilerIrValueSeq)]) : i64
   values.len)
@@ -5254,15 +5118,13 @@
     [slots : (__tl_dyn-array CompilerIrPhiInput)
       (__tl_make-array CompilerIrPhiInput count)]
     [index : i64 0]
-    (begin
-      (set! (array-ref slots 0) (CompilerIrPhiInput value label))
-      (while (< index rest.len)
-        (begin
-          (set!
-            (array-ref slots (+ index 1))
-            (compiler-ir-phi-input-seq-ref rest index))
-          (set! index (+ index 1))))
-      (CompilerIrPhiInputSeq slots 0 count))))
+    (set! (array-ref slots 0) (CompilerIrPhiInput value label))
+    (while (< index rest.len)
+      (set!
+        (array-ref slots (+ index 1))
+        (compiler-ir-phi-input-seq-ref rest index))
+      (set! index (+ index 1)))
+    (CompilerIrPhiInputSeq slots 0 count)))
 
 (define (compiler-ir-phi-input-seq-count
   [inputs : (& inputs CompilerIrPhiInputSeq)]) : i64
@@ -5285,29 +5147,26 @@
       [slots : (__tl_dyn-array CompilerIrPhiInput)
         (__tl_make-array CompilerIrPhiInput inputs.len)]
       [index : i64 0]
-      (begin
-        (while (< index inputs.len)
-          (let
-            [input : CompilerIrPhiInput
-              (compiler-ir-phi-input-seq-ref inputs index)]
-            (begin
-              (set!
-                (array-ref slots index)
-                (CompilerIrPhiInput
-                  input.value
-                  (if (= input.label from-label)
-                    to-label
-                    input.label)))
-              (set! index (+ index 1)))))
-        (CompilerIrPhiInputSeq slots 0 inputs.len)))))
+      (while (< index inputs.len)
+        (let
+          [input : CompilerIrPhiInput
+            (compiler-ir-phi-input-seq-ref inputs index)]
+          (set!
+            (array-ref slots index)
+            (CompilerIrPhiInput
+              input.value
+              (if (= input.label from-label)
+                to-label
+                input.label)))
+          (set! index (+ index 1))))
+      (CompilerIrPhiInputSeq slots 0 inputs.len))))
 
 (define (compiler-ir-switch-case-seq1 [a : CompilerIrSwitchCase]) : CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (__tl_make-array CompilerIrSwitchCase 1)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (CompilerIrSwitchCaseSeq slots 1))))
+    (set! (array-ref slots 0) a)
+    (CompilerIrSwitchCaseSeq slots 1)))
 
 (define (compiler-ir-switch-case-seq2
   [a : CompilerIrSwitchCase]
@@ -5315,10 +5174,9 @@
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (__tl_make-array CompilerIrSwitchCase 2)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (CompilerIrSwitchCaseSeq slots 2))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (CompilerIrSwitchCaseSeq slots 2)))
 
 (define (compiler-ir-switch-case-seq3
   [a : CompilerIrSwitchCase]
@@ -5327,11 +5185,10 @@
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (__tl_make-array CompilerIrSwitchCase 3)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (set! (array-ref slots 2) c)
-      (CompilerIrSwitchCaseSeq slots 3))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (set! (array-ref slots 2) c)
+    (CompilerIrSwitchCaseSeq slots 3)))
 
 (define (compiler-ir-switch-case-seq-count
   [cases : (& cases CompilerIrSwitchCaseSeq)]) : i64
@@ -5357,9 +5214,8 @@
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr 1)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (CompilerIrInstrSeq slots 1))))
+    (set! (array-ref slots 0) first)
+    (CompilerIrInstrSeq slots 1)))
 
 (define (compiler-ir-instr-seq2
   [first : CompilerIrInstr]
@@ -5367,10 +5223,9 @@
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr 2)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (CompilerIrInstrSeq slots 2))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (CompilerIrInstrSeq slots 2)))
 
 (define (compiler-ir-instr-seq3
   [first : CompilerIrInstr]
@@ -5379,11 +5234,10 @@
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr 3)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (CompilerIrInstrSeq slots 3))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (set! (array-ref slots 2) third)
+    (CompilerIrInstrSeq slots 3)))
 
 (define (compiler-ir-instr-seq4
   [first : CompilerIrInstr]
@@ -5393,12 +5247,11 @@
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr 4)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (set! (array-ref slots 3) fourth)
-      (CompilerIrInstrSeq slots 4))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (set! (array-ref slots 2) third)
+    (set! (array-ref slots 3) fourth)
+    (CompilerIrInstrSeq slots 4)))
 
 (define (compiler-ir-instr-seq5
   [first : CompilerIrInstr]
@@ -5409,13 +5262,12 @@
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr 5)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (set! (array-ref slots 3) fourth)
-      (set! (array-ref slots 4) fifth)
-      (CompilerIrInstrSeq slots 5))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (set! (array-ref slots 2) third)
+    (set! (array-ref slots 3) fourth)
+    (set! (array-ref slots 4) fifth)
+    (CompilerIrInstrSeq slots 5)))
 
 (defmacro (compiler-ir-instr-seq-count [instrs : Expr]) : Expr
   `(__tl-project-field-name ,instrs "len"))
@@ -5545,13 +5397,11 @@
     [slots : (__tl_dyn-array CompilerIrParam)
       (__tl_make-array CompilerIrParam count)]
     [index : i64 0]
-    (begin
-      (set! (array-ref slots 0) param)
-      (while (< index rest.len)
-        (begin
-          (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
-          (set! index (+ index 1))))
-      (CompilerIrParamSeq slots count))))
+    (set! (array-ref slots 0) param)
+    (while (< index rest.len)
+      (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
+      (set! index (+ index 1)))
+    (CompilerIrParamSeq slots count)))
 
 (define (compiler-ir-param-seq-append-one
   [params : CompilerIrParamSeq]
@@ -5561,13 +5411,11 @@
     [slots : (__tl_dyn-array CompilerIrParam)
       (__tl_make-array CompilerIrParam count)]
     [index : i64 0]
-    (begin
-      (while (< index params.len)
-        (begin
-          (set! (array-ref slots index) (array-ref params.slots index))
-          (set! index (+ index 1))))
-      (set! (array-ref slots params.len) param)
-      (CompilerIrParamSeq slots count))))
+    (while (< index params.len)
+      (set! (array-ref slots index) (array-ref params.slots index))
+      (set! index (+ index 1)))
+    (set! (array-ref slots params.len) param)
+    (CompilerIrParamSeq slots count)))
 
 (define (compiler-ir-param-seq-count [params : (& params CompilerIrParamSeq)]) : i64
   params.len)
@@ -5643,11 +5491,10 @@
   (let
     [index : i64 0]
     (while (< index values.len)
-      (begin
-        (compiler-ir-value-builder-push!
-          builder
-          (compiler-ir-value-seq-ref values index))
-        (set! index (+ index 1))))))
+      (compiler-ir-value-builder-push!
+        builder
+        (compiler-ir-value-seq-ref values index))
+      (set! index (+ index 1)))))
 
 (define (compiler-ir-value-seq-prepend
   [value : CompilerIrValue]
@@ -5655,10 +5502,9 @@
   (let
     [builder : CompilerIrValueBuilder
       (compiler-ir-value-builder-with-capacity (+ values.len 1))]
-    (begin
-      (compiler-ir-value-builder-push! (&mut builder) value)
-      (compiler-ir-value-builder-append-seq! (&mut builder) values)
-      (compiler-ir-value-builder-to-seq builder))))
+    (compiler-ir-value-builder-push! (&mut builder) value)
+    (compiler-ir-value-builder-append-seq! (&mut builder) values)
+    (compiler-ir-value-builder-to-seq builder)))
 
 (define (compiler-ir-value-seq-append-one
   [values : CompilerIrValueSeq]
@@ -5666,10 +5512,9 @@
   (let
     [builder : CompilerIrValueBuilder
       (compiler-ir-value-builder-with-capacity (+ values.len 1))]
-    (begin
-      (compiler-ir-value-builder-append-seq! (&mut builder) values)
-      (compiler-ir-value-builder-push! (&mut builder) value)
-      (compiler-ir-value-builder-to-seq builder))))
+    (compiler-ir-value-builder-append-seq! (&mut builder) values)
+    (compiler-ir-value-builder-push! (&mut builder) value)
+    (compiler-ir-value-builder-to-seq builder)))
 
 (define (compiler-ir-value-seq-append
   [head : CompilerIrValueSeq]
@@ -5677,10 +5522,9 @@
   (let
     [builder : CompilerIrValueBuilder
       (compiler-ir-value-builder-with-capacity (+ head.len tail.len))]
-    (begin
-      (compiler-ir-value-builder-append-seq! (&mut builder) head)
-      (compiler-ir-value-builder-append-seq! (&mut builder) tail)
-      (compiler-ir-value-builder-to-seq builder))))
+    (compiler-ir-value-builder-append-seq! (&mut builder) head)
+    (compiler-ir-value-builder-append-seq! (&mut builder) tail)
+    (compiler-ir-value-builder-to-seq builder)))
 
 (compiler-ir-dense-builder
   CompilerIrPhiInput
@@ -5696,11 +5540,10 @@
   (let
     [index : i64 0]
     (while (< index inputs.len)
-      (begin
-        (compiler-ir-phi-input-builder-push!
-          builder
-          (compiler-ir-phi-input-seq-ref inputs index))
-        (set! index (+ index 1))))))
+      (compiler-ir-phi-input-builder-push!
+        builder
+        (compiler-ir-phi-input-seq-ref inputs index))
+      (set! index (+ index 1)))))
 
 (compiler-ir-dense-builder
   CompilerIrInstr
@@ -5725,11 +5568,10 @@
   (let
     [index : i64 start]
     (while (< index end)
-      (begin
-        (compiler-ir-instr-builder-push!
-          builder
-          (compiler-ir-instr-seq-ref instrs index))
-        (set! index (+ index 1))))))
+      (compiler-ir-instr-builder-push!
+        builder
+        (compiler-ir-instr-seq-ref instrs index))
+      (set! index (+ index 1)))))
 
 (compiler-ir-dense-builder
   CompilerIrBlock
@@ -5756,11 +5598,10 @@
         [count : i64 seq.len]
         [src : (__tl_dyn-array CompilerIrBlock) seq.slots]
         (while (< index count)
-          (begin
-            (compiler-ir-block-builder-push!
-              builder
-              (compiler-ir-array-shared-view src index))
-            (set! index (+ index 1)))))]))
+          (compiler-ir-block-builder-push!
+            builder
+            (compiler-ir-array-shared-view src index))
+          (set! index (+ index 1))))]))
 
 (define (compiler-ir-block-builder-append-slice!
   [builder : (&mut builder CompilerIrBlockBuilder)]
@@ -5768,11 +5609,10 @@
   (match blocks
     [(slice) unit]
     [(slice block & rest)
-      (begin
-        (compiler-ir-block-builder-push!
-          builder
-          (owned_view.compiler-owned-reference-shared-view block))
-        (compiler-ir-block-builder-append-slice! builder rest))]))
+      (compiler-ir-block-builder-push!
+        builder
+        (owned_view.compiler-owned-reference-shared-view block))
+      (compiler-ir-block-builder-append-slice! builder rest)]))
 
 (define (compiler-ir-block-builder-to-list [builder : CompilerIrBlockBuilder]) : CompilerIrBlockList
   (Array (CompilerIrBlockSeq builder.slots builder.len)))
@@ -5806,12 +5646,11 @@
     [blocks-builder
       (compiler-ir-block-builder-with-capacity
         ,(comptime.expr-int (comptime.expr-list-length blocks)))]
-    (begin
-      (compiler-ir-blocks-push!
-        (&mut blocks-builder)
-        (__compiler-ir-blocks ,@blocks)
-        0)
-      (compiler-ir-block-builder-to-list blocks-builder))))
+    (compiler-ir-blocks-push!
+      (&mut blocks-builder)
+      (__compiler-ir-blocks ,@blocks)
+      0)
+    (compiler-ir-block-builder-to-list blocks-builder)))
 
 ;; The blocks, in order, followed by every block of `tail`. The blocks are
 ;; evaluated first, in source order, then `tail` once.
@@ -5822,13 +5661,12 @@
     [blocks-builder
       (compiler-ir-block-builder-with-capacity
         ,(comptime.expr-int (comptime.expr-list-length blocks)))]
-    (begin
-      (compiler-ir-blocks-push!
-        (&mut blocks-builder)
-        (__compiler-ir-blocks ,@blocks)
-        0)
-      (compiler-ir-block-builder-append-list! (&mut blocks-builder) ,tail)
-      (compiler-ir-block-builder-to-list blocks-builder))))
+    (compiler-ir-blocks-push!
+      (&mut blocks-builder)
+      (__compiler-ir-blocks ,@blocks)
+      0)
+    (compiler-ir-block-builder-append-list! (&mut blocks-builder) ,tail)
+    (compiler-ir-block-builder-to-list blocks-builder)))
 
 (compiler-ir-dense-builder
   CompilerIrParam
@@ -5855,28 +5693,25 @@
   (let
     [index : i64 0]
     (while (< index functions.len)
-      (begin
-        (compiler-ir-function-builder-push!
-          builder
-          (compiler-ir-array-shared-view functions.slots index))
-        (set! index (+ index 1))))))
+      (compiler-ir-function-builder-push!
+        builder
+        (compiler-ir-array-shared-view functions.slots index))
+      (set! index (+ index 1)))))
 
 (define (compiler-ir-function-builder-from-seq
   [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionBuilder
   (let
     [builder : CompilerIrFunctionBuilder
       (compiler-ir-function-builder-with-capacity functions.len)]
-    (begin
-      (compiler-ir-function-builder-append-seq! (&mut builder) functions)
-      builder)))
+    (compiler-ir-function-builder-append-seq! (&mut builder) functions)
+    builder))
 
 (define (compiler-ir-function-seq1 [func : CompilerIrFunction]) : CompilerIrFunctionSeq
   (let
     [builder : CompilerIrFunctionBuilder
       (compiler-ir-function-builder-with-capacity 1)]
-    (begin
-      (compiler-ir-function-builder-push! (&mut builder) func)
-      (compiler-ir-function-builder-to-seq builder))))
+    (compiler-ir-function-builder-push! (&mut builder) func)
+    (compiler-ir-function-builder-to-seq builder)))
 
 (define (compiler-ir-function-seq-prepend
   [func : CompilerIrFunction]
@@ -5884,10 +5719,9 @@
   (let
     [builder : CompilerIrFunctionBuilder
       (compiler-ir-function-builder-with-capacity (+ functions.len 1))]
-    (begin
-      (compiler-ir-function-builder-push! (&mut builder) func)
-      (compiler-ir-function-builder-append-seq! (&mut builder) functions)
-      (compiler-ir-function-builder-to-seq builder))))
+    (compiler-ir-function-builder-push! (&mut builder) func)
+    (compiler-ir-function-builder-append-seq! (&mut builder) functions)
+    (compiler-ir-function-builder-to-seq builder)))
 
 (define (compiler-ir-global-seq-empty) : CompilerIrGlobalSeq
   (CompilerIrGlobalSeq (__tl_make-array CompilerIrGlobal 0) 0))
@@ -5904,13 +5738,12 @@
   (let
     [builder : CompilerIrGlobalBuilder
       (compiler-ir-global-builder-with-capacity globals.len)]
-    (begin
-      (compiler-ir-global-builder-copy-range!
-        (&mut builder.slots)
-        (& globals.slots)
-        globals.len)
-      (set! builder.len globals.len)
-      builder)))
+    (compiler-ir-global-builder-copy-range!
+      (&mut builder.slots)
+      (& globals.slots)
+      globals.len)
+    (set! builder.len globals.len)
+    builder))
 
 (define (compiler-ir-extern-seq-empty) : CompilerIrExternSeq
   (CompilerIrExternSeq (__tl_make-array CompilerIrExtern 0) 0))
@@ -5918,17 +5751,15 @@
 (define (compiler-ir-extern-seq1 [a : CompilerIrExtern]) : CompilerIrExternSeq
   (let
     [slots (__tl_make-array CompilerIrExtern 1)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (CompilerIrExternSeq slots 1))))
+    (set! (array-ref slots 0) a)
+    (CompilerIrExternSeq slots 1)))
 
 (define (compiler-ir-extern-seq2 [a : CompilerIrExtern] [b : CompilerIrExtern]) : CompilerIrExternSeq
   (let
     [slots (__tl_make-array CompilerIrExtern 2)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (CompilerIrExternSeq slots 2))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (CompilerIrExternSeq slots 2)))
 
 (define (compiler-ir-extern-seq4
   [a : CompilerIrExtern]
@@ -5937,12 +5768,11 @@
   [d : CompilerIrExtern]) : CompilerIrExternSeq
   (let
     [slots (__tl_make-array CompilerIrExtern 4)]
-    (begin
-      (set! (array-ref slots 0) a)
-      (set! (array-ref slots 1) b)
-      (set! (array-ref slots 2) c)
-      (set! (array-ref slots 3) d)
-      (CompilerIrExternSeq slots 4))))
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (set! (array-ref slots 2) c)
+    (set! (array-ref slots 3) d)
+    (CompilerIrExternSeq slots 4)))
 
 (define (compiler-ir-global-seq-count
   [globals : (& globals CompilerIrGlobalSeq)]) : i64
@@ -5965,13 +5795,12 @@
   (let
     [builder : CompilerIrExternBuilder
       (compiler-ir-extern-builder-with-capacity externs.len)]
-    (begin
-      (compiler-ir-extern-builder-copy-range!
-        (&mut builder.slots)
-        (& externs.slots)
-        externs.len)
-      (set! builder.len externs.len)
-      builder)))
+    (compiler-ir-extern-builder-copy-range!
+      (&mut builder.slots)
+      (& externs.slots)
+      externs.len)
+    (set! builder.len externs.len)
+    builder))
 
 (define (compiler-ir-extern-seq-count
   [externs : (& externs CompilerIrExternSeq)]) : i64
@@ -6040,15 +5869,14 @@
   [dst : (&mut dst (__tl_dyn-array CompilerIrSpmdCallArg))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (compiler-ir-clone-spmd-call-arg
-          pools
-          (compiler-ir-array-shared-view src index)))
-      (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set!
+      (array-ref dst index)
+      (compiler-ir-clone-spmd-call-arg
+        pools
+        (compiler-ir-array-shared-view src index)))
+    (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst (+ index 1) count)))
 
 (define (compiler-ir-clone-spmd-call-arg-seq
   [pools : ast.AstNodePoolContext]
@@ -6061,9 +5889,8 @@
     [src : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]
     [dst : (__tl_dyn-array CompilerIrSpmdCallArg)
       (__tl_make-array CompilerIrSpmdCallArg count)]
-    (begin
-      (compiler-ir-clone-spmd-call-arg-seq-fill pools src (&mut dst) 0 count)
-      (CompilerIrSpmdCallArgSeq dst count))))
+    (compiler-ir-clone-spmd-call-arg-seq-fill pools src (&mut dst) 0 count)
+    (CompilerIrSpmdCallArgSeq dst count)))
 
 (define (compiler-ir-clone-spmd-call-result
   [pools : ast.AstNodePoolContext]
@@ -6083,15 +5910,13 @@
     [builder : CompilerIrPhiInputBuilder
       (compiler-ir-phi-input-builder-with-capacity (+ inputs.len acc.len))]
     [index : i64 (- inputs.len 1)]
-    (begin
-      (while (>= index 0)
-        (begin
-          (compiler-ir-phi-input-builder-push!
-            (&mut builder)
-            (compiler-ir-phi-input-seq-ref inputs index))
-          (set! index (- index 1))))
-      (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
-      (compiler-ir-phi-input-builder-to-seq builder))))
+    (while (>= index 0)
+      (compiler-ir-phi-input-builder-push!
+        (&mut builder)
+        (compiler-ir-phi-input-seq-ref inputs index))
+      (set! index (- index 1)))
+    (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
+    (compiler-ir-phi-input-builder-to-seq builder)))
 
 ;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
 ;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
@@ -6198,19 +6023,18 @@
   [tys : (& tys ast.AstTypeList)]
   [out : (&mut out ast.AstTypeList)]
   [index : i64]) : unit
-  (if (>= index (ast.ast-type-list-len tys))
-    unit
-    (begin
-      (ast.ast-type-list-push
-        out
-        (ast.ast-node-pool-context-type-push
+  (unless
+    (>= index (ast.ast-type-list-len tys))
+    (ast.ast-type-list-push
+      out
+      (ast.ast-node-pool-context-type-push
+        pools
+        (compiler-ir-clone-type
           pools
-          (compiler-ir-clone-type
-            pools
-            (ast.ast-node-pool-context-type-get
-              (& pools)
-              (ast.ast-type-list-get tys index (ast.ast-type-id-fallback))))))
-      (compiler-ir-clone-type-list-into pools tys out (+ index 1)))))
+          (ast.ast-node-pool-context-type-get
+            (& pools)
+            (ast.ast-type-list-get tys index (ast.ast-type-id-fallback))))))
+    (compiler-ir-clone-type-list-into pools tys out (+ index 1))))
 
 (define (compiler-ir-clone-type-list
   [pools : ast.AstNodePoolContext]
@@ -6218,9 +6042,8 @@
   (let
     [out : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-type-list-len (& tys)))]
-    (begin
-      (compiler-ir-clone-type-list-into pools (& tys) (&mut out) 0)
-      out)))
+    (compiler-ir-clone-type-list-into pools (& tys) (&mut out) 0)
+    out))
 
 (define (compiler-ir-clone-operand
   [_pools : ast.AstNodePoolContext]
@@ -6277,16 +6100,14 @@
   [count : i64]) : unit
   (let
     [cursor : i64 index]
-    (begin
-      (while (< cursor count)
-        (begin
-          (set!
-            (array-ref dst cursor)
-            (compiler-ir-clone-instr
-              pools
-              (compiler-ir-array-shared-view src cursor)))
-          (set! cursor (+ cursor 1))))
-      unit)))
+    (while (< cursor count)
+      (set!
+        (array-ref dst cursor)
+        (compiler-ir-clone-instr
+          pools
+          (compiler-ir-array-shared-view src cursor)))
+      (set! cursor (+ cursor 1)))
+    unit))
 
 (define (compiler-ir-clone-instr-seq
   [pools : ast.AstNodePoolContext]
@@ -6296,9 +6117,8 @@
     [src : (__tl_dyn-array CompilerIrInstr) instrs.slots]
     [dst : (__tl_dyn-array CompilerIrInstr)
       (__tl_make-array CompilerIrInstr count)]
-    (begin
-      (compiler-ir-clone-instr-seq-fill pools src (&mut dst) 0 count)
-      (CompilerIrInstrSeq dst count))))
+    (compiler-ir-clone-instr-seq-fill pools src (&mut dst) 0 count)
+    (CompilerIrInstrSeq dst count)))
 
 (define (compiler-ir-clone-block
   [pools : ast.AstNodePoolContext]
@@ -6317,16 +6137,14 @@
         [out : CompilerIrBlockBuilder
           (compiler-ir-block-builder-with-capacity count)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (compiler-ir-block-builder-push!
-                (&mut out)
-                (compiler-ir-clone-block
-                  pools
-                  (compiler-ir-block-seq-ref seq index)))
-              (set! index (+ index 1))))
-          (compiler-ir-block-builder-to-list out)))]))
+        (while (< index count)
+          (compiler-ir-block-builder-push!
+            (&mut out)
+            (compiler-ir-clone-block
+              pools
+              (compiler-ir-block-seq-ref seq index)))
+          (set! index (+ index 1)))
+        (compiler-ir-block-builder-to-list out))]))
 
 (define (compiler-ir-clone-param
   [pools : ast.AstNodePoolContext]
@@ -6342,16 +6160,12 @@
     [builder : CompilerIrParamBuilder
       (compiler-ir-param-builder-with-capacity params.len)]
     [index : i64 0]
-    (begin
-      (while (< index params.len)
-        (begin
-          (compiler-ir-param-builder-push!
-            (&mut builder)
-            (compiler-ir-clone-param
-              pools
-              (compiler-ir-param-seq-ref params index)))
-          (set! index (+ index 1))))
-      (compiler-ir-param-builder-to-seq builder))))
+    (while (< index params.len)
+      (compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler-ir-clone-param pools (compiler-ir-param-seq-ref params index)))
+      (set! index (+ index 1)))
+    (compiler-ir-param-builder-to-seq builder)))
 
 (define (compiler-ir-clone-function
   [pools : ast.AstNodePoolContext]
@@ -6373,16 +6187,14 @@
     [slots : (__tl_dyn-array CompilerIrFunction)
       (__tl_make-array CompilerIrFunction functions.len)]
     [index : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-ir-clone-function
-              pools
-              (compiler-ir-array-shared-view functions.slots index)))
-          (set! index (+ index 1))))
-      (CompilerIrFunctionSeq slots functions.len))))
+    (while (< index functions.len)
+      (set!
+        (array-ref slots index)
+        (compiler-ir-clone-function
+          pools
+          (compiler-ir-array-shared-view functions.slots index)))
+      (set! index (+ index 1)))
+    (CompilerIrFunctionSeq slots functions.len)))
 
 (define (compiler-ir-clone-global
   [pools : ast.AstNodePoolContext]
@@ -6401,16 +6213,14 @@
     [slots : (__tl_dyn-array CompilerIrGlobal)
       (__tl_make-array CompilerIrGlobal globals.len)]
     [index : i64 0]
-    (begin
-      (while (< index globals.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-ir-clone-global
-              pools
-              (compiler-ir-global-seq-ref globals index)))
-          (set! index (+ index 1))))
-      (CompilerIrGlobalSeq slots globals.len))))
+    (while (< index globals.len)
+      (set!
+        (array-ref slots index)
+        (compiler-ir-clone-global
+          pools
+          (compiler-ir-global-seq-ref globals index)))
+      (set! index (+ index 1)))
+    (CompilerIrGlobalSeq slots globals.len)))
 
 (define (compiler-ir-clone-extern
   [pools : ast.AstNodePoolContext]
@@ -6434,16 +6244,14 @@
     [slots : (__tl_dyn-array CompilerIrExtern)
       (__tl_make-array CompilerIrExtern externs.len)]
     [index : i64 0]
-    (begin
-      (while (< index externs.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-ir-clone-extern
-              pools
-              (compiler-ir-extern-seq-ref externs index)))
-          (set! index (+ index 1))))
-      (CompilerIrExternSeq slots externs.len))))
+    (while (< index externs.len)
+      (set!
+        (array-ref slots index)
+        (compiler-ir-clone-extern
+          pools
+          (compiler-ir-extern-seq-ref externs index)))
+      (set! index (+ index 1)))
+    (CompilerIrExternSeq slots externs.len)))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
 ;; lowerer arena. Function payloads already live in lower-ir-arena and remain
@@ -6455,12 +6263,10 @@
     [dest : (__tl_dyn-array CompilerIrFunction)
       (__tl_make-array CompilerIrFunction count)]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! (array-ref dest i) (array-ref source i))
-          (set! i (+ i 1))))
-      (CompilerIrFunctionSeq dest count))))
+    (while (< i count)
+      (set! (array-ref dest i) (array-ref source i))
+      (set! i (+ i 1)))
+    (CompilerIrFunctionSeq dest count)))
 
 (define (compiler-ir-clone-program-shell
   [pools : ast.AstNodePoolContext]
@@ -6793,9 +6599,8 @@
     [count : i64 values.len]
     [out : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue count)]
-    (begin
-      (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
-      (Array out))))
+    (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
+    (Array out)))
 
 (define (compiler-ir-call-args-from-seq [values : CompilerIrValueSeq]) : CompilerIrCallArgs
   (cond
@@ -6814,9 +6619,8 @@
     [count : i64 values.len]
     [out : (__tl_dyn-array CompilerIrValue)
       (__tl_make-array CompilerIrValue count)]
-    (begin
-      (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
-      (Sret out index))))
+    (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
+    (Sret out index)))
 
 (define (compiler-ir-call-args-array-render
   [values : (__tl_dyn-array CompilerIrValue)]
@@ -7949,19 +7753,17 @@
   (let
     [index : i64 0]
     [out : text_buf.TextBuf buf]
-    (begin
-      (while (< index globals.len)
-        (begin
-          (set!
-            out
-            (text_buf.append
-              out
-              (compiler-ir-global-render
-                structural-session
-                type-segment-bases
-                (compiler-ir-global-seq-ref globals index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index globals.len)
+      (set!
+        out
+        (text_buf.append
+          out
+          (compiler-ir-global-render
+            structural-session
+            type-segment-bases
+            (compiler-ir-global-seq-ref globals index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-ir-extern-abi-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -8007,19 +7809,17 @@
   (let
     [index : i64 0]
     [out : text_buf.TextBuf buf]
-    (begin
-      (while (< index externs.len)
-        (begin
-          (set!
-            out
-            (text_buf.append
-              out
-              (compiler-ir-extern-render
-                structural-session
-                type-segment-bases
-                (compiler-ir-extern-seq-ref externs index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index externs.len)
+      (set!
+        out
+        (text_buf.append
+          out
+          (compiler-ir-extern-render
+            structural-session
+            type-segment-bases
+            (compiler-ir-extern-seq-ref externs index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-ir-program-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -8342,9 +8142,8 @@
   compiler-debug-info-enabled)
 
 (define (compiler-debug-path-remap-clear!) : unit
-  (begin
-    (set! compiler-debug-path-remap-from "")
-    (set! compiler-debug-path-remap-to "")))
+  (set! compiler-debug-path-remap-from "")
+  (set! compiler-debug-path-remap-to ""))
 
 ;; Configure the reproducible-build mapping spelled FROM=TO. The first equals
 ;; sign is the separator so replacement prefixes may themselves contain `=`.
@@ -8352,17 +8151,16 @@
   (let
     [length : i64 (string.string-length spec)]
     [index : i64 0]
-    (begin
-      (while (and (< index length) (not (= (string.string-ref spec index) '=')))
-        (set! index (+ index 1)))
-      (if (or (= index 0) (>= index length))
-        false
-        (begin
-          (set! compiler-debug-path-remap-from (string.substring spec 0 index))
-          (set!
-            compiler-debug-path-remap-to
-            (string.substring spec (+ index 1) (- length (+ index 1))))
-          true)))))
+    (while (and (< index length) (not (= (string.string-ref spec index) '=')))
+      (set! index (+ index 1)))
+    (if (or (= index 0) (>= index length))
+      false
+      (begin
+        (set! compiler-debug-path-remap-from (string.substring spec 0 index))
+        (set!
+          compiler-debug-path-remap-to
+          (string.substring spec (+ index 1) (- length (+ index 1))))
+        true))))
 
 (define (compiler-debug-path-remap-enabled?) : bool
   (> (string.string-length compiler-debug-path-remap-from) 0))
@@ -8525,9 +8323,8 @@
   (let
     [i : i64 index]
     (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
+      (set! (array-ref dst i) (array-ref src i))
+      (set! i (+ i 1)))))
 
 (define (compiler-source-spans-entry-list-capacity-for [count : i64]) : i64
   (let
@@ -8536,10 +8333,9 @@
         4
         count)]
     [cap : i64 4]
-    (begin
-      (while (< cap min-cap)
-        (set! cap (* cap 2)))
-      cap)))
+    (while (< cap min-cap)
+      (set! cap (* cap 2)))
+    cap))
 
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
@@ -8557,14 +8353,13 @@
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
         [bigger : (__tl_dyn-array CompilerSourceSpansEntry)
           (__tl_make-array CompilerSourceSpansEntry new-cap)]
-        (begin
-          (compiler-source-spans-entry-list-copy-array-range!
-            (&mut bigger)
-            (& slots)
-            0
-            len)
-          (set! (array-ref bigger len) entry)
-          (CompilerSourceSpansEntryList bigger (+ len 1)))))))
+        (compiler-source-spans-entry-list-copy-array-range!
+          (&mut bigger)
+          (& slots)
+          0
+          len)
+        (set! (array-ref bigger len) entry)
+        (CompilerSourceSpansEntryList bigger (+ len 1))))))
 
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
   [dst : (&mut dst (__tl_dyn-array CompilerSourceSpansInstrEntry))]
@@ -8574,9 +8369,8 @@
   (let
     [i : i64 index]
     (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
+      (set! (array-ref dst i) (array-ref src i))
+      (set! i (+ i 1)))))
 
 (define (compiler-source-spans-instr-entry-list-append
   [entries : CompilerSourceSpansInstrEntryList]
@@ -8594,14 +8388,13 @@
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
         [bigger : (__tl_dyn-array CompilerSourceSpansInstrEntry)
           (__tl_make-array CompilerSourceSpansInstrEntry new-cap)]
-        (begin
-          (compiler-source-spans-instr-entry-list-copy-array-range!
-            (&mut bigger)
-            (& slots)
-            0
-            len)
-          (set! (array-ref bigger len) entry)
-          (CompilerSourceSpansInstrEntryList bigger (+ len 1)))))))
+        (compiler-source-spans-instr-entry-list-copy-array-range!
+          (&mut bigger)
+          (& slots)
+          0
+          len)
+        (set! (array-ref bigger len) entry)
+        (CompilerSourceSpansInstrEntryList bigger (+ len 1))))))
 
 ;; --- spans escape -----------------------------------------------------------
 ;;
@@ -8620,13 +8413,12 @@
     [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansEntry)
       (__tl_make-array CompilerSourceSpansEntry len)]
-    (begin
-      (compiler-source-spans-entry-list-copy-array-range!
-        (&mut copy)
-        (& slots)
-        0
-        len)
-      (CompilerSourceSpansEntryList copy len))))
+    (compiler-source-spans-entry-list-copy-array-range!
+      (&mut copy)
+      (& slots)
+      0
+      len)
+    (CompilerSourceSpansEntryList copy len)))
 
 (define (compiler-source-spans-instr-entry-list-escape
   [entries : CompilerSourceSpansInstrEntryList]) : CompilerSourceSpansInstrEntryList
@@ -8635,13 +8427,12 @@
     [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
       (__tl_make-array CompilerSourceSpansInstrEntry len)]
-    (begin
-      (compiler-source-spans-instr-entry-list-copy-array-range!
-        (&mut copy)
-        (& slots)
-        0
-        len)
-      (CompilerSourceSpansInstrEntryList copy len))))
+    (compiler-source-spans-instr-entry-list-copy-array-range!
+      (&mut copy)
+      (& slots)
+      0
+      len)
+    (CompilerSourceSpansInstrEntryList copy len)))
 
 (define (compiler-source-spans-escape [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans
@@ -8889,16 +8680,15 @@
     [marker : String "__u"]
     [n : i64 (string.string-length text)]
     [digits : i64 n]
-    (begin
-      (while (and
-        (> digits 0)
-        (compiler-source-spans-label-digit-at? text (- digits 1)))
-        (set! digits (- digits 1)))
-      (if (or (= digits n) (< digits 4))
-        0
-        (if (string.is-string-prefix-at text (& marker) (- digits 3))
-          (- n (- digits 3))
-          0)))))
+    (while (and
+      (> digits 0)
+      (compiler-source-spans-label-digit-at? text (- digits 1)))
+      (set! digits (- digits 1)))
+    (if (or (= digits n) (< digits 4))
+      0
+      (if (string.is-string-prefix-at text (& marker) (- digits 3))
+        (- n (- digits 3))
+        0))))
 
 ;; Length of the one trailing clone suffix `text` carries, or 0.
 (define (compiler-source-spans-bounds-clone-suffix-len [text : (& text str)]) : i64
@@ -9018,45 +8808,38 @@
             [complete-instr-slots : (__tl_dyn-array
               CompilerSourceSpansInstrEntry)
               complete-instr-entries.slots]
-            (begin
-              (while (< entry-index complete-entries.len)
-                (let
-                  [span-entry : CompilerSourceSpansEntry
-                    (array-ref complete-entry-slots entry-index)]
-                  [name : CompilerIrSymbolId span-entry.name]
-                  [path-id : i64 span-entry.path-id]
-                  [span : ast.AstSourceSpan span-entry.span]
-                  (begin
-                    (set!
+            (while (< entry-index complete-entries.len)
+              (let
+                [span-entry : CompilerSourceSpansEntry
+                  (array-ref complete-entry-slots entry-index)]
+                [name : CompilerIrSymbolId span-entry.name]
+                [path-id : i64 span-entry.path-id]
+                [span : ast.AstSourceSpan span-entry.span]
+                (set!
+                  out
+                  (if (> path-id 0)
+                    (compiler-source-spans-insert-located out name path-id span)
+                    (compiler-source-spans-insert out name span)))
+                (set! entry-index (+ entry-index 1))))
+            (while (< instr-index complete-instr-entries.len)
+              (let
+                [span-entry : CompilerSourceSpansInstrEntry
+                  (array-ref complete-instr-slots instr-index)]
+                [key : CompilerSourceSpansInstrKey
+                  (compiler-source-spans-instr-entry-key (& span-entry))]
+                [path-id : i64 span-entry.path-id]
+                [span : ast.AstSourceSpan span-entry.span]
+                (set!
+                  out
+                  (if (> path-id 0)
+                    (compiler-source-spans-insert-instr-entry-located
                       out
-                      (if (> path-id 0)
-                        (compiler-source-spans-insert-located
-                          out
-                          name
-                          path-id
-                          span)
-                        (compiler-source-spans-insert out name span)))
-                    (set! entry-index (+ entry-index 1)))))
-              (while (< instr-index complete-instr-entries.len)
-                (let
-                  [span-entry : CompilerSourceSpansInstrEntry
-                    (array-ref complete-instr-slots instr-index)]
-                  [key : CompilerSourceSpansInstrKey
-                    (compiler-source-spans-instr-entry-key (& span-entry))]
-                  [path-id : i64 span-entry.path-id]
-                  [span : ast.AstSourceSpan span-entry.span]
-                  (begin
-                    (set!
-                      out
-                      (if (> path-id 0)
-                        (compiler-source-spans-insert-instr-entry-located
-                          out
-                          key
-                          path-id
-                          span)
-                        (compiler-source-spans-insert-instr-entry out key span)))
-                    (set! instr-index (+ instr-index 1)))))
-              out))])]))
+                      key
+                      path-id
+                      span)
+                    (compiler-source-spans-insert-instr-entry out key span)))
+                (set! instr-index (+ instr-index 1))))
+            out)])]))
 
 (defenum CompilerIrSummary
   (Summary i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64))
@@ -9247,14 +9030,12 @@
         [count : i64 (compiler-ir-block-seq-count seq)]
         [total : i64 0]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (match (compiler-ir-block-seq-ref seq index)
-                [(Block _ instrs)
-                  (set! total (+ total (compiler-ir-instr-seq-count instrs)))])
-              (set! index (+ index 1))))
-          total))]))
+        (while (< index count)
+          (match (compiler-ir-block-seq-ref seq index)
+            [(Block _ instrs)
+              (set! total (+ total (compiler-ir-instr-seq-count instrs)))])
+          (set! index (+ index 1)))
+        total)]))
 
 (define (compiler-ir-function-block-count [func : CompilerIrFunction]) : i64
   (match func
@@ -9304,17 +9085,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-block-count
-                (compiler-ir-array-shared-view functions.slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-block-count
+            (compiler-ir-array-shared-view functions.slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
@@ -9323,17 +9102,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-instruction-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-instruction-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-empty-block-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
@@ -9342,17 +9119,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-empty-block-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-empty-block-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-max-instruction-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
@@ -9361,17 +9136,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (compiler-ir-max-i64
-              acc
-              (compiler-ir-function-max-instruction-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (compiler-ir-max-i64
+          acc
+          (compiler-ir-function-max-instruction-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-max-block-instruction-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
@@ -9380,17 +9153,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (compiler-ir-max-i64
-              acc
-              (compiler-ir-function-max-block-instruction-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (compiler-ir-max-i64
+          acc
+          (compiler-ir-function-max-block-instruction-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-call-arg-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
@@ -9399,17 +9170,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-call-arg-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-call-arg-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-phi-input-count
   [functions : CompilerIrFunctionSeq]) : i64
@@ -9418,17 +9187,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-phi-input-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-phi-input-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-function-seq-var-count [functions : CompilerIrFunctionSeq]) : i64
   (let
@@ -9436,17 +9203,15 @@
     [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (compiler-ir-function-var-count
-                (compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (compiler-ir-function-var-count
+            (compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (compiler-ir-program-summary [program : CompilerIrProgram]) : CompilerIrSummary
   (match program
@@ -9764,10 +9529,9 @@
         (CompilerIrRepresentationIndex counts masks))
       (match (ir_i64_i64_map.get (& counts) key)
         [(LookupMissing)
-          (begin
-            (ir_i64_i64_map.insert-ref! (&mut counts) key word-count)
-            (ir_i64_i64_map.insert-ref! (&mut masks) key class-mask)
-            (CompilerIrRepresentationIndex counts masks))]
+          (ir_i64_i64_map.insert-ref! (&mut counts) key word-count)
+          (ir_i64_i64_map.insert-ref! (&mut masks) key class-mask)
+          (CompilerIrRepresentationIndex counts masks)]
         [(LookupFound found-count)
           (match (ir_i64_i64_map.get (& masks) key)
             [(LookupFound found-mask)
@@ -9778,10 +9542,9 @@
                   (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
                   (CompilerIrRepresentationIndex counts masks)))]
             [(LookupMissing)
-              (begin
-                (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
-                (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
-                (CompilerIrRepresentationIndex counts masks))])]))))
+              (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
+              (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
+              (CompilerIrRepresentationIndex counts masks)])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
   [index : CompilerIrRepresentationIndex]
@@ -9790,19 +9553,17 @@
     index
     (let
       [counts : ir_i64_i64_map.Map index.word-counts]
-      (begin
-        (ir_i64_i64_map.insert-ref! (&mut counts) key 1)
-        (CompilerIrRepresentationIndex counts index.class-masks)))))
+      (ir_i64_i64_map.insert-ref! (&mut counts) key 1)
+      (CompilerIrRepresentationIndex counts index.class-masks))))
 
 (define (compiler-ir-representation-var-type-set!
   [types : (& types CompilerIrRepresentationVarTypes)]
   [var : i64]
   [ty : ast.AstType]) : unit
-  (if (or (< var 0) (>= var (array-length types.present)))
-    unit
-    (begin
-      (set! (array-ref types.present var) 1)
-      (set! (array-ref types.items var) ty))))
+  (unless
+    (or (< var 0) (>= var (array-length types.present)))
+    (set! (array-ref types.present var) 1)
+    (set! (array-ref types.items var) ty)))
 
 (define (compiler-ir-representation-param-types!
   [params : CompilerIrParamSeq]
@@ -9810,11 +9571,10 @@
   (let
     [position : i64 0]
     (while (< position params.len)
-      (begin
-        (match (compiler-ir-param-seq-ref params position)
-          [(Param _ ty var)
-            (compiler-ir-representation-var-type-set! types var ty)])
-        (set! position (+ position 1))))))
+      (match (compiler-ir-param-seq-ref params position)
+        [(Param _ ty var)
+          (compiler-ir-representation-var-type-set! types var ty)])
+      (set! position (+ position 1)))))
 
 (define (compiler-ir-representation-instr-def-type!
   [instr : CompilerIrInstr]
@@ -9839,11 +9599,10 @@
   (let
     [i : i64 0]
     (while (< i (compiler-ir-instr-seq-count instrs))
-      (begin
-        (compiler-ir-representation-instr-def-type!
-          (compiler-ir-instr-seq-ref instrs i)
-          types)
-        (set! i (+ i 1))))))
+      (compiler-ir-representation-instr-def-type!
+        (compiler-ir-instr-seq-ref instrs i)
+        types)
+      (set! i (+ i 1)))))
 
 (define (compiler-ir-representation-block-types!
   [blocks : CompilerIrBlockList]
@@ -9853,11 +9612,10 @@
       (let
         [i : i64 0]
         (while (< i (compiler-ir-block-seq-count seq))
-          (begin
-            (match (compiler-ir-block-seq-ref seq i)
-              [(Block _ instrs)
-                (compiler-ir-representation-instr-types! instrs types)])
-            (set! i (+ i 1)))))]))
+          (match (compiler-ir-block-seq-ref seq i)
+            [(Block _ instrs)
+              (compiler-ir-representation-instr-types! instrs types)])
+          (set! i (+ i 1))))]))
 
 (define (compiler-ir-representation-function-var-types
   [func : CompilerIrFunction]) : CompilerIrRepresentationVarTypes
@@ -9868,10 +9626,9 @@
           (CompilerIrRepresentationVarTypes
             (__tl_make-array i64 vars)
             (__tl_make-array ast.AstType vars))]
-        (begin
-          (compiler-ir-representation-param-types! params types)
-          (compiler-ir-representation-block-types! blocks types)
-          types))]))
+        (compiler-ir-representation-param-types! params types)
+        (compiler-ir-representation-block-types! blocks types)
+        types)]))
 
 (define (compiler-ir-representation-float-type? [ty : ast.AstType]) : bool
   (match ty
@@ -10494,14 +10251,12 @@
     [length : i64 (string.string-length text)]
     [index : i64 0]
     [spaces : i64 0]
-    (begin
-      (while (and (< spaces 2) (< index length))
-        (begin
-          (if (= (string.string-ref text index) ' ')
-            (set! spaces (+ spaces 1))
-            unit)
-          (set! index (+ index 1))))
-      (string.substring text index (- length index)))))
+    (while (and (< spaces 2) (< index length))
+      (if (= (string.string-ref text index) ' ')
+        (set! spaces (+ spaces 1))
+        unit)
+      (set! index (+ index 1)))
+    (string.substring text index (- length index))))
 
 ;; Test support: the shapes of every private helper in `functions`, in function order,
 ;; separated by " | ".
@@ -10510,28 +10265,26 @@
   (let
     [out : String ""]
     [index : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-ir-function-seq-ref functions index)
-            [(Function _ _ _ _ _ function-abi)
-              (match function-abi
-                [(Ordinary) unit]
-                [(SpmdPrivate private-box)
-                  (let
-                    [separator : String
-                      (if (= (string.string-length out) 0)
-                        ""
-                        " | ")]
-                    (set!
-                      out
-                      (str_cat.str-cat
-                        out
-                        separator
-                        (compiler-ir-test-spmd-private-abi-shape
-                          (deref private-box)))))])])
-          (set! index (+ index 1))))
-      out)))
+    (while (< index functions.len)
+      (match (compiler-ir-function-seq-ref functions index)
+        [(Function _ _ _ _ _ function-abi)
+          (match function-abi
+            [(Ordinary) unit]
+            [(SpmdPrivate private-box)
+              (let
+                [separator : String
+                  (if (= (string.string-length out) 0)
+                    ""
+                    " | ")]
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    separator
+                    (compiler-ir-test-spmd-private-abi-shape
+                      (deref private-box)))))])])
+      (set! index (+ index 1)))
+    out))
 
 ;; Test support: the private SPMD ABI a helper called with exactly `args` and
 ;; `result` would have, with each physical parameter typed as its source type
@@ -10546,35 +10299,33 @@
     [params : CompilerIrSpmdPrivateParamSeq
       (compiler-ir-spmd-private-param-seq-with-capacity (+ args.len 1))]
     [index : i64 0]
-    (begin
-      (compiler-ir-spmd-private-param-seq-push!
-        (&mut params)
-        (CompilerIrSpmdPrivateParam.Param 0 (ActiveMask) (Bool)))
-      (while (< index args.len)
-        (begin
-          (match (array-ref args.slots index)
-            [(Arg class _ ty)
-              (compiler-ir-spmd-private-param-seq-push!
-                (&mut params)
-                (CompilerIrSpmdPrivateParam.Param
-                  (+ index 1)
-                  (Source
-                    index
-                    (compiler-ir-clone-spmd-value-class class)
-                    (clone ty))
-                  (clone ty)))])
-          (set! index (+ index 1))))
-      (CompilerIrSpmdPrivateAbi
-        (V1)
-        callee
-        backend
-        lanes
-        params
-        (None)
-        (match result
-          [(Unit) (Unit)]
-          [(Value _ class ty)
-            (Value (compiler-ir-clone-spmd-value-class class) (clone ty))])))))
+    (compiler-ir-spmd-private-param-seq-push!
+      (&mut params)
+      (CompilerIrSpmdPrivateParam.Param 0 (ActiveMask) (Bool)))
+    (while (< index args.len)
+      (match (array-ref args.slots index)
+        [(Arg class _ ty)
+          (compiler-ir-spmd-private-param-seq-push!
+            (&mut params)
+            (CompilerIrSpmdPrivateParam.Param
+              (+ index 1)
+              (Source
+                index
+                (compiler-ir-clone-spmd-value-class class)
+                (clone ty))
+              (clone ty)))])
+      (set! index (+ index 1)))
+    (CompilerIrSpmdPrivateAbi
+      (V1)
+      callee
+      backend
+      lanes
+      params
+      (None)
+      (match result
+        [(Unit) (Unit)]
+        [(Value _ class ty)
+          (Value (compiler-ir-clone-spmd-value-class class) (clone ty))]))))
 
 ;; Test support: a same-program SPMD call carrying the descriptor
 ;; `compiler-ir-test-spmd-private-abi` derives from its own payload.

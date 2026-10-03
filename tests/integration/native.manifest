@@ -569,6 +569,12 @@ spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0
 spmd_foreach_active_lane_types|all|-|tests/integration/spmd_foreach_active.tl|0|-2 8 2\n|5|-|stage-stdlib
 spmd_foreach_active_atomics|all|-|tests/integration/spmd_foreach_active.tl|0|9 5 7\n|6|-|stage-stdlib
 spmd_foreach_active_first_fault|all|-|tests/integration/spmd_foreach_active.tl|134|0\n1\n2\n3\n|7|-|stage-stdlib+expected-stderr:tl: $SRC:140:32: array index out of bounds: index=9 length=8\n
+spmd_foreach_2d_order|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=2\ny1=4\nx0=-1\nx1=2\n(2 -1)\n(2 0)\n(2 1)\n(3 -1)\n(3 0)\n(3 1)\ncount=6\n|1|-|stage-stdlib
+spmd_foreach_2d_row_major|all|-|tests/integration/spmd_foreach_2d.tl|0|0 -7 -6 -5 3 4 5 13 14 15\n|2|-|stage-stdlib
+spmd_foreach_2d_empty|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=3\ny1=3\nx0=-9223372036854775808\nx1=9223372036854775807\ncount=0\ny0=-9223372036854775808\ny1=9223372036854775807\nx0=5\nx1=5\ncount=0\ny0=5\ny1=2\nx0=0\nx1=4\ncount=0\ny0=0\ny1=1\nx0=7\nx1=-7\ncount=0\n|3|-|stage-stdlib
+spmd_foreach_2d_outer_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=-9223372036854775808\ny1=9223372036854775807\nx0=0\nx1=1\n|4|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_inner_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=1\nx0=-9223372036854775808\nx1=9223372036854775807\n|5|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_product_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=4294967296\nx0=0\nx1=2147483648\n|6|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-

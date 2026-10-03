@@ -908,8 +908,14 @@
 ;; AstExpr.Foreach inlines an AstType plus four scalars;
 ;; AstExpr.WithResource inlines two list heads. Boxing both keeps them off the
 ;; row size.
+;; `Foreach` is a rank-1 domain: name, index type, start, end, body.
+;; `Foreach2` is a rank-2 domain in binding order -- the outer coordinate's
+;; name, type, start and end, then the inner (fastest-varying) coordinate's,
+;; then the body. Both coordinates keep their ordinal: the inner one is never
+;; folded into the outer or vice versa.
 (defenum AstForeach
-  (Foreach i64 AstType i64 i64 i64))
+  (Foreach i64 AstType i64 i64 i64)
+  (Foreach2 i64 AstType i64 i64 i64 AstType i64 i64 i64))
 
 (define (ast-foreach-box-shared-view [value : (Box AstForeach)]) : AstForeach
   (let
@@ -6814,7 +6820,26 @@
       [(AstExpr.Foreach payload)
         (match (__tl-box-place payload)
           [(AstForeach.Foreach _ t a b d)
-            (ast-fold-3 ,c (ast-fold-1 ,c ,s ,ty t ,@x) ,e a b d ,@x)])]
+            (ast-fold-3 ,c (ast-fold-1 ,c ,s ,ty t ,@x) ,e a b d ,@x)]
+          [(AstForeach.Foreach2 _ t0 a0 b0 _ t1 a1 b1 d)
+            (ast-fold-1
+              ,c
+              (ast-fold-2
+                ,c
+                (ast-fold-2
+                  ,c
+                  (ast-fold-1 ,c (ast-fold-1 ,c ,s ,ty t0 ,@x) ,ty t1 ,@x)
+                  ,e
+                  a0
+                  b0
+                  ,@x)
+                ,e
+                a1
+                b1
+                ,@x)
+              ,e
+              d
+              ,@x)])]
       [(AstExpr.SpmdReduce payload)
         (match (__tl-box-place payload)
           [(AstSpmdReduce.Reduce _ _ t a b d f)
@@ -7178,6 +7203,19 @@
                   (,ty ,@x t)
                   (,e ,@x a)
                   (,e ,@x b)
+                  (,e ,@x d))))]
+          [(AstForeach.Foreach2 outer t0 a0 b0 inner t1 a1 b1 d)
+            (AstExpr.Foreach
+              (box
+                (AstForeach.Foreach2
+                  outer
+                  (,ty ,@x t0)
+                  (,e ,@x a0)
+                  (,e ,@x b0)
+                  inner
+                  (,ty ,@x t1)
+                  (,e ,@x a1)
+                  (,e ,@x b1)
                   (,e ,@x d))))])]
       [(AstExpr.SpmdReduce payload)
         (match (__tl-box-place payload)
@@ -7766,7 +7804,25 @@
                       (,ty ,@x t0 t1)
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
-                      (,e ,@x a2 b2))])]
+                      (,e ,@x a2 b2))]
+                  [_ false])]
+              [_ false])]
+          [(AstForeach.Foreach2 m0 u0 a0 a1 n0 v0 a2 a3 a4)
+            (match ,r
+              [(AstExpr.Foreach b-payload)
+                (match (__tl-box-place b-payload)
+                  [(AstForeach.Foreach2 m1 u1 b0 b1 n1 v1 b2 b3 b4)
+                    (and
+                      (= m0 m1)
+                      (= n0 n1)
+                      (,ty ,@x u0 u1)
+                      (,ty ,@x v0 v1)
+                      (,e ,@x a0 b0)
+                      (,e ,@x a1 b1)
+                      (,e ,@x a2 b2)
+                      (,e ,@x a3 b3)
+                      (,e ,@x a4 b4))]
+                  [_ false])]
               [_ false])])]
       [(AstExpr.SpmdReduce a-payload)
         (match (__tl-box-place a-payload)
@@ -8512,6 +8568,30 @@
   (ast-node-push
     (Foreach (box (AstForeach.Foreach name index-ty start end body)))))
 
+(define (ast-expr-foreach2-id
+  [outer : i64]
+  [outer-ty : AstType]
+  [outer-start : i64]
+  [outer-end : i64]
+  [inner : i64]
+  [inner-ty : AstType]
+  [inner-start : i64]
+  [inner-end : i64]
+  [body : i64]) : i64
+  (ast-node-push
+    (Foreach
+      (box
+        (Foreach2
+          outer
+          outer-ty
+          outer-start
+          outer-end
+          inner
+          inner-ty
+          inner-start
+          inner-end
+          body)))))
+
 (define (ast-expr-spmd-program-index) : i64
   (ast-node-push (SpmdProgramIndex)))
 
@@ -8887,6 +8967,32 @@
   (ast-node-pool-context-expr-push
     pools
     (Foreach (box (AstForeach.Foreach name index-ty start end body)))))
+
+(define (ast-expr-foreach2-id-with-pools
+  [pools : AstNodePoolContext]
+  [outer : i64]
+  [outer-ty : AstType]
+  [outer-start : i64]
+  [outer-end : i64]
+  [inner : i64]
+  [inner-ty : AstType]
+  [inner-start : i64]
+  [inner-end : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (Foreach
+      (box
+        (Foreach2
+          outer
+          outer-ty
+          outer-start
+          outer-end
+          inner
+          inner-ty
+          inner-start
+          inner-end
+          body)))))
 
 (define (ast-expr-spmd-reduce-id-with-pools
   [pools : AstNodePoolContext]

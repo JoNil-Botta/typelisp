@@ -7787,7 +7787,82 @@
                       state
                       locals
                       index)
-                    (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
+                    (sym_i64_env.sym-i64-bind-id locals index 1))))))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start
+            outer-end
+            inner
+            inner-ty
+            inner-start
+            inner-end
+            body)
+          (let
+            [outer-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+                state)
+                (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+                  state
+                  locals
+                  outer)
+                (sym_i64_env.sym-i64-bind-id locals outer 1))]
+            [body-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+                state)
+                (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+                  state
+                  outer-locals
+                  inner)
+                (sym_i64_env.sym-i64-bind-id outer-locals inner 1))]
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-session-state-lazy-type-demand
+                (owned_view.compiler-owned-shared-view state)
+                outer-ty
+                alias
+                summary
+                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-session-state-lazy-type-demand
+                  (owned_view.compiler-owned-shared-view state)
+                  inner-ty
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-session-state-lazy-expr-demand
+                    (owned_view.compiler-owned-shared-view state)
+                    outer-start
+                    alias
+                    summary
+                    locals)
+                  (compiler-load-lazy-alias-demand-merge
+                    (compiler-load-session-state-lazy-expr-demand
+                      (owned_view.compiler-owned-shared-view state)
+                      outer-end
+                      alias
+                      summary
+                      locals)
+                    (compiler-load-lazy-alias-demand-merge
+                      (compiler-load-session-state-lazy-expr-demand
+                        (owned_view.compiler-owned-shared-view state)
+                        inner-start
+                        alias
+                        summary
+                        locals)
+                      (compiler-load-lazy-alias-demand-merge
+                        (compiler-load-session-state-lazy-expr-demand
+                          (owned_view.compiler-owned-shared-view state)
+                          inner-end
+                          alias
+                          summary
+                          locals)
+                        (compiler-load-session-state-lazy-expr-demand
+                          state
+                          body
+                          alias
+                          summary
+                          body-locals))))))))])]
     [(ForeachActive lane body)
       (compiler-load-session-state-lazy-expr-demand
         (owned_view.compiler-owned-shared-view state)

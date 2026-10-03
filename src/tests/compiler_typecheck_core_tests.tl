@@ -1401,6 +1401,7 @@
     [(= i 20) "(__tl_for-owned-state src idx source body)"]
     [(= i 21) "(__tl_for-owned-step src idx item done body)"]
     [(= i 22) "(__tl_for-owned-step-typed src idx item (type i64) done body)"]
+    [(= i 23) "(foreach ([y : i64 0 h] [x : i64 1 w]) (touch out y x))"]
     [else "(let [x : i64 41] (in-arena a (+ x 1)))"]))
 
 ;; The head each probed form converts to.
@@ -1429,6 +1430,7 @@
     [(= i 20) "__tl_for-owned-state"]
     [(= i 21) "__tl_for-owned-step"]
     [(= i 22) "__tl_for-owned-step-typed"]
+    [(= i 23) "foreach"]
     [else "let"]))
 
 (define (macro-output-forms-failed
@@ -1437,7 +1439,7 @@
     [failed : String ""]
     [i : i64 0]
     (begin
-      (while (< i 24)
+      (while (< i 25)
         (begin
           (if (macro-output-form-round-trips? session i)
             unit
@@ -1521,7 +1523,7 @@
       (test.assert-string-eq
         failed
         ""
-        "every expression form the parser accepts in a function body -- the scoped arena, scratch, escape and resource forms, break and continue, comptime, typed and untyped lambdas, foreach and the SPMD forms, and the compiler-private owned-iteration steps in both spellings -- converts from Decls/Module macro output back to syntax that re-parses as the same kind of expression and converts again to the same syntax")
+        "every expression form the parser accepts in a function body -- the scoped arena, scratch, escape and resource forms, break and continue, comptime, typed and untyped lambdas, rank-1 and rank-2 foreach and the SPMD forms, and the compiler-private owned-iteration steps in both spellings -- converts from Decls/Module macro output back to syntax that re-parses as the same kind of expression and converts again to the same syntax")
       (test.assert-true
         move-aware-rejected?
         "a move-aware resource scope in Decls/Module macro output is rejected, not spelled as a plain `with` whose cleanup stays armed"))))

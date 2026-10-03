@@ -3628,6 +3628,76 @@
           body-id)
         (compiler-semantic-walk-node! state bound.scope bound.env body-id)))))
 
+;; A rank-2 foreach binds the outer coordinate, then the inner one, over the
+;; body only; all four bounds resolve in the enclosing scope.
+(define (compiler-semantic-walk-foreach2!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : tc.TcTypeEnv]
+  [outer : i64]
+  [outer-ty : ast.AstType]
+  [outer-start-id : i64]
+  [outer-end-id : i64]
+  [inner : i64]
+  [inner-ty : ast.AstType]
+  [inner-start-id : i64]
+  [inner-end-id : i64]
+  [body-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
+    [source-end : i64 (string.string-length state.source)]
+    [outer-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        state
+        scope
+        env
+        outer
+        Local
+        (Some
+          (tc.tc-resolve-type
+            state.ctx
+            (owned_view.compiler-owned-shared-view outer-ty)))
+        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-expr-start-offset state outer-start-id source-end))]
+    [inner-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        state
+        outer-bound.scope
+        outer-bound.env
+        inner
+        Local
+        (Some
+          (tc.tc-resolve-type
+            state.ctx
+            (owned_view.compiler-owned-shared-view inner-ty)))
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          outer-end-id
+          outer-bound.next-search)
+        (compiler-semantic-expr-start-offset state inner-start-id source-end))]
+    (begin
+      (compiler-semantic-walk-type! state outer-ty)
+      (compiler-semantic-walk-node! state scope env outer-start-id)
+      (compiler-semantic-walk-node! state scope env outer-end-id)
+      (compiler-semantic-walk-type! state inner-ty)
+      (compiler-semantic-walk-node! state scope env inner-start-id)
+      (compiler-semantic-walk-node! state scope env inner-end-id)
+      (compiler-semantic-scope-node-region-add!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        inner-bound.scope
+        body-id)
+      (compiler-semantic-walk-node!
+        state
+        inner-bound.scope
+        inner-bound.env
+        body-id))))
+
 ;; `(foreach-active [lane : i64] body...)` binds LANE, an i64, over the body.
 (define (compiler-semantic-walk-foreach-active!
   [state : CompilerSemanticWalkState]
@@ -4932,6 +5002,30 @@
                 index-ty
                 start
                 end
+                body
+                maybe-span)]
+            [(Foreach2
+                outer
+                outer-ty
+                outer-start
+                outer-end
+                inner
+                inner-ty
+                inner-start
+                inner-end
+                body)
+              (compiler-semantic-walk-foreach2!
+                state
+                scope
+                env
+                outer
+                outer-ty
+                outer-start
+                outer-end
+                inner
+                inner-ty
+                inner-start
+                inner-end
                 body
                 maybe-span)])]
         [(ForeachActive lane body)

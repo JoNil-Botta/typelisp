@@ -2648,8 +2648,15 @@
       (let [_seen-prefix : i64 prefix] unit))
     (spmd-reduce sum ([j : i64 0 n]) 0 j)))
 
+(define (spmd-domain [n : i64]) : i64
+  (let
+    [col : i64 n]
+    (begin
+      (foreach ([row : i64 0 col] [col : i64 0 n]) (let [_cell : i64 (+ row col)] unit))
+      col)))
+
 (define (main) : i64
-  (+ (deep 1) (pattern-resource (ScopeSome 2)) (macro-use 3) (spmd-scope 4)))"]
+  (+ (deep 1) (pattern-resource (ScopeSome 2)) (macro-use 3) (spmd-scope 4) (spmd-domain 5)))"]
     (match (compiler-check-source-index-with-roots
       (owned_view.compiler-owned-shared-view path)
       (owned_view.compiler-owned-shared-view source)
@@ -2755,6 +2762,41 @@
                     "prefix"
                     0
                     0)
+                  ;; A rank-2 domain binds both coordinates over the body
+                  ;; only: the outer bound reads the enclosing `col`, the
+                  ;; body reads the inner coordinate, and the binding after
+                  ;; the domain restores the enclosing `col`.
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "row"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "col"
+                    0
+                    0)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "col"
+                    1
+                    1)
+                  (compiler-semantic-source-index-name-symbol-match?
+                    (& index)
+                    path
+                    "col"
+                    0
+                    2)
+                  (not
+                    (compiler-semantic-source-index-name-symbol-match?
+                      (& index)
+                      path
+                      "col"
+                      0
+                      1))
                   (compiler-check-semantic-index-dense-visibility-ok?
                     (& index)
                     path

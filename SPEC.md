@@ -5151,6 +5151,55 @@ Semantics:
   buffer's length traps through the same bounds-check abort path for both
   `array-ref` reads and array-element place writes.
 
+Rank-2 domains. `(foreach ([y : i64 y-begin y-end] [x : i64 x-begin x-end])
+body)` executes one logical program instance for each pair `(y, x)` in the
+product of the two half-open ranges. Exactly one or two bindings are
+accepted: an empty binding list and three or more bindings are diagnosed, not
+flattened, and the two coordinate names must differ.
+
+- Both coordinates have type `i64`. All four bounds are uniform `i64`
+  expressions evaluated exactly once, in binding order (`y-begin`, `y-end`,
+  `x-begin`, `x-end`), before any body effect. No bound sees either
+  coordinate.
+- All bounds are compared first. If either dimension is empty (`end <=
+  begin`), the domain executes zero iterations, even when the other
+  dimension's span would overflow.
+- Otherwise each span and the domain product `(y-end - y-begin) * (x-end -
+  x-begin)` are computed with checked `i64` arithmetic. Overflow traps through
+  the bounds-check abort path before the first body effect.
+- The scalar reference executes the domain lexicographically in binding
+  order: `(y-begin, x-begin)` first, `x` varying fastest, then the next `y`.
+- Both coordinates are varying and read-only: `set!` of either is rejected.
+  A coordinate passed to a helper is an ordinary varying value there.
+- A non-atomic array-element destination index inside a rank-2 body must be
+  the row-major form `base + (y - a) * span + (x - b)` for uniform `base`,
+  `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
+  bounds, or the bare `x-end` when `x-begin` is the literal `0`. Additive
+  terms may appear in any order and grouping, each coordinate exactly once and
+  with positive sign. The span's bounds must be integer literals or
+  variables bound outside the `foreach` that the body never assigns. Because
+  the checked domain product keeps `(y - y-begin) * span + (x - x-begin)` in
+  `[0, product)`, such writes are disjoint over the whole domain. Any other
+  coordinate-dependent destination, including `out[x]` and `out[y]`, is
+  rejected; masked branches apply the same rule to their reads and writes.
+  Helper bodies and nested `foreach` bodies see no rank-2 coordinate, so a
+  row-major write there is rejected.
+- Every backend mode lowers a rank-2 domain to the scalar reference; native
+  row-local gangs are a separate extension (#7191). Rank-1 `foreach` is
+  unchanged.
+
+```lisp test=check name=spmd-foreach-rank2-row-major
+
+(define (fill-tile [out : (&mut (Slice i64))]
+                   [base : i64]
+                   [y0 : i64] [y1 : i64]
+                   [x0 : i64] [x1 : i64]) : unit
+  (foreach ([y : i64 y0 y1]
+            [x : i64 x0 x1])
+    (set! (array-ref out (+ base (+ (* (- y y0) (- x1 x0)) (- x x0))))
+          (+ (* y 100) x))))
+```
+
 Array access. The core patterns are contiguous map and zip-style kernels over
 runtime-sized buffers, reading through `array-ref` and writing through
 `(set! (array-ref destination index) value)`:
@@ -8781,6 +8830,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: ordered scalar reference; native row-local gangs are #7191 | Supported: ordered scalar reference; native row-local gangs are #7191 | `tests/integration/spmd_foreach_2d.tl`, the SPMD same-exit corpus and product-overflow trap case, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
 | `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |

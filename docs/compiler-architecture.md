@@ -330,15 +330,19 @@ scanning returns. Token literal payloads remain in their source/interner
 owners, so growth preserves records and indices without retaining all previous
 capacities. The spanned reader pool is the only s-expression tree; plain data
 reads (lockfiles, TLCI metadata) use its `data-result` mode. It also owns
-declaration/member origins. Its load handoff transfers the live prefix into an
-exclusive owner without changing row ids. Subsequent node growth moves both
-rows and live builders to a replacement owner with bounded slack, then destroys
-the old owner. Reset revokes exclusive ownership before another load session
-can share the reader arena; pre-handoff growth must preserve that shared arena.
-The final handoff compacts the prefix again after lowering. The compile-profile
-verifier checks retained arena bytes before that compaction, and
-`src/tests/scan_storage_growth.tl` covers relocation, current-owner retirement,
-failed reads and shared-session reuse. Whole-load scan release empties the
+declaration/member origins. Rows live in fixed 1024-row segments that never
+move or get freed while the pool is live, so a borrowed view of a list's
+children stays valid while the parser and the macro expander keep pushing rows.
+A list never straddles a segment (the rows it skips hold an inert filler), and
+a list longer than a segment gets one dedicated array. The load handoff copies
+the live prefix into an exclusive owner, in whole segments, without changing
+row ids; a handoff is the only point where rows move. Subsequent growth appends
+segments to that owner. Reset revokes exclusive ownership before another load
+session can share the reader arena; pre-handoff growth must preserve that
+shared arena. The final handoff compacts the prefix again after lowering. The
+compile-profile verifier checks retained arena bytes before that compaction,
+and `src/tests/scan_storage_growth.tl` covers retained growth in place, the
+handoff's owner retirement, failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat

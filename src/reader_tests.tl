@@ -18,18 +18,18 @@
 ;; boundary as well as the scalar fields.
 (define (sp-node-pool-growth-preserves-string?) : bool
   (reader.sp-node-pool-reset!)
-  (if (< (array-length reader.sp-node-pool-slots) 1)
+  (if (< (reader.sp-node-pool-capacity) 1)
     (reader.sp-node-pool-grow!)
     unit)
   (let
     [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
-    [old-cap : i64 (array-length reader.sp-node-pool-slots)]
+    [old-cap : i64 (reader.sp-node-pool-capacity)]
     [i : i64 0]
     (while (<= i old-cap)
       (reader.sp-node-push (Int i "__tl_pool_growth_marker" span))
       (set! i (+ i 1)))
     (let
-      [grew : bool (> (array-length reader.sp-node-pool-slots) old-cap)]
+      [grew : bool (> (reader.sp-node-pool-capacity) old-cap)]
       [first-ok : bool
         (match (reader.sp-node-get 0)
           [(Int value text _)
@@ -63,7 +63,13 @@
         (and
           (> sp-count-before-transfer 0)
           (= (reader.sp-node-pool-len) sp-count-before-transfer)
-          (= (array-length reader.sp-node-pool-slots) sp-count-before-transfer)
+          (=
+            (reader.sp-node-pool-capacity)
+            (*
+              (/
+                (+ sp-count-before-transfer (- reader.sp-node-segment-rows 1))
+                reader.sp-node-segment-rows)
+              reader.sp-node-segment-rows))
           (= (array-length reader.sp-builder-slots) 0)
           (!= reader.sp-node-pool-base-arena 0)
           (!= reader.sp-node-pool-base-arena sp-arena-before-transfer))]
@@ -1033,3 +1039,70 @@
     (= (token.span-start-col span) start-col)
     (= (token.span-end-line span) end-line)
     (= (token.span-end-col span) end-col)))
+
+;; A list never straddles a segment: one that would cross a boundary starts at
+;; the next segment, the skipped rows hold the filler, and a list longer than a
+;; segment still reads back in order. Growth never moves a row.
+;; Builds a list of `count` Int rows and returns its first row id (-1 when the
+;; list does not have `count` rows).
+(define (sp-node-pool-test-list [count : i64] [span : token.SourceSpan]) : i64
+  (let
+    [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
+    [i : i64 0]
+    (while (< i count)
+      (set! builder (reader.spanned-sexpr-builder-push builder (Int i "" span)))
+      (set! i (+ i 1)))
+    (match (reader.spanned-sexpr-list-from-builder builder span)
+      [(List start length _)
+        (if (= length count)
+          start
+          -1)]
+      [_ -1])))
+
+(define (sp-node-pool-test-list-reads? [start : i64] [count : i64]) : bool
+  (let
+    [ok : bool true]
+    [i : i64 0]
+    (while (and ok (< i count))
+      (match (reader.sp-node-get (+ start i))
+        [(Int value _ _) (set! ok (= value i))]
+        [_ (set! ok false)])
+      (set! i (+ i 1)))
+    ok))
+
+(define (sp-node-pool-segment-placement-ok?) : bool
+  (let
+    [rows : i64 reader.sp-node-segment-rows]
+    [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+    [_reset : unit (reader.sp-node-pool-reset!)]
+    [_fill : unit
+      (while (< (reader.sp-node-pool-len) (- rows 3))
+        (reader.sp-node-pool-fill!
+          (reader.sp-node-pool-reserve! 1)
+          (Int 7 "__tl_pool_placement" span)))]
+    [first-address : i64 (reader.sp-node-pool-row-address 0)]
+    [straddler : i64 (sp-node-pool-test-list 10 span)]
+    [long : i64 (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
+    [after : i64 (sp-node-pool-test-list 3 span)]
+    [placed : bool
+      (and
+        (= straddler rows)
+        (= long (* 2 rows))
+        (= after (+ (* 4 rows) 5))
+        (match (reader.sp-node-get (- rows 1))
+          [(Int value text _) (and (= value 0) (string.eq text ""))]
+          [_ false]))]
+    [reads : bool
+      (and
+        (sp-node-pool-test-list-reads? straddler 10)
+        (sp-node-pool-test-list-reads? long (+ (* 2 rows) 5))
+        (sp-node-pool-test-list-reads? after 3))]
+    [stable : bool (= (reader.sp-node-pool-row-address 0) first-address)]
+    (reader.sp-node-pool-reset!)
+    (and placed reads stable)))
+
+(test
+  reader-pool-segments
+  (if (sp-node-pool-segment-placement-ok?)
+    unit
+    (io.panic "reader: segmented pool placement self-test failed")))

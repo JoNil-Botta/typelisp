@@ -312,6 +312,66 @@
     (compiler-ast-context-dedup-half-load-smoke?)
     "explicit dedup growth preserves ids, collisions, reset and arena ownership"))
 
+;; Use a small real index with the existing bound temporarily set to its
+;; capacity. This exercises the maximum-capacity fallback without an 8M-node
+;; fixture; restore the bound and installed owner before reporting assertions.
+(define (compiler-ast-context-dedup-max-capacity-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [old-max : i64 ast.ty-node-dedup-max-capacity]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [small : ast.AstTypeNodePoolState
+      (ast.AstTypeNodePoolState
+        state.segment-bases
+        state.count
+        state.base-arena
+        state.exhausted
+        (__tl_make-array i64 8)
+        state.dedup-count
+        state.storage-arena
+        state.segment-count)]
+    (ast.ast-type-pool-cell-write! pools.type-pool small)
+    (ast.ast-node-pool-context-type-push pools (I64))
+    (ast.ast-node-pool-context-type-push pools (Var 0))
+    (ast.ast-node-pool-context-type-push pools (Var 8))
+    (ast.ast-node-pool-context-type-push pools (Bool))
+    (unsafe
+      (ptr-write!
+        (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+        8))
+    (let
+      [explicit : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+      [after-explicit : i64 (ast.ast-node-pool-context-type-len pools)]
+      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [installed : i64 (ast.ty-node-push (I64))]
+      [after-installed : i64 (ast.ast-node-pool-context-type-len pools)]
+      [final-state : ast.AstTypeNodePoolState
+        (ast.ast-type-pool-cell-read pools.type-pool)]
+      [capacity : i64 (array-length final-state.dedup-slots)]
+      [dedup-count : i64 final-state.dedup-count]
+      (unsafe
+        (ptr-write!
+          (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+          old-max))
+      (ast.ast-node-pool-context-install! active-before)
+      (and
+        (= explicit 4)
+        (= after-explicit 5)
+        (= installed 5)
+        (= after-installed 6)
+        (= capacity 8)
+        (= dedup-count 4)))))
+
+(test
+  compiler-ast-context-dedup-max-capacity
+  (tl_test.assert-true
+    (compiler-ast-context-dedup-max-capacity-smoke?)
+    "both append APIs retain raw fallback at the dedup capacity bound"))
+
 (define (compiler-ast-state-owned-node-pools-smoke?) : bool
   (and
     (compiler-ast-state-owned-expr-pool-smoke?)
@@ -2347,6 +2407,7 @@
   (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
   (unless (compiler-ast-active-context-sync-smoke?) (return 4))
   (unless (compiler-ast-context-dedup-half-load-smoke?) (return 28))
+  (unless (compiler-ast-context-dedup-max-capacity-smoke?) (return 29))
   (unless (compiler-ast-context-owner-identity-smoke?) (return 17))
   (unless (compiler-ast-program-compaction-smoke?) (return 5))
   (unless (compiler-ast-program-copy-append-smoke?) (return 13))

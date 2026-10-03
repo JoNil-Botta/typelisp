@@ -15631,12 +15631,11 @@
 (define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (lower_i64_i64_map.insert-ref!
-        (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
-        var-id
-        1)
-      state)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
+      var-id
+      1)
+    state))
 
 (define (lower-state-deferred-arm-body [state : LowerState]) : i64
   (let
@@ -20674,19 +20673,17 @@
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
         [index : i64 0]
         [found : bool false]
-        (begin
-          (while (and (not found) (< index children.len))
-            (begin
-              (when
-                (lower-deferred-copy-mentions?
-                  ctx
-                  (lower-context-expr-get
-                    ctx
-                    (ast.ast-expr-list-get (& children) index -1))
-                  name)
-                (set! found true))
-              (set! index (+ index 1))))
-          found))]))
+        (while (and (not found) (< index children.len))
+          (when
+            (lower-deferred-copy-mentions?
+              ctx
+              (lower-context-expr-get
+                ctx
+                (ast.ast-expr-list-get (& children) index -1))
+              name)
+            (set! found true))
+          (set! index (+ index 1)))
+        found)]))
 
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
 ;; when owned, the payload's address when borrowed.
@@ -21725,31 +21722,29 @@
       ;; apply here.
       (let
         [outer-arm-body : i64 (lower-state-deferred-arm-body state)]
-        (begin
-          (lower-state-set-deferred-arm-body! state body-id)
-          (let
-            [bound : ResultLowerEnv
-              (lower-bind-variant-payloads
-                ctx
-                state
-                env
-                type-env
-                (Borrowed lifetime)
-                base
-                patterns
-                types
-                mode
-                enum-id
-                enum-name
-                variant-name
-                variant-name-id
-                index
-                cursor
-                fail-label
-                false)]
-            (begin
-              (lower-state-set-deferred-arm-body! state outer-arm-body)
-              bound))))]))
+        (lower-state-set-deferred-arm-body! state body-id)
+        (let
+          [bound : ResultLowerEnv
+            (lower-bind-variant-payloads
+              ctx
+              state
+              env
+              type-env
+              (Borrowed lifetime)
+              base
+              patterns
+              types
+              mode
+              enum-id
+              enum-name
+              variant-name
+              variant-name-id
+              index
+              cursor
+              fail-label
+              false)]
+          (lower-state-set-deferred-arm-body! state outer-arm-body)
+          bound))]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
 ;; Literals, nested enum variants and slice patterns with a length test are
@@ -25883,16 +25878,14 @@
     [expr-bases : i64 (tc_core.tc-context-expr-bases ctx)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index args.len))
-        (begin
-          (if (tc_core.tc-call-temporary-borrow-arg-id?
-            expr-bases
-            (ast.ast-expr-list-get args index 0))
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index args.len))
+      (if (tc_core.tc-call-temporary-borrow-arg-id?
+        expr-bases
+        (ast.ast-expr-list-get args index 0))
+        (set! found true)
+        unit)
+      (set! index (+ index 1)))
+    found))
 
 ;; The symbol of a cleanup-owning type's declared cleanup function.
 (define (lower-cleanup-symbol-for-type

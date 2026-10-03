@@ -728,6 +728,11 @@
     (when (> x 0) (begin (v) (set! x 1)))
     (unless (> x 0) (begin (when true (set! x 2)) (v) (set! x 3)))
     (set! x (test 1 (begin (v) 2)))
+    (let
+      [y : i64 0]
+      (begin
+        (cfg linux (set! y 1))
+        (let [z : i64 y] z)))
     (if (> x 0) (begin (v) unit) unit)))
 
 (defmacro (quoted) : Expr

@@ -271,14 +271,11 @@
   [want-label : i64]) : bool
   (let
     [index : i64 0]
-    (begin
-      (while (< index cases.len)
-        (begin
-          (match (ir.compiler-ir-switch-case-seq-ref cases index)
-            [(Case tag label)
-              (when (= tag want-tag) (return (= label want-label)))])
-          (set! index (+ index 1))))
-      false)))
+    (while (< index cases.len)
+      (match (ir.compiler-ir-switch-case-seq-ref cases index)
+        [(Case tag label) (when (= tag want-tag) (return (= label want-label)))])
+      (set! index (+ index 1)))
+    false))
 
 (define (opt-switch-test-block-tail-has-case?
   [block : (& block ir.CompilerIrBlock)]
@@ -330,16 +327,14 @@
   (let
     [tags : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set!
-            (array-ref tags i)
-            (if (= i (- count 1))
-              last
-              (+ first i)))
-          (set! i (+ i 1))))
-      tags)))
+    (while (< i count)
+      (set!
+        (array-ref tags i)
+        (if (= i (- count 1))
+          last
+          (+ first i)))
+      (set! i (+ i 1)))
+    tags))
 
 ;; `tags[0..count)` as a compare chain over var 0, appended to `tail`. Chain
 ;; position `start + k` carries tag `tags[k]`, branches to its own returning
@@ -1631,15 +1626,12 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (Nil)
         (smoke-noop-int-cast-mov-instrs))]
-    (begin
-      (unless (= (ot.opt-count-cast-instr-seq rewritten) 3) (return 1))
-      (unless (smoke-mov-dst-var-type? rewritten 50 10 (Char)) (return 2))
-      (unless (smoke-mov-dst-var-type? rewritten 51 11 (U8)) (return 3))
-      (unless (smoke-mov-dst-var-type? rewritten 52 12 (Char)) (return 4))
-      (unless
-        (smoke-cast-dst-var-types? rewritten 55 15 (I64) (U64))
-        (return 5))
-      42)))
+    (unless (= (ot.opt-count-cast-instr-seq rewritten) 3) (return 1))
+    (unless (smoke-mov-dst-var-type? rewritten 50 10 (Char)) (return 2))
+    (unless (smoke-mov-dst-var-type? rewritten 51 11 (U8)) (return 3))
+    (unless (smoke-mov-dst-var-type? rewritten 52 12 (Char)) (return 4))
+    (unless (smoke-cast-dst-var-types? rewritten 55 15 (I64) (U64)) (return 5))
+    42))
 
 (define (smoke-bounds-object-length-check-fragment
   [ptr-var : i64]
@@ -1967,21 +1959,20 @@
           type-segment-bases
           func
           (opt.opt-program-summaries-empty)))]
-    (begin
-      (unless (> (ir.compiler-ir-block-list-count blocks) 1024) (return 1))
-      (unless
-        (<=
-          (ir.compiler-ir-block-list-count blocks)
-          (opt.opt-heavy-pass-block-limit))
-        (return 2))
-      (match optimized
-        [(Function _ _ _ _ optimized-blocks _)
-          (if (=
-            (ot.opt-gvn-count-binops-blocks
-              (ir.compiler-ir-block-list-view optimized-blocks))
-            1)
-            42
-            3)]))))
+    (unless (> (ir.compiler-ir-block-list-count blocks) 1024) (return 1))
+    (unless
+      (<=
+        (ir.compiler-ir-block-list-count blocks)
+        (opt.opt-heavy-pass-block-limit))
+      (return 2))
+    (match optimized
+      [(Function _ _ _ _ optimized-blocks _)
+        (if (=
+          (ot.opt-gvn-count-binops-blocks
+            (ir.compiler-ir-block-list-view optimized-blocks))
+          1)
+          42
+          3)])))
 
 (define (smoke-function-index-leaf-starts-self-test) : i64
   (let
@@ -2100,12 +2091,11 @@
   (let
     [values : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue 4)]
-    (begin
-      (set! (array-ref values 0) (ir.CompilerIrValue.I64 1))
-      (set! (array-ref values 1) (ir.CompilerIrValue.I64 2))
-      (set! (array-ref values 2) (ir.CompilerIrValue.I64 3))
-      (set! (array-ref values 3) (ir.CompilerIrValue.I64 4))
-      (Call 0 symbols.inline-branch (Array values) (I64)))))
+    (set! (array-ref values 0) (ir.CompilerIrValue.I64 1))
+    (set! (array-ref values 1) (ir.CompilerIrValue.I64 2))
+    (set! (array-ref values 2) (ir.CompilerIrValue.I64 3))
+    (set! (array-ref values 3) (ir.CompilerIrValue.I64 4))
+    (Call 0 symbols.inline-branch (Array values) (I64))))
 
 (define (smoke-inline-phi-caller [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (smoke-inline-phi-caller-with-call symbols (smoke-inline-phi-call symbols)))

@@ -28,89 +28,85 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(module alpha)
+    (match (parser.parse-ast-source
+      "(module alpha)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))
 (defstruct RefBox (:lifetimes a a) (value (& a i64)))")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
-            [tail2 : ast.AstDeclList (ast_tests.ast-decl-list-tail tail1)]
-            [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
-            [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
-            [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
-            (begin
-              (ast.ast-decl-list-append-from (&mut replacement) (& decls) 0)
-              (parser.compiler-parse-decl-origin-register-maybe!
-                (& replacement)
-                0
-                (parser.compiler-parse-decl-origin-span (& decls) 0))
-              (parser.compiler-parse-decl-origin-register-maybe!
-                (& replacement)
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
+          [tail2 : ast.AstDeclList (ast_tests.ast-decl-list-tail tail1)]
+          [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
+          [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
+          [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
+          (ast.ast-decl-list-append-from (&mut replacement) (& decls) 0)
+          (parser.compiler-parse-decl-origin-register-maybe!
+            (& replacement)
+            0
+            (parser.compiler-parse-decl-origin-span (& decls) 0))
+          (parser.compiler-parse-decl-origin-register-maybe!
+            (& replacement)
+            2
+            (parser.compiler-parse-decl-origin-span (& tail2) 0))
+          (ast.ast-decl-list-append-from (&mut alias1) (& replacement) 0)
+          (parser.compiler-parse-decl-origin-register-list-aliases!
+            (& alias1)
+            0
+            (owned_view.compiler-owned-shared-view replacement))
+          (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
+          (parser.compiler-parse-decl-origin-register-list-aliases!
+            (& alias2)
+            0
+            alias1)
+          (set!
+            ok
+            (and
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& decls) 0)
+                1
+                1)
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& tail1) 0)
                 2
-                (parser.compiler-parse-decl-origin-span (& tail2) 0))
-              (ast.ast-decl-list-append-from (&mut alias1) (& replacement) 0)
-              (parser.compiler-parse-decl-origin-register-list-aliases!
-                (& alias1)
-                0
-                (owned_view.compiler-owned-shared-view replacement))
-              (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
-              (parser.compiler-parse-decl-origin-register-list-aliases!
-                (& alias2)
-                0
-                alias1)
-              (set!
-                ok
-                (and
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& decls) 0)
-                    1
-                    1)
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& tail1) 0)
-                    2
-                    9)
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& tail2) 0)
-                    3
-                    1)
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& replacement) 0)
-                    1
-                    1)
-                  (match (parser.compiler-parse-decl-origin-span
-                    (& replacement)
-                    1)
-                    [(None) true]
-                    [_ false])
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& replacement) 2)
-                    3
-                    1)
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& alias2) 0)
-                    1
-                    1)
-                  (match (parser.compiler-parse-decl-origin-span (& alias2) 1)
-                    [(None) true]
-                    [_ false])
-                  (compiler-parse-test-decl-origin-start-ok?
-                    (parser.compiler-parse-decl-origin-span (& alias2) 2)
-                    3
-                    1)))
-              (reader.sp-node-pool-truncate! mark)
-              (parser.compiler-parse-decl-origin-cache-reset!)
-              (set!
-                ok
-                (and
-                  ok
-                  (match (parser.compiler-parse-decl-origin-span (& decls) 0)
-                    [(None) true]
-                    [_ false])))))]
-        [(Err _) (reader.sp-node-pool-truncate! mark)])
-      ok)))
+                9)
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& tail2) 0)
+                3
+                1)
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& replacement) 0)
+                1
+                1)
+              (match (parser.compiler-parse-decl-origin-span (& replacement) 1)
+                [(None) true]
+                [_ false])
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& replacement) 2)
+                3
+                1)
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& alias2) 0)
+                1
+                1)
+              (match (parser.compiler-parse-decl-origin-span (& alias2) 1)
+                [(None) true]
+                [_ false])
+              (compiler-parse-test-decl-origin-start-ok?
+                (parser.compiler-parse-decl-origin-span (& alias2) 2)
+                3
+                1)))
+          (reader.sp-node-pool-truncate! mark)
+          (parser.compiler-parse-decl-origin-cache-reset!)
+          (set!
+            ok
+            (and
+              ok
+              (match (parser.compiler-parse-decl-origin-span (& decls) 0)
+                [(None) true]
+                [_ false]))))]
+      [(Err _) (reader.sp-node-pool-truncate! mark)])
+    ok))
 
 (define (compiler-parse-test-semantic-origin-inner-ok?
   [decls : (& decls ast.AstDeclList)]
@@ -171,46 +167,44 @@
         start-col
         end-line
         end-col)]
-    (begin
-      (if ok
-        unit
-        (match (parser.compiler-parse-semantic-origin-run decls slot)
-          [(Some run)
-            (let
-              [origin : parser.CompilerParseSemanticOrigin
-                (parser.compiler-parse-semantic-origin-run-get
-                  (& run)
-                  index
-                  (parser.compiler-parse-semantic-origin-fallback))]
-              [span : ast.AstSourceSpan origin.span]
-              (io.print-error
-                (str_cat.str-cat
-                  "semantic origin mismatch: expected "
-                  expected-name
-                  ", actual "
-                  (ci.intern-str origin.written-name)
-                  ", count "
-                  (string.int->string
-                    (parser.compiler-parse-semantic-origin-run-len (& run)))
-                  ", kind "
-                  (parser.compiler-parse-semantic-origin-kind-marker
-                    origin.kind)
-                  ", span "
-                  (string.int->string (ast.ast-source-span-start-line span))
-                  ":"
-                  (string.int->string (ast.ast-source-span-start-col span))
-                  "-"
-                  (string.int->string (ast.ast-source-span-end-line span))
-                  ":"
-                  (string.int->string (ast.ast-source-span-end-col span))
-                  "\n")))]
-          [(None)
+    (if ok
+      unit
+      (match (parser.compiler-parse-semantic-origin-run decls slot)
+        [(Some run)
+          (let
+            [origin : parser.CompilerParseSemanticOrigin
+              (parser.compiler-parse-semantic-origin-run-get
+                (& run)
+                index
+                (parser.compiler-parse-semantic-origin-fallback))]
+            [span : ast.AstSourceSpan origin.span]
             (io.print-error
               (str_cat.str-cat
-                "semantic origin mismatch: missing run for "
+                "semantic origin mismatch: expected "
                 expected-name
-                "\n"))]))
-      ok)))
+                ", actual "
+                (ci.intern-str origin.written-name)
+                ", count "
+                (string.int->string
+                  (parser.compiler-parse-semantic-origin-run-len (& run)))
+                ", kind "
+                (parser.compiler-parse-semantic-origin-kind-marker origin.kind)
+                ", span "
+                (string.int->string (ast.ast-source-span-start-line span))
+                ":"
+                (string.int->string (ast.ast-source-span-start-col span))
+                "-"
+                (string.int->string (ast.ast-source-span-end-line span))
+                ":"
+                (string.int->string (ast.ast-source-span-end-col span))
+                "\n")))]
+        [(None)
+          (io.print-error
+            (str_cat.str-cat
+              "semantic origin mismatch: missing run for "
+              expected-name
+              "\n"))]))
+    ok))
 
 (define (compiler-parse-test-semantic-origin-none?
   [decls : (& decls ast.AstDeclList)]
@@ -223,9 +217,8 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(module pkg.inner)
+    (match (parser.parse-ast-source
+      "(module pkg.inner)
 (import foo.bar)
 (import foo.bar as dep)
 (defstruct Pair
@@ -245,541 +238,536 @@
       (set! (__tl_struct-get p left) y)
       (match (Some y)
         [(Some (None)) p]))))")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            (set!
-              ok
-              (and
-                ;; Dotted module definitions retain every exact component.
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  0
-                  0
-                  2
-                  "__tl_semantic_origin_module_definition"
-                  "pkg"
-                  1
-                  9
-                  1
-                  12)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  0
-                  1
-                  2
-                  "__tl_semantic_origin_module_definition"
-                  "inner"
-                  1
-                  13
-                  1
-                  18)
-                ;; Default and explicit import aliases are distinct occurrences.
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  1
-                  0
-                  3
-                  "__tl_semantic_origin_module_path"
-                  "foo"
-                  2
-                  9
-                  2
-                  12)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  1
-                  1
-                  3
-                  "__tl_semantic_origin_module_path"
-                  "bar"
-                  2
-                  13
-                  2
-                  16)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  1
-                  2
-                  3
-                  "__tl_semantic_origin_import_alias"
-                  "bar"
-                  2
-                  13
-                  2
-                  16)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  2
-                  2
-                  3
-                  "__tl_semantic_origin_import_alias"
-                  "dep"
-                  3
-                  20
-                  3
-                  23)
-                ;; Definitions plus nested/qualified nominal type syntax.
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  0
-                  7
-                  "__tl_semantic_origin_type_definition"
-                  "Pair"
-                  4
-                  12
-                  4
-                  16)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  1
-                  7
-                  "__tl_semantic_origin_struct_field_definition"
-                  "left"
-                  5
-                  4
-                  5
-                  8)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  2
-                  7
-                  "__tl_semantic_origin_module_path"
-                  "dep"
-                  5
-                  9
-                  5
-                  12)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  3
-                  7
-                  "__tl_semantic_origin_type_name"
-                  "Thing"
-                  5
-                  13
-                  5
-                  18)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  4
-                  7
-                  "__tl_semantic_origin_struct_field_definition"
-                  "right"
-                  6
-                  4
-                  6
-                  9)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  5
-                  7
-                  "__tl_semantic_origin_module_path"
-                  "dep"
-                  6
-                  17
-                  6
-                  20)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  3
-                  6
-                  7
-                  "__tl_semantic_origin_type_name"
-                  "Thing"
-                  6
-                  21
-                  6
-                  26)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  4
-                  0
-                  5
-                  "__tl_semantic_origin_type_definition"
-                  "Choice"
-                  7
-                  10
-                  7
-                  16)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  4
-                  1
-                  5
-                  "__tl_semantic_origin_enum_variant_definition"
-                  "Some"
-                  8
-                  4
-                  8
-                  8)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  4
-                  4
-                  5
-                  "__tl_semantic_origin_enum_variant_definition"
-                  "None"
-                  9
-                  4
-                  9
-                  8)
-                ;; Dispatch function, explicit field operand, and nested patterns.
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  5
-                  0
-                  2
-                  "__tl_semantic_origin_module_path"
-                  "dep"
-                  10
-                  29
-                  10
-                  32)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  5
-                  1
-                  2
-                  "__tl_semantic_origin_dispatch_function"
-                  "choose"
-                  10
-                  33
-                  10
-                  39)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  0
-                  10
-                  "__tl_semantic_origin_type_name"
-                  "Pair"
-                  12
-                  17
-                  12
-                  21)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  1
-                  10
-                  "__tl_semantic_origin_module_path"
-                  "dep"
-                  12
-                  28
-                  12
-                  31)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  2
-                  10
-                  "__tl_semantic_origin_type_name"
-                  "Thing"
-                  12
-                  32
-                  12
-                  37)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  3
-                  10
-                  "__tl_semantic_origin_type_name"
-                  "Pair"
-                  12
-                  42
-                  12
-                  46)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  4
-                  10
-                  "__tl_semantic_origin_module_path"
-                  "dep"
-                  13
-                  13
-                  13
-                  16)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  5
-                  10
-                  "__tl_semantic_origin_type_name"
-                  "Thing"
-                  13
-                  17
-                  13
-                  22)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  6
-                  10
-                  "__tl_semantic_origin_struct_field_use"
-                  "left"
-                  17
-                  38
-                  17
-                  42)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  7
-                  10
-                  "__tl_semantic_origin_struct_field_use"
-                  "left"
-                  18
-                  32
-                  18
-                  36)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  8
-                  10
-                  "__tl_semantic_origin_enum_variant_pattern"
-                  "Some"
-                  20
-                  11
-                  20
-                  15)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  6
-                  9
-                  10
-                  "__tl_semantic_origin_enum_variant_pattern"
-                  "None"
-                  20
-                  17
-                  20
-                  21))))]
-        [(Err message)
-          (io.print-error
-            (str_cat.str-cat "semantic origin parse failed: " message "\n"))])
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          (set!
+            ok
+            (and
+              ;; Dotted module definitions retain every exact component.
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                0
+                0
+                2
+                "__tl_semantic_origin_module_definition"
+                "pkg"
+                1
+                9
+                1
+                12)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                0
+                1
+                2
+                "__tl_semantic_origin_module_definition"
+                "inner"
+                1
+                13
+                1
+                18)
+              ;; Default and explicit import aliases are distinct occurrences.
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                1
+                0
+                3
+                "__tl_semantic_origin_module_path"
+                "foo"
+                2
+                9
+                2
+                12)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                1
+                1
+                3
+                "__tl_semantic_origin_module_path"
+                "bar"
+                2
+                13
+                2
+                16)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                1
+                2
+                3
+                "__tl_semantic_origin_import_alias"
+                "bar"
+                2
+                13
+                2
+                16)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                2
+                2
+                3
+                "__tl_semantic_origin_import_alias"
+                "dep"
+                3
+                20
+                3
+                23)
+              ;; Definitions plus nested/qualified nominal type syntax.
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                0
+                7
+                "__tl_semantic_origin_type_definition"
+                "Pair"
+                4
+                12
+                4
+                16)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                1
+                7
+                "__tl_semantic_origin_struct_field_definition"
+                "left"
+                5
+                4
+                5
+                8)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                2
+                7
+                "__tl_semantic_origin_module_path"
+                "dep"
+                5
+                9
+                5
+                12)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                3
+                7
+                "__tl_semantic_origin_type_name"
+                "Thing"
+                5
+                13
+                5
+                18)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                4
+                7
+                "__tl_semantic_origin_struct_field_definition"
+                "right"
+                6
+                4
+                6
+                9)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                5
+                7
+                "__tl_semantic_origin_module_path"
+                "dep"
+                6
+                17
+                6
+                20)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                3
+                6
+                7
+                "__tl_semantic_origin_type_name"
+                "Thing"
+                6
+                21
+                6
+                26)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                4
+                0
+                5
+                "__tl_semantic_origin_type_definition"
+                "Choice"
+                7
+                10
+                7
+                16)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                4
+                1
+                5
+                "__tl_semantic_origin_enum_variant_definition"
+                "Some"
+                8
+                4
+                8
+                8)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                4
+                4
+                5
+                "__tl_semantic_origin_enum_variant_definition"
+                "None"
+                9
+                4
+                9
+                8)
+              ;; Dispatch function, explicit field operand, and nested patterns.
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                5
+                0
+                2
+                "__tl_semantic_origin_module_path"
+                "dep"
+                10
+                29
+                10
+                32)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                5
+                1
+                2
+                "__tl_semantic_origin_dispatch_function"
+                "choose"
+                10
+                33
+                10
+                39)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                0
+                10
+                "__tl_semantic_origin_type_name"
+                "Pair"
+                12
+                17
+                12
+                21)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                1
+                10
+                "__tl_semantic_origin_module_path"
+                "dep"
+                12
+                28
+                12
+                31)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                2
+                10
+                "__tl_semantic_origin_type_name"
+                "Thing"
+                12
+                32
+                12
+                37)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                3
+                10
+                "__tl_semantic_origin_type_name"
+                "Pair"
+                12
+                42
+                12
+                46)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                4
+                10
+                "__tl_semantic_origin_module_path"
+                "dep"
+                13
+                13
+                13
+                16)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                5
+                10
+                "__tl_semantic_origin_type_name"
+                "Thing"
+                13
+                17
+                13
+                22)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                6
+                10
+                "__tl_semantic_origin_struct_field_use"
+                "left"
+                17
+                38
+                17
+                42)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                7
+                10
+                "__tl_semantic_origin_struct_field_use"
+                "left"
+                18
+                32
+                18
+                36)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                8
+                10
+                "__tl_semantic_origin_enum_variant_pattern"
+                "Some"
+                20
+                11
+                20
+                15)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                6
+                9
+                10
+                "__tl_semantic_origin_enum_variant_pattern"
+                "None"
+                20
+                17
+                20
+                21))))]
+      [(Err message)
+        (io.print-error
+          (str_cat.str-cat "semantic origin parse failed: " message "\n"))])
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-parse-semantic-origin-quote-depth-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(define q
+    (match (parser.parse-ast-source
+      "(define q
   (quasiquote
     (ignored.field
       (unquote live.field))))")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            (set!
-              ok
-              (and
-                ;; Quoted dotted syntax is inert, while an unquote resumes
-                ;; editable source-origin capture at the matching depth.
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  0
-                  0
-                  3
-                  "__tl_semantic_origin_value_qualifier"
-                  "live"
-                  4
-                  16
-                  4
-                  20)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  0
-                  1
-                  3
-                  "__tl_semantic_origin_value_name"
-                  "field"
-                  4
-                  21
-                  4
-                  26)
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  0
-                  2
-                  3
-                  "__tl_semantic_origin_struct_field_use"
-                  "field"
-                  4
-                  21
-                  4
-                  26))))]
-        [(Err message)
-          (io.print-error
-            (str_cat.str-cat
-              "semantic origin quote-depth parse failed: "
-              message
-              "\n"))])
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          (set!
+            ok
+            (and
+              ;; Quoted dotted syntax is inert, while an unquote resumes
+              ;; editable source-origin capture at the matching depth.
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                0
+                0
+                3
+                "__tl_semantic_origin_value_qualifier"
+                "live"
+                4
+                16
+                4
+                20)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                0
+                1
+                3
+                "__tl_semantic_origin_value_name"
+                "field"
+                4
+                21
+                4
+                26)
+              (compiler-parse-test-semantic-origin-ok?
+                (& decls)
+                0
+                2
+                3
+                "__tl_semantic_origin_struct_field_use"
+                "field"
+                4
+                21
+                4
+                26))))]
+      [(Err message)
+        (io.print-error
+          (str_cat.str-cat
+            "semantic origin quote-depth parse failed: "
+            message
+            "\n"))])
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-parse-semantic-origin-aliases-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(module alias.test)
+    (match (parser.parse-ast-source
+      "(module alias.test)
 (defstruct Pair (field dep.Thing))")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
-            [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
-            [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
-            (begin
-              (ast.ast-decl-list-push-from
-                (&mut alias)
-                (& decls.slots)
-                (+ decls.offset 1))
-              (parser.compiler-parse-decl-origin-register-alias-record!
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
+          [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+          [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
+          (ast.ast-decl-list-push-from
+            (&mut alias)
+            (& decls.slots)
+            (+ decls.offset 1))
+          (parser.compiler-parse-decl-origin-register-alias-record!
+            (& alias)
+            0
+            1
+            (parser.compiler-parse-decl-list-storage-key (& decls))
+            (+ decls.offset 1)
+            false)
+          (ast.ast-decl-list-push-from
+            (&mut generated)
+            (& decls.slots)
+            (+ decls.offset 1))
+          (ast.ast-decl-list-push-from
+            (&mut generated)
+            (& decls.slots)
+            (+ decls.offset 1))
+          (parser.compiler-parse-decl-origin-register-alias-record!
+            (& generated)
+            0
+            2
+            (parser.compiler-parse-decl-list-storage-key (& decls))
+            (+ decls.offset 1)
+            true)
+          (set!
+            ok
+            (and
+              ;; Same-storage slices and ordinary copied aliases retain runs.
+              (compiler-parse-test-semantic-origin-ok?
+                (& tail)
+                0
+                3
+                4
+                "__tl_semantic_origin_type_name"
+                "Thing"
+                2
+                28
+                2
+                33)
+              (compiler-parse-test-semantic-origin-ok?
                 (& alias)
                 0
-                1
-                (parser.compiler-parse-decl-list-storage-key (& decls))
-                (+ decls.offset 1)
-                false)
-              (ast.ast-decl-list-push-from
-                (&mut generated)
-                (& decls.slots)
-                (+ decls.offset 1))
-              (ast.ast-decl-list-push-from
-                (&mut generated)
-                (& decls.slots)
-                (+ decls.offset 1))
-              (parser.compiler-parse-decl-origin-register-alias-record!
-                (& generated)
-                0
+                3
+                4
+                "__tl_semantic_origin_type_name"
+                "Thing"
                 2
-                (parser.compiler-parse-decl-list-storage-key (& decls))
-                (+ decls.offset 1)
-                true)
-              (set!
-                ok
-                (and
-                  ;; Same-storage slices and ordinary copied aliases retain runs.
-                  (compiler-parse-test-semantic-origin-ok?
-                    (& tail)
-                    0
-                    3
-                    4
-                    "__tl_semantic_origin_type_name"
-                    "Thing"
-                    2
-                    28
-                    2
-                    33)
-                  (compiler-parse-test-semantic-origin-ok?
-                    (& alias)
-                    0
-                    3
-                    4
-                    "__tl_semantic_origin_type_name"
-                    "Thing"
-                    2
-                    28
-                    2
-                    33)
-                  ;; A one-to-many generated rewrite has no editable origins.
-                  (compiler-parse-test-semantic-origin-none? (& generated) 0)
-                  (compiler-parse-test-semantic-origin-none? (& generated) 1)))))]
-        [(Err _) unit])
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+                28
+                2
+                33)
+              ;; A one-to-many generated rewrite has no editable origins.
+              (compiler-parse-test-semantic-origin-none? (& generated) 0)
+              (compiler-parse-test-semantic-origin-none? (& generated) 1))))]
+      [(Err _) unit])
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-parse-semantic-origin-nested-module-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(module outer.inner (defstruct Inside (field dep.Type)))")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-              [(ModuleBody _ body-box)
-                (let
-                  [body : ast.AstDeclList (deref body-box)]
-                  (set!
-                    ok
-                    (and
-                      (compiler-parse-test-semantic-origin-ok?
-                        (& decls)
-                        0
-                        0
-                        2
-                        "__tl_semantic_origin_module_definition"
-                        "outer"
-                        1
-                        9
-                        1
-                        14)
-                      (compiler-parse-test-semantic-origin-ok?
-                        (& decls)
-                        0
-                        1
-                        2
-                        "__tl_semantic_origin_module_definition"
-                        "inner"
-                        1
-                        15
-                        1
-                        20)
-                      (compiler-parse-test-semantic-origin-ok?
-                        (& body)
-                        0
-                        0
-                        4
-                        "__tl_semantic_origin_type_definition"
-                        "Inside"
-                        1
-                        32
-                        1
-                        38)
-                      (compiler-parse-test-semantic-origin-ok?
-                        (& body)
-                        0
-                        3
-                        4
-                        "__tl_semantic_origin_type_name"
-                        "Type"
-                        1
-                        50
-                        1
-                        54))))]
-              [_ unit]))]
-        [(Err _) unit])
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+    (match (parser.parse-ast-source
+      "(module outer.inner (defstruct Inside (field dep.Type)))")
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
+            [(ModuleBody _ body-box)
+              (let
+                [body : ast.AstDeclList (deref body-box)]
+                (set!
+                  ok
+                  (and
+                    (compiler-parse-test-semantic-origin-ok?
+                      (& decls)
+                      0
+                      0
+                      2
+                      "__tl_semantic_origin_module_definition"
+                      "outer"
+                      1
+                      9
+                      1
+                      14)
+                    (compiler-parse-test-semantic-origin-ok?
+                      (& decls)
+                      0
+                      1
+                      2
+                      "__tl_semantic_origin_module_definition"
+                      "inner"
+                      1
+                      15
+                      1
+                      20)
+                    (compiler-parse-test-semantic-origin-ok?
+                      (& body)
+                      0
+                      0
+                      4
+                      "__tl_semantic_origin_type_definition"
+                      "Inside"
+                      1
+                      32
+                      1
+                      38)
+                    (compiler-parse-test-semantic-origin-ok?
+                      (& body)
+                      0
+                      3
+                      4
+                      "__tl_semantic_origin_type_name"
+                      "Type"
+                      1
+                      50
+                      1
+                      54))))]
+            [_ unit]))]
+      [(Err _) unit])
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-parse-semantic-origin-growth-reset-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
-    (begin
-      (match (parser.parse-ast-source
-        "(module m00)
+    (match (parser.parse-ast-source
+      "(module m00)
 (module m01)
 (module m02)
 (module m03)
@@ -799,36 +787,33 @@
 (module m17)
 (module m18)
 (module m19)")
-        [(Ok (Program decls-box))
-          (let
-            [decls : ast.AstDeclList (deref decls-box)]
-            (begin
-              (set!
-                ok
-                (compiler-parse-test-semantic-origin-ok?
-                  (& decls)
-                  19
-                  0
-                  1
-                  "__tl_semantic_origin_module_definition"
-                  "m19"
-                  20
-                  9
-                  20
-                  12))
-              (reader.sp-node-pool-truncate! mark)
-              (parser.compiler-parse-decl-origin-cache-reset!)
-              (set!
-                ok
-                (and
-                  ok
-                  (compiler-parse-test-semantic-origin-none? (& decls) 19)))))]
-        [(Err _) unit])
-      (if (> (reader.sp-node-pool-len) mark)
-        (reader.sp-node-pool-truncate! mark)
-        unit)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          (set!
+            ok
+            (compiler-parse-test-semantic-origin-ok?
+              (& decls)
+              19
+              0
+              1
+              "__tl_semantic_origin_module_definition"
+              "m19"
+              20
+              9
+              20
+              12))
+          (reader.sp-node-pool-truncate! mark)
+          (parser.compiler-parse-decl-origin-cache-reset!)
+          (set!
+            ok
+            (and ok (compiler-parse-test-semantic-origin-none? (& decls) 19))))]
+      [(Err _) unit])
+    (if (> (reader.sp-node-pool-len) mark)
+      (reader.sp-node-pool-truncate! mark)
+      unit)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-parse-member-origin-boundary-ok?) : bool
   (match (parser.parse-ast-source
@@ -996,37 +981,36 @@
     [first-len : i64 0]
     [second-len : i64 0]
     [ok : bool false]
-    (begin
-      ;; The temporary driver bridge seeds builtins through the installed
-      ;; globals. Explicit lexing must capture that scalar advance, then publish
-      ;; each file's new count so the next file cannot rewind the same owner.
-      (ci.intern-compat-state-install! intern-state)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (set!
+    ;; The temporary driver bridge seeds builtins through the installed
+    ;; globals. Explicit lexing must capture that scalar advance, then publish
+    ;; each file's new count so the next file cannot rewind the same owner.
+    (ci.intern-compat-state-install! intern-state)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (set!
+      ok
+      (compiler-parse-state-source-ok?
+        "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
+        (owned_view.compiler-owned-shared-view parse-state)
+        pools))
+    (set! first-len (ci.intern-compat-state-pool-len intern-state))
+    (set!
+      ok
+      (and
         ok
+        (= first-len (ci.intern-pool-len))
         (compiler-parse-state-source-ok?
-          "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
-          (owned_view.compiler-owned-shared-view parse-state)
-          pools))
-      (set! first-len (ci.intern-compat-state-pool-len intern-state))
-      (set!
-        ok
-        (and
-          ok
-          (= first-len (ci.intern-pool-len))
-          (compiler-parse-state-source-ok?
-            "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
-            parse-state
-            pools)))
-      (set! second-len (ci.intern-compat-state-pool-len intern-state))
-      (set!
-        ok
-        (and ok (> second-len first-len) (= second-len (ci.intern-pool-len))))
-      (ci.intern-compat-state-install! home)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      ok)))
+          "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
+          parse-state
+          pools)))
+    (set! second-len (ci.intern-compat-state-pool-len intern-state))
+    (set!
+      ok
+      (and ok (> second-len first-len) (= second-len (ci.intern-pool-len))))
+    (ci.intern-compat-state-install! home)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    ok))
 
 (define (compiler-parse-intern-owner-isolation-ok?) : bool
   (let
@@ -1037,77 +1021,75 @@
     [message-a : String ""]
     [message-b : String ""]
     [ok : bool false]
-    (begin
-      ;; Seed fixed builtin IDs identically in both inactive owners, then leave
-      ;; the active table as a decoy while lexing and parsing through A and B.
-      (ci.intern-compat-state-install! state-a)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-      (ci.intern-compat-state-install! state-b)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (ci.intern-compat-state-capture-from-globals! (&mut state-b))
-      (ci.intern-compat-state-install! home)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (let
-        [active-table-before : i64 (ci.intern-active-table-id)]
-        [active-generation-before : i64 (ci.intern-generation)]
-        [active-len-before : i64 (ci.intern-pool-len)]
-        [parse-state-a : parser.CompilerParseState
-          (parser.compiler-parse-state-new-with-intern-state
-            (owned_view.compiler-owned-shared-view state-a))]
-        [parse-state-b : parser.CompilerParseState
-          (parser.compiler-parse-state-new-with-intern-state
-            (owned_view.compiler-owned-shared-view state-b))]
-        [pools-a : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-new-with-capacities 64 32)]
-        [pools-b : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-new-with-capacities 64 32)]
-        (begin
-          (set!
+    ;; Seed fixed builtin IDs identically in both inactive owners, then leave
+    ;; the active table as a decoy while lexing and parsing through A and B.
+    (ci.intern-compat-state-install! state-a)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (ci.intern-compat-state-capture-from-globals! (&mut state-a))
+    (ci.intern-compat-state-install! state-b)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (ci.intern-compat-state-capture-from-globals! (&mut state-b))
+    (ci.intern-compat-state-install! home)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [active-table-before : i64 (ci.intern-active-table-id)]
+      [active-generation-before : i64 (ci.intern-generation)]
+      [active-len-before : i64 (ci.intern-pool-len)]
+      [parse-state-a : parser.CompilerParseState
+        (parser.compiler-parse-state-new-with-intern-state
+          (owned_view.compiler-owned-shared-view state-a))]
+      [parse-state-b : parser.CompilerParseState
+        (parser.compiler-parse-state-new-with-intern-state
+          (owned_view.compiler-owned-shared-view state-b))]
+      [pools-a : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 64 32)]
+      [pools-b : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 64 32)]
+      (set!
+        message-a
+        (compiler-parse-state-diagnostic-message
+          "owner-a.tl"
+          "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
+          (owned_view.compiler-owned-shared-view parse-state-a)
+          pools-a))
+      (set!
+        message-b
+        (compiler-parse-state-diagnostic-message
+          "owner-b.tl"
+          "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
+          (owned_view.compiler-owned-shared-view parse-state-b)
+          pools-b))
+      (set!
+        ok
+        (and
+          (string.eq
             message-a
-            (compiler-parse-state-diagnostic-message
-              "owner-a.tl"
-              "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
-              (owned_view.compiler-owned-shared-view parse-state-a)
-              pools-a))
-          (set!
+            "parse: macro type operand T has unknown constraint form :owner-a")
+          (string.eq
             message-b
-            (compiler-parse-state-diagnostic-message
-              "owner-b.tl"
-              "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
-              (owned_view.compiler-owned-shared-view parse-state-b)
-              pools-b))
-          (set!
-            ok
-            (and
-              (string.eq
-                message-a
-                "parse: macro type operand T has unknown constraint form :owner-a")
-              (string.eq
-                message-b
-                "parse: macro type operand T has unknown constraint form :owner-b")
-              (compiler-parse-state-import-ok?
-                "(import owner-a.pkg.alpha)"
-                "owner-a.pkg.alpha"
-                "alpha"
-                state-a
-                parse-state-a
-                pools-a)
-              (compiler-parse-state-import-ok?
-                "(import owner-b.pkg.beta)"
-                "owner-b.pkg.beta"
-                "beta"
-                state-b
-                parse-state-b
-                pools-b)
-              (= (ci.intern-active-table-id) active-table-before)
-              (= (ci.intern-generation) active-generation-before)
-              (= (ci.intern-pool-len) active-len-before)
-              (string.eq (ci.intern-str active-decoy-id) "parser-active-decoy")))))
-      ok)))
+            "parse: macro type operand T has unknown constraint form :owner-b")
+          (compiler-parse-state-import-ok?
+            "(import owner-a.pkg.alpha)"
+            "owner-a.pkg.alpha"
+            "alpha"
+            state-a
+            parse-state-a
+            pools-a)
+          (compiler-parse-state-import-ok?
+            "(import owner-b.pkg.beta)"
+            "owner-b.pkg.beta"
+            "beta"
+            state-b
+            parse-state-b
+            pools-b)
+          (= (ci.intern-active-table-id) active-table-before)
+          (= (ci.intern-generation) active-generation-before)
+          (= (ci.intern-pool-len) active-len-before)
+          (string.eq (ci.intern-str active-decoy-id) "parser-active-decoy"))))
+    ok))
 
 (define (compiler-diagnostic-test-source-position-index
   [source : String]
@@ -1119,20 +1101,19 @@
     [line : i64 1]
     [col : i64 1]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< idx source-len))
-        (if (and (= line target-line) (= col target-col))
-          (set! found idx)
-          (begin
-            (if (= (string.string-ref source idx) '\n')
-              (begin
-                (set! line (+ line 1))
-                (set! col 1))
-              (set! col (+ col 1)))
-            (set! idx (+ idx 1)))))
-      (if (and (< found 0) (= line target-line) (= col target-col))
-        source-len
-        found))))
+    (while (and (< found 0) (< idx source-len))
+      (if (and (= line target-line) (= col target-col))
+        (set! found idx)
+        (begin
+          (if (= (string.string-ref source idx) '\n')
+            (begin
+              (set! line (+ line 1))
+              (set! col 1))
+            (set! col (+ col 1)))
+          (set! idx (+ idx 1)))))
+    (if (and (< found 0) (= line target-line) (= col target-col))
+      source-len
+      found)))
 
 (define (compiler-diagnostic-test-apply-edit
   [source : String]
@@ -1167,10 +1148,9 @@
   (let
     [slots : (__tl_dyn-array diagnostic.CompilerDiagnosticTextEdit)
       (__tl_make-array diagnostic.CompilerDiagnosticTextEdit 2)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (diagnostic.CompilerDiagnosticTextEditSeq slots 2))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (diagnostic.CompilerDiagnosticTextEditSeq slots 2)))
 
 (define (compiler-diagnostic-fix-model-ok?) : bool
   (let
@@ -1294,23 +1274,22 @@
       [CompilerDiagnosticNoString false])))
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (if (and
-      (= (compiler_diagnostic_tests.compiler-diagnostic-self-test) 42)
-      (compiler-parse-test-decl-origin-records-ok?)
-      (compiler-parse-semantic-origin-categories-ok?)
-      (compiler-parse-semantic-origin-quote-depth-ok?)
-      (compiler-parse-semantic-origin-aliases-ok?)
-      (compiler-parse-semantic-origin-nested-module-ok?)
-      (compiler-parse-semantic-origin-growth-reset-ok?)
-      (compiler-parse-member-origin-boundary-ok?)
-      (compiler-parse-name-id-provenance-ok?)
-      (compiler-parse-removed-declaration-errors-ok?)
-      (compiler-parse-intern-owner-isolation-ok?)
-      (compiler-parse-installed-owner-lex-sync-ok?)
-      (compiler-diagnostic-fix-model-ok?)
-      (compiler-diagnostic-invalid-fixes-rejected-ok?)
-      (compiler-diagnostic-unicode-byte-edit-ok?))
-      (parse_tests.compiler-parse-smoke)
-      1)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (if (and
+    (= (compiler_diagnostic_tests.compiler-diagnostic-self-test) 42)
+    (compiler-parse-test-decl-origin-records-ok?)
+    (compiler-parse-semantic-origin-categories-ok?)
+    (compiler-parse-semantic-origin-quote-depth-ok?)
+    (compiler-parse-semantic-origin-aliases-ok?)
+    (compiler-parse-semantic-origin-nested-module-ok?)
+    (compiler-parse-semantic-origin-growth-reset-ok?)
+    (compiler-parse-member-origin-boundary-ok?)
+    (compiler-parse-name-id-provenance-ok?)
+    (compiler-parse-removed-declaration-errors-ok?)
+    (compiler-parse-intern-owner-isolation-ok?)
+    (compiler-parse-installed-owner-lex-sync-ok?)
+    (compiler-diagnostic-fix-model-ok?)
+    (compiler-diagnostic-invalid-fixes-rejected-ok?)
+    (compiler-diagnostic-unicode-byte-edit-ok?))
+    (parse_tests.compiler-parse-smoke)
+    1))

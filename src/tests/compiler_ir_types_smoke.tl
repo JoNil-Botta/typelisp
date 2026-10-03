@@ -11,14 +11,13 @@
   (let
     [builder : compiler_ir_types.CompilerIrInstrBuilder
       (compiler_ir_types.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+    (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)))
 
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -118,26 +117,24 @@
   (let
     [old-alloc : i64 cbi.compiler-builtin-id-tl-alloc]
     [old-stdin : i64 cbi.compiler-builtin-id-tl-stdin-eof-label]
-    (begin
-      (ci.intern-reset!)
-      (cbi.compiler-builtin-reset!)
-      (ci.intern-source-slice "reset-prefix" 0 12)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (and
-        (not (= old-alloc cbi.compiler-builtin-id-tl-alloc))
-        (not (= old-stdin cbi.compiler-builtin-id-tl-stdin-eof-label))
-        (compiler-ir-smoke-runtime-effect-ids-ok?)
-        (compiler-ir-smoke-runtime-effect-identity-ok?)))))
-
-(define (compiler-ir-smoke-runtime-effect-self-test-ok?) : bool
-  (begin
     (ci.intern-reset!)
     (cbi.compiler-builtin-reset!)
+    (ci.intern-source-slice "reset-prefix" 0 12)
     (cbi.compiler-builtin-initialize-for-parse!)
     (and
+      (not (= old-alloc cbi.compiler-builtin-id-tl-alloc))
+      (not (= old-stdin cbi.compiler-builtin-id-tl-stdin-eof-label))
       (compiler-ir-smoke-runtime-effect-ids-ok?)
-      (compiler-ir-smoke-runtime-effect-identity-ok?)
-      (compiler-ir-smoke-runtime-effect-reset-ok?))))
+      (compiler-ir-smoke-runtime-effect-identity-ok?))))
+
+(define (compiler-ir-smoke-runtime-effect-self-test-ok?) : bool
+  (ci.intern-reset!)
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (and
+    (compiler-ir-smoke-runtime-effect-ids-ok?)
+    (compiler-ir-smoke-runtime-effect-identity-ok?)
+    (compiler-ir-smoke-runtime-effect-reset-ok?)))
 
 (define (compiler-ir-smoke-function-seq-first-name?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -275,10 +272,9 @@
   (let
     [builder : compiler_ir_types.CompilerIrGlobalBuilder
       (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
-    (begin
-      (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) first)
-      (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) second)
-      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+    (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) first)
+    (compiler_ir_types.compiler-ir-global-builder-push! (&mut builder) second)
+    (compiler_ir_types.compiler-ir-global-builder-to-seq builder)))
 
 (define (compiler-ir-smoke-extern-seq-name-at?
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -552,9 +548,8 @@
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (let
     [count : i64 (array-ref seen 0)]
-    (begin
-      (set! (array-ref seen (+ count 1)) (compiler-ir-smoke-value-code value))
-      (set! (array-ref seen 0) (+ count 1)))))
+    (set! (array-ref seen (+ count 1)) (compiler-ir-smoke-value-code value))
+    (set! (array-ref seen 0) (+ count 1))))
 
 (define (compiler-ir-smoke-spmd-class-code
   [class : compiler_ir_types.CompilerIrSpmdValueClass]) : i64
@@ -569,13 +564,12 @@
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (let
     [count : i64 (array-ref seen 0)]
-    (begin
-      (set!
-        (array-ref seen (+ count 1))
-        (+
-          (compiler-ir-smoke-spmd-class-code class)
-          (compiler-ir-smoke-value-code value)))
-      (set! (array-ref seen 0) (+ count 1)))))
+    (set!
+      (array-ref seen (+ count 1))
+      (+
+        (compiler-ir-smoke-spmd-class-code class)
+        (compiler-ir-smoke-value-code value)))
+    (set! (array-ref seen 0) (+ count 1))))
 
 (define (compiler-ir-smoke-call-arg-map-visit-ok?) : bool
   (let
@@ -784,14 +778,13 @@
   (let
     [builder : compiler_ir_types.CompilerIrSpmdCallArgBuilder
       (compiler_ir_types.compiler-ir-spmd-call-arg-builder-with-capacity 1)]
-    (begin
-      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrSpmdCallArg.Arg (Uniform) (Var 21) (I64)))
-      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrSpmdCallArg.Arg (Varying) (Var 22) (I64)))
-      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder))))
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSpmdCallArg.Arg (Uniform) (Var 21) (I64)))
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSpmdCallArg.Arg (Varying) (Var 22) (I64)))
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder)))
 
 (define (compiler-ir-smoke-spmd-call-shape-ok?) : bool
   (let
@@ -1309,190 +1302,171 @@
     [index : i64 0]
     [logical-source-handle : i64 0]
     [ok : bool true]
-    (begin
-      ;; An existing canonical generated name remains a pooled identity and
-      ;; does not consume an IR-owned slot.
-      (unless (= canonical-symbol canonical-id) (set! ok false))
-      ;; Equal spellings are one id; distinct spellings are distinct ids.
-      (unless (= first first-again) (set! ok false))
-      (unless (not (= first second)) (set! ok false))
+    ;; An existing canonical generated name remains a pooled identity and
+    ;; does not consume an IR-owned slot.
+    (unless (= canonical-symbol canonical-id) (set! ok false))
+    ;; Equal spellings are one id; distinct spellings are distinct ids.
+    (unless (= first first-again) (set! ok false))
+    (unless (not (= first second)) (set! ok false))
+    (unless
+      (= (compiler_ir_types.compiler-ir-symbol-count-value) (+ count-before 2))
+      (set! ok false))
+    ;; Round trip, through the raw render and through the typed handle.
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text first)
+        "ir-smoke/one")
+      (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text second)
+        "ir-smoke/two")
+      (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-id-text
+          (compiler_ir_types.compiler-ir-symbol-typed-id second))
+        "ir-smoke/two")
+      (set! ok false))
+    ;; The full namespace is capacity-independent: compact u32 ids, cfg,
+    ;; IR-owned and session structural identities occupy disjoint domains.
+    (unless (= compact-limit 4294967296) (set! ok false))
+    (unless (= cfg-base domain-width) (set! ok false))
+    (unless (= base (* 2 domain-width)) (set! ok false))
+    (unless (= domain-limit (* 3 domain-width)) (set! ok false))
+    (unless (= structural-base 4611686018427387904) (set! ok false))
+    (unless (= compact-limit cfg-base) (set! ok false))
+    (unless (< cfg-base base) (set! ok false))
+    (unless (< domain-limit structural-base) (set! ok false))
+    ;; Allocated IR ids remain dense inside their fixed tagged domain.
+    (unless (= first (+ base count-before)) (set! ok false))
+    (unless (= second (+ first 1)) (set! ok false))
+    (unless (< second domain-limit) (set! ok false))
+    (unless (= (compiler-ir-symbol-slot first) (- first base)) (set! ok false))
+    (unless (compiler_ir_types.compiler-ir-symbol-owned? first) (set! ok false))
+    (unless
+      (compiler_ir_types.compiler-ir-symbol-domain? first)
+      (set! ok false))
+    (unless (not (ci.intern-renderable-id? first)) (set! ok false))
+    ;; More than today's `intern-capacity` source handles -- including the old
+    ;; 4*capacity collision point -- all fail ownership and slot decoding.
+    ;; This deliberately uses raw u32-domain handles because today's fixed
+    ;; pool cannot allocate the future values the namespace must reserve.
+    (while (<= logical-source-handle capacity)
+      (if (compiler_ir_types.compiler-ir-symbol-owned? logical-source-handle)
+        (set! ok false)
+        unit)
       (unless
-        (=
-          (compiler_ir_types.compiler-ir-symbol-count-value)
-          (+ count-before 2))
+        (= (compiler-ir-symbol-slot logical-source-handle) -1)
         (set! ok false))
-      ;; Round trip, through the raw render and through the typed handle.
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text first)
-          "ir-smoke/one")
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text second)
-          "ir-smoke/two")
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-id-text
-            (compiler_ir_types.compiler-ir-symbol-typed-id second))
-          "ir-smoke/two")
-        (set! ok false))
-      ;; The full namespace is capacity-independent: compact u32 ids, cfg,
-      ;; IR-owned and session structural identities occupy disjoint domains.
-      (unless (= compact-limit 4294967296) (set! ok false))
-      (unless (= cfg-base domain-width) (set! ok false))
-      (unless (= base (* 2 domain-width)) (set! ok false))
-      (unless (= domain-limit (* 3 domain-width)) (set! ok false))
-      (unless (= structural-base 4611686018427387904) (set! ok false))
-      (unless (= compact-limit cfg-base) (set! ok false))
-      (unless (< cfg-base base) (set! ok false))
-      (unless (< domain-limit structural-base) (set! ok false))
-      ;; Allocated IR ids remain dense inside their fixed tagged domain.
-      (unless (= first (+ base count-before)) (set! ok false))
-      (unless (= second (+ first 1)) (set! ok false))
-      (unless (< second domain-limit) (set! ok false))
-      (unless
-        (= (compiler-ir-symbol-slot first) (- first base))
-        (set! ok false))
-      (unless
-        (compiler_ir_types.compiler-ir-symbol-owned? first)
-        (set! ok false))
-      (unless
-        (compiler_ir_types.compiler-ir-symbol-domain? first)
-        (set! ok false))
-      (unless (not (ci.intern-renderable-id? first)) (set! ok false))
-      ;; More than today's `intern-capacity` source handles -- including the old
-      ;; 4*capacity collision point -- all fail ownership and slot decoding.
-      ;; This deliberately uses raw u32-domain handles because today's fixed
-      ;; pool cannot allocate the future values the namespace must reserve.
-      (while (<= logical-source-handle capacity)
-        (begin
-          (if (compiler_ir_types.compiler-ir-symbol-owned?
-            logical-source-handle)
-            (set! ok false)
-            unit)
-          (unless
-            (= (compiler-ir-symbol-slot logical-source-handle) -1)
-            (set! ok false))
-          (set! logical-source-handle (+ logical-source-handle 1))))
-      (unless (< old-collision-base compact-limit) (set! ok false))
-      (unless
-        (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
-        (set! ok false))
-      (unless
-        (= (compiler-ir-symbol-slot old-collision-base) -1)
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text old-collision-base)
-          "")
-        (set! ok false))
-      ;; Tagged IR payloads around that old boundary stay in the IR domain but
-      ;; are not table-owned until actually minted, so they cannot alias or
-      ;; index either the source pool or the side table.
-      (set! index (- old-collision-base 1))
-      (while (<= index (+ old-collision-base 1))
-        (let
-          [unallocated : i64
-            (compiler_ir_types.compiler-ir-symbol-domain-id-for-index index)]
-          (begin
-            (unless
-              (compiler_ir_types.compiler-ir-symbol-domain? unallocated)
-              (set! ok false))
-            (if (compiler_ir_types.compiler-ir-symbol-owned? unallocated)
-              (set! ok false)
-              unit)
-            (unless
-              (= (compiler-ir-symbol-slot unallocated) -1)
-              (set! ok false))
-            (unless
-              (string.eq
-                (compiler_ir_types.compiler-ir-symbol-text unallocated)
-                "")
-              (set! ok false))
-            (set! index (+ index 1)))))
-      ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
-      ;; fail closed rather than indexing or reaching intern-str.
-      (unless
-        (= (compiler-ir-symbol-slot (- compact-limit 1)) -1)
-        (set! ok false))
-      (unless (= (compiler-ir-symbol-slot cfg-base) -1) (set! ok false))
-      (unless (= (compiler-ir-symbol-slot current-cfg-key) -1) (set! ok false))
-      (unless (= (compiler-ir-symbol-slot structural-base) -1) (set! ok false))
-      ;; Unminted ids in the IR domain, other tags, and the negative sentinel
-      ;; render empty rather than aborting: diagnostics reach this path with
-      ;; whatever the IR is holding.
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text
-            (+ base (compiler_ir_types.compiler-ir-symbol-count-value)))
-          "")
-        (set! ok false))
-      (unless
-        (string.eq (compiler_ir_types.compiler-ir-symbol-text cfg-base) "")
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text structural-base)
-          "")
-        (set! ok false))
-      (unless
-        (string.eq (compiler_ir_types.compiler-ir-symbol-text (- 0 1)) "")
-        (set! ok false))
-      ;; Pool ids still render from the pool through the same entry point.
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text pool-id)
-          "ir-smoke-pool-name")
-        (set! ok false))
-      ;; Growth: mint past the initial 1024-slot slab, then re-read the first
-      ;; spelling, which the doubling copy has to have carried over.
-      (set! index 0)
-      (while (< index 2048)
-        (begin
-          (set!
-            last-grown
-            (compiler_ir_types.compiler-ir-symbol
-              (str_cat.str-cat "ir-smoke/grow-" (string.int->string index))))
-          (set! index (+ index 1))))
-      (unless
-        (=
-          (compiler_ir_types.compiler-ir-symbol-count-value)
-          (+ count-before 2050))
-        (set! ok false))
-      (unless (= last-grown (+ base (+ count-before 2049))) (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text first)
-          "ir-smoke/one")
-        (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text last-grown)
-          "ir-smoke/grow-2047")
-        (set! ok false))
-      ;; The whole batch cost the intern pool nothing in either lane.
-      (unless (= (ci.intern-generated-count) generated-before) (set! ok false))
-      (unless (= (ci.intern-pool-len) pool-before) (set! ok false))
-      ;; The table is its own spelling authority: resetting and reseeding the
-      ;; front-end pool cannot change an answer it has already returned.
-      (ci.intern-reset!)
-      (cbi.compiler-builtin-reset!)
-      (ci.intern-source-slice "ir-smoke-reset-prefix" 0 21)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
-        (set! ok false))
-      (unless
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-text first)
-          "ir-smoke/one")
-        (set! ok false))
-      ok)))
+      (set! logical-source-handle (+ logical-source-handle 1)))
+    (unless (< old-collision-base compact-limit) (set! ok false))
+    (unless
+      (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
+      (set! ok false))
+    (unless (= (compiler-ir-symbol-slot old-collision-base) -1) (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text old-collision-base)
+        "")
+      (set! ok false))
+    ;; Tagged IR payloads around that old boundary stay in the IR domain but
+    ;; are not table-owned until actually minted, so they cannot alias or
+    ;; index either the source pool or the side table.
+    (set! index (- old-collision-base 1))
+    (while (<= index (+ old-collision-base 1))
+      (let
+        [unallocated : i64
+          (compiler_ir_types.compiler-ir-symbol-domain-id-for-index index)]
+        (unless
+          (compiler_ir_types.compiler-ir-symbol-domain? unallocated)
+          (set! ok false))
+        (if (compiler_ir_types.compiler-ir-symbol-owned? unallocated)
+          (set! ok false)
+          unit)
+        (unless (= (compiler-ir-symbol-slot unallocated) -1) (set! ok false))
+        (unless
+          (string.eq (compiler_ir_types.compiler-ir-symbol-text unallocated) "")
+          (set! ok false))
+        (set! index (+ index 1))))
+    ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
+    ;; fail closed rather than indexing or reaching intern-str.
+    (unless
+      (= (compiler-ir-symbol-slot (- compact-limit 1)) -1)
+      (set! ok false))
+    (unless (= (compiler-ir-symbol-slot cfg-base) -1) (set! ok false))
+    (unless (= (compiler-ir-symbol-slot current-cfg-key) -1) (set! ok false))
+    (unless (= (compiler-ir-symbol-slot structural-base) -1) (set! ok false))
+    ;; Unminted ids in the IR domain, other tags, and the negative sentinel
+    ;; render empty rather than aborting: diagnostics reach this path with
+    ;; whatever the IR is holding.
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text
+          (+ base (compiler_ir_types.compiler-ir-symbol-count-value)))
+        "")
+      (set! ok false))
+    (unless
+      (string.eq (compiler_ir_types.compiler-ir-symbol-text cfg-base) "")
+      (set! ok false))
+    (unless
+      (string.eq (compiler_ir_types.compiler-ir-symbol-text structural-base) "")
+      (set! ok false))
+    (unless
+      (string.eq (compiler_ir_types.compiler-ir-symbol-text (- 0 1)) "")
+      (set! ok false))
+    ;; Pool ids still render from the pool through the same entry point.
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text pool-id)
+        "ir-smoke-pool-name")
+      (set! ok false))
+    ;; Growth: mint past the initial 1024-slot slab, then re-read the first
+    ;; spelling, which the doubling copy has to have carried over.
+    (set! index 0)
+    (while (< index 2048)
+      (set!
+        last-grown
+        (compiler_ir_types.compiler-ir-symbol
+          (str_cat.str-cat "ir-smoke/grow-" (string.int->string index))))
+      (set! index (+ index 1)))
+    (unless
+      (=
+        (compiler_ir_types.compiler-ir-symbol-count-value)
+        (+ count-before 2050))
+      (set! ok false))
+    (unless (= last-grown (+ base (+ count-before 2049))) (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text first)
+        "ir-smoke/one")
+      (set! ok false))
+    (unless
+      (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
+      (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text last-grown)
+        "ir-smoke/grow-2047")
+      (set! ok false))
+    ;; The whole batch cost the intern pool nothing in either lane.
+    (unless (= (ci.intern-generated-count) generated-before) (set! ok false))
+    (unless (= (ci.intern-pool-len) pool-before) (set! ok false))
+    ;; The table is its own spelling authority: resetting and reseeding the
+    ;; front-end pool cannot change an answer it has already returned.
+    (ci.intern-reset!)
+    (cbi.compiler-builtin-reset!)
+    (ci.intern-source-slice "ir-smoke-reset-prefix" 0 21)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (unless
+      (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
+      (set! ok false))
+    (unless
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-text first)
+        "ir-smoke/one")
+      (set! ok false))
+    ok))
 
 ;; Arenas destroyed from here on are poisoned, so a read of a retired label
 ;; generation traps instead of passing silently.
@@ -1515,50 +1489,47 @@
     [index : i64 1]
     [ok : bool true]
     [past-end : String ""]
-    (begin
-      (tl_arena_poison_enable)
-      (while (< index total)
-        (begin
-          (unless
-            (=
-              (compiler_ir_types.compiler-ir-label
-                (compiler-ir-smoke-label-spelling index))
-              (+ base index))
-            (set! ok false))
-          (set! index (+ index 1))))
-      (unless (string.eq (& first-text) "ir-smoke-label-0") (set! ok false))
-      (set! index 0)
-      (while (< index total)
-        (let
-          [spelling : String (compiler-ir-smoke-label-spelling index)]
-          [text : String
-            (compiler_ir_types.compiler-ir-label-text (+ base index))]
-          (begin
-            (unless (string.eq (& text) (& spelling)) (set! ok false))
-            (unless
-              (=
-                (compiler_ir_types.compiler-ir-label-existing spelling)
-                (+ base index))
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (and
-        ok
-        (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
-        ;; Re-interning an existing spelling returns its id and adds nothing.
+    (tl_arena_poison_enable)
+    (while (< index total)
+      (unless
         (=
           (compiler_ir_types.compiler-ir-label
-            (compiler-ir-smoke-label-spelling 4321))
-          (+ base 4321))
-        (=
-          (compiler_ir_types.compiler-ir-label-existing
-            "ir-smoke-label-never-created")
-          -1)
-        (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
-        (begin
-          (set!
-            past-end
-            (compiler_ir_types.compiler-ir-label-text (+ base total)))
-          (string.eq (& past-end) ""))))))
+            (compiler-ir-smoke-label-spelling index))
+          (+ base index))
+        (set! ok false))
+      (set! index (+ index 1)))
+    (unless (string.eq (& first-text) "ir-smoke-label-0") (set! ok false))
+    (set! index 0)
+    (while (< index total)
+      (let
+        [spelling : String (compiler-ir-smoke-label-spelling index)]
+        [text : String
+          (compiler_ir_types.compiler-ir-label-text (+ base index))]
+        (unless (string.eq (& text) (& spelling)) (set! ok false))
+        (unless
+          (=
+            (compiler_ir_types.compiler-ir-label-existing spelling)
+            (+ base index))
+          (set! ok false))
+        (set! index (+ index 1))))
+    (and
+      ok
+      (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
+      ;; Re-interning an existing spelling returns its id and adds nothing.
+      (=
+        (compiler_ir_types.compiler-ir-label
+          (compiler-ir-smoke-label-spelling 4321))
+        (+ base 4321))
+      (=
+        (compiler_ir_types.compiler-ir-label-existing
+          "ir-smoke-label-never-created")
+        -1)
+      (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
+      (begin
+        (set!
+          past-end
+          (compiler_ir_types.compiler-ir-label-text (+ base total)))
+        (string.eq (& past-end) "")))))
 
 ;; Build a spans table entirely inside a throwaway arena, escape it into the
 ;; enclosing arena, then destroy the throwaway arena and read the escape. Every
@@ -1764,77 +1735,76 @@
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex
       (compiler_ir_types.compiler-ir-representation-index-build bases program)]
-    (begin
-      (unless
-        (compiler-ir-smoke-representation-kind-group?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            group-ty)
-          2
-          2)
-        (return 1))
-      (unless
-        (compiler-ir-smoke-representation-kind-group?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            region-ty)
-          2
-          2)
-        (return 2))
-      (unless
-        (compiler-ir-smoke-representation-kind-group?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            signature-ty)
-          2
-          2)
-        (return 3))
-      (unless
-        (compiler-ir-smoke-representation-kind-one?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            one-ty))
-        (return 4))
-      (unless
-        (compiler-ir-smoke-representation-kind-unknown?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            conflict-ty))
-        (return 5))
-      (unless
-        (compiler-ir-smoke-representation-kind-unknown?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            private-ty))
-        (return 6))
-      (unless
-        (compiler-ir-smoke-representation-kind-unknown?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            malformed-ty))
-        (return 7))
-      (unless
-        (compiler-ir-smoke-representation-kind-unknown?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            (Var 99)))
-        (return 8))
-      (unless
-        (compiler-ir-smoke-representation-kind-unknown?
-          (compiler_ir_types.compiler-ir-representation-index-kind
-            bases
-            index
-            (String)))
-        (return 9))
-      0)))
+    (unless
+      (compiler-ir-smoke-representation-kind-group?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          group-ty)
+        2
+        2)
+      (return 1))
+    (unless
+      (compiler-ir-smoke-representation-kind-group?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          region-ty)
+        2
+        2)
+      (return 2))
+    (unless
+      (compiler-ir-smoke-representation-kind-group?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          signature-ty)
+        2
+        2)
+      (return 3))
+    (unless
+      (compiler-ir-smoke-representation-kind-one?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          one-ty))
+      (return 4))
+    (unless
+      (compiler-ir-smoke-representation-kind-unknown?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          conflict-ty))
+      (return 5))
+    (unless
+      (compiler-ir-smoke-representation-kind-unknown?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          private-ty))
+      (return 6))
+    (unless
+      (compiler-ir-smoke-representation-kind-unknown?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          malformed-ty))
+      (return 7))
+    (unless
+      (compiler-ir-smoke-representation-kind-unknown?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          (Var 99)))
+      (return 8))
+    (unless
+      (compiler-ir-smoke-representation-kind-unknown?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          (String)))
+      (return 9))
+    0))
 
 ;; --- private SPMD ABI integrity (#7405) ---------------------------------------
 ;;
@@ -1898,14 +1868,12 @@
     [params : compiler_ir_types.CompilerIrSpmdPrivateParamSeq
       (compiler_ir_types.compiler-ir-spmd-private-param-seq-with-capacity count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (compiler_ir_types.compiler-ir-spmd-private-param-seq-push!
-            (&mut params)
-            (pabi-param-at variant index))
-          (set! index (+ index 1))))
-      params)))
+    (while (< index count)
+      (compiler_ir_types.compiler-ir-spmd-private-param-seq-push!
+        (&mut params)
+        (pabi-param-at variant index))
+      (set! index (+ index 1)))
+    params))
 
 (define (pabi-result-varying-i64) : compiler_ir_types.CompilerIrSpmdPrivateResult
   (Value (Varying) (I64)))
@@ -1948,27 +1916,26 @@
   (let
     [builder : compiler_ir_types.CompilerIrParamBuilder
       (compiler_ir_types.compiler-ir-param-builder-with-capacity 4)]
-    (begin
+    (compiler_ir_types.compiler-ir-param-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrParam.Param "mask" (Bool) 0))
+    (compiler_ir_types.compiler-ir-param-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrParam.Param "x" (I64) 1))
+    (compiler_ir_types.compiler-ir-param-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrParam.Param
+        "k"
+        (if (= variant 2)
+          (I32)
+          (I64))
+        2))
+    (if (= variant 1)
+      unit
       (compiler_ir_types.compiler-ir-param-builder-push!
         (&mut builder)
-        (compiler_ir_types.CompilerIrParam.Param "mask" (Bool) 0))
-      (compiler_ir_types.compiler-ir-param-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrParam.Param "x" (I64) 1))
-      (compiler_ir_types.compiler-ir-param-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrParam.Param
-          "k"
-          (if (= variant 2)
-            (I32)
-            (I64))
-          2))
-      (if (= variant 1)
-        unit
-        (compiler_ir_types.compiler-ir-param-builder-push!
-          (&mut builder)
-          (compiler_ir_types.CompilerIrParam.Param "base" (I64) 3)))
-      (compiler_ir_types.compiler-ir-param-builder-to-seq builder))))
+        (compiler_ir_types.CompilerIrParam.Param "base" (I64) 3)))
+    (compiler_ir_types.compiler-ir-param-builder-to-seq builder)))
 
 (define (pabi-signature-rejects?
   [name : String]
@@ -1994,36 +1961,35 @@
   (let
     [builder : compiler_ir_types.CompilerIrSpmdCallArgBuilder
       (compiler_ir_types.compiler-ir-spmd-call-arg-builder-with-capacity 3)]
-    (begin
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+        (if (or (= variant 2) (= variant 4))
+          (Uniform)
+          (Varying))
+        (Var 21)
+        (if (= variant 3)
+          (I32)
+          (I64))))
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+        (if (= variant 4)
+          (Varying)
+          (Uniform))
+        (Var 22)
+        (I64)))
+    (if (= variant 1)
+      unit
       (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
         (&mut builder)
         (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-          (if (or (= variant 2) (= variant 4))
-            (Uniform)
-            (Varying))
-          (Var 21)
-          (if (= variant 3)
-            (I32)
-            (I64))))
-      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-          (if (= variant 4)
+          (if (= variant 5)
             (Varying)
             (Uniform))
-          (Var 22)
-          (I64)))
-      (if (= variant 1)
-        unit
-        (compiler_ir_types.compiler-ir-spmd-call-arg-builder-push!
-          (&mut builder)
-          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
-            (if (= variant 5)
-              (Varying)
-              (Uniform))
-            (Var 23)
-            (I64))))
-      (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder))))
+          (Var 23)
+          (I64))))
+    (compiler_ir_types.compiler-ir-spmd-call-arg-builder-to-seq builder)))
 
 (define (pabi-call-result [variant : i64]) : compiler_ir_types.CompilerIrSpmdCallResult
   (cond
@@ -2105,17 +2071,14 @@
   (let
     [builder : compiler_ir_types.CompilerIrFunctionBuilder
       (compiler_ir_types.compiler-ir-function-builder-new)]
-    (begin
-      (compiler_ir_types.compiler-ir-function-builder-push!
-        (&mut builder)
-        (pabi-caller-function payload))
-      (compiler_ir_types.compiler-ir-function-builder-push!
-        (&mut builder)
-        helper)
-      (let
-        [functions : compiler_ir_types.CompilerIrFunctionSeq
-          (compiler_ir_types.compiler-ir-function-builder-to-seq builder)]
-        (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)))))
+    (compiler_ir_types.compiler-ir-function-builder-push!
+      (&mut builder)
+      (pabi-caller-function payload))
+    (compiler_ir_types.compiler-ir-function-builder-push! (&mut builder) helper)
+    (let
+      [functions : compiler_ir_types.CompilerIrFunctionSeq
+        (compiler_ir_types.compiler-ir-function-builder-to-seq builder)]
+      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions))))
 
 (define (pabi-program-rejects?
   [helper : compiler_ir_types.CompilerIrFunction]
@@ -2492,20 +2455,19 @@
               (let
                 [builder : compiler_ir_types.CompilerIrParamBuilder
                   (compiler_ir_types.compiler-ir-param-builder-with-capacity 4)]
-                (begin
-                  (compiler_ir_types.compiler-ir-param-builder-push!
-                    (&mut builder)
-                    (compiler_ir_types.CompilerIrParam.Param "mask" (Bool) 0))
-                  (compiler_ir_types.compiler-ir-param-builder-push!
-                    (&mut builder)
-                    (compiler_ir_types.CompilerIrParam.Param "x" (I64) 1))
-                  (compiler_ir_types.compiler-ir-param-builder-push!
-                    (&mut builder)
-                    (compiler_ir_types.CompilerIrParam.Param "k" (U64) 2))
-                  (compiler_ir_types.compiler-ir-param-builder-push!
-                    (&mut builder)
-                    (compiler_ir_types.CompilerIrParam.Param "base" (I64) 3))
-                  (compiler_ir_types.compiler-ir-param-builder-to-seq builder)))
+                (compiler_ir_types.compiler-ir-param-builder-push!
+                  (&mut builder)
+                  (compiler_ir_types.CompilerIrParam.Param "mask" (Bool) 0))
+                (compiler_ir_types.compiler-ir-param-builder-push!
+                  (&mut builder)
+                  (compiler_ir_types.CompilerIrParam.Param "x" (I64) 1))
+                (compiler_ir_types.compiler-ir-param-builder-push!
+                  (&mut builder)
+                  (compiler_ir_types.CompilerIrParam.Param "k" (U64) 2))
+                (compiler_ir_types.compiler-ir-param-builder-push!
+                  (&mut builder)
+                  (compiler_ir_types.CompilerIrParam.Param "base" (I64) 3))
+                (compiler_ir_types.compiler-ir-param-builder-to-seq builder))
               (I64)
               4
               (compiler_ir_types.compiler-ir-block-list-empty)
@@ -2638,11 +2600,10 @@
   (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
       (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
-    (begin
-      (set!
-        (array-ref slots 0)
-        (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot (I64) 0))
-      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slots 1))))
+    (set!
+      (array-ref slots 0)
+      (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot (I64) 0))
+    (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slots 1)))
 
 (define (compiler-ir-smoke-role-letter
   [role : compiler_ir_types.CompilerIrOperandRole]) : String
@@ -2696,17 +2657,16 @@
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (let
     [zero : i64 0]
-    (begin
-      (set! compiler-ir-smoke-operand-visits 0)
-      (compiler_ir_types.compiler-ir-instr-visit-uses
-        (compiler_ir_types.compiler-ir-global-shared-view instr)
-        compiler-ir-smoke-count-use)
-      (=
-        compiler-ir-smoke-operand-visits
-        (compiler_ir_types.compiler-ir-instr-fold-uses
-          instr
-          zero
-          compiler-ir-smoke-count-fold)))))
+    (set! compiler-ir-smoke-operand-visits 0)
+    (compiler_ir_types.compiler-ir-instr-visit-uses
+      (compiler_ir_types.compiler-ir-global-shared-view instr)
+      compiler-ir-smoke-count-use)
+    (=
+      compiler-ir-smoke-operand-visits
+      (compiler_ir_types.compiler-ir-instr-fold-uses
+        instr
+        zero
+        compiler-ir-smoke-count-fold))))
 
 (define (compiler-ir-smoke-shift-use
   [delta : i64]
@@ -2737,14 +2697,13 @@
   (let
     [instr : compiler_ir_types.CompilerIrInstr
       (owned_view.compiler-owned-reference-shared-view instr)]
-    (begin
-      (set! compiler-ir-smoke-operand-labels "")
-      (compiler_ir_types.compiler-ir-instr-visit-successors
-        instr
-        compiler-ir-smoke-note-label
-        delta)
-      (compiler_ir_types.compiler-ir-global-shared-view
-        compiler-ir-smoke-operand-labels))))
+    (set! compiler-ir-smoke-operand-labels "")
+    (compiler_ir_types.compiler-ir-instr-visit-successors
+      instr
+      compiler-ir-smoke-note-label
+      delta)
+    (compiler_ir_types.compiler-ir-global-shared-view
+      compiler-ir-smoke-operand-labels)))
 
 (define (compiler-ir-smoke-operand-summary
   [instr : compiler_ir_types.CompilerIrInstr]) : String
@@ -2876,18 +2835,16 @@
   (let
     [index : i64 1]
     [failure : i64 0]
-    (begin
-      (while (and (= failure 0) (<= index 54))
-        (begin
-          (set!
-            failure
-            (compiler-ir-smoke-operand-failure
-              (compiler-ir-smoke-operand-sample index)
-              (compiler-ir-smoke-operand-expect index)))
-          (set! index (+ index 1))))
-      (if (= failure 0)
-        0
-        (+ (* (- index 1) 100) failure)))))
+    (while (and (= failure 0) (<= index 54))
+      (set!
+        failure
+        (compiler-ir-smoke-operand-failure
+          (compiler-ir-smoke-operand-sample index)
+          (compiler-ir-smoke-operand-expect index)))
+      (set! index (+ index 1)))
+    (if (= failure 0)
+      0
+      (+ (* (- index 1) 100) failure))))
 
 (define (compiler-ir-smoke-operand-sample [index : i64]) : compiler_ir_types.CompilerIrInstr
   (cond
@@ -3173,12 +3130,11 @@
     [index : i64 0]
     [count : i64 instrs.len]
     (while (< index count)
-      (begin
-        (compiler_ir_types.compiler-ir-instr-seq-set!
-          (&mut instrs)
-          index
-          (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
-        (set! index (+ index 1))))))
+      (compiler_ir_types.compiler-ir-instr-seq-set!
+        (&mut instrs)
+        index
+        (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
+      (set! index (+ index 1)))))
 
 (define (compiler-ir-instr-seq-compact!
   [instrs : (&mut instrs compiler_ir_types.CompilerIrInstrSeq)]
@@ -3187,20 +3143,17 @@
     [read : i64 0]
     [write : i64 0]
     [count : i64 instrs.len]
-    (begin
-      (while (< read count)
-        (begin
-          (if (keep? (clone (array-ref instrs.slots read)))
-            (begin
-              (if (not (= write read))
-                (set!
-                  (array-ref instrs.slots write)
-                  (clone (array-ref instrs.slots read)))
-                unit)
-              (set! write (+ write 1)))
-            unit)
-          (set! read (+ read 1))))
-      (set! instrs.len write))))
+    (while (< read count)
+      (when
+        (keep? (clone (array-ref instrs.slots read)))
+        (if (not (= write read))
+          (set!
+            (array-ref instrs.slots write)
+            (clone (array-ref instrs.slots read)))
+          unit)
+        (set! write (+ write 1)))
+      (set! read (+ read 1)))
+    (set! instrs.len write)))
 
 (define (compiler-ir-value-var-eq?
   [value : compiler_ir_types.CompilerIrValue]
@@ -3356,18 +3309,16 @@
   (let
     [index : i64 1]
     [out : String ""]
-    (begin
-      (while (<= index 54)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (compiler-ir-smoke-fault-letter
-                (compiler_ir_types.compiler-ir-instr-fault
-                  (compiler-ir-smoke-operand-sample index)))))
-          (set! index (+ index 1))))
-      out)))
+    (while (<= index 54)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (compiler-ir-smoke-fault-letter
+            (compiler_ir_types.compiler-ir-instr-fault
+              (compiler-ir-smoke-operand-sample index)))))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-ir-smoke-binop-fault-rows) : String
   (let
@@ -3398,18 +3349,16 @@
         (compiler_ir_types.CompilerIrBinOp.Shr (clone i64-ty)))]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index 22)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (compiler-ir-smoke-fault-letter
-                (compiler_ir_types.compiler-ir-binop-fault
-                  (clone (array-ref ops index))))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index 22)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (compiler-ir-smoke-fault-letter
+            (compiler_ir_types.compiler-ir-binop-fault
+              (clone (array-ref ops index))))))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-ir-fault-rows-ok?) : bool
   (and
@@ -3767,114 +3716,111 @@
     [grown-instr-spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-empty)]
     [i : i64 0]
-    (begin
-      (while (< i 6)
-        (begin
-          (set!
-            grown-entries
-            (compiler_ir_types.compiler-source-spans-entry-list-append
-              grown-entries
-              (compiler_ir_types.CompilerSourceSpansEntry
-                grow
-                0
-                (if (= i 5)
-                  span3
-                  span1))))
-          (set!
-            grown-instr-spans
-            (compiler_ir_types.compiler-source-spans-insert-instr
-              grown-instr-spans
-              instr-function
-              (compiler_ir_types.compiler-ir-global-shared-view instr)
-              (if (= i 5)
-                span3
-                span1)))
-          (set! i (+ i 1))))
-      (and
-        (= (compiler_ir_types.compiler-source-spans-entry-list-count entries) 2)
-        (= (compiler_ir_types.compiler-source-spans-count spans) 2)
-        (=
-          (compiler_ir_types.compiler-source-spans-entry-list-count
-            grown-entries)
-          6)
-        (= (array-length grown-entries.slots) 8)
-        (match (compiler_ir_types.compiler-ir-global-shared-view
-          grown-instr-spans)
-          [(Spans _ grown-instr-entries grown-instr-count)
-            (and
-              (= grown-instr-count 6)
-              (= grown-instr-entries.len 6)
-              (= (array-length grown-instr-entries.slots) 8))])
-        (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
-          entries
-          second)
-          [(Some found)
-            (and
-              (= (ast.ast-source-span-start-line found) 4)
-              (= (ast.ast-source-span-end-col found) 8))]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
+    (while (< i 6)
+      (set!
+        grown-entries
+        (compiler_ir_types.compiler-source-spans-entry-list-append
           grown-entries
-          grow)
-          [(Some found)
-            (and
-              (= (ast.ast-source-span-start-line found) 7)
-              (= (ast.ast-source-span-end-col found) 12))]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup shadowed same)
-          [(Some found)
-            (and
-              (= (ast.ast-source-span-start-line found) 7)
-              (= (ast.ast-source-span-end-col found) 12))]
-          [(No) false])
-        (not
-          (compiler_ir_types.compiler-ir-symbol-id-eq?
-            source-provenance
-            generated-provenance))
-        (string.eq
-          (compiler_ir_types.compiler-ir-symbol-id-text source-provenance)
-          (compiler_ir_types.compiler-ir-symbol-id-text generated-provenance))
-        (match (compiler_ir_types.compiler-source-spans-lookup
-          (compiler_ir_types.compiler-ir-global-shared-view same-spelling)
-          source-provenance)
-          [(Some found) (= (ast.ast-source-span-start-line found) 1)]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup
-          same-spelling
-          generated-provenance)
-          [(Some found) (= (ast.ast-source-span-start-line found) 4)]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup-instr
-          instr-spans
-          instr-function
-          (compiler_ir_types.compiler-ir-global-shared-view instr))
-          [(Some found)
-            (and
-              (= (ast.ast-source-span-start-line found) 7)
-              (= (ast.ast-source-span-end-col found) 12))]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          (compiler_ir_types.CompilerSourceSpansEntry
+            grow
+            0
+            (if (= i 5)
+              span3
+              span1))))
+      (set!
+        grown-instr-spans
+        (compiler_ir_types.compiler-source-spans-insert-instr
           grown-instr-spans
           instr-function
-          (compiler_ir_types.compiler-ir-global-shared-view instr))
-          [(Some found)
-            (and
-              (= (ast.ast-source-span-start-line found) 7)
-              (= (ast.ast-source-span-end-col found) 12))]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup-instr
-          (compiler_ir_types.compiler-ir-global-shared-view
-            provenance-instr-spans)
+          (compiler_ir_types.compiler-ir-global-shared-view instr)
+          (if (= i 5)
+            span3
+            span1)))
+      (set! i (+ i 1)))
+    (and
+      (= (compiler_ir_types.compiler-source-spans-entry-list-count entries) 2)
+      (= (compiler_ir_types.compiler-source-spans-count spans) 2)
+      (=
+        (compiler_ir_types.compiler-source-spans-entry-list-count grown-entries)
+        6)
+      (= (array-length grown-entries.slots) 8)
+      (match (compiler_ir_types.compiler-ir-global-shared-view
+        grown-instr-spans)
+        [(Spans _ grown-instr-entries grown-instr-count)
+          (and
+            (= grown-instr-count 6)
+            (= grown-instr-entries.len 6)
+            (= (array-length grown-instr-entries.slots) 8))])
+      (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
+        entries
+        second)
+        [(Some found)
+          (and
+            (= (ast.ast-source-span-start-line found) 4)
+            (= (ast.ast-source-span-end-col found) 8))]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
+        grown-entries
+        grow)
+        [(Some found)
+          (and
+            (= (ast.ast-source-span-start-line found) 7)
+            (= (ast.ast-source-span-end-col found) 12))]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup shadowed same)
+        [(Some found)
+          (and
+            (= (ast.ast-source-span-start-line found) 7)
+            (= (ast.ast-source-span-end-col found) 12))]
+        [(No) false])
+      (not
+        (compiler_ir_types.compiler-ir-symbol-id-eq?
           source-provenance
-          (compiler_ir_types.compiler-ir-global-shared-view instr))
-          [(Some found) (= (ast.ast-source-span-start-line found) 1)]
-          [(No) false])
-        (match (compiler_ir_types.compiler-source-spans-lookup-instr
-          provenance-instr-spans
-          generated-provenance
-          instr)
-          [(Some found) (= (ast.ast-source-span-start-line found) 4)]
-          [(No) false])))))
+          generated-provenance))
+      (string.eq
+        (compiler_ir_types.compiler-ir-symbol-id-text source-provenance)
+        (compiler_ir_types.compiler-ir-symbol-id-text generated-provenance))
+      (match (compiler_ir_types.compiler-source-spans-lookup
+        (compiler_ir_types.compiler-ir-global-shared-view same-spelling)
+        source-provenance)
+        [(Some found) (= (ast.ast-source-span-start-line found) 1)]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup
+        same-spelling
+        generated-provenance)
+        [(Some found) (= (ast.ast-source-span-start-line found) 4)]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup-instr
+        instr-spans
+        instr-function
+        (compiler_ir_types.compiler-ir-global-shared-view instr))
+        [(Some found)
+          (and
+            (= (ast.ast-source-span-start-line found) 7)
+            (= (ast.ast-source-span-end-col found) 12))]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup-instr
+        grown-instr-spans
+        instr-function
+        (compiler_ir_types.compiler-ir-global-shared-view instr))
+        [(Some found)
+          (and
+            (= (ast.ast-source-span-start-line found) 7)
+            (= (ast.ast-source-span-end-col found) 12))]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup-instr
+        (compiler_ir_types.compiler-ir-global-shared-view
+          provenance-instr-spans)
+        source-provenance
+        (compiler_ir_types.compiler-ir-global-shared-view instr))
+        [(Some found) (= (ast.ast-source-span-start-line found) 1)]
+        [(No) false])
+      (match (compiler_ir_types.compiler-source-spans-lookup-instr
+        provenance-instr-spans
+        generated-provenance
+        instr)
+        [(Some found) (= (ast.ast-source-span-start-line found) 4)]
+        [(No) false]))))
 
 (define (compiler-ir-instr-seq-mov-dst?
   [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
@@ -3913,15 +3859,14 @@
         (Mov 1 (I64 10) (I64))
         (Mov 2 (I64 20) (I64))
         (Return (Some (Var 2))))]
-    (begin
-      (compiler-ir-instr-seq-rewrite!
-        (compiler_ir_types.compiler-ir-global-shared-view seq)
-        compiler-ir-instr-seq-test-rewrite)
-      (and
-        (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
-        (compiler-ir-instr-seq-mov-dst? seq 0 11)
-        (compiler-ir-instr-seq-mov-dst? seq 1 12)
-        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+    (compiler-ir-instr-seq-rewrite!
+      (compiler_ir_types.compiler-ir-global-shared-view seq)
+      compiler-ir-instr-seq-test-rewrite)
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
+      (compiler-ir-instr-seq-mov-dst? seq 0 11)
+      (compiler-ir-instr-seq-mov-dst? seq 1 12)
+      (compiler-ir-instr-seq-return-var? seq 2 2))))
 
 (define (compiler-ir-instr-seq-mutable-compact-ok?) : bool
   (let
@@ -3931,15 +3876,14 @@
         (Alloc 9 (I64))
         (Mov 2 (I64 20) (I64))
         (Return (Some (Var 2))))]
-    (begin
-      (compiler-ir-instr-seq-compact!
-        (&mut seq)
-        compiler-ir-instr-seq-test-keep-non-alloc?)
-      (and
-        (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
-        (compiler-ir-instr-seq-mov-dst? seq 0 1)
-        (compiler-ir-instr-seq-mov-dst? seq 1 2)
-        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+    (compiler-ir-instr-seq-compact!
+      (&mut seq)
+      compiler-ir-instr-seq-test-keep-non-alloc?)
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
+      (compiler-ir-instr-seq-mov-dst? seq 0 1)
+      (compiler-ir-instr-seq-mov-dst? seq 1 2)
+      (compiler-ir-instr-seq-return-var? seq 2 2))))
 
 (define (compiler-ir-block-list-first-label?
   [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]
@@ -4006,68 +3950,67 @@
       (compiler_ir_types.compiler-ir-block-list-empty)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-empty)]
-    (begin
-      (compiler_ir_types.compiler-ir-instr-builder-push!
-        (&mut instr-builder)
-        (compiler_ir_types.CompilerIrInstr.Mov 1 (I64 10) (I64)))
-      (compiler_ir_types.compiler-ir-instr-builder-push!
-        (&mut instr-builder)
-        (compiler_ir_types.CompilerIrInstr.Mov 2 (I64 20) (I64)))
-      (compiler_ir_types.compiler-ir-instr-builder-push!
-        (&mut instr-builder)
-        (compiler_ir_types.CompilerIrInstr.Return (Some (Var 2))))
-      (set!
-        instrs
-        (compiler_ir_types.compiler-ir-instr-builder-to-seq instr-builder))
-      (compiler_ir_types.compiler-ir-block-builder-push!
-        (&mut block-builder)
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-instr-seq-empty)))
-      (compiler_ir_types.compiler-ir-block-builder-push!
-        (&mut block-builder)
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "middle")
-          (compiler_ir_types.compiler-ir-instr-seq-empty)))
-      (compiler_ir_types.compiler-ir-block-builder-push!
-        (&mut block-builder)
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "done")
-          (compiler_ir_types.compiler-ir-instr-seq-empty)))
-      (set!
-        blocks
-        (compiler_ir_types.compiler-ir-block-builder-to-list block-builder))
-      (compiler_ir_types.compiler-ir-function-builder-push!
-        (&mut function-builder)
-        (compiler-ir-test-function "first"))
-      (compiler_ir_types.compiler-ir-function-builder-push!
-        (&mut function-builder)
-        (compiler-ir-test-function "second"))
-      (compiler_ir_types.compiler-ir-function-builder-push!
-        (&mut function-builder)
-        (compiler-ir-test-function "third"))
-      (set!
-        functions
-        (compiler_ir_types.compiler-ir-function-builder-to-seq function-builder))
-      (and
-        (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
-        (compiler-ir-instr-seq-mov-dst? instrs 0 1)
-        (compiler-ir-instr-seq-mov-dst? instrs 1 2)
-        (compiler-ir-instr-seq-return-var? instrs 2 2)
-        (= (compiler_ir_types.compiler-ir-block-list-count blocks) 3)
-        (compiler-ir-block-list-label-at?
-          (compiler_ir_types.compiler-ir-global-shared-view blocks)
-          0
-          "entry")
-        (compiler-ir-block-list-label-at?
-          (compiler_ir_types.compiler-ir-global-shared-view blocks)
-          1
-          "middle")
-        (compiler-ir-block-list-label-at? blocks 2 "done")
-        (= (compiler_ir_types.compiler-ir-function-seq-count functions) 3)
-        (compiler-ir-function-seq-name-at? functions 0 "first")
-        (compiler-ir-function-seq-name-at? functions 1 "second")
-        (compiler-ir-function-seq-name-at? functions 2 "third")))))
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      (&mut instr-builder)
+      (compiler_ir_types.CompilerIrInstr.Mov 1 (I64 10) (I64)))
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      (&mut instr-builder)
+      (compiler_ir_types.CompilerIrInstr.Mov 2 (I64 20) (I64)))
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      (&mut instr-builder)
+      (compiler_ir_types.CompilerIrInstr.Return (Some (Var 2))))
+    (set!
+      instrs
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq instr-builder))
+    (compiler_ir_types.compiler-ir-block-builder-push!
+      (&mut block-builder)
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-builder-push!
+      (&mut block-builder)
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "middle")
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-builder-push!
+      (&mut block-builder)
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "done")
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (set!
+      blocks
+      (compiler_ir_types.compiler-ir-block-builder-to-list block-builder))
+    (compiler_ir_types.compiler-ir-function-builder-push!
+      (&mut function-builder)
+      (compiler-ir-test-function "first"))
+    (compiler_ir_types.compiler-ir-function-builder-push!
+      (&mut function-builder)
+      (compiler-ir-test-function "second"))
+    (compiler_ir_types.compiler-ir-function-builder-push!
+      (&mut function-builder)
+      (compiler-ir-test-function "third"))
+    (set!
+      functions
+      (compiler_ir_types.compiler-ir-function-builder-to-seq function-builder))
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
+      (compiler-ir-instr-seq-mov-dst? instrs 0 1)
+      (compiler-ir-instr-seq-mov-dst? instrs 1 2)
+      (compiler-ir-instr-seq-return-var? instrs 2 2)
+      (= (compiler_ir_types.compiler-ir-block-list-count blocks) 3)
+      (compiler-ir-block-list-label-at?
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        0
+        "entry")
+      (compiler-ir-block-list-label-at?
+        (compiler_ir_types.compiler-ir-global-shared-view blocks)
+        1
+        "middle")
+      (compiler-ir-block-list-label-at? blocks 2 "done")
+      (= (compiler_ir_types.compiler-ir-function-seq-count functions) 3)
+      (compiler-ir-function-seq-name-at? functions 0 "first")
+      (compiler-ir-function-seq-name-at? functions 1 "second")
+      (compiler-ir-function-seq-name-at? functions 2 "third"))))
 
 (define (compiler-ir-param-seq-entry-i64?
   [seq : (& seq compiler_ir_types.CompilerIrParamSeq)]
@@ -4121,51 +4064,46 @@
         (compiler_ir_types.compiler-ir-block-list-empty)
         Ordinary)]
     [cloned-func : compiler_ir_types.CompilerIrFunction func]
-    (begin
-      (compiler_ir_types.compiler-ir-param-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrParam.Param "value" (I64) 3))
-      (set!
-        snapshot
-        (compiler_ir_types.compiler-ir-param-builder-snapshot (& builder)))
-      (compiler_ir_types.compiler-ir-param-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrParam.Param "flag" (Bool) 7))
-      (set! params (compiler_ir_types.compiler-ir-param-builder-to-seq builder))
-      (set!
-        cloned
-        (compiler_ir_types.compiler-ir-clone-param-seq
-          pools
-          (compiler_ir_types.compiler-ir-global-shared-view params)))
-      (set!
-        func
-        (Function
-          (compiler_ir_types.compiler-ir-test-symbol "dense_params")
-          (compiler_ir_types.compiler-ir-global-shared-view params)
-          (Unit)
-          8
-          (compiler_ir_types.compiler-ir-block-list-empty)
-          Ordinary))
-      (set!
-        cloned-func
-        (compiler_ir_types.compiler-ir-clone-function pools func))
-      (and
-        (= (compiler_ir_types.compiler-ir-param-seq-count snapshot) 1)
-        (compiler-ir-param-seq-entry-i64? snapshot 0 "value" 3)
-        (= (compiler_ir_types.compiler-ir-param-seq-count params) 2)
-        (compiler-ir-param-seq-entry-i64? params 0 "value" 3)
-        (compiler-ir-param-seq-entry-bool? params 1 "flag" 7)
-        (= (compiler_ir_types.compiler-ir-param-seq-count cloned) 2)
-        (compiler-ir-param-seq-entry-i64? cloned 0 "value" 3)
-        (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
-        (match cloned-func
-          [(Function _ cloned-params _ _ _ _)
-            (and
-              (=
-                (compiler_ir_types.compiler-ir-param-seq-count cloned-params)
-                2)
-              (compiler-ir-param-seq-entry-i64? cloned-params 0 "value" 3)
-              (compiler-ir-param-seq-entry-bool? cloned-params 1 "flag" 7))])))))
+    (compiler_ir_types.compiler-ir-param-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrParam.Param "value" (I64) 3))
+    (set!
+      snapshot
+      (compiler_ir_types.compiler-ir-param-builder-snapshot (& builder)))
+    (compiler_ir_types.compiler-ir-param-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrParam.Param "flag" (Bool) 7))
+    (set! params (compiler_ir_types.compiler-ir-param-builder-to-seq builder))
+    (set!
+      cloned
+      (compiler_ir_types.compiler-ir-clone-param-seq
+        pools
+        (compiler_ir_types.compiler-ir-global-shared-view params)))
+    (set!
+      func
+      (Function
+        (compiler_ir_types.compiler-ir-test-symbol "dense_params")
+        (compiler_ir_types.compiler-ir-global-shared-view params)
+        (Unit)
+        8
+        (compiler_ir_types.compiler-ir-block-list-empty)
+        Ordinary))
+    (set! cloned-func (compiler_ir_types.compiler-ir-clone-function pools func))
+    (and
+      (= (compiler_ir_types.compiler-ir-param-seq-count snapshot) 1)
+      (compiler-ir-param-seq-entry-i64? snapshot 0 "value" 3)
+      (= (compiler_ir_types.compiler-ir-param-seq-count params) 2)
+      (compiler-ir-param-seq-entry-i64? params 0 "value" 3)
+      (compiler-ir-param-seq-entry-bool? params 1 "flag" 7)
+      (= (compiler_ir_types.compiler-ir-param-seq-count cloned) 2)
+      (compiler-ir-param-seq-entry-i64? cloned 0 "value" 3)
+      (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
+      (match cloned-func
+        [(Function _ cloned-params _ _ _ _)
+          (and
+            (= (compiler_ir_types.compiler-ir-param-seq-count cloned-params) 2)
+            (compiler-ir-param-seq-entry-i64? cloned-params 0 "value" 3)
+            (compiler-ir-param-seq-entry-bool? cloned-params 1 "flag" 7))]))))
 
 (define (compiler-ir-c-abi-return-slot-seq-entry-i64-offset?
   [seq : (& seq compiler_ir_types.CompilerIrCAbiReturnSlotSeq)]
@@ -4456,39 +4394,38 @@
   (let
     [builder : compiler_ir_types.CompilerIrSwitchCaseBuilder
       (compiler_ir_types.compiler-ir-switch-case-builder-with-capacity 1)]
-    (begin
-      (compiler_ir_types.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrSwitchCase.Case
-          4
-          (compiler_ir_types.compiler-ir-label "four")))
-      (compiler_ir_types.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (compiler_ir_types.CompilerIrSwitchCase.Case
-          5
-          (compiler_ir_types.compiler-ir-label "five")))
-      (let
-        [cases : compiler_ir_types.CompilerIrSwitchCaseSeq
-          (compiler_ir_types.compiler-ir-switch-case-builder-to-seq builder)]
-        [cloned : compiler_ir_types.CompilerIrSwitchCaseSeq
-          (match (compiler_ir_types.compiler-ir-clone-instr
-            (ast.ast-node-pool-reader-context-current)
-            (Switch
-              (I64 0)
-              0
-              (compiler_ir_types.compiler-ir-global-shared-view cases)
-              (compiler_ir_types.compiler-ir-label "default")))
-            [(Switch _ _ cloned-cases _) cloned-cases]
-            [_ (compiler-ir-switch-case-seq-empty)])]
-        (and
-          (= (compiler_ir_types.compiler-ir-switch-case-seq-count cases) 2)
-          (string.eq
-            (compiler_ir_types.compiler-ir-switch-case-seq-render cases)
-            "4:four, 5:five")
-          (compiler-ir-switch-case-seq-entry-tag-label? cases 0 4 "four")
-          (compiler-ir-switch-case-seq-entry-tag-label? cases 1 5 "five")
-          (compiler-ir-switch-case-seq-entry-tag-label? cloned 0 4 "four")
-          (compiler-ir-switch-case-seq-entry-tag-label? cloned 1 5 "five"))))))
+    (compiler_ir_types.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        4
+        (compiler_ir_types.compiler-ir-label "four")))
+    (compiler_ir_types.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        5
+        (compiler_ir_types.compiler-ir-label "five")))
+    (let
+      [cases : compiler_ir_types.CompilerIrSwitchCaseSeq
+        (compiler_ir_types.compiler-ir-switch-case-builder-to-seq builder)]
+      [cloned : compiler_ir_types.CompilerIrSwitchCaseSeq
+        (match (compiler_ir_types.compiler-ir-clone-instr
+          (ast.ast-node-pool-reader-context-current)
+          (Switch
+            (I64 0)
+            0
+            (compiler_ir_types.compiler-ir-global-shared-view cases)
+            (compiler_ir_types.compiler-ir-label "default")))
+          [(Switch _ _ cloned-cases _) cloned-cases]
+          [_ (compiler-ir-switch-case-seq-empty)])]
+      (and
+        (= (compiler_ir_types.compiler-ir-switch-case-seq-count cases) 2)
+        (string.eq
+          (compiler_ir_types.compiler-ir-switch-case-seq-render cases)
+          "4:four, 5:five")
+        (compiler-ir-switch-case-seq-entry-tag-label? cases 0 4 "four")
+        (compiler-ir-switch-case-seq-entry-tag-label? cases 1 5 "five")
+        (compiler-ir-switch-case-seq-entry-tag-label? cloned 0 4 "four")
+        (compiler-ir-switch-case-seq-entry-tag-label? cloned 1 5 "five")))))
 
 (define (compiler-ir-instr-seq-dense-construction-ok?) : bool
   (let
@@ -4520,56 +4457,52 @@
       (compiler-ir-instr-seq-mov-dst? seq 0 1))))
 
 (define (compiler-ir-effect-self-test) : i64
-  (begin
-    (unless (compiler-ir-instruction-effects-ok?) (return 1))
-    (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
-    (unless (compiler-ir-effect-predicates-ok?) (return 1))
-    (unless (compiler-ir-fault-rows-ok?) (return 1))
-    (unless (compiler-ir-display-self-test-ok?) (return 1))
-    (unless (compiler-ir-tail-call-render-ok?) (return 1))
-    (unless (compiler-ir-switch-render-ok?) (return 1))
-    (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
-    (unless (compiler-ir-source-spans-entry-strides-pinned?) (return 1))
-    (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
-    (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
-    (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
-    (unless (compiler-ir-dense-builders-order-ok?) (return 1))
-    (unless (compiler-ir-param-seq-dense-order-ok?) (return 1))
-    (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
-    (unless (compiler-ir-pack-value-seq-dense-order-ok?) (return 1))
-    (unless (compiler-ir-descriptor-pair-capability-ok?) (return 1))
-    (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
-    (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))
-    42))
+  (unless (compiler-ir-instruction-effects-ok?) (return 1))
+  (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
+  (unless (compiler-ir-effect-predicates-ok?) (return 1))
+  (unless (compiler-ir-fault-rows-ok?) (return 1))
+  (unless (compiler-ir-display-self-test-ok?) (return 1))
+  (unless (compiler-ir-tail-call-render-ok?) (return 1))
+  (unless (compiler-ir-switch-render-ok?) (return 1))
+  (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
+  (unless (compiler-ir-source-spans-entry-strides-pinned?) (return 1))
+  (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
+  (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
+  (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
+  (unless (compiler-ir-dense-builders-order-ok?) (return 1))
+  (unless (compiler-ir-param-seq-dense-order-ok?) (return 1))
+  (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
+  (unless (compiler-ir-pack-value-seq-dense-order-ok?) (return 1))
+  (unless (compiler-ir-descriptor-pair-capability-ok?) (return 1))
+  (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
+  (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))
+  42)
 
 (define (main) : i64
-  (begin
-    (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
-    (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
-    (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
-    (unless (compiler-ir-smoke-spmd-catalog-origin-ok?) (return 22))
-    (unless (compiler-ir-smoke-spmd-catalog-mismatches-ok?) (return 23))
-    (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
-    (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
-    (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
-    (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
-    (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
-    (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
-    (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
-    (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
-    (unless (compiler-ir-smoke-label-table-growth-ok?) (return 28))
-    (let
-      [representation-failure : i64
-        (compiler-ir-smoke-representation-index-failure)]
-      (unless
-        (= representation-failure 0)
-        (return (+ 11 representation-failure))))
-    (unless (compiler-ir-smoke-store-owned-ok?) (return 21))
-    (unless (compiler-ir-smoke-call-arg-map-visit-ok?) (return 22))
-    (unless (compiler-ir-smoke-spmd-map-visit-ok?) (return 23))
-    (unless (compiler-ir-smoke-value-seq-map-visit-ok?) (return 24))
-    (unless (= (compiler-ir-smoke-operand-api-failure) 0) (return 25))
-    (let
-      [private-abi-failure : i64 (compiler-ir-smoke-spmd-private-abi-failure)]
-      (unless (= private-abi-failure 0) (return (+ 100 private-abi-failure))))
-    (compiler-ir-effect-self-test)))
+  (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
+  (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
+  (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
+  (unless (compiler-ir-smoke-spmd-catalog-origin-ok?) (return 22))
+  (unless (compiler-ir-smoke-spmd-catalog-mismatches-ok?) (return 23))
+  (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
+  (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
+  (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
+  (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
+  (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
+  (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
+  (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
+  (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
+  (unless (compiler-ir-smoke-label-table-growth-ok?) (return 28))
+  (let
+    [representation-failure : i64
+      (compiler-ir-smoke-representation-index-failure)]
+    (unless (= representation-failure 0) (return (+ 11 representation-failure))))
+  (unless (compiler-ir-smoke-store-owned-ok?) (return 21))
+  (unless (compiler-ir-smoke-call-arg-map-visit-ok?) (return 22))
+  (unless (compiler-ir-smoke-spmd-map-visit-ok?) (return 23))
+  (unless (compiler-ir-smoke-value-seq-map-visit-ok?) (return 24))
+  (unless (= (compiler-ir-smoke-operand-api-failure) 0) (return 25))
+  (let
+    [private-abi-failure : i64 (compiler-ir-smoke-spmd-private-abi-failure)]
+    (unless (= private-abi-failure 0) (return (+ 100 private-abi-failure))))
+  (compiler-ir-effect-self-test))

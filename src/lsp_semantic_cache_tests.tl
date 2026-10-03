@@ -31,32 +31,31 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lvf.LspServerState (lsp.lsp-server-state-copy-in-current state)]
-      (begin
-        (lsp.lsp-workspace-index-add-text-source!
-          (&mut draft.workspace)
-          Missing
-          shared-path
-          shared-text
-          true)
-        (lsp.lsp-workspace-index-add-text-source!
-          (&mut draft.workspace)
-          Missing
-          open-path
-          open-text
-          true)
-        (lsp.lsp-workspace-index-add-text-source!
-          (&mut draft.workspace)
-          Missing
-          closed-path
-          closed-text
-          false)
-        (lsp.lsp-workspace-index-add-text-source!
-          (&mut draft.workspace)
-          Missing
-          noise-path
-          noise-text
-          false)
-        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
+      (lsp.lsp-workspace-index-add-text-source!
+        (&mut draft.workspace)
+        Missing
+        shared-path
+        shared-text
+        true)
+      (lsp.lsp-workspace-index-add-text-source!
+        (&mut draft.workspace)
+        Missing
+        open-path
+        open-text
+        true)
+      (lsp.lsp-workspace-index-add-text-source!
+        (&mut draft.workspace)
+        Missing
+        closed-path
+        closed-text
+        false)
+      (lsp.lsp-workspace-index-add-text-source!
+        (&mut draft.workspace)
+        Missing
+        noise-path
+        noise-text
+        false)
+      (lsp.lsp-server-state-finish-swap state draft owner previous))))
 
 (cfg
   test
@@ -70,11 +69,10 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lvf.LspServerState (lsp.lsp-server-state-copy-in-current state)]
-      (begin
-        (lsp.lsp-workspace-semantic-cache-invalidate-path!
-          (&mut draft.semantic-cache)
-          path)
-        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
+      (lsp.lsp-workspace-semantic-cache-invalidate-path!
+        (&mut draft.semantic-cache)
+        path)
+      (lsp.lsp-server-state-finish-swap state draft owner previous))))
 
 (cfg
   test
@@ -90,14 +88,13 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lvf.LspServerState (lsp.lsp-server-state-copy-in-current state)]
-      (begin
-        (lsp.lsp-workspace-index-add-text-source!
-          (&mut draft.workspace)
-          Missing
-          path
-          text
-          overlay)
-        (lsp.lsp-server-state-finish-swap state draft owner previous)))))
+      (lsp.lsp-workspace-index-add-text-source!
+        (&mut draft.workspace)
+        Missing
+        path
+        text
+        overlay)
+      (lsp.lsp-server-state-finish-swap state draft owner previous))))
 
 (cfg
   test
@@ -106,30 +103,25 @@
     (let
       [count : i64 0]
       [index : i64 0]
-      (begin
-        (while (< index (lsp_document_vec.len (& state.documents)))
-          (begin
-            (if (__tl-project-field
-              (__tl-project-field
-                (lsp_document_vec.get
-                  (& state.documents)
-                  index
-                  (lsp.lsp-document-fallback))
-                semantic)
-              present)
-              (set! count (+ count 1))
-              unit)
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index state.semantic-cache.len)
-          (begin
-            (if (>
-              (array-ref state.semantic-cache.slots index).index.owner-arena
-              0)
-              (set! count (+ count 1))
-              unit)
-            (set! index (+ index 1))))
-        count))))
+      (while (< index (lsp_document_vec.len (& state.documents)))
+        (if (__tl-project-field
+          (__tl-project-field
+            (lsp_document_vec.get
+              (& state.documents)
+              index
+              (lsp.lsp-document-fallback))
+            semantic)
+          present)
+          (set! count (+ count 1))
+          unit)
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index state.semantic-cache.len)
+        (if (> (array-ref state.semantic-cache.slots index).index.owner-arena 0)
+          (set! count (+ count 1))
+          unit)
+        (set! index (+ index 1)))
+      count)))
 
 (cfg
   test
@@ -138,41 +130,36 @@
     (let
       [count : i64 0]
       [index : i64 0]
-      (begin
-        (while (< index (lsp_document_vec.len (& state.documents)))
-          (let
-            [doc : lvf.LspDocument
-              (lsp_document_vec.get
-                (& state.documents)
-                index
-                (lsp.lsp-document-fallback))]
-            [snapshot : lvf.LspSemanticSnapshot doc.semantic]
-            (begin
-              (if snapshot.present
-                (set!
-                  count
-                  (+
-                    count
-                    (sem.compiler-semantic-source-index-len (& snapshot.index))))
-                unit)
-              (set! index (+ index 1)))))
-        (set! index 0)
-        (while (< index state.semantic-cache.len)
-          (let
-            [entry : lvf.LspWorkspaceSemanticCacheEntry
-              (owned_view.compiler-owned-array-element-shared-view
-                state.semantic-cache.slots
-                index)]
-            (begin
-              (if (> entry.index.owner-arena 0)
-                (set!
-                  count
-                  (+
-                    count
-                    (sem.compiler-semantic-source-index-len (& entry.index))))
-                unit)
-              (set! index (+ index 1)))))
-        count))))
+      (while (< index (lsp_document_vec.len (& state.documents)))
+        (let
+          [doc : lvf.LspDocument
+            (lsp_document_vec.get
+              (& state.documents)
+              index
+              (lsp.lsp-document-fallback))]
+          [snapshot : lvf.LspSemanticSnapshot doc.semantic]
+          (if snapshot.present
+            (set!
+              count
+              (+
+                count
+                (sem.compiler-semantic-source-index-len (& snapshot.index))))
+            unit)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index state.semantic-cache.len)
+        (let
+          [entry : lvf.LspWorkspaceSemanticCacheEntry
+            (owned_view.compiler-owned-array-element-shared-view
+              state.semantic-cache.slots
+              index)]
+          (if (> entry.index.owner-arena 0)
+            (set!
+              count
+              (+ count (sem.compiler-semantic-source-index-len (& entry.index))))
+            unit)
+          (set! index (+ index 1))))
+      count)))
 
 (cfg
   test
@@ -205,21 +192,17 @@
       [wanted-role : i64 (lsp-workspace-semantic-test-role-tag (& role))]
       [index : i64 0]
       [found : bool false]
-      (begin
-        (while (and (< index facts.len) (not found))
-          (let
-            [fact : lvf.LspWorkspaceSemanticFact
-              (lsp.lsp-workspace-semantic-facts-get facts index)]
-            (begin
-              (if (and
-                (string.eq fact.span.path normalized)
-                (=
-                  (lsp-workspace-semantic-test-role-tag (& fact.role))
-                  wanted-role))
-                (set! found true)
-                unit)
-              (set! index (+ index 1)))))
-        found))))
+      (while (and (< index facts.len) (not found))
+        (let
+          [fact : lvf.LspWorkspaceSemanticFact
+            (lsp.lsp-workspace-semantic-facts-get facts index)]
+          (if (and
+            (string.eq fact.span.path normalized)
+            (= (lsp-workspace-semantic-test-role-tag (& fact.role)) wanted-role))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
 
 (cfg
   test
@@ -354,13 +337,12 @@
           (= final-state.semantic-cache.source-checks 1)
           (= final-state.semantic-cache.len 2)
           (= (lsp-workspace-semantic-test-retained-owners (& final-state)) 4))]
-      (begin
-        (lsp.lsp-server-state-destroy! final-state)
-        (and
-          ok
-          (=
-            owners-before
-            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
+      (lsp.lsp-server-state-destroy! final-state)
+      (and
+        ok
+        (=
+          owners-before
+          (sem_tests.compiler-semantic-source-index-live-owner-count))))))
 
 (cfg
   test
@@ -401,20 +383,15 @@
                 shared-index
                 open-index)]
             [(Partial _ partial)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                (sem.compiler-semantic-source-index-release!
-                  (&mut shared-index))
-                false)]
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              (sem.compiler-semantic-source-index-release! (&mut shared-index))
+              false]
             [(Err _)
-              (begin
-                (sem.compiler-semantic-source-index-release!
-                  (&mut shared-index))
-                false)])]
+              (sem.compiler-semantic-source-index-release! (&mut shared-index))
+              false])]
         [(Partial _ partial)
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut partial))
-            false)]
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          false]
         [(Err _) false]))))
 
 (cfg
@@ -463,13 +440,12 @@
           (=
             (lsp-workspace-semantic-test-retained-records (& final-state))
             cold-records))]
-      (begin
-        (lsp.lsp-server-state-destroy! final-state)
-        (and
-          ok
-          (=
-            owners-before
-            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
+      (lsp.lsp-server-state-destroy! final-state)
+      (and
+        ok
+        (=
+          owners-before
+          (sem_tests.compiler-semantic-source-index-live-owner-count))))))
 
 (cfg
   test
@@ -567,13 +543,12 @@
           (= final-state.semantic-cache.source-checks 0)
           (= final-state.semantic-cache.len 1)
           (= (lsp-workspace-semantic-test-retained-owners (& final-state)) 1))]
-      (begin
-        (lsp.lsp-server-state-destroy! final-state)
-        (and
-          ok
-          (=
-            owners-before
-            (sem_tests.compiler-semantic-source-index-live-owner-count)))))))
+      (lsp.lsp-server-state-destroy! final-state)
+      (and
+        ok
+        (=
+          owners-before
+          (sem_tests.compiler-semantic-source-index-live-owner-count))))))
 
 (cfg
   test
@@ -600,9 +575,8 @@
             closed-text
             shared-index)]
         [(Partial _ partial)
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut partial))
-            false)]
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          false]
         [(Err _) false]))))
 
 (test

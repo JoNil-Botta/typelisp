@@ -17,86 +17,72 @@
 ;; by-value indexing. Exercise a String-bearing row across the exact capacity
 ;; boundary as well as the scalar fields.
 (define (sp-node-pool-growth-preserves-string?) : bool
-  (begin
-    (reader.sp-node-pool-reset!)
-    (if (< (array-length reader.sp-node-pool-slots) 1)
-      (reader.sp-node-pool-grow!)
-      unit)
+  (reader.sp-node-pool-reset!)
+  (if (< (array-length reader.sp-node-pool-slots) 1)
+    (reader.sp-node-pool-grow!)
+    unit)
+  (let
+    [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+    [old-cap : i64 (array-length reader.sp-node-pool-slots)]
+    [i : i64 0]
+    (while (<= i old-cap)
+      (reader.sp-node-push (Int i "__tl_pool_growth_marker" span))
+      (set! i (+ i 1)))
     (let
-      [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
-      [old-cap : i64 (array-length reader.sp-node-pool-slots)]
-      [i : i64 0]
-      (begin
-        (while (<= i old-cap)
-          (begin
-            (reader.sp-node-push (Int i "__tl_pool_growth_marker" span))
-            (set! i (+ i 1))))
-        (let
-          [grew : bool (> (array-length reader.sp-node-pool-slots) old-cap)]
-          [first-ok : bool
-            (match (reader.sp-node-get 0)
-              [(Int value text _)
-                (and (= value 0) (string.eq text "__tl_pool_growth_marker"))]
-              [_ false])]
-          [boundary-ok : bool
-            (match (reader.sp-node-get old-cap)
-              [(Int value text _)
-                (and
-                  (= value old-cap)
-                  (string.eq text "__tl_pool_growth_marker"))]
-              [_ false])]
-          (begin
-            (reader.sp-node-pool-reset!)
-            (and grew first-ok boundary-ok)))))))
+      [grew : bool (> (array-length reader.sp-node-pool-slots) old-cap)]
+      [first-ok : bool
+        (match (reader.sp-node-get 0)
+          [(Int value text _)
+            (and (= value 0) (string.eq text "__tl_pool_growth_marker"))]
+          [_ false])]
+      [boundary-ok : bool
+        (match (reader.sp-node-get old-cap)
+          [(Int value text _)
+            (and (= value old-cap) (string.eq text "__tl_pool_growth_marker"))]
+          [_ false])]
+      (reader.sp-node-pool-reset!)
+      (and grew first-ok boundary-ok))))
 
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let
     [scratch : arena.Arena (arena.make)]
-    (begin
-      (in-arena
-        scratch
-        (begin
-          (reader.sp-node-pool-grow!)
-          (reader.sp-builder-grow!)))
-      (arena.destroy-safe! scratch)
-      (reader.sp-node-pool-reset!)
-      (let
-        [growth-ok : bool (sp-node-pool-growth-preserves-string?)]
-        [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
-        [sp-list : reader.SpannedSexpr
-          (reader.spanned-sexpr-list1
-            (Sym (ci.intern-syntax-id-from-raw 7) span)
-            span)]
-        [sp-count-before-transfer : i64 (reader.sp-node-pool-len)]
-        [sp-arena-before-transfer : i64 reader.sp-node-pool-base-arena]
-        [_compact-retained-origins : unit
-          (reader.sp-node-pool-compact-retained!)]
-        [retained-transfer-ok : bool
-          (and
-            (> sp-count-before-transfer 0)
-            (= (reader.sp-node-pool-len) sp-count-before-transfer)
-            (=
-              (array-length reader.sp-node-pool-slots)
-              sp-count-before-transfer)
-            (= (array-length reader.sp-builder-slots) 0)
-            (!= reader.sp-node-pool-base-arena 0)
-            (!= reader.sp-node-pool-base-arena sp-arena-before-transfer))]
-        (match sp-list
-          [(List sp-start sp-length sp-span)
-            (if (and
-              (= sp-start 0)
-              (= sp-length 1)
-              (= sp-span.start-line 1)
-              growth-ok
-              retained-transfer-ok)
-              (match (reader.sp-node-get sp-start)
-                [(Sym sp-value _)
-                  (if (= (ci.intern-syntax-id-value sp-value) 7)
-                    42
-                    1)]
-                [_ 1])
-              1)]
-          [_ 2])))))
+    (in-arena scratch (reader.sp-node-pool-grow!) (reader.sp-builder-grow!))
+    (arena.destroy-safe! scratch)
+    (reader.sp-node-pool-reset!)
+    (let
+      [growth-ok : bool (sp-node-pool-growth-preserves-string?)]
+      [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+      [sp-list : reader.SpannedSexpr
+        (reader.spanned-sexpr-list1
+          (Sym (ci.intern-syntax-id-from-raw 7) span)
+          span)]
+      [sp-count-before-transfer : i64 (reader.sp-node-pool-len)]
+      [sp-arena-before-transfer : i64 reader.sp-node-pool-base-arena]
+      [_compact-retained-origins : unit (reader.sp-node-pool-compact-retained!)]
+      [retained-transfer-ok : bool
+        (and
+          (> sp-count-before-transfer 0)
+          (= (reader.sp-node-pool-len) sp-count-before-transfer)
+          (= (array-length reader.sp-node-pool-slots) sp-count-before-transfer)
+          (= (array-length reader.sp-builder-slots) 0)
+          (!= reader.sp-node-pool-base-arena 0)
+          (!= reader.sp-node-pool-base-arena sp-arena-before-transfer))]
+      (match sp-list
+        [(List sp-start sp-length sp-span)
+          (if (and
+            (= sp-start 0)
+            (= sp-length 1)
+            (= sp-span.start-line 1)
+            growth-ok
+            retained-transfer-ok)
+            (match (reader.sp-node-get sp-start)
+              [(Sym sp-value _)
+                (if (= (ci.intern-syntax-id-value sp-value) 7)
+                  42
+                  1)]
+              [_ 1])
+            1)]
+        [_ 2]))))
 
 (define (symbol-id-preservation-ok?) : bool
   (match (lexer.spanned-result "(alpha alpha)")
@@ -107,33 +93,32 @@
         [second-id : ci.InternId
           (token.sym-id (token.spanned-token-token-ref (& (array-ref toks 2))))]
         [pool-len-before : i64 (ci.intern-pool-len)]
-        (begin
-          (reader.sp-node-pool-reset!)
-          (match (reader.spanned-result toks)
-            [(Ok form)
-              (and
-                (= pool-len-before (ci.intern-pool-len))
-                (ci.intern-id-eq? first-id second-id)
-                (match (reader.spanned-sexpr-view form)
-                  [(Cons first tail _)
-                    (match first
-                      [(Sym first-text _)
-                        (match (reader.spanned-sexpr-view tail)
-                          [(Cons second _ _)
-                            (match second
-                              [(Sym second-text _)
-                                (and
-                                  (=
-                                    (reader.symbol-id first-text)
-                                    (ci.intern-id-value first-id))
-                                  (=
-                                    (reader.symbol-id second-text)
-                                    (ci.intern-id-value second-id)))]
-                              [_ false])]
-                          [_ false])]
-                      [_ false])]
-                  [_ false]))]
-            [(Err _) false])))]
+        (reader.sp-node-pool-reset!)
+        (match (reader.spanned-result toks)
+          [(Ok form)
+            (and
+              (= pool-len-before (ci.intern-pool-len))
+              (ci.intern-id-eq? first-id second-id)
+              (match (reader.spanned-sexpr-view form)
+                [(Cons first tail _)
+                  (match first
+                    [(Sym first-text _)
+                      (match (reader.spanned-sexpr-view tail)
+                        [(Cons second _ _)
+                          (match second
+                            [(Sym second-text _)
+                              (and
+                                (=
+                                  (reader.symbol-id first-text)
+                                  (ci.intern-id-value first-id))
+                                (=
+                                  (reader.symbol-id second-text)
+                                  (ci.intern-id-value second-id)))]
+                            [_ false])]
+                        [_ false])]
+                    [_ false])]
+                [_ false]))]
+          [(Err _) false]))]
     [(Err _) false]))
 
 (define (reader-test-symbol? [form : reader.SpannedSexpr] [expected : String]) : bool
@@ -150,12 +135,11 @@
     [(Ok toks)
       (let
         [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-        (begin
-          (reader.sp-node-pool-reset!)
-          (set! (array-ref cur 0) 0)
-          (match (reader.form-spanned-result (& toks) (&mut cur))
-            [(Err _) false]
-            [(Ok _) (= (array-ref cur 0) expected-cursor)])))]))
+        (reader.sp-node-pool-reset!)
+        (set! (array-ref cur 0) 0)
+        (match (reader.form-spanned-result (& toks) (&mut cur))
+          [(Err _) false]
+          [(Ok _) (= (array-ref cur 0) expected-cursor)]))]))
 
 (define (reader-test-data-error? [source : String] [expected : String]) : bool
   (match (reader.data-result source)
@@ -191,9 +175,8 @@
                   [(Cons beta _) (reader-test-symbol? beta ".beta")]
                   [_ false]))]
             [_ false])])]
-    (begin
-      (reader.sp-node-pool-reset!)
-      (and errors-ok suffix-ok (not reader.sp-reader-data-mode?)))))
+    (reader.sp-node-pool-reset!)
+    (and errors-ok suffix-ok (not reader.sp-reader-data-mode?))))
 
 (test
   reader-traversal-ids-typed-and-preserved
@@ -414,9 +397,8 @@
                           [_ false]))]
                     [_ false]))])])]
       [ok : bool (and data-error-ok spanned-error-ok repeated-read-ok)]
-      (begin
-        (reader.sp-node-pool-reset!)
-        ok)))
+      (reader.sp-node-pool-reset!)
+      ok))
     unit
     (io.panic "reader: dense child range self-test failed")))
 
@@ -438,87 +420,81 @@
       [(Ok toks)
         (let
           [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-          (begin
-            (reader.sp-node-pool-reset!)
-            (set! (array-ref cur 0) 0)
-            (match (reader.form-spanned-result (& toks) (&mut cur))
-              [(Ok _) false]
-              [(Err err)
-                (string.eq
-                  (token.source-error-message err)
-                  "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")])))]))
+          (reader.sp-node-pool-reset!)
+          (set! (array-ref cur 0) 0)
+          (match (reader.form-spanned-result (& toks) (&mut cur))
+            [(Ok _) false]
+            [(Err err)
+              (string.eq
+                (token.source-error-message err)
+                "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")]))]))
     unit
     (io.panic "reader: projection suffix self-test failed")))
 
 (define (spanned-token-buffer-release-regrow-ok?) : bool
-  (begin
-    (lexer.spanned-token-buffer-release!)
-    (if (and
-      (= (array-length lexer.lex-spanned-token-buffer) 0)
-      (= lexer.lex-spanned-token-buffer-arena 0))
-      (match (lexer.spanned-result "(release-regrow)")
-        [(Ok tokens)
+  (lexer.spanned-token-buffer-release!)
+  (if (and
+    (= (array-length lexer.lex-spanned-token-buffer) 0)
+    (= lexer.lex-spanned-token-buffer-arena 0))
+    (match (lexer.spanned-result "(release-regrow)")
+      [(Ok tokens)
+        (let
+          [regrown-ok : bool
+            (and
+              (> (array-length tokens) 0)
+              (!= lexer.lex-spanned-token-buffer-arena 0)
+              (=
+                (token.tag
+                  (token.spanned-token-tok (lexer.array-shared-view tokens 0)))
+                (token.tag-lparen)))]
+          (lexer.spanned-token-buffer-release!)
           (let
-            [regrown-ok : bool
+            [released-again-ok : bool
               (and
-                (> (array-length tokens) 0)
-                (!= lexer.lex-spanned-token-buffer-arena 0)
-                (=
-                  (token.tag
-                    (token.spanned-token-tok (lexer.array-shared-view tokens 0)))
-                  (token.tag-lparen)))]
-            (begin
-              (lexer.spanned-token-buffer-release!)
-              (let
-                [released-again-ok : bool
-                  (and
-                    (= (array-length lexer.lex-spanned-token-buffer) 0)
-                    (= lexer.lex-spanned-token-buffer-arena 0))]
-                (begin
-                  ;; A release without a backing arena is idempotent.
-                  (lexer.spanned-token-buffer-release!)
-                  (and
-                    regrown-ok
-                    released-again-ok
-                    (= (array-length lexer.lex-spanned-token-buffer) 0)
-                    (= lexer.lex-spanned-token-buffer-arena 0))))))]
-        [(Err _) false])
-      false)))
+                (= (array-length lexer.lex-spanned-token-buffer) 0)
+                (= lexer.lex-spanned-token-buffer-arena 0))]
+            ;; A release without a backing arena is idempotent.
+            (lexer.spanned-token-buffer-release!)
+            (and
+              regrown-ok
+              released-again-ok
+              (= (array-length lexer.lex-spanned-token-buffer) 0)
+              (= lexer.lex-spanned-token-buffer-arena 0))))]
+      [(Err _) false])
+    false))
 
 (define (spanned-token-buffer-arena-ownership-ok?) : bool
   (let
     [scratch : arena.Arena (arena.make)]
     [required : i64 (+ (array-length lexer.lex-spanned-token-buffer) 1)]
     [witness : token.SpannedToken (token.spanned-token-new LBracket 7 11)]
-    (begin
-      ;; Earlier checks may intentionally release the shared storage. Keep
-      ;; this ownership check independent of test order before parking slot 0.
-      (lexer.spanned-token-buffer-ensure! 1 0)
-      (in-arena
-        scratch
-        (begin
-          (lexer.spanned-token-buffer-set! 0 witness)
-          (lexer.spanned-token-buffer-grow-to! required 1)))
-      (arena.destroy-safe! scratch)
-      (and
-        (>= (array-length lexer.lex-spanned-token-buffer) required)
-        (spanned-token-buffer-grow-preserves-records?)
-        (match (lexer.spanned-result "(arena-ok)")
-          [(Ok tokens)
-            (and
-              (=
-                (token.tag
-                  (token.spanned-token-tok
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data tokens) 0)))))
-                (token.tag-lparen))
-              (=
-                (token.tag
-                  (token.spanned-token-tok
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data tokens) 3)))))
-                (token.tag-end)))]
-          [(Err _) false])))))
+    ;; Earlier checks may intentionally release the shared storage. Keep
+    ;; this ownership check independent of test order before parking slot 0.
+    (lexer.spanned-token-buffer-ensure! 1 0)
+    (in-arena
+      scratch
+      (lexer.spanned-token-buffer-set! 0 witness)
+      (lexer.spanned-token-buffer-grow-to! required 1))
+    (arena.destroy-safe! scratch)
+    (and
+      (>= (array-length lexer.lex-spanned-token-buffer) required)
+      (spanned-token-buffer-grow-preserves-records?)
+      (match (lexer.spanned-result "(arena-ok)")
+        [(Ok tokens)
+          (and
+            (=
+              (token.tag
+                (token.spanned-token-tok
+                  (unsafe
+                    (ptr-read (ptr-offset (__tl_array-data tokens) 0)))))
+              (token.tag-lparen))
+            (=
+              (token.tag
+                (token.spanned-token-tok
+                  (unsafe
+                    (ptr-read (ptr-offset (__tl_array-data tokens) 3)))))
+              (token.tag-end)))]
+        [(Err _) false]))))
 
 ;; The record the ownership check parked at slot 0 must survive the grow above:
 ;; mid-scan growth relies on it.
@@ -540,11 +516,10 @@
 (define (result-with-intern-state
   [src : String]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : lexer.ResultTokens
-  (begin
-    (ci.intern-compat-state-ensure-ready! intern-state)
-    (lexer.result-with-intern-owner
-      src
-      (lexer.LexerInternOwner.State (& intern-state)))))
+  (ci.intern-compat-state-ensure-ready! intern-state)
+  (lexer.result-with-intern-owner
+    src
+    (lexer.LexerInternOwner.State (& intern-state))))
 
 (define (percent-symbol-ok?) : bool
   (match (lexer.result "(% n 16)")
@@ -908,120 +883,107 @@
     [len-a : i64 0]
     [len-b : i64 0]
     [len-b-after-spanned : i64 0]
-    (begin
-      (match (result-with-intern-state
-        (lexer.global-shared-view source)
-        (&mut state-a))
-        [(Err _) (return false)]
-        [(Ok tokens)
-          (begin
-            (unless
-              (and
-                (=
-                  (token.tag (lexer.array-shared-view tokens 0))
-                  (token.tag-lparen))
-                (=
-                  (token.tag (lexer.array-shared-view tokens 5))
-                  (token.tag-rparen))
-                (=
-                  (token.tag (lexer.array-shared-view tokens 6))
-                  (token.tag-end)))
-              (return false))
-            (set!
-              (array-ref ids-a 0)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
-            (set!
-              (array-ref ids-a 1)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
-            (set!
-              (array-ref ids-a 2)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
-            (set!
-              (array-ref ids-a 3)
-              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
-            (set! len-a (ci.intern-compat-state-pool-len state-a)))])
-      (match (result-with-intern-state source (&mut state-b))
-        [(Err _) (return false)]
-        [(Ok tokens)
-          (begin
-            (set!
-              (array-ref ids-b 0)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
-            (set!
-              (array-ref ids-b 1)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
-            (set!
-              (array-ref ids-b 2)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
-            (set!
-              (array-ref ids-b 3)
-              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
-            (set! len-b (ci.intern-compat-state-pool-len state-b)))])
-      (unless
-        (and
-          (= (array-ref ids-a 0) (array-ref ids-b 0))
-          (= (array-ref ids-a 1) (array-ref ids-b 1))
-          (= (array-ref ids-a 2) (array-ref ids-b 2))
-          (= (array-ref ids-a 3) (array-ref ids-b 3))
-          (= len-a len-b)
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 0))
-            "alpha")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 1))
-            ":")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 2))
-            "pkg/module.name")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 3))
-            "payload")
-          (ci.intern-compat-state-qualified? state-a (array-ref ids-a 2))
-          (ci.intern-compat-state-dotted? state-a (array-ref ids-a 2))
-          (string.eq
-            (ci.intern-compat-state-str
-              state-a
-              (ci.intern-compat-state-dotted-final-id
-                state-a
-                (array-ref ids-a 2)))
-            "name"))
-        (return false))
-      (match (lexer.spanned-result-with-intern-state "spanned" (&mut state-b))
-        [(Err _) (return false)]
-        [(Ok spanned)
-          (let
-            [spanned-token : token.Token
-              (token.spanned-token-tok (lexer.array-shared-view spanned 0))]
-            [spanned-id : i64
-              (ci.intern-id-value (token.sym-id (& spanned-token)))]
-            (begin
-              (unless
-                (and
-                  (= (token.tag spanned-token) (token.tag-sym))
-                  (string.eq
-                    (ci.intern-compat-state-str state-b spanned-id)
-                    "spanned")
-                  (=
-                    (token.tag
-                      (token.spanned-token-tok
-                        (lexer.array-shared-view spanned 1)))
-                    (token.tag-end)))
-                (return false))
-              (set!
-                len-b-after-spanned
-                (ci.intern-compat-state-pool-len state-b))))])
-      (match (result-with-intern-state "failure @" (&mut state-a))
-        [(Ok _) (return false)]
-        [(Err message)
-          (unless
-            (string.eq message "lexer: unexpected character")
-            (return false))])
+    (match (result-with-intern-state
+      (lexer.global-shared-view source)
+      (&mut state-a))
+      [(Err _) (return false)]
+      [(Ok tokens)
+        (unless
+          (and
+            (=
+              (token.tag (lexer.array-shared-view tokens 0))
+              (token.tag-lparen))
+            (=
+              (token.tag (lexer.array-shared-view tokens 5))
+              (token.tag-rparen))
+            (= (token.tag (lexer.array-shared-view tokens 6)) (token.tag-end)))
+          (return false))
+        (set!
+          (array-ref ids-a 0)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
+        (set!
+          (array-ref ids-a 1)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
+        (set!
+          (array-ref ids-a 2)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
+        (set!
+          (array-ref ids-a 3)
+          (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
+        (set! len-a (ci.intern-compat-state-pool-len state-a))])
+    (match (result-with-intern-state source (&mut state-b))
+      [(Err _) (return false)]
+      [(Ok tokens)
+        (set!
+          (array-ref ids-b 0)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
+        (set!
+          (array-ref ids-b 1)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
+        (set!
+          (array-ref ids-b 2)
+          (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
+        (set!
+          (array-ref ids-b 3)
+          (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
+        (set! len-b (ci.intern-compat-state-pool-len state-b))])
+    (unless
       (and
-        (= (ci.intern-compat-state-pool-len state-b) len-b-after-spanned)
-        (= (ci.intern-active-table-id) active-table-before)
-        (= (ci.intern-generation) active-generation-before)
-        (= (ci.intern-pool-len) active-len-before)
-        (string.eq (ci.intern-str active-decoy-id) "lexer-active-decoy")))))
+        (= (array-ref ids-a 0) (array-ref ids-b 0))
+        (= (array-ref ids-a 1) (array-ref ids-b 1))
+        (= (array-ref ids-a 2) (array-ref ids-b 2))
+        (= (array-ref ids-a 3) (array-ref ids-b 3))
+        (= len-a len-b)
+        (string.eq
+          (ci.intern-compat-state-str state-a (array-ref ids-a 0))
+          "alpha")
+        (string.eq (ci.intern-compat-state-str state-a (array-ref ids-a 1)) ":")
+        (string.eq
+          (ci.intern-compat-state-str state-a (array-ref ids-a 2))
+          "pkg/module.name")
+        (string.eq
+          (ci.intern-compat-state-str state-a (array-ref ids-a 3))
+          "payload")
+        (ci.intern-compat-state-qualified? state-a (array-ref ids-a 2))
+        (ci.intern-compat-state-dotted? state-a (array-ref ids-a 2))
+        (string.eq
+          (ci.intern-compat-state-str
+            state-a
+            (ci.intern-compat-state-dotted-final-id state-a (array-ref ids-a 2)))
+          "name"))
+      (return false))
+    (match (lexer.spanned-result-with-intern-state "spanned" (&mut state-b))
+      [(Err _) (return false)]
+      [(Ok spanned)
+        (let
+          [spanned-token : token.Token
+            (token.spanned-token-tok (lexer.array-shared-view spanned 0))]
+          [spanned-id : i64
+            (ci.intern-id-value (token.sym-id (& spanned-token)))]
+          (unless
+            (and
+              (= (token.tag spanned-token) (token.tag-sym))
+              (string.eq
+                (ci.intern-compat-state-str state-b spanned-id)
+                "spanned")
+              (=
+                (token.tag
+                  (token.spanned-token-tok (lexer.array-shared-view spanned 1)))
+                (token.tag-end)))
+            (return false))
+          (set! len-b-after-spanned (ci.intern-compat-state-pool-len state-b)))])
+    (match (result-with-intern-state "failure @" (&mut state-a))
+      [(Ok _) (return false)]
+      [(Err message)
+        (unless
+          (string.eq message "lexer: unexpected character")
+          (return false))])
+    (and
+      (= (ci.intern-compat-state-pool-len state-b) len-b-after-spanned)
+      (= (ci.intern-active-table-id) active-table-before)
+      (= (ci.intern-generation) active-generation-before)
+      (= (ci.intern-pool-len) active-len-before)
+      (string.eq (ci.intern-str active-decoy-id) "lexer-active-decoy"))))
 
 (define (span-positions-self-ok?) : bool
   (match (lexer.spanned-result "(a\n  (b c))")
@@ -1031,35 +993,34 @@
 (define (span-self-test) : i64
   (let
     [ok : bool true]
-    (begin
-      (set!
+    (set!
+      ok
+      (and
         ok
-        (and
-          ok
-          (span-positions-self-ok?)
-          (string-escapes-ok?)
-          (string-token-retains-id?)
-          (basic-token-sequence-ok?)
-          (colon-annotation-tokens-ok?)
-          (spanned-colon-annotation-tokens-ok?)
-          (char-literals-ok?)
-          (quote-vs-apostrophe-char-ok?)
-          (error-spans-ok?)
-          (percent-symbol-ok?)
-          (ampersand-symbol-ok?)
-          (float-token-ok?)
-          (negative-int-token-ok?)
-          (prefixed-int-token-ok?)
-          (prefixed-int-errors-ok?)
-          (result-prefixed-int-ok?)
-          (result-prefixed-int-error-ok?)
-          (quote-prefix-tokens-ok?)
-          (lexer-intern-owner-isolation-ok?)
-          (spanned-token-buffer-arena-ownership-ok?)
-          (spanned-token-buffer-release-regrow-ok?)))
-      (if ok
-        42
-        1))))
+        (span-positions-self-ok?)
+        (string-escapes-ok?)
+        (string-token-retains-id?)
+        (basic-token-sequence-ok?)
+        (colon-annotation-tokens-ok?)
+        (spanned-colon-annotation-tokens-ok?)
+        (char-literals-ok?)
+        (quote-vs-apostrophe-char-ok?)
+        (error-spans-ok?)
+        (percent-symbol-ok?)
+        (ampersand-symbol-ok?)
+        (float-token-ok?)
+        (negative-int-token-ok?)
+        (prefixed-int-token-ok?)
+        (prefixed-int-errors-ok?)
+        (result-prefixed-int-ok?)
+        (result-prefixed-int-error-ok?)
+        (quote-prefix-tokens-ok?)
+        (lexer-intern-owner-isolation-ok?)
+        (spanned-token-buffer-arena-ownership-ok?)
+        (spanned-token-buffer-release-regrow-ok?)))
+    (if ok
+      42
+      1)))
 
 (define (span-eq?
   [span : token.SourceSpan]

@@ -72,32 +72,31 @@
       (trace.compiler-trace-default-limits)]
     (match (trace.compiler-trace-begin (trace-test-parent 5) limits)
       [(Ok builder)
-        (begin
-          (if reverse?
-            (begin
-              (trace.compiler-trace-note!
-                (&mut builder)
-                (trace-test-child-edge result-length))
-              (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
-              (trace.compiler-trace-note!
-                (&mut builder)
-                (trace-test-source source-length)))
-            (begin
-              (trace.compiler-trace-note!
-                (&mut builder)
-                (trace-test-source source-length))
-              (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
-              (trace.compiler-trace-note!
-                (&mut builder)
-                (trace-test-child-edge result-length))))
-          (if duplicate?
-            (begin
-              (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
-              unit)
+        (if reverse?
+          (begin
+            (trace.compiler-trace-note!
+              (&mut builder)
+              (trace-test-child-edge result-length))
+            (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
+            (trace.compiler-trace-note!
+              (&mut builder)
+              (trace-test-source source-length)))
+          (begin
+            (trace.compiler-trace-note!
+              (&mut builder)
+              (trace-test-source source-length))
+            (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
+            (trace.compiler-trace-note!
+              (&mut builder)
+              (trace-test-child-edge result-length))))
+        (if duplicate?
+          (begin
+            (trace.compiler-trace-note! (&mut builder) (trace-test-absent))
             unit)
-          (match (trace.compiler-trace-finalize builder)
-            [(Ok value) value]
-            [_ (string.tl_oob_abort)]))]
+          unit)
+        (match (trace.compiler-trace-finalize builder)
+          [(Ok value) value]
+          [_ (string.tl_oob_abort)])]
       [_ (string.tl_oob_abort)])))
 
 (define (trace-test-canonical?) : bool
@@ -144,12 +143,11 @@
     [conflict? : bool
       (match (trace.compiler-trace-begin (trace-test-parent 5) limits)
         [(Ok builder)
-          (begin
-            (trace.compiler-trace-note! (&mut builder) (trace-test-source 1))
-            (trace.compiler-trace-note! (&mut builder) (trace-test-source 2))
-            (match (trace.compiler-trace-finalize builder)
-              [(Err error) (= error.code trace.compiler-trace-error-conflict)]
-              [_ false]))]
+          (trace.compiler-trace-note! (&mut builder) (trace-test-source 1))
+          (trace.compiler-trace-note! (&mut builder) (trace-test-source 2))
+          (match (trace.compiler-trace-finalize builder)
+            [(Err error) (= error.code trace.compiler-trace-error-conflict)]
+            [_ false])]
         [_ false])]
     [self? : bool
       (match (trace.compiler-trace-begin (trace-test-parent 5) limits)
@@ -172,12 +170,11 @@
     [aborted? : bool
       (match (trace.compiler-trace-begin (trace-test-parent 5) limits)
         [(Ok builder)
-          (begin
-            (trace.compiler-trace-note! (&mut builder) (trace-test-source 1))
-            (trace.compiler-trace-abort! (&mut builder))
-            (match (trace.compiler-trace-finalize builder)
-              [(Err error) (= error.code trace.compiler-trace-error-state)]
-              [_ false]))]
+          (trace.compiler-trace-note! (&mut builder) (trace-test-source 1))
+          (trace.compiler-trace-abort! (&mut builder))
+          (match (trace.compiler-trace-finalize builder)
+            [(Err error) (= error.code trace.compiler-trace-error-state)]
+            [_ false])]
         [_ false])]
     (and conflict? self? aborted?)))
 
@@ -190,24 +187,20 @@
         (let
           [attempts : i64 0]
           [accepted? : bool true]
-          (begin
-            ;; Identical notes would collapse at finalization, but must not
-            ;; accumulate without a bound in the open transaction.
-            (while (and (< attempts 100) accepted?)
-              (begin
-                (set!
-                  accepted?
-                  (trace.compiler-trace-note!
-                    (&mut builder)
-                    (trace-test-absent)))
-                (set! attempts (+ attempts 1))))
-            (and
-              (> attempts 1)
-              (< attempts 100)
-              (not accepted?)
-              (match (trace.compiler-trace-finalize builder)
-                [(Err error) (= error.code trace.compiler-trace-error-state)]
-                [_ false]))))]
+          ;; Identical notes would collapse at finalization, but must not
+          ;; accumulate without a bound in the open transaction.
+          (while (and (< attempts 100) accepted?)
+            (set!
+              accepted?
+              (trace.compiler-trace-note! (&mut builder) (trace-test-absent)))
+            (set! attempts (+ attempts 1)))
+          (and
+            (> attempts 1)
+            (< attempts 100)
+            (not accepted?)
+            (match (trace.compiler-trace-finalize builder)
+              [(Err error) (= error.code trace.compiler-trace-error-state)]
+              [_ false])))]
       [_ false])))
 
 (define (trace-test-structural-child-keys?) : bool
@@ -242,16 +235,15 @@
       ;; cannot collapse them: finalization merges complete key bytes only.
       (match (trace.compiler-trace-begin parent limits)
         [(Ok builder)
-          (begin
-            (trace.compiler-trace-note!
-              (&mut builder)
-              (trace-test-child-edge-query 10))
-            (trace.compiler-trace-note!
-              (&mut builder)
-              (trace-test-child-edge-query 9))
-            (match (trace.compiler-trace-finalize builder)
-              [(Ok value) (= value.edge-count 2)]
-              [_ false]))]
+          (trace.compiler-trace-note!
+            (&mut builder)
+            (trace-test-child-edge-query 10))
+          (trace.compiler-trace-note!
+            (&mut builder)
+            (trace-test-child-edge-query 9))
+          (match (trace.compiler-trace-finalize builder)
+            [(Ok value) (= value.edge-count 2)]
+            [_ false])]
         [_ false]))))
 
 (define (trace-test-corruption?) : bool
@@ -261,19 +253,18 @@
       (trace.compiler-trace-default-limits)]
     [bytes : (__tl_dyn-array u8)
       (binary.compiler-incremental-binary-copy (& a.transcript))]
-    (begin
-      (set! (array-ref bytes (- (array-length bytes) 1)) (cast 255 : u8))
-      (let
-        [bad : trace.CompilerIncrementalTrace
-          (trace.CompilerIncrementalTrace
-            a.schema
-            a.parent
-            a.edge-count
-            bytes
-            a.fingerprint)]
-        (match (trace.compiler-trace-compare (& a) (& bad) (& limits))
-          [(Corrupt error) (= error.code trace.compiler-trace-error-corrupt)]
-          [_ false])))))
+    (set! (array-ref bytes (- (array-length bytes) 1)) (cast 255 : u8))
+    (let
+      [bad : trace.CompilerIncrementalTrace
+        (trace.CompilerIncrementalTrace
+          a.schema
+          a.parent
+          a.edge-count
+          bytes
+          a.fingerprint)]
+      (match (trace.compiler-trace-compare (& a) (& bad) (& limits))
+        [(Corrupt error) (= error.code trace.compiler-trace-error-corrupt)]
+        [_ false]))))
 
 (define (trace-test-rehash [bytes : (__tl_dyn-array u8)] [count : i64]) : trace.CompilerIncrementalTrace
   (match (identity.compiler-incremental-digest-array (& bytes))
@@ -307,63 +298,49 @@
     [trailing : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ (array-length original.transcript) 1))]
     [index : i64 0]
-    (begin
-      (set!
-        (array-ref
-          schema-bytes
-          (+ 4 (string.string-length trace.compiler-incremental-trace-domain)))
-        (cast 2 : u8))
-      (set! (array-ref count-bytes (- header 4)) (cast 4 : u8))
-      (set! (array-ref tag-bytes (+ header 4)) (cast 255 : u8))
-      (while (< index (array-length original.transcript))
-        (begin
-          (set!
-            (array-ref trailing index)
-            (array-ref original.transcript index))
-          (set! index (+ index 1))))
-      (let
-        [schema : trace.CompilerIncrementalTrace
-          (trace-test-rehash schema-bytes 3)]
-        [count : trace.CompilerIncrementalTrace
-          (trace-test-rehash count-bytes 3)]
-        [tag : trace.CompilerIncrementalTrace (trace-test-rehash tag-bytes 3)]
-        [extra : trace.CompilerIncrementalTrace (trace-test-rehash trailing 3)]
-        [small : trace.CompilerIncrementalTraceLimits
-          (trace.CompilerIncrementalTraceLimits
-            limits.max-bytes
-            2
-            limits.max-edge-bytes
-            limits.max-depth
-            limits.max-owned-bytes
-            limits.max-work)]
-        (and
-          (match (trace.compiler-trace-compare
-            (& original)
-            (& schema)
-            (& limits))
-            [(Miss category _) (= category trace.compiler-trace-miss-schema)]
-            [_ false])
-          (match (trace.compiler-trace-compare
-            (& original)
-            (& count)
-            (& limits))
-            [(Corrupt _) true]
-            [_ false])
-          (match (trace.compiler-trace-compare (& original) (& tag) (& limits))
-            [(Corrupt _) true]
-            [_ false])
-          (match (trace.compiler-trace-compare
-            (& original)
-            (& extra)
-            (& limits))
-            [(Corrupt _) true]
-            [_ false])
-          (match (trace.compiler-trace-compare
-            (& original)
-            (& original)
-            (& small))
-            [(Miss category _) (= category trace.compiler-trace-miss-limit)]
-            [_ false]))))))
+    (set!
+      (array-ref
+        schema-bytes
+        (+ 4 (string.string-length trace.compiler-incremental-trace-domain)))
+      (cast 2 : u8))
+    (set! (array-ref count-bytes (- header 4)) (cast 4 : u8))
+    (set! (array-ref tag-bytes (+ header 4)) (cast 255 : u8))
+    (while (< index (array-length original.transcript))
+      (set! (array-ref trailing index) (array-ref original.transcript index))
+      (set! index (+ index 1)))
+    (let
+      [schema : trace.CompilerIncrementalTrace
+        (trace-test-rehash schema-bytes 3)]
+      [count : trace.CompilerIncrementalTrace (trace-test-rehash count-bytes 3)]
+      [tag : trace.CompilerIncrementalTrace (trace-test-rehash tag-bytes 3)]
+      [extra : trace.CompilerIncrementalTrace (trace-test-rehash trailing 3)]
+      [small : trace.CompilerIncrementalTraceLimits
+        (trace.CompilerIncrementalTraceLimits
+          limits.max-bytes
+          2
+          limits.max-edge-bytes
+          limits.max-depth
+          limits.max-owned-bytes
+          limits.max-work)]
+      (and
+        (match (trace.compiler-trace-compare (& original) (& schema) (& limits))
+          [(Miss category _) (= category trace.compiler-trace-miss-schema)]
+          [_ false])
+        (match (trace.compiler-trace-compare (& original) (& count) (& limits))
+          [(Corrupt _) true]
+          [_ false])
+        (match (trace.compiler-trace-compare (& original) (& tag) (& limits))
+          [(Corrupt _) true]
+          [_ false])
+        (match (trace.compiler-trace-compare (& original) (& extra) (& limits))
+          [(Corrupt _) true]
+          [_ false])
+        (match (trace.compiler-trace-compare
+          (& original)
+          (& original)
+          (& small))
+          [(Miss category _) (= category trace.compiler-trace-miss-limit)]
+          [_ false])))))
 
 (test
   compiler-incremental-trace-canonical-order-and-dedup

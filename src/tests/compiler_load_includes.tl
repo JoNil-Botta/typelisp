@@ -120,65 +120,64 @@
             cbi.compiler-builtin-id-fix-x
             (load_tests.compiler-load-string-vec-one "stdlib")
             pools)]
-        (begin
+        (test.assert-true
+          (include-matches? kind (& pools) result (string.copy contents))
+          "local file retains exact payload and declaration kind")
+        (test.assert-i64-eq
+          (ast.ast-node-pool-len)
+          ambient-count
+          "explicit pools do not publish into ambient pool")
+        (test.assert-true
+          (error-matches?
+            (load.compiler-load-expand-include-with-pools
+              kind
+              "tests/integration/include-entry.tl"
+              "__missing_include__.bin"
+              cbi.compiler-builtin-id-fix-x
+              (load_tests.compiler-load-string-vec-one "stdlib")
+              pools)
+            (cat.str-cat
+              "compiler-load: cannot read "
+              (match kind
+                [(Binary) "include-bin"]
+                [_ "include-str"])
+              " __missing_include__.bin from tests/integration/include-entry.tl (resolved tests/integration/__missing_include__.bin)"))
+          "missing-resource diagnostics retain importer, request and resolved path")
+        (test.assert-true
+          (error-matches?
+            (load.compiler-load-expand-include-with-pools
+              kind
+              "tests/integration/include-entry.tl"
+              "pkg:__missing_include__/payload.bin"
+              cbi.compiler-builtin-id-fix-x
+              (load_tests.compiler-load-string-vec-one "stdlib")
+              pools)
+            "compiler-load: unknown package alias '__missing_include__': pkg:__missing_include__/payload.bin")
+          "ordinary resolver errors survive include dispatch")
+        (let
+          [package-result : load.ResultCompilerLoadInclude
+            (load.compiler-load-package-expand-include
+              kind
+              "tests/integration/include-entry.tl"
+              "pkg:assets/include_bin_payload.bin"
+              cbi.compiler-builtin-id-fix-x
+              (load_tests.compiler-load-string-vec-one "stdlib")
+              "tests"
+              (load.compiler-pkg-deps-cons
+                "assets"
+                "integration"
+                (load.compiler-pkg-deps-empty)))]
+          [active : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
           (test.assert-true
-            (include-matches? kind (& pools) result (string.copy contents))
-            "local file retains exact payload and declaration kind")
-          (test.assert-i64-eq
-            (ast.ast-node-pool-len)
-            ambient-count
-            "explicit pools do not publish into ambient pool")
-          (test.assert-true
-            (error-matches?
-              (load.compiler-load-expand-include-with-pools
-                kind
-                "tests/integration/include-entry.tl"
-                "__missing_include__.bin"
-                cbi.compiler-builtin-id-fix-x
-                (load_tests.compiler-load-string-vec-one "stdlib")
-                pools)
-              (cat.str-cat
-                "compiler-load: cannot read "
-                (match kind
-                  [(Binary) "include-bin"]
-                  [_ "include-str"])
-                " __missing_include__.bin from tests/integration/include-entry.tl (resolved tests/integration/__missing_include__.bin)"))
-            "missing-resource diagnostics retain importer, request and resolved path")
-          (test.assert-true
-            (error-matches?
-              (load.compiler-load-expand-include-with-pools
-                kind
-                "tests/integration/include-entry.tl"
-                "pkg:__missing_include__/payload.bin"
-                cbi.compiler-builtin-id-fix-x
-                (load_tests.compiler-load-string-vec-one "stdlib")
-                pools)
-              "compiler-load: unknown package alias '__missing_include__': pkg:__missing_include__/payload.bin")
-            "ordinary resolver errors survive include dispatch")
-          (let
-            [package-result : load.ResultCompilerLoadInclude
-              (load.compiler-load-package-expand-include
-                kind
-                "tests/integration/include-entry.tl"
-                "pkg:assets/include_bin_payload.bin"
-                cbi.compiler-builtin-id-fix-x
-                (load_tests.compiler-load-string-vec-one "stdlib")
-                "tests"
-                (load.compiler-pkg-deps-cons
-                  "assets"
-                  "integration"
-                  (load.compiler-pkg-deps-empty)))]
-            [active : ast.AstNodePoolContext
-              (ast.ast-node-pool-context-capture-active)]
-            (test.assert-true
-              (include-matches?
-                kind
-                (& active)
-                package-result
-                (string.copy contents))
-              "package resolver and active-pool adapter preserve every kind"))
-          (set! ambient-count (ast.ast-node-pool-len))
-          (set! index (+ index 1)))))))
+            (include-matches?
+              kind
+              (& active)
+              package-result
+              (string.copy contents))
+            "package resolver and active-pool adapter preserve every kind"))
+        (set! ambient-count (ast.ast-node-pool-len))
+        (set! index (+ index 1))))))
 
 (test include-kind-matrix (check-includes))
 
@@ -196,24 +195,22 @@
       [index : i64 0]
       (match (embedded.compiler-embedded-stdlib-lookup "option.tl")
         [(CompilerEmbeddedStdlibSomeSource contents)
-          (begin
-            (while (< index 4)
-              (let
-                [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
-                (begin
-                  (test.assert-true
-                    (include-matches?
-                      kind
-                      (& pools)
-                      (load.compiler-load-include-from-resolved-with-pools
-                        kind
-                        "entry.tl"
-                        "stdlib/option.tl"
-                        (cfg linux "stdlib\\option.tl" "stdlib/option.tl")
-                        cbi.compiler-builtin-id-fix-x
-                        pools)
-                      (string.copy contents))
-                    "embedded fallback retains every materialization kind")
-                  (set! index (+ index 1)))))
-            42)]
+          (while (< index 4)
+            (let
+              [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
+              (test.assert-true
+                (include-matches?
+                  kind
+                  (& pools)
+                  (load.compiler-load-include-from-resolved-with-pools
+                    kind
+                    "entry.tl"
+                    "stdlib/option.tl"
+                    (cfg linux "stdlib\\option.tl" "stdlib/option.tl")
+                    cbi.compiler-builtin-id-fix-x
+                    pools)
+                  (string.copy contents))
+                "embedded fallback retains every materialization kind")
+              (set! index (+ index 1))))
+          42]
         [_ 0]))))

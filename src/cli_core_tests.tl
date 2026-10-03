@@ -46,52 +46,50 @@
       [unsupported-schema : String
         "source-set-binding-schema: unsupported (2)\n"]
       [malformed-schema : String "source-set-binding-schema: malformed\n"]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.tlci-package-source-binding-section 12345))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(Ok packed)
-            (set! bound (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            2
-            (tlci_core.tlci-string->bytes "future")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(Ok packed)
-            (set! unsupported (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            tlci_core.tlci-package-source-binding-schema-version
-            (__tl_make-array u8 7)))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(Ok packed)
-            (set! malformed (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (let
-          [missing : String
-            (inspect.tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
-          (if (and
-            (string.contains (& bound) (& bound-schema))
-            (string.contains (& bound) (& bound-digest))
-            (string.contains (& missing) (& missing-schema))
-            (string.contains (& missing) (& missing-digest))
-            (string.contains (& unsupported) (& unsupported-schema))
-            (string.contains (& malformed) (& malformed-schema)))
-            unit
-            (io.panic "inspect source binding rendering failed")))))))
+      (set!
+        (array-ref sections 0)
+        (tlci_core.tlci-package-source-binding-section 12345))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed) (set! bound (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-source-binding
+          2
+          (tlci_core.tlci-string->bytes "future")))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed)
+          (set! unsupported (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-source-binding
+          tlci_core.tlci-package-source-binding-schema-version
+          (__tl_make-array u8 7)))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed)
+          (set! malformed (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (let
+        [missing : String
+          (inspect.tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
+        (if (and
+          (string.contains (& bound) (& bound-schema))
+          (string.contains (& bound) (& bound-digest))
+          (string.contains (& missing) (& missing-schema))
+          (string.contains (& missing) (& missing-digest))
+          (string.contains (& unsupported) (& unsupported-schema))
+          (string.contains (& malformed) (& malformed-schema)))
+          unit
+          (io.panic "inspect source binding rendering failed"))))))
 
 (cfg
   test
@@ -100,50 +98,49 @@
     (let
       [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
         (__tl_make-array tlci_core.TlciAuxSection 3)]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-identity
-            1
-            (tlci_core.tlci-string->bytes "identity")))
-        (set!
-          (array-ref sections 1)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-ast
-            5
-            (tlci_core.tlci-empty-bytes)))
-        (set!
-          (array-ref sections 2)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-facts
-            1
-            (tlci_core.tlci-string->bytes "facts")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(Err _) (io.panic "inspect surface fixture packing failed")]
-          [(Ok rodata)
-            (let
-              [rendered : String
-                (inspect.tlci-inspect-surface
-                  rodata
-                  "0123456789abcdef0123456789abcdef01234567")]
-              [identity-line : String
-                "surface-package-identity: present schema-version=1 bytes=8\n"]
-              [ast-line : String
-                "surface-frontend-ast: present schema-version=5 bytes=0\n"]
-              [facts-line : String
-                "surface-frontend-facts: present schema-version=1 bytes=5\n"]
-              [trust-line : String
-                "surface-trust-policy: exact-producer-and-source-binding-required\n"]
-              (unless
-                (and
-                  (string.contains (& rendered) (& identity-line))
-                  (string.contains (& rendered) (& ast-line))
-                  (string.contains (& rendered) (& facts-line))
-                  (string.contains (& rendered) (& trust-line)))
-                (io.panic "inspect surface rendering failed")))])))))
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-identity
+          1
+          (tlci_core.tlci-string->bytes "identity")))
+      (set!
+        (array-ref sections 1)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-frontend-ast
+          5
+          (tlci_core.tlci-empty-bytes)))
+      (set!
+        (array-ref sections 2)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-frontend-facts
+          1
+          (tlci_core.tlci-string->bytes "facts")))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Err _) (io.panic "inspect surface fixture packing failed")]
+        [(Ok rodata)
+          (let
+            [rendered : String
+              (inspect.tlci-inspect-surface
+                rodata
+                "0123456789abcdef0123456789abcdef01234567")]
+            [identity-line : String
+              "surface-package-identity: present schema-version=1 bytes=8\n"]
+            [ast-line : String
+              "surface-frontend-ast: present schema-version=5 bytes=0\n"]
+            [facts-line : String
+              "surface-frontend-facts: present schema-version=1 bytes=5\n"]
+            [trust-line : String
+              "surface-trust-policy: exact-producer-and-source-binding-required\n"]
+            (unless
+              (and
+                (string.contains (& rendered) (& identity-line))
+                (string.contains (& rendered) (& ast-line))
+                (string.contains (& rendered) (& facts-line))
+                (string.contains (& rendered) (& trust-line)))
+              (io.panic "inspect surface rendering failed")))]))))
 
 (cfg
   test
@@ -253,14 +250,12 @@
       [index : i64 0]
       [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
       [ok : bool true]
-      (begin
-        (while (and ok (< index count))
-          (begin
-            (if (diagnostic-explain-registry-entry-ok? index)
-              unit
-              (set! ok false))
-            (set! index (+ index 1))))
-        ok))))
+      (while (and ok (< index count))
+        (if (diagnostic-explain-registry-entry-ok? index)
+          unit
+          (set! ok false))
+        (set! index (+ index 1)))
+      ok)))
 
 (cfg
   test

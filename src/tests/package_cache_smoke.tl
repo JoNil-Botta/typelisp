@@ -30,12 +30,11 @@
     [n : i64 (string.string-length text)]
     [i : i64 start]
     [found : i64 -1]
-    (begin
-      (while (and (= found -1) (< i n))
-        (if (= (cast (string.string-ref text i) : i64) needle)
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (= found -1) (< i n))
+      (if (= (cast (string.string-ref text i) : i64) needle)
+        (set! found i)
+        (set! i (+ i 1))))
+    found))
 
 (define (package-cache-parse-normalized-remote [dep : (& dep str)]) : cache.ResultPackageCacheRemoteSpec
   (let
@@ -238,48 +237,47 @@
     [wrong-metadata : String
       (cache.package-cache-metadata-content (& wrong-key))]
     [marker : String (cache.package-cache-complete-marker-content)]
-    (begin
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& complete-key))
-        "prepare complete entry: ")
-      (package-cache-expect-ok
-        (cache.package-cache-write-complete-marker complete (& complete-key))
-        "write complete marker: ")
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& partial-key))
-        "prepare partial entry: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& partial-metadata-path)
-          (byte_buf.str-as-bytes (& partial-metadata)))
-        "write partial metadata: ")
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& mismatch-key))
-        "prepare mismatch entry: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& mismatch-metadata-path)
-          (byte_buf.str-as-bytes (& wrong-metadata)))
-        "write mismatch metadata: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& mismatch-marker-path)
-          (byte_buf.str-as-bytes (& marker)))
-        "write mismatch marker: ")
-      (and
-        (package-cache-state-miss?
-          (cache.package-cache-entry-state missing (& key)))
-        (package-cache-state-complete?
-          (cache.package-cache-entry-state complete (& complete-key)))
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& complete-key))
+      "prepare complete entry: ")
+    (package-cache-expect-ok
+      (cache.package-cache-write-complete-marker complete (& complete-key))
+      "write complete marker: ")
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& partial-key))
+      "prepare partial entry: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& partial-metadata-path)
+        (byte_buf.str-as-bytes (& partial-metadata)))
+      "write partial metadata: ")
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& mismatch-key))
+      "prepare mismatch entry: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& mismatch-metadata-path)
+        (byte_buf.str-as-bytes (& wrong-metadata)))
+      "write mismatch metadata: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& mismatch-marker-path)
+        (byte_buf.str-as-bytes (& marker)))
+      "write mismatch marker: ")
+    (and
+      (package-cache-state-miss?
+        (cache.package-cache-entry-state missing (& key)))
+      (package-cache-state-complete?
+        (cache.package-cache-entry-state complete (& complete-key)))
+      (package-cache-entry-reusable?
+        (cache.package-cache-entry-state complete (& complete-key)))
+      (package-cache-state-partial?
+        (cache.package-cache-entry-state partial (& partial-key)))
+      (not
         (package-cache-entry-reusable?
-          (cache.package-cache-entry-state complete (& complete-key)))
-        (package-cache-state-partial?
-          (cache.package-cache-entry-state partial (& partial-key)))
-        (not
-          (package-cache-entry-reusable?
-            (cache.package-cache-entry-state partial (& partial-key))))
-        (package-cache-state-partial?
-          (cache.package-cache-entry-state mismatch (& mismatch-key)))))))
+          (cache.package-cache-entry-state partial (& partial-key))))
+      (package-cache-state-partial?
+        (cache.package-cache-entry-state mismatch (& mismatch-key))))))
 
 (define (package-cache-self-test) : i64
   (if (and

@@ -60,14 +60,12 @@
       (let
         [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
         [index : i64 0]
-        (begin
-          (while (< index 20)
-            (begin
-              (byte_buf.byte-buf-builder-push
-                (&mut out)
-                (sha1.digest-byte (& value) index))
-              (set! index (+ index 1))))
-          (byte_buf.byte-buf-builder-finish-string (& out))))]))
+        (while (< index 20)
+          (byte_buf.byte-buf-builder-push
+            (&mut out)
+            (sha1.digest-byte (& value) index))
+          (set! index (+ index 1)))
+        (byte_buf.byte-buf-builder-finish-string (& out)))]))
 
 (define (git-object-test-sha256 [preimage : String]) : String
   (match (sha256.digest (bytes.str-as-bytes (& preimage)))
@@ -76,14 +74,12 @@
       (let
         [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
         [index : i64 0]
-        (begin
-          (while (< index 32)
-            (begin
-              (byte_buf.byte-buf-builder-push
-                (&mut out)
-                (sha256.digest-byte (& value) index))
-              (set! index (+ index 1))))
-          (byte_buf.byte-buf-builder-finish-string (& out))))]))
+        (while (< index 32)
+          (byte_buf.byte-buf-builder-push
+            (&mut out)
+            (sha256.digest-byte (& value) index))
+          (set! index (+ index 1)))
+        (byte_buf.byte-buf-builder-finish-string (& out)))]))
 
 (define (git-object-test-identity?
   [format : git_object.GitObjectFormat]
@@ -129,45 +125,43 @@
     [bad : (__tl_dyn-array String) (__tl_make-array String 0)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (__tl_array-push! bad "")
-      (__tl_array-push! bad "refs//heads/x")
-      (__tl_array-push! bad "refs/heads/.bad")
-      (__tl_array-push! bad "refs/heads/x.lock")
-      (__tl_array-push! bad "refs/heads/x..y")
-      (__tl_array-push! bad "refs/heads/x@{1}")
-      (__tl_array-push! bad "refs/heads/x y")
-      (__tl_array-push! bad "refs/heads/x\ny")
-      (__tl_array-push! bad "refs/heads/x\\y")
-      (__tl_array-push! bad "refs/heads/x.")
-      (while (< index (array-length bad))
-        (begin
-          (when
-            (git_object.git-object-refname-valid? (array-ref bad index) true)
-            (set! ok false))
-          (set! index (+ index 1))))
-      (and
-        ok
-        (git_object.git-object-refname-valid? "a/b" false)
-        (git_object.git-object-refname-valid? "refs/heads/main" false)
-        (git_object.git-object-refname-valid? "HEAD" true)
-        (not (git_object.git-object-refname-valid? "HEAD" false))
-        (match (git_object.git-object-advertised-ref
-          (Sha1)
-          "HEAD"
-          "ce013625030ba8dba906f756967f9e9ca394464a"
-          "refs/heads/main"
-          "")
-          [(Ok advert) advert.has-symref]
-          [_ false])
-        (match (git_object.git-object-advertised-ref
-          (Sha1)
-          "HEAD"
-          "ce013625030ba8dba906f756967f9e9ca394464a"
-          "refs/heads/x..y"
-          "")
-          [(Err _) true]
-          [_ false])))))
+    (__tl_array-push! bad "")
+    (__tl_array-push! bad "refs//heads/x")
+    (__tl_array-push! bad "refs/heads/.bad")
+    (__tl_array-push! bad "refs/heads/x.lock")
+    (__tl_array-push! bad "refs/heads/x..y")
+    (__tl_array-push! bad "refs/heads/x@{1}")
+    (__tl_array-push! bad "refs/heads/x y")
+    (__tl_array-push! bad "refs/heads/x\ny")
+    (__tl_array-push! bad "refs/heads/x\\y")
+    (__tl_array-push! bad "refs/heads/x.")
+    (while (< index (array-length bad))
+      (when
+        (git_object.git-object-refname-valid? (array-ref bad index) true)
+        (set! ok false))
+      (set! index (+ index 1)))
+    (and
+      ok
+      (git_object.git-object-refname-valid? "a/b" false)
+      (git_object.git-object-refname-valid? "refs/heads/main" false)
+      (git_object.git-object-refname-valid? "HEAD" true)
+      (not (git_object.git-object-refname-valid? "HEAD" false))
+      (match (git_object.git-object-advertised-ref
+        (Sha1)
+        "HEAD"
+        "ce013625030ba8dba906f756967f9e9ca394464a"
+        "refs/heads/main"
+        "")
+        [(Ok advert) advert.has-symref]
+        [_ false])
+      (match (git_object.git-object-advertised-ref
+        (Sha1)
+        "HEAD"
+        "ce013625030ba8dba906f756967f9e9ca394464a"
+        "refs/heads/x..y"
+        "")
+        [(Err _) true]
+        [_ false]))))
 
 (define (git-object-test-commit-body [hex : (& hex str)]) : String
   (str_cat.str-cat
@@ -191,65 +185,57 @@
         "\nauthor A\ncommitter B\ngpgsig -----BEGIN-----\n continuation\n\nraw")]
     [nul-builder : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (byte_buf.byte-buf-builder-append-string
-        (&mut nul-builder)
-        (str_cat.str-cat "tree " (string.substring (& hex) 0 40) "\nauthor A"))
-      (byte_buf.byte-buf-builder-push (&mut nul-builder) (cast 0 : u8))
-      (byte_buf.byte-buf-builder-append-string
-        (&mut nul-builder)
-        "\ncommitter B\n\n")
-      (let
-        [nul : String (byte_buf.byte-buf-builder-finish-string (& nul-builder))]
-        (and
-          (match (git_object.git-object-decode-commit
-            (Sha1)
-            (& body)
-            (& limits))
-            [(Ok commit)
-              (and
-                (string.eq (& commit.tree.hex) (& hex))
-                (= (array-length commit.parents) 0)
-                (string.eq (& commit.message) "message"))]
-            [_ false])
-          (match (git_object.git-object-decode-commit
-            (Sha1)
-            (& continuation)
-            (& limits))
-            [(Ok commit)
-              (and
-                (= (array-length commit.extra-headers) 1)
-                (string.eq
-                  (& (array-ref commit.extra-headers 0).value)
-                  "-----BEGIN-----\n continuation"))]
-            [_ false])
-          (git-object-test-commit-error?
-            (git_object.git-object-decode-commit
-              (Sha1)
-              (& duplicate)
-              (& limits)))
-          (git-object-test-commit-error?
-            (git_object.git-object-decode-commit (Sha1) (& nul) (& limits)))
-          (git-object-test-commit-error?
-            (git_object.git-object-decode-commit (Sha256) (& body) (& limits)))
-          (git-object-test-commit-error?
-            (git_object.git-object-decode-commit (Sha1) "tree x\n" (& limits))))))))
+    (byte_buf.byte-buf-builder-append-string
+      (&mut nul-builder)
+      (str_cat.str-cat "tree " (string.substring (& hex) 0 40) "\nauthor A"))
+    (byte_buf.byte-buf-builder-push (&mut nul-builder) (cast 0 : u8))
+    (byte_buf.byte-buf-builder-append-string
+      (&mut nul-builder)
+      "\ncommitter B\n\n")
+    (let
+      [nul : String (byte_buf.byte-buf-builder-finish-string (& nul-builder))]
+      (and
+        (match (git_object.git-object-decode-commit (Sha1) (& body) (& limits))
+          [(Ok commit)
+            (and
+              (string.eq (& commit.tree.hex) (& hex))
+              (= (array-length commit.parents) 0)
+              (string.eq (& commit.message) "message"))]
+          [_ false])
+        (match (git_object.git-object-decode-commit
+          (Sha1)
+          (& continuation)
+          (& limits))
+          [(Ok commit)
+            (and
+              (= (array-length commit.extra-headers) 1)
+              (string.eq
+                (& (array-ref commit.extra-headers 0).value)
+                "-----BEGIN-----\n continuation"))]
+          [_ false])
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit (Sha1) (& duplicate) (& limits)))
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit (Sha1) (& nul) (& limits)))
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit (Sha256) (& body) (& limits)))
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit (Sha1) "tree x\n" (& limits)))))))
 
 (define (git-object-test-append-tree-entry!
   [out : (&mut out byte_buf.ByteBufBuilder)]
   [mode : String]
   [name : String]
   [binary : (& binary str)]) : unit
-  (begin
-    (byte_buf.byte-buf-builder-append-string out mode)
-    (byte_buf.byte-buf-builder-push out (cast 32 : u8))
-    (byte_buf.byte-buf-builder-append-string out name)
-    (byte_buf.byte-buf-builder-push out (cast 0 : u8))
-    (byte_buf.byte-buf-builder-append-string-range
-      out
-      (string.substring binary 0 (string.string-length binary))
-      0
-      (string.string-length binary))))
+  (byte_buf.byte-buf-builder-append-string out mode)
+  (byte_buf.byte-buf-builder-push out (cast 32 : u8))
+  (byte_buf.byte-buf-builder-append-string out name)
+  (byte_buf.byte-buf-builder-push out (cast 0 : u8))
+  (byte_buf.byte-buf-builder-append-string-range
+    out
+    (string.substring binary 0 (string.string-length binary))
+    0
+    (string.string-length binary)))
 
 (define (git-object-test-tree-kind-code
   [kind : (& kind git_object.GitTreeEntryKind)]) : i64
@@ -273,125 +259,99 @@
     [sha256-tree : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
     [ok : bool true]
-    (begin
-      (git-object-test-append-tree-entry!
-        (&mut out)
-        "100644"
-        "a"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut out)
-        "100755"
-        "b"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut out)
-        "120000"
-        "c"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut out)
-        "160000"
-        "d"
-        (& id1.binary))
-      (git-object-test-append-tree-entry! (&mut out) "40000" "e" (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut bad-order)
-        "100644"
-        "b"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut bad-order)
-        "100644"
-        "a"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut duplicate)
-        "100644"
-        "a"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut duplicate)
-        "100644"
-        "a-"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut duplicate)
-        "40000"
-        "a"
-        (& id1.binary))
-      (git-object-test-append-tree-entry!
-        (&mut sha256-tree)
-        "40000"
-        "dir"
-        (& id2.binary))
-      (let
-        [good : String (byte_buf.byte-buf-builder-finish-string (& out))]
-        [bad : String (byte_buf.byte-buf-builder-finish-string (& bad-order))]
-        [dup : String (byte_buf.byte-buf-builder-finish-string (& duplicate))]
-        [wide : String
-          (byte_buf.byte-buf-builder-finish-string (& sha256-tree))]
-        [index : i64 1]
-        (begin
-          (while (< index 28)
-            (begin
-              (unless
-                (git-object-test-tree-error?
-                  (git_object.git-object-decode-tree
-                    (Sha1)
-                    (string.substring (& good) 0 index)
-                    (& limits)))
-                (set! ok false))
-              (set! index (+ index 1))))
-          (and
-            ok
-            (match (git_object.git-object-decode-tree
+    (git-object-test-append-tree-entry! (&mut out) "100644" "a" (& id1.binary))
+    (git-object-test-append-tree-entry! (&mut out) "100755" "b" (& id1.binary))
+    (git-object-test-append-tree-entry! (&mut out) "120000" "c" (& id1.binary))
+    (git-object-test-append-tree-entry! (&mut out) "160000" "d" (& id1.binary))
+    (git-object-test-append-tree-entry! (&mut out) "40000" "e" (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut bad-order)
+      "100644"
+      "b"
+      (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut bad-order)
+      "100644"
+      "a"
+      (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut duplicate)
+      "100644"
+      "a"
+      (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut duplicate)
+      "100644"
+      "a-"
+      (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut duplicate)
+      "40000"
+      "a"
+      (& id1.binary))
+    (git-object-test-append-tree-entry!
+      (&mut sha256-tree)
+      "40000"
+      "dir"
+      (& id2.binary))
+    (let
+      [good : String (byte_buf.byte-buf-builder-finish-string (& out))]
+      [bad : String (byte_buf.byte-buf-builder-finish-string (& bad-order))]
+      [dup : String (byte_buf.byte-buf-builder-finish-string (& duplicate))]
+      [wide : String (byte_buf.byte-buf-builder-finish-string (& sha256-tree))]
+      [index : i64 1]
+      (while (< index 28)
+        (unless
+          (git-object-test-tree-error?
+            (git_object.git-object-decode-tree
               (Sha1)
-              (& good)
-              (& limits))
-              [(Ok tree)
-                (and
-                  (= (array-length tree.entries) 5)
-                  (= (array-ref tree.entries 0).mode 33188)
-                  (= (array-ref tree.entries 4).mode 16384)
-                  (=
-                    (git-object-test-tree-kind-code
-                      (& (array-ref tree.entries 0).kind))
-                    2)
-                  (=
-                    (git-object-test-tree-kind-code
-                      (& (array-ref tree.entries 1).kind))
-                    3)
-                  (=
-                    (git-object-test-tree-kind-code
-                      (& (array-ref tree.entries 2).kind))
-                    4)
-                  (=
-                    (git-object-test-tree-kind-code
-                      (& (array-ref tree.entries 3).kind))
-                    5)
-                  (=
-                    (git-object-test-tree-kind-code
-                      (& (array-ref tree.entries 4).kind))
-                    1))]
-              [_ false])
-            (match (git_object.git-object-decode-tree
-              (Sha256)
-              (& wide)
-              (& limits))
-              [(Ok tree)
-                (and
-                  (= (array-length tree.entries) 1)
-                  (string.eq (& (array-ref tree.entries 0).id.hex) (& hex2)))]
-              [_ false])
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha1) (& bad) (& limits)))
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha1) (& dup) (& limits)))
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha256) (& good) (& limits)))
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha1) "100644 x" (& limits)))))))))
+              (string.substring (& good) 0 index)
+              (& limits)))
+          (set! ok false))
+        (set! index (+ index 1)))
+      (and
+        ok
+        (match (git_object.git-object-decode-tree (Sha1) (& good) (& limits))
+          [(Ok tree)
+            (and
+              (= (array-length tree.entries) 5)
+              (= (array-ref tree.entries 0).mode 33188)
+              (= (array-ref tree.entries 4).mode 16384)
+              (=
+                (git-object-test-tree-kind-code
+                  (& (array-ref tree.entries 0).kind))
+                2)
+              (=
+                (git-object-test-tree-kind-code
+                  (& (array-ref tree.entries 1).kind))
+                3)
+              (=
+                (git-object-test-tree-kind-code
+                  (& (array-ref tree.entries 2).kind))
+                4)
+              (=
+                (git-object-test-tree-kind-code
+                  (& (array-ref tree.entries 3).kind))
+                5)
+              (=
+                (git-object-test-tree-kind-code
+                  (& (array-ref tree.entries 4).kind))
+                1))]
+          [_ false])
+        (match (git_object.git-object-decode-tree (Sha256) (& wide) (& limits))
+          [(Ok tree)
+            (and
+              (= (array-length tree.entries) 1)
+              (string.eq (& (array-ref tree.entries 0).id.hex) (& hex2)))]
+          [_ false])
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha1) (& bad) (& limits)))
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha1) (& dup) (& limits)))
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha256) (& good) (& limits)))
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha1) "100644 x" (& limits)))))))
 
 (define (git-object-test-tag-body [hex : (& hex str)]) : String
   (str_cat.str-cat
@@ -492,27 +452,26 @@
     [refs : (__tl_dyn-array git_object.GitAdvertisedRef)
       (__tl_make-array git_object.GitAdvertisedRef 0)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (match (git_object.git-object-advertised-ref
-        (Sha256)
-        "refs/heads/main"
-        "3bab679794760a0c4d7d5ba0274fdaf2c4770bba6373c406b4aea81679afa132"
-        ""
-        "")
-        [(Err _) (return false)]
-        [(Ok advert) (__tl_array-push! refs advert)])
-      (match (git_object.git-object-resolve-commit
-        (Sha256)
-        (Branch "refs/heads/main")
-        (& refs)
-        (& limits)
-        git-object-test-lookup-sha256
-        git-object-test-sha256)
-        [(Ok id)
-          (string.eq
-            (& id.hex)
-            "3bab679794760a0c4d7d5ba0274fdaf2c4770bba6373c406b4aea81679afa132")]
-        [_ false]))))
+    (match (git_object.git-object-advertised-ref
+      (Sha256)
+      "refs/heads/main"
+      "3bab679794760a0c4d7d5ba0274fdaf2c4770bba6373c406b4aea81679afa132"
+      ""
+      "")
+      [(Err _) (return false)]
+      [(Ok advert) (__tl_array-push! refs advert)])
+    (match (git_object.git-object-resolve-commit
+      (Sha256)
+      (Branch "refs/heads/main")
+      (& refs)
+      (& limits)
+      git-object-test-lookup-sha256
+      git-object-test-sha256)
+      [(Ok id)
+        (string.eq
+          (& id.hex)
+          "3bab679794760a0c4d7d5ba0274fdaf2c4770bba6373c406b4aea81679afa132")]
+      [_ false])))
 
 (define (git-object-test-resolve?) : bool
   (let
@@ -529,103 +488,98 @@
     [refs : (__tl_dyn-array git_object.GitAdvertisedRef)
       (__tl_make-array git_object.GitAdvertisedRef 0)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (unless
-        (and
-          (string.eq
-            (& commit-id.hex)
-            "7f7c16029d5de18ead72216fa7301a8de0e137f1")
-          (string.eq (& tag-id.hex) "8be0a88af0e53a8f5dd93582cd219f080ad8713a")
-          (string.eq
-            (& outer-id.hex)
-            "068203eaabc9b581e73a45788cb560137b1937e0"))
-        (return false))
-      (match (git_object.git-object-advertised-ref
-        (Sha1)
-        "refs/tags/v1"
-        (& tag-id.hex)
-        ""
-        (& commit-id.hex))
-        [(Err _) (io.panic "git object test: tag advertisement failed")]
-        [(Ok advert) (__tl_array-push! refs advert)])
-      (match (git_object.git-object-advertised-ref
-        (Sha1)
-        "refs/tags/v2"
-        (& outer-id.hex)
-        ""
-        (& commit-id.hex))
-        [(Err _) (return false)]
-        [(Ok advert) (__tl_array-push! refs advert)])
-      (match (git_object.git-object-advertised-ref
-        (Sha1)
-        "refs/tags/light"
-        (& commit-id.hex)
-        ""
-        "")
-        [(Err _) (return false)]
-        [(Ok advert) (__tl_array-push! refs advert)])
+    (unless
       (and
-        (match (git_object.git-object-resolve-commit
+        (string.eq (& commit-id.hex) "7f7c16029d5de18ead72216fa7301a8de0e137f1")
+        (string.eq (& tag-id.hex) "8be0a88af0e53a8f5dd93582cd219f080ad8713a")
+        (string.eq (& outer-id.hex) "068203eaabc9b581e73a45788cb560137b1937e0"))
+      (return false))
+    (match (git_object.git-object-advertised-ref
+      (Sha1)
+      "refs/tags/v1"
+      (& tag-id.hex)
+      ""
+      (& commit-id.hex))
+      [(Err _) (io.panic "git object test: tag advertisement failed")]
+      [(Ok advert) (__tl_array-push! refs advert)])
+    (match (git_object.git-object-advertised-ref
+      (Sha1)
+      "refs/tags/v2"
+      (& outer-id.hex)
+      ""
+      (& commit-id.hex))
+      [(Err _) (return false)]
+      [(Ok advert) (__tl_array-push! refs advert)])
+    (match (git_object.git-object-advertised-ref
+      (Sha1)
+      "refs/tags/light"
+      (& commit-id.hex)
+      ""
+      "")
+      [(Err _) (return false)]
+      [(Ok advert) (__tl_array-push! refs advert)])
+    (and
+      (match (git_object.git-object-resolve-commit
+        (Sha1)
+        (Tag "refs/tags/v2")
+        (& refs)
+        (& limits)
+        git-object-test-lookup
+        git-object-test-sha1)
+        [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
+        [_ false])
+      (match (git_object.git-object-resolve-commit
+        (Sha1)
+        (Tag "refs/tags/light")
+        (& refs)
+        (& limits)
+        git-object-test-lookup
+        git-object-test-sha1)
+        [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
+        [_ false])
+      (match (git_object.git-object-resolve-commit
+        (Sha1)
+        (ExactId (string.substring (& commit-id.hex) 0 40))
+        (& refs)
+        (& limits)
+        git-object-test-lookup
+        git-object-test-sha1)
+        [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
+        [_ false])
+      (match (git_object.git-object-resolve-commit
+        (Sha1)
+        (Tag "refs/tags/v1")
+        (& refs)
+        (& limits)
+        git-object-test-lookup
+        git-object-test-sha1)
+        [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
+        [_ false])
+      (git-object-test-resolve-error?
+        (git_object.git-object-resolve-commit
           (Sha1)
-          (Tag "refs/tags/v2")
+          (ExactId "1111111111111111111111111111111111111111")
           (& refs)
           (& limits)
           git-object-test-lookup
-          git-object-test-sha1)
-          [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
-          [_ false])
-        (match (git_object.git-object-resolve-commit
+          git-object-test-sha1))
+      (git-object-test-resolve-error?
+        (git_object.git-object-resolve-commit
           (Sha1)
-          (Tag "refs/tags/light")
+          (Tag "refs/tags/v1^{commit}")
           (& refs)
           (& limits)
           git-object-test-lookup
-          git-object-test-sha1)
-          [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
-          [_ false])
-        (match (git_object.git-object-resolve-commit
-          (Sha1)
-          (ExactId (string.substring (& commit-id.hex) 0 40))
-          (& refs)
-          (& limits)
-          git-object-test-lookup
-          git-object-test-sha1)
-          [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
-          [_ false])
-        (match (git_object.git-object-resolve-commit
+          git-object-test-sha1))
+      (git-object-test-resolve-error?
+        (git_object.git-object-resolve-commit
           (Sha1)
           (Tag "refs/tags/v1")
           (& refs)
           (& limits)
-          git-object-test-lookup
-          git-object-test-sha1)
-          [(Ok id) (string.eq (& id.hex) (& commit-id.hex))]
-          [_ false])
-        (git-object-test-resolve-error?
-          (git_object.git-object-resolve-commit
-            (Sha1)
-            (ExactId "1111111111111111111111111111111111111111")
-            (& refs)
-            (& limits)
-            git-object-test-lookup
-            git-object-test-sha1))
-        (git-object-test-resolve-error?
-          (git_object.git-object-resolve-commit
-            (Sha1)
-            (Tag "refs/tags/v1^{commit}")
-            (& refs)
-            (& limits)
-            git-object-test-lookup
-            git-object-test-sha1))
-        (git-object-test-resolve-error?
-          (git_object.git-object-resolve-commit
-            (Sha1)
-            (Tag "refs/tags/v1")
-            (& refs)
-            (& limits)
-            (lambda ([_hex : String]) : git_object.ResultGitObjectRecord
-              (Missing))
-            git-object-test-sha1))))))
+          (lambda ([_hex : String]) : git_object.ResultGitObjectRecord
+            (Missing))
+          git-object-test-sha1)))))
 
 (define (git-object-test-cycle-tag-body [target : String] [kind : String]) : String
   (str_cat.str-cat "object " target "\ntype " kind "\ntag cycle\n\n"))
@@ -680,48 +634,46 @@
     [refs : (__tl_dyn-array git_object.GitAdvertisedRef)
       (__tl_make-array git_object.GitAdvertisedRef 0)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (match (git_object.git-object-advertised-ref
-        (Sha1)
-        "refs/tags/cycle"
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ""
-        "")
-        [(Err _) (return false)]
-        [(Ok advert) (__tl_array-push! refs advert)])
-      (let
-        [cycle : git_object.ResultGitCommitId
+    (match (git_object.git-object-advertised-ref
+      (Sha1)
+      "refs/tags/cycle"
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ""
+      "")
+      [(Err _) (return false)]
+      [(Ok advert) (__tl_array-push! refs advert)])
+    (let
+      [cycle : git_object.ResultGitCommitId
+        (git_object.git-object-resolve-commit
+          (Sha1)
+          (Tag "refs/tags/cycle")
+          (& refs)
+          (& limits)
+          git-object-test-cycle-lookup
+          git-object-test-cycle-digest)]
+      [mismatch : git_object.ResultGitCommitId
+        (git_object.git-object-resolve-commit
+          (Sha1)
+          (Tag "refs/tags/cycle")
+          (& refs)
+          (& limits)
+          git-object-test-mismatch-lookup
+          git-object-test-cycle-digest)]
+      (set! limits.max-peel-depth 0)
+      (and
+        (git-object-test-resolve-error-is? cycle "git object: tag cycle")
+        (git-object-test-resolve-error-is?
+          mismatch
+          "git object: tag target type mismatch")
+        (git-object-test-resolve-error-is?
           (git_object.git-object-resolve-commit
             (Sha1)
             (Tag "refs/tags/cycle")
             (& refs)
             (& limits)
             git-object-test-cycle-lookup
-            git-object-test-cycle-digest)]
-        [mismatch : git_object.ResultGitCommitId
-          (git_object.git-object-resolve-commit
-            (Sha1)
-            (Tag "refs/tags/cycle")
-            (& refs)
-            (& limits)
-            git-object-test-mismatch-lookup
-            git-object-test-cycle-digest)]
-        (begin
-          (set! limits.max-peel-depth 0)
-          (and
-            (git-object-test-resolve-error-is? cycle "git object: tag cycle")
-            (git-object-test-resolve-error-is?
-              mismatch
-              "git object: tag target type mismatch")
-            (git-object-test-resolve-error-is?
-              (git_object.git-object-resolve-commit
-                (Sha1)
-                (Tag "refs/tags/cycle")
-                (& refs)
-                (& limits)
-                git-object-test-cycle-lookup
-                git-object-test-cycle-digest)
-              "git object: tag depth exceeded")))))))
+            git-object-test-cycle-digest)
+          "git object: tag depth exceeded")))))
 
 (define (git-object-test-deterministic-invalid-bytes?) : bool
   (let
@@ -729,42 +681,32 @@
     [round : i64 0]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
     [ok : bool true]
-    (begin
-      (while (< round 128)
+    (while (< round 128)
+      (let
+        [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
+        [index : i64 0]
+        (while (< index 24)
+          (set! state (% (+ (* state 1664525) 1013904223) 2147483647))
+          (byte_buf.byte-buf-builder-push
+            (&mut out)
+            (cast (bit-and state 255) : u8))
+          (set! index (+ index 1)))
         (let
-          [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-          [index : i64 0]
-          (begin
-            (while (< index 24)
-              (begin
-                (set! state (% (+ (* state 1664525) 1013904223) 2147483647))
-                (byte_buf.byte-buf-builder-push
-                  (&mut out)
-                  (cast (bit-and state 255) : u8))
-                (set! index (+ index 1))))
-            (let
-              [sample : String
-                (byte_buf.byte-buf-builder-finish-string (& out))]
-              (unless
-                (and
-                  (git-object-test-tree-error?
-                    (git_object.git-object-decode-tree
-                      (Sha1)
-                      (& sample)
-                      (& limits)))
-                  (git-object-test-commit-error?
-                    (git_object.git-object-decode-commit
-                      (Sha1)
-                      (& sample)
-                      (& limits)))
-                  (git-object-test-tag-error?
-                    (git_object.git-object-decode-tag
-                      (Sha1)
-                      (& sample)
-                      (& limits))))
-                (set! ok false)))))
-        (set! round (+ round 1)))
-      ok)))
+          [sample : String (byte_buf.byte-buf-builder-finish-string (& out))]
+          (unless
+            (and
+              (git-object-test-tree-error?
+                (git_object.git-object-decode-tree (Sha1) (& sample) (& limits)))
+              (git-object-test-commit-error?
+                (git_object.git-object-decode-commit
+                  (Sha1)
+                  (& sample)
+                  (& limits)))
+              (git-object-test-tag-error?
+                (git_object.git-object-decode-tag (Sha1) (& sample) (& limits))))
+            (set! ok false))))
+      (set! round (+ round 1)))
+    ok))
 
 (define (git-object-test-boundaries?) : bool
   (let
@@ -774,99 +716,93 @@
     [commit : String (git-object-test-commit-body (& hex))]
     [tag : String (git-object-test-tag-body (& hex))]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (git-object-test-append-tree-entry! (&mut out) "100644" "a" (& id.binary))
-      (git-object-test-append-tree-entry! (&mut out) "100644" "b" (& id.binary))
-      (let
-        [tree : String (byte_buf.byte-buf-builder-finish-string (& out))]
-        [ok : bool true]
-        (begin
-          (set! limits.max-object-bytes 1)
-          (unless
-            (and
-              (git-object-test-commit-error?
-                (git_object.git-object-decode-commit
-                  (Sha1)
-                  (& commit)
-                  (& limits)))
-              (git-object-test-tree-error?
-                (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
-              (git-object-test-tag-error?
-                (git_object.git-object-decode-tag (Sha1) (& tag) (& limits))))
-            (set! ok false))
-          (set! limits.max-object-bytes 4096)
-          (set! limits.max-headers 0)
-          (unless
-            (git-object-test-commit-error?
-              (git_object.git-object-decode-commit (Sha1) (& commit) (& limits)))
-            (set! ok false))
-          (set! limits.max-headers 32)
-          (set! limits.max-tree-entries 1)
-          (unless
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
-            (set! ok false))
-          (set! limits.max-tree-entries 32)
-          (set! limits.max-name-comparisons 0)
-          (unless
-            (git-object-test-tree-error?
-              (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
-            (set! ok false))
-          (and
-            ok
-            (git-object-test-commit-error?
-              (git_object.git-object-decode-commit
-                (Sha1)
-                "tree 1111111111111111111111111111111111111111\nauthor A\ncommitter B\ngpgsig X\n broken"
-                (& limits)))
-            (git-object-test-commit-error?
-              (git_object.git-object-decode-commit
-                (Sha1)
-                "tree 1111111111111111111111111111111111111111\nauthor A\n continued\ncommitter B\n\n"
-                (& limits)))
-            (git-object-test-tag-error?
-              (git_object.git-object-decode-tag
-                (Sha1)
-                "object 1111111111111111111111111111111111111111\ntype commit\ntag bad..name\n\n"
-                (& limits)))
-            (git-object-test-tag-error?
-              (git_object.git-object-decode-tag
-                (Sha1)
-                "object 1111111111111111111111111111111111111111\ntype commit\ntag v1\ntagger A\n continued\n\n"
-                (& limits)))))))))
+    (git-object-test-append-tree-entry! (&mut out) "100644" "a" (& id.binary))
+    (git-object-test-append-tree-entry! (&mut out) "100644" "b" (& id.binary))
+    (let
+      [tree : String (byte_buf.byte-buf-builder-finish-string (& out))]
+      [ok : bool true]
+      (set! limits.max-object-bytes 1)
+      (unless
+        (and
+          (git-object-test-commit-error?
+            (git_object.git-object-decode-commit (Sha1) (& commit) (& limits)))
+          (git-object-test-tree-error?
+            (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
+          (git-object-test-tag-error?
+            (git_object.git-object-decode-tag (Sha1) (& tag) (& limits))))
+        (set! ok false))
+      (set! limits.max-object-bytes 4096)
+      (set! limits.max-headers 0)
+      (unless
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit (Sha1) (& commit) (& limits)))
+        (set! ok false))
+      (set! limits.max-headers 32)
+      (set! limits.max-tree-entries 1)
+      (unless
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
+        (set! ok false))
+      (set! limits.max-tree-entries 32)
+      (set! limits.max-name-comparisons 0)
+      (unless
+        (git-object-test-tree-error?
+          (git_object.git-object-decode-tree (Sha1) (& tree) (& limits)))
+        (set! ok false))
+      (and
+        ok
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit
+            (Sha1)
+            "tree 1111111111111111111111111111111111111111\nauthor A\ncommitter B\ngpgsig X\n broken"
+            (& limits)))
+        (git-object-test-commit-error?
+          (git_object.git-object-decode-commit
+            (Sha1)
+            "tree 1111111111111111111111111111111111111111\nauthor A\n continued\ncommitter B\n\n"
+            (& limits)))
+        (git-object-test-tag-error?
+          (git_object.git-object-decode-tag
+            (Sha1)
+            "object 1111111111111111111111111111111111111111\ntype commit\ntag bad..name\n\n"
+            (& limits)))
+        (git-object-test-tag-error?
+          (git_object.git-object-decode-tag
+            (Sha1)
+            "object 1111111111111111111111111111111111111111\ntype commit\ntag v1\ntagger A\n continued\n\n"
+            (& limits)))))))
 
 (define (git-object-test-opaque-and-parent-bytes?) : bool
   (let
     [hex : String "1111111111111111111111111111111111111111"]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    (begin
-      (byte_buf.byte-buf-builder-append-string
-        (&mut out)
-        (str_cat.str-cat
-          "tree "
-          (string.substring (& hex) 0 40)
-          "\nparent "
-          (string.substring (& hex) 0 40)
-          "\nparent "
-          (string.substring (& hex) 0 40)
-          "\nauthor A\ncommitter B\n\n"))
-      (byte_buf.byte-buf-builder-push (&mut out) (cast 0 : u8))
-      (byte_buf.byte-buf-builder-push (&mut out) (cast 255 : u8))
-      (byte_buf.byte-buf-builder-push (&mut out) (cast 10 : u8))
-      (let
-        [bytes : String (byte_buf.byte-buf-builder-finish-string (& out))]
-        (match (git_object.git-object-decode-commit (Sha1) (& bytes) (& limits))
-          [(Ok commit)
-            (and
-              (= (array-length commit.parents) 2)
-              (string.eq (& (array-ref commit.parents 0).hex) (& hex))
-              (string.eq (& (array-ref commit.parents 1).hex) (& hex))
-              (= (string.string-length (& commit.message)) 3)
-              (= (git_object.git-object-byte (& commit.message) 0) 0)
-              (= (git_object.git-object-byte (& commit.message) 1) 255)
-              (= (git_object.git-object-byte (& commit.message) 2) 10))]
-          [_ false])))))
+    (byte_buf.byte-buf-builder-append-string
+      (&mut out)
+      (str_cat.str-cat
+        "tree "
+        (string.substring (& hex) 0 40)
+        "\nparent "
+        (string.substring (& hex) 0 40)
+        "\nparent "
+        (string.substring (& hex) 0 40)
+        "\nauthor A\ncommitter B\n\n"))
+    (byte_buf.byte-buf-builder-push (&mut out) (cast 0 : u8))
+    (byte_buf.byte-buf-builder-push (&mut out) (cast 255 : u8))
+    (byte_buf.byte-buf-builder-push (&mut out) (cast 10 : u8))
+    (let
+      [bytes : String (byte_buf.byte-buf-builder-finish-string (& out))]
+      (match (git_object.git-object-decode-commit (Sha1) (& bytes) (& limits))
+        [(Ok commit)
+          (and
+            (= (array-length commit.parents) 2)
+            (string.eq (& (array-ref commit.parents 0).hex) (& hex))
+            (string.eq (& (array-ref commit.parents 1).hex) (& hex))
+            (= (string.string-length (& commit.message)) 3)
+            (= (git_object.git-object-byte (& commit.message) 0) 0)
+            (= (git_object.git-object-byte (& commit.message) 1) 255)
+            (= (git_object.git-object-byte (& commit.message) 2) 10))]
+        [_ false]))))
 
 (define (git-object-test-header-prefixes?) : bool
   (let
@@ -876,41 +812,38 @@
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
     [index : i64 1]
     [ok : bool true]
-    (begin
-      (while (< index (- (string.string-length (& commit)) 7))
-        (begin
-          (unless
-            (=
-              (git-object-test-commit-error?
-                (git_object.git-object-decode-commit
-                  (Sha1)
-                  (string.substring (& commit) 0 index)
-                  (& limits)))
-              (!= index (- (string.string-length (& commit)) 8)))
-            (set! ok false))
-          (set! index (+ index 1))))
-      (set! index 1)
-      (while (< index (- (string.string-length (& tag)) 7))
-        (begin
-          (unless
-            (=
-              (git-object-test-tag-error?
-                (git_object.git-object-decode-tag
-                  (Sha1)
-                  (string.substring (& tag) 0 index)
-                  (& limits)))
-              ;; `tagger` is optional, so the tag also ends validly after
-              ;; its `tag` line.
-              (and
-                (!= index (- (string.string-length (& tag)) 8))
-                (!=
-                  index
-                  (-
-                    (string.string-length (& tag))
-                    (string.string-length "tagger A <a@b> 0 +0000\n\nmessage")))))
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (< index (- (string.string-length (& commit)) 7))
+      (unless
+        (=
+          (git-object-test-commit-error?
+            (git_object.git-object-decode-commit
+              (Sha1)
+              (string.substring (& commit) 0 index)
+              (& limits)))
+          (!= index (- (string.string-length (& commit)) 8)))
+        (set! ok false))
+      (set! index (+ index 1)))
+    (set! index 1)
+    (while (< index (- (string.string-length (& tag)) 7))
+      (unless
+        (=
+          (git-object-test-tag-error?
+            (git_object.git-object-decode-tag
+              (Sha1)
+              (string.substring (& tag) 0 index)
+              (& limits)))
+          ;; `tagger` is optional, so the tag also ends validly after
+          ;; its `tag` line.
+          (and
+            (!= index (- (string.string-length (& tag)) 8))
+            (!=
+              index
+              (-
+                (string.string-length (& tag))
+                (string.string-length "tagger A <a@b> 0 +0000\n\nmessage")))))
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 ;; Git's fsck_commit and fsck_tag fix the header order; an object that breaks it
 ;; is not a Git object, whatever its individual headers say.
@@ -923,155 +856,152 @@
     [tag-bad : (__tl_dyn-array String) (__tl_make-array String 0)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; author before tree
-      (let
-        [text : String
-          (str_cat.str-cat
-            "author A\ntree "
-            (string.substring (& hex) 0 40)
-            "\ncommitter B\n\n")]
-        (__tl_array-push! commit-bad text))
-      ;; parent after author
-      (let
-        [text : String
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\nauthor A\nparent "
-            (string.substring (& parent) 0 40)
-            "\ncommitter B\n\n")]
-        (__tl_array-push! commit-bad text))
-      ;; committer before author
-      (let
-        [text : String
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\ncommitter B\nauthor A\n\n")]
-        (__tl_array-push! commit-bad text))
-      ;; another header before committer
-      (let
-        [text : String
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\nauthor A\nencoding UTF-8\ncommitter B\n\n")]
-        (__tl_array-push! commit-bad text))
-      ;; another header between tree and author
-      (let
-        [text : String
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\nx y\nauthor A\ncommitter B\n\n")]
-        (__tl_array-push! commit-bad text))
-      ;; type before object
-      (let
-        [text : String
-          (str_cat.str-cat
-            "type commit\nobject "
-            (string.substring (& hex) 0 40)
-            "\ntag v1\n\n")]
-        (__tl_array-push! tag-bad text))
-      ;; tag before type
-      (let
-        [text : String
-          (str_cat.str-cat
-            "object "
-            (string.substring (& hex) 0 40)
-            "\ntag v1\ntype commit\n\n")]
-        (__tl_array-push! tag-bad text))
-      ;; tagger not immediately after tag
-      (let
-        [text : String
-          (str_cat.str-cat
-            "object "
-            (string.substring (& hex) 0 40)
-            "\ntype commit\ntag v1\nx y\ntagger A\n\n")]
-        (__tl_array-push! tag-bad text))
-      ;; another header before tag
-      (let
-        [text : String
-          (str_cat.str-cat
-            "object "
-            (string.substring (& hex) 0 40)
-            "\ntype commit\nx y\ntag v1\n\n")]
-        (__tl_array-push! tag-bad text))
-      (while (< index (array-length commit-bad))
-        (begin
-          (unless
-            (git-object-test-commit-error?
-              (git_object.git-object-decode-commit
-                (Sha1)
-                (& (array-ref commit-bad index))
-                (& limits)))
-            (set! ok false))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index (array-length tag-bad))
-        (begin
-          (unless
-            (git-object-test-tag-error?
-              (git_object.git-object-decode-tag
-                (Sha1)
-                (& (array-ref tag-bad index))
-                (& limits)))
-            (set! ok false))
-          (set! index (+ index 1))))
-      (and
-        ok
-        ;; parents between tree and author, extras after committer, in order
-        (match (git_object.git-object-decode-commit
-          (Sha1)
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\nparent "
-            (string.substring (& parent) 0 40)
-            "\nparent "
-            (string.substring (& hex) 0 40)
-            "\nauthor A\ncommitter B\nencoding UTF-8\n\nm")
-          (& limits))
-          [(Ok commit)
-            (and
-              (= (array-length commit.parents) 2)
-              (string.eq (& (array-ref commit.parents 0).hex) (& parent))
-              (= (array-length commit.extra-headers) 1))]
-          [_ false])
-        ;; a bodiless commit: the object ends at its committer line
-        (match (git_object.git-object-decode-commit
-          (Sha1)
-          (str_cat.str-cat
-            "tree "
-            (string.substring (& hex) 0 40)
-            "\nauthor A\ncommitter B\n")
-          (& limits))
-          [(Ok commit) (= (string.string-length (& commit.message)) 0)]
-          [_ false])
-        ;; but the last header line still needs its LF, and an empty object
-        ;; has no required headers
+    ;; author before tree
+    (let
+      [text : String
+        (str_cat.str-cat
+          "author A\ntree "
+          (string.substring (& hex) 0 40)
+          "\ncommitter B\n\n")]
+      (__tl_array-push! commit-bad text))
+    ;; parent after author
+    (let
+      [text : String
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\nauthor A\nparent "
+          (string.substring (& parent) 0 40)
+          "\ncommitter B\n\n")]
+      (__tl_array-push! commit-bad text))
+    ;; committer before author
+    (let
+      [text : String
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\ncommitter B\nauthor A\n\n")]
+      (__tl_array-push! commit-bad text))
+    ;; another header before committer
+    (let
+      [text : String
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\nauthor A\nencoding UTF-8\ncommitter B\n\n")]
+      (__tl_array-push! commit-bad text))
+    ;; another header between tree and author
+    (let
+      [text : String
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\nx y\nauthor A\ncommitter B\n\n")]
+      (__tl_array-push! commit-bad text))
+    ;; type before object
+    (let
+      [text : String
+        (str_cat.str-cat
+          "type commit\nobject "
+          (string.substring (& hex) 0 40)
+          "\ntag v1\n\n")]
+      (__tl_array-push! tag-bad text))
+    ;; tag before type
+    (let
+      [text : String
+        (str_cat.str-cat
+          "object "
+          (string.substring (& hex) 0 40)
+          "\ntag v1\ntype commit\n\n")]
+      (__tl_array-push! tag-bad text))
+    ;; tagger not immediately after tag
+    (let
+      [text : String
+        (str_cat.str-cat
+          "object "
+          (string.substring (& hex) 0 40)
+          "\ntype commit\ntag v1\nx y\ntagger A\n\n")]
+      (__tl_array-push! tag-bad text))
+    ;; another header before tag
+    (let
+      [text : String
+        (str_cat.str-cat
+          "object "
+          (string.substring (& hex) 0 40)
+          "\ntype commit\nx y\ntag v1\n\n")]
+      (__tl_array-push! tag-bad text))
+    (while (< index (array-length commit-bad))
+      (unless
         (git-object-test-commit-error?
           (git_object.git-object-decode-commit
             (Sha1)
-            (str_cat.str-cat
-              "tree "
-              (string.substring (& hex) 0 40)
-              "\nauthor A\ncommitter B")
+            (& (array-ref commit-bad index))
             (& limits)))
-        (git-object-test-commit-error?
-          (git_object.git-object-decode-commit (Sha1) "" (& limits)))
-        ;; a tag without a tagger, with a later header
-        (match (git_object.git-object-decode-tag
+        (set! ok false))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index (array-length tag-bad))
+      (unless
+        (git-object-test-tag-error?
+          (git_object.git-object-decode-tag
+            (Sha1)
+            (& (array-ref tag-bad index))
+            (& limits)))
+        (set! ok false))
+      (set! index (+ index 1)))
+    (and
+      ok
+      ;; parents between tree and author, extras after committer, in order
+      (match (git_object.git-object-decode-commit
+        (Sha1)
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\nparent "
+          (string.substring (& parent) 0 40)
+          "\nparent "
+          (string.substring (& hex) 0 40)
+          "\nauthor A\ncommitter B\nencoding UTF-8\n\nm")
+        (& limits))
+        [(Ok commit)
+          (and
+            (= (array-length commit.parents) 2)
+            (string.eq (& (array-ref commit.parents 0).hex) (& parent))
+            (= (array-length commit.extra-headers) 1))]
+        [_ false])
+      ;; a bodiless commit: the object ends at its committer line
+      (match (git_object.git-object-decode-commit
+        (Sha1)
+        (str_cat.str-cat
+          "tree "
+          (string.substring (& hex) 0 40)
+          "\nauthor A\ncommitter B\n")
+        (& limits))
+        [(Ok commit) (= (string.string-length (& commit.message)) 0)]
+        [_ false])
+      ;; but the last header line still needs its LF, and an empty object
+      ;; has no required headers
+      (git-object-test-commit-error?
+        (git_object.git-object-decode-commit
           (Sha1)
           (str_cat.str-cat
-            "object "
+            "tree "
             (string.substring (& hex) 0 40)
-            "\ntype commit\ntag v1\nx y\n\n")
-          (& limits))
-          [(Ok tag)
-            (and (not tag.has-tagger) (= (array-length tag.extra-headers) 1))]
-          [_ false])))))
+            "\nauthor A\ncommitter B")
+          (& limits)))
+      (git-object-test-commit-error?
+        (git_object.git-object-decode-commit (Sha1) "" (& limits)))
+      ;; a tag without a tagger, with a later header
+      (match (git_object.git-object-decode-tag
+        (Sha1)
+        (str_cat.str-cat
+          "object "
+          (string.substring (& hex) 0 40)
+          "\ntype commit\ntag v1\nx y\n\n")
+        (& limits))
+        [(Ok tag)
+          (and (not tag.has-tagger) (= (array-length tag.extra-headers) 1))]
+        [_ false]))))
 
 ;; A symref target is a full ref under refs/: HEAD never points elsewhere.
 (define (git-object-test-symref-targets?) : bool

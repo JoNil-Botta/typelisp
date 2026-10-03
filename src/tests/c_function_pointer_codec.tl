@@ -22,20 +22,18 @@
           24
           16))]
     [index : i64 0]
-    (begin
-      (set! (array-ref bytes 0) 38)
-      (while (< index 8)
-        (begin
-          (set!
-            (array-ref bytes (+ 8 index))
-            (cast (bit-and (shr signature (* index 8)) 255) : u8))
-          (if complete
-            (set!
-              (array-ref bytes (+ 16 index))
-              (cast (bit-and (shr mode (* index 8)) 255) : u8))
-            unit)
-          (set! index (+ index 1))))
-      bytes)))
+    (set! (array-ref bytes 0) 38)
+    (while (< index 8)
+      (set!
+        (array-ref bytes (+ 8 index))
+        (cast (bit-and (shr signature (* index 8)) 255) : u8))
+      (if complete
+        (set!
+          (array-ref bytes (+ 16 index))
+          (cast (bit-and (shr mode (* index 8)) 255) : u8))
+        unit)
+      (set! index (+ index 1)))
+    bytes))
 
 (define (c-function-codec-decode [mode : ast.AstCFunctionMode]) : bool
   (let
@@ -68,31 +66,29 @@
 
 (test
   c-function-codec-mode-decode
-  (begin
-    (test.assert-true (c-function-codec-decode Nullable) "nullable decode")
-    (test.assert-true (c-function-codec-decode NonNull) "non-null decode")
-    (test.assert-true
-      (c-function-codec-decode UnsafeNullable)
-      "unsafe nullable decode")
-    (test.assert-true
-      (c-function-codec-decode UnsafeNonNull)
-      "unsafe non-null decode")))
+  (test.assert-true (c-function-codec-decode Nullable) "nullable decode")
+  (test.assert-true (c-function-codec-decode NonNull) "non-null decode")
+  (test.assert-true
+    (c-function-codec-decode UnsafeNullable)
+    "unsafe nullable decode")
+  (test.assert-true
+    (c-function-codec-decode UnsafeNonNull)
+    "unsafe non-null decode"))
 
 (test
   c-function-codec-malformed
-  (begin
-    (test.assert-true
-      (c-function-codec-invalid 17 -1 true)
-      "negative mode rejected")
-    (test.assert-true
-      (c-function-codec-invalid 17 4 true)
-      "unknown mode rejected")
-    (test.assert-true
-      (c-function-codec-invalid -1 0 true)
-      "negative signature rejected")
-    (test.assert-true
-      (c-function-codec-invalid 17 0 false)
-      "truncated mode rejected")))
+  (test.assert-true
+    (c-function-codec-invalid 17 -1 true)
+    "negative mode rejected")
+  (test.assert-true
+    (c-function-codec-invalid 17 4 true)
+    "unknown mode rejected")
+  (test.assert-true
+    (c-function-codec-invalid -1 0 true)
+    "negative signature rejected")
+  (test.assert-true
+    (c-function-codec-invalid 17 0 false)
+    "truncated mode rejected"))
 
 (define (c-function-codec-reference-valid? [signature : i64]) : bool
   (let
@@ -111,25 +107,23 @@
         (c-function-codec-session)
         (__tl_make-array i64 0))]
     [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
-    (begin
-      (codec.surface-ast-validate-c-function-signatures! (&mut reader) pools)
-      (codec.surface-ast-reader-valid? (& reader)))))
+    (codec.surface-ast-validate-c-function-signatures! (&mut reader) pools)
+    (codec.surface-ast-reader-valid? (& reader))))
 
 (test
   c-function-codec-signature-references
-  (begin
-    (test.assert-true
-      (c-function-codec-reference-valid? 1)
-      "function signature accepted")
-    (test.assert-false
-      (c-function-codec-reference-valid? 0)
-      "scalar signature rejected")
-    (test.assert-false
-      (c-function-codec-reference-valid? 2)
-      "CFunc signature alias rejected")
-    (test.assert-false
-      (c-function-codec-reference-valid? 3)
-      "one-past-pool signature rejected")
-    (test.assert-false
-      (c-function-codec-reference-valid? 9223372036854775807)
-      "large signature rejected")))
+  (test.assert-true
+    (c-function-codec-reference-valid? 1)
+    "function signature accepted")
+  (test.assert-false
+    (c-function-codec-reference-valid? 0)
+    "scalar signature rejected")
+  (test.assert-false
+    (c-function-codec-reference-valid? 2)
+    "CFunc signature alias rejected")
+  (test.assert-false
+    (c-function-codec-reference-valid? 3)
+    "one-past-pool signature rejected")
+  (test.assert-false
+    (c-function-codec-reference-valid? 9223372036854775807)
+    "large signature rejected"))

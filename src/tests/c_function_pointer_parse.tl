@@ -48,41 +48,39 @@
 
 (test
   c-function-parser-modes
-  (begin
-    (test.assert-true (c-function-parse-mode Nullable) "nullable C signature")
-    (test.assert-true (c-function-parse-mode NonNull) "non-null C signature")
-    (test.assert-true
-      (c-function-parse-mode UnsafeNullable)
-      "unsafe nullable C signature")
-    (test.assert-true
-      (c-function-parse-mode UnsafeNonNull)
-      "unsafe non-null C signature")))
+  (test.assert-true (c-function-parse-mode Nullable) "nullable C signature")
+  (test.assert-true (c-function-parse-mode NonNull) "non-null C signature")
+  (test.assert-true
+    (c-function-parse-mode UnsafeNullable)
+    "unsafe nullable C signature")
+  (test.assert-true
+    (c-function-parse-mode UnsafeNonNull)
+    "unsafe non-null C signature"))
 
 (test
   c-function-parser-invalid
-  (begin
-    (test.assert-true (c-function-parse-invalid "(CFunc)") "missing operands")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable)")
-      "missing signature")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable (-> i64) i64)")
-      "extra operand")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc wrong (-> i64))")
-      "unknown mode")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc 0 (-> i64))")
-      "non-symbol mode")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable i64)")
-      "non-function signature")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable SomeAlias)")
-      "signature alias rejected")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable (->))")
-      "missing result")
-    (test.assert-true
-      (c-function-parse-invalid "(CFunc nullable (CFunc nullable (-> i64)))")
-      "nested wrapper is not a signature")))
+  (test.assert-true (c-function-parse-invalid "(CFunc)") "missing operands")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable)")
+    "missing signature")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable (-> i64) i64)")
+    "extra operand")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc wrong (-> i64))")
+    "unknown mode")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc 0 (-> i64))")
+    "non-symbol mode")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable i64)")
+    "non-function signature")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable SomeAlias)")
+    "signature alias rejected")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable (->))")
+    "missing result")
+  (test.assert-true
+    (c-function-parse-invalid "(CFunc nullable (CFunc nullable (-> i64)))")
+    "nested wrapper is not a signature"))

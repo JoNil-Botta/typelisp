@@ -97,16 +97,14 @@
   (let
     [out : clone_support.CloneRootEntries roots]
     [index : i64 start]
-    (begin
-      (while (< index end)
-        (begin
-          (set!
-            out
-            (clone_support.clone-root-entries-add-id
-              out
-              (clone-root-entries-smoke-key-id index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index end)
+      (set!
+        out
+        (clone_support.clone-root-entries-add-id
+          out
+          (clone-root-entries-smoke-key-id index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (clone-root-entries-smoke-order-ok?
   [roots : clone_support.CloneRootEntries]) : bool
@@ -114,16 +112,15 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
     [ok : bool true]
-    (begin
-      (while (and (< index count) ok)
-        (if (not
-          (=
-            (clone_support.clone-root-entries-key-id-at-or roots index -1)
-            (clone-root-entries-smoke-key-id (- count (+ index 1)))))
-          (set! ok false)
-          unit)
-        (set! index (+ index 1)))
-      ok)))
+    (while (and (< index count) ok)
+      (if (not
+        (=
+          (clone_support.clone-root-entries-key-id-at-or roots index -1)
+          (clone-root-entries-smoke-key-id (- count (+ index 1)))))
+        (set! ok false)
+        unit)
+      (set! index (+ index 1)))
+    ok))
 
 (define (clone-root-entries-smoke-copy-equal?
   [left : clone_support.CloneRootEntries]
@@ -132,19 +129,18 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len left)]
     [ok : bool (= count (clone_support.clone-root-entries-len right))]
-    (begin
-      (while (and (< index count) ok)
-        (if (and
-          (=
-            (clone_support.clone-root-entries-key-id-at-or left index -1)
-            (clone_support.clone-root-entries-key-id-at-or right index -1))
-          (=
-            (clone_support.clone-root-entries-helper-id-at-or left index -1)
-            (clone_support.clone-root-entries-helper-id-at-or right index -1)))
-          unit
-          (set! ok false))
-        (set! index (+ index 1)))
-      ok)))
+    (while (and (< index count) ok)
+      (if (and
+        (=
+          (clone_support.clone-root-entries-key-id-at-or left index -1)
+          (clone_support.clone-root-entries-key-id-at-or right index -1))
+        (=
+          (clone_support.clone-root-entries-helper-id-at-or left index -1)
+          (clone_support.clone-root-entries-helper-id-at-or right index -1)))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (clone-root-entries-smoke-ok?) : bool
   (let

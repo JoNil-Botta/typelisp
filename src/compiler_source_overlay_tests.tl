@@ -42,29 +42,26 @@
   (load_tests.compiler-load-write-file-text (overlay-test-path name) text))
 
 (define (overlay-test-setup!) : unit
-  (begin
-    (if (compiler_load.compiler-load-test-mkdir "target/check_overlay")
-      unit
-      unit)
-    (overlay-test-write! "a.tl" (string.copy overlay-test-a))
-    (overlay-test-write! "b.tl" (string.copy overlay-test-b))
-    (overlay-test-write! "c.tl" "(define (unused) : i64 0)")
-    (overlay-test-write! "e.tl" "(define (main) : i64 missing)")))
+  (if (compiler_load.compiler-load-test-mkdir "target/check_overlay")
+    unit
+    unit)
+  (overlay-test-write! "a.tl" (string.copy overlay-test-a))
+  (overlay-test-write! "b.tl" (string.copy overlay-test-b))
+  (overlay-test-write! "c.tl" "(define (unused) : i64 0)")
+  (overlay-test-write! "e.tl" "(define (main) : i64 missing)"))
 
 (define (overlay-test-names-2 [first : String] [second : String]) : svec.Vec
   (let
     [names : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut names) first)
-      (svec.push-ref! (&mut names) second)
-      names)))
+    (svec.push-ref! (&mut names) first)
+    (svec.push-ref! (&mut names) second)
+    names))
 
 (define (overlay-test-names-1 [first : String]) : svec.Vec
   (let
     [names : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut names) first)
-      names)))
+    (svec.push-ref! (&mut names) first)
+    names))
 
 ;; Admit `texts` for the canonical paths of fixture `names` under `limits`.
 (define (overlay-test-admit-with
@@ -80,35 +77,31 @@
         "target/check_overlay")]
     [inputs (source_overlay.compiler-source-overlay-inputs)]
     [index : i64 0]
-    (begin
-      (while (< index (svec.len (& paths)))
-        (begin
-          (source_overlay.compiler-source-overlay-inputs-push!
-            (&mut inputs)
-            (svec.get (& paths) index "")
-            (svec.get (& texts) index "")
-            (Any))
-          (set! index (+ index 1))))
-      (source_overlay.compiler-source-overlay-admit
-        generation
-        root
-        cwd
-        inputs
-        limits))))
+    (while (< index (svec.len (& paths)))
+      (source_overlay.compiler-source-overlay-inputs-push!
+        (&mut inputs)
+        (svec.get (& paths) index "")
+        (svec.get (& texts) index "")
+        (Any))
+      (set! index (+ index 1)))
+    (source_overlay.compiler-source-overlay-admit
+      generation
+      root
+      cwd
+      inputs
+      limits)))
 
 (define (overlay-test-canonical-names [names : svec.Vec]) : svec.Vec
   (let
     [out : svec.Vec (svec.new)]
     [index : i64 0]
-    (begin
-      (while (< index (svec.len (& names)))
-        (begin
-          (svec.push-ref!
-            (&mut out)
-            (overlay-test-canonical
-              (overlay-test-path (svec.get (& names) index ""))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (svec.len (& names)))
+      (svec.push-ref!
+        (&mut out)
+        (overlay-test-canonical
+          (overlay-test-path (svec.get (& names) index ""))))
+      (set! index (+ index 1)))
+    out))
 
 (define (overlay-test-admit [names : svec.Vec] [texts : svec.Vec]) : source_overlay.ResultCompilerSourceOverlay
   (overlay-test-admit-with
@@ -170,23 +163,22 @@
       (overlay-test-names-2
         (string.copy overlay-test-a-renamed)
         (string.copy overlay-test-b-other))]
-    (begin
-      (overlay-test-setup!)
-      (and
-        (overlay-test-plain-check-ok? "a.tl")
-        (=
-          (overlay-test-check
-            (overlay-test-admit (clone both) (clone both-texts)))
-          1)
-        (=
-          (overlay-test-check
-            (overlay-test-admit
-              (overlay-test-names-1 "a.tl")
-              (overlay-test-names-1 (string.copy overlay-test-a-renamed))))
-          0)
-        (= (overlay-test-check (overlay-test-admit (clone both) other-texts)) 0)
-        (= (overlay-test-check (overlay-test-admit (clone both) both-texts)) 1)
-        (overlay-test-plain-check-ok? "a.tl")))))
+    (overlay-test-setup!)
+    (and
+      (overlay-test-plain-check-ok? "a.tl")
+      (=
+        (overlay-test-check
+          (overlay-test-admit (clone both) (clone both-texts)))
+        1)
+      (=
+        (overlay-test-check
+          (overlay-test-admit
+            (overlay-test-names-1 "a.tl")
+            (overlay-test-names-1 (string.copy overlay-test-a-renamed))))
+        0)
+      (= (overlay-test-check (overlay-test-admit (clone both) other-texts)) 0)
+      (= (overlay-test-check (overlay-test-admit (clone both) both-texts)) 1)
+      (overlay-test-plain-check-ok? "a.tl"))))
 
 (define (overlay-test-class-name [class : source_overlay.CompilerSourceClass]) : String
   (match class
@@ -212,14 +204,12 @@
     [count : i64 (source_overlay.compiler-source-ledger-count ledger)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (< index count)
-        (begin
-          (match (source_overlay.compiler-source-ledger-get ledger index).class
-            [(Embedded) (set! found true)]
-            [_ unit])
-          (set! index (+ index 1))))
-      found)))
+    (while (< index count)
+      (match (source_overlay.compiler-source-ledger-get ledger index).class
+        [(Embedded) (set! found true)]
+        [_ unit])
+      (set! index (+ index 1)))
+    found))
 
 ;; The ledger of a successful overlay check of fixture `root`, or an empty one.
 (define (overlay-test-ledger
@@ -295,22 +285,20 @@
         [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
         [index : i64 0]
         [text : String ""]
-        (begin
-          (while (< index count)
-            (let
-              [diag : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-list-get diagnostics index)]
-              (begin
-                (set!
-                  text
-                  (str_cat.str-cat
-                    text
-                    (string.int->string (cdiag.compiler-diagnostic-line diag))
-                    ":"
-                    (cdiag.compiler-diagnostic-message diag)
-                    "\n"))
-                (set! index (+ index 1)))))
-          text))]))
+        (while (< index count)
+          (let
+            [diag : cdiag.CompilerDiagnostic
+              (cdiag.compiler-diagnostic-list-get diagnostics index)]
+            (set!
+              text
+              (str_cat.str-cat
+                text
+                (string.int->string (cdiag.compiler-diagnostic-line diag))
+                ":"
+                (cdiag.compiler-diagnostic-message diag)
+                "\n"))
+            (set! index (+ index 1))))
+        text)]))
 
 ;; With an empty overlay a failing check reports exactly what it reports
 ;; without one.
@@ -481,53 +469,51 @@
     [changed : source_overlay.CompilerSourceLedger
       (source_overlay.compiler-source-ledger-new
         (source_overlay.compiler-source-overlay-default-limits))]
-    (begin
+    (source_overlay.compiler-source-ledger-record-text!
+      (&mut limited)
+      (Disk)
+      "/one.tl"
+      "one.tl"
+      "1")
+    (source_overlay.compiler-source-ledger-record-text!
+      (&mut limited)
+      (Disk)
+      "/two.tl"
+      "two.tl"
+      "2")
+    (source_overlay.compiler-source-ledger-record-text!
+      (&mut changed)
+      (Disk)
+      "/one.tl"
+      "one.tl"
+      "1")
+    (source_overlay.compiler-source-ledger-record-text!
+      (&mut changed)
+      (Disk)
+      "/one.tl"
+      "one.tl"
+      "1")
+    (let
+      [same : bool
+        (and
+          (not (source_overlay.compiler-source-ledger-failed? (& changed)))
+          (= (source_overlay.compiler-source-ledger-count (& changed)) 1))]
       (source_overlay.compiler-source-ledger-record-text!
-        (&mut limited)
+        (&mut changed)
         (Disk)
         "/one.tl"
         "one.tl"
-        "1")
-      (source_overlay.compiler-source-ledger-record-text!
-        (&mut limited)
-        (Disk)
-        "/two.tl"
-        "two.tl"
         "2")
-      (source_overlay.compiler-source-ledger-record-text!
-        (&mut changed)
-        (Disk)
-        "/one.tl"
-        "one.tl"
-        "1")
-      (source_overlay.compiler-source-ledger-record-text!
-        (&mut changed)
-        (Disk)
-        "/one.tl"
-        "one.tl"
-        "1")
-      (let
-        [same : bool
-          (and
-            (not (source_overlay.compiler-source-ledger-failed? (& changed)))
-            (= (source_overlay.compiler-source-ledger-count (& changed)) 1))]
-        (begin
-          (source_overlay.compiler-source-ledger-record-text!
-            (&mut changed)
-            (Disk)
-            "/one.tl"
-            "one.tl"
-            "2")
-          (and
-            same
-            (source_overlay.compiler-source-ledger-failed? (& limited))
-            (=
-              (source_overlay.compiler-source-ledger-failure (& limited)).code
-              source_overlay.compiler-source-overlay-error-ledger-limit)
-            (source_overlay.compiler-source-ledger-failed? (& changed))
-            (=
-              (source_overlay.compiler-source-ledger-failure (& changed)).code
-              source_overlay.compiler-source-overlay-error-changed)))))))
+      (and
+        same
+        (source_overlay.compiler-source-ledger-failed? (& limited))
+        (=
+          (source_overlay.compiler-source-ledger-failure (& limited)).code
+          source_overlay.compiler-source-overlay-error-ledger-limit)
+        (source_overlay.compiler-source-ledger-failed? (& changed))
+        (=
+          (source_overlay.compiler-source-ledger-failure (& changed)).code
+          source_overlay.compiler-source-overlay-error-changed)))))
 
 ;; A package entry and a source of its dependency package change together; only
 ;; the whole candidate generation checks, and the ledger records the dependency
@@ -550,110 +536,106 @@
     [dep-candidate : String
       "(define (inc [x : i64]) : i64 (+ x 1))
 (define (twice [x : i64]) : i64 (* x 2))"]
-    (begin
-      (overlay-test-setup!)
-      (if (compiler_load.compiler-load-test-mkdir (string.copy base))
-        unit
-        unit)
-      (if (compiler_load.compiler-load-test-mkdir
-        "target/check_overlay/pkg/app")
-        unit
-        unit)
-      (if (compiler_load.compiler-load-test-mkdir
-        "target/check_overlay/pkg/app/src")
-        unit
-        unit)
-      (if (compiler_load.compiler-load-test-mkdir
-        "target/check_overlay/pkg/math")
-        unit
-        unit)
-      (if (compiler_load.compiler-load-test-mkdir
-        "target/check_overlay/pkg/math/src")
-        unit
-        unit)
-      (load_tests.compiler-load-write-file-text
-        (string.copy manifest)
-        "(package (name \"math\") (version \"1\") (kind staticlib) (entry \"src/add.tl\"))")
-      (load_tests.compiler-load-write-file-text
-        (string.copy dep)
-        "(define (inc [x : i64]) : i64 (+ x 1))")
-      (load_tests.compiler-load-write-file-text
-        (string.copy entry)
-        "(import math.src.add)
+    (overlay-test-setup!)
+    (if (compiler_load.compiler-load-test-mkdir (string.copy base))
+      unit
+      unit)
+    (if (compiler_load.compiler-load-test-mkdir "target/check_overlay/pkg/app")
+      unit
+      unit)
+    (if (compiler_load.compiler-load-test-mkdir
+      "target/check_overlay/pkg/app/src")
+      unit
+      unit)
+    (if (compiler_load.compiler-load-test-mkdir "target/check_overlay/pkg/math")
+      unit
+      unit)
+    (if (compiler_load.compiler-load-test-mkdir
+      "target/check_overlay/pkg/math/src")
+      unit
+      unit)
+    (load_tests.compiler-load-write-file-text
+      (string.copy manifest)
+      "(package (name \"math\") (version \"1\") (kind staticlib) (entry \"src/add.tl\"))")
+    (load_tests.compiler-load-write-file-text
+      (string.copy dep)
+      "(define (inc [x : i64]) : i64 (+ x 1))")
+    (load_tests.compiler-load-write-file-text
+      (string.copy entry)
+      "(import math.src.add)
 (define (main) : i64 (add.inc 41))")
-      (let
-        [both
-          (overlay-test-package-check
-            (clone deps)
-            (overlay-test-admit-with
-              1
-              (overlay-test-names-2
-                (overlay-test-canonical (string.copy entry))
-                (overlay-test-canonical (string.copy dep)))
-              (overlay-test-names-2
-                (string.copy entry-candidate)
-                (string.copy dep-candidate))
-              (source_overlay.compiler-source-overlay-default-limits)))]
-        [entry-only
-          (overlay-test-package-check
-            (clone deps)
-            (overlay-test-admit-with
-              1
-              (overlay-test-names-1
-                (overlay-test-canonical (string.copy entry)))
-              (overlay-test-names-1 (string.copy entry-candidate))
-              (source_overlay.compiler-source-overlay-default-limits)))]
-        [_write-tlci : unit
-          (begin
-            (if (compiler_load.compiler-load-test-mkdir
-              "target/check_overlay/pkg/math/target")
-              unit
-              unit)
-            (if (compiler_load.compiler-load-test-mkdir
-              "target/check_overlay/pkg/math/target/release")
-              unit
-              unit)
-            (load_tests.compiler-load-write-file-text
-              (string.copy tlci)
-              "not a tlci image"))]
-        [with-tlci
-          (overlay-test-package-check
-            (clone deps)
-            (overlay-test-admit-with
-              1
-              (overlay-test-names-2
-                (overlay-test-canonical (string.copy entry))
-                (overlay-test-canonical (string.copy dep)))
-              (overlay-test-names-2
-                (string.copy entry-candidate)
-                (string.copy dep-candidate))
-              (source_overlay.compiler-source-overlay-default-limits)))]
-        [removed : bool (= (fs.remove-file-status (& tlci)) 0)]
-        (and
-          (= both.status 1)
-          (= entry-only.status 0)
-          removed
-          (= with-tlci.status 0)
-          (string.eq
-            (overlay-test-ledger-class-of
-              (& with-tlci.ledger)
-              (overlay-test-canonical (string.copy tlci)))
-            "disk")
-          (string.eq
-            (overlay-test-ledger-class-of
-              (& both.ledger)
-              (overlay-test-canonical (string.copy tlci)))
-            "")
-          (string.eq
-            (overlay-test-ledger-class-of
-              (& both.ledger)
-              (overlay-test-canonical (string.copy manifest)))
-            "disk")
-          (string.eq
-            (overlay-test-ledger-class-of
-              (& both.ledger)
+    (let
+      [both
+        (overlay-test-package-check
+          (clone deps)
+          (overlay-test-admit-with
+            1
+            (overlay-test-names-2
+              (overlay-test-canonical (string.copy entry))
               (overlay-test-canonical (string.copy dep)))
-            "overlay"))))))
+            (overlay-test-names-2
+              (string.copy entry-candidate)
+              (string.copy dep-candidate))
+            (source_overlay.compiler-source-overlay-default-limits)))]
+      [entry-only
+        (overlay-test-package-check
+          (clone deps)
+          (overlay-test-admit-with
+            1
+            (overlay-test-names-1 (overlay-test-canonical (string.copy entry)))
+            (overlay-test-names-1 (string.copy entry-candidate))
+            (source_overlay.compiler-source-overlay-default-limits)))]
+      [_write-tlci : unit
+        (begin
+          (if (compiler_load.compiler-load-test-mkdir
+            "target/check_overlay/pkg/math/target")
+            unit
+            unit)
+          (if (compiler_load.compiler-load-test-mkdir
+            "target/check_overlay/pkg/math/target/release")
+            unit
+            unit)
+          (load_tests.compiler-load-write-file-text
+            (string.copy tlci)
+            "not a tlci image"))]
+      [with-tlci
+        (overlay-test-package-check
+          (clone deps)
+          (overlay-test-admit-with
+            1
+            (overlay-test-names-2
+              (overlay-test-canonical (string.copy entry))
+              (overlay-test-canonical (string.copy dep)))
+            (overlay-test-names-2
+              (string.copy entry-candidate)
+              (string.copy dep-candidate))
+            (source_overlay.compiler-source-overlay-default-limits)))]
+      [removed : bool (= (fs.remove-file-status (& tlci)) 0)]
+      (and
+        (= both.status 1)
+        (= entry-only.status 0)
+        removed
+        (= with-tlci.status 0)
+        (string.eq
+          (overlay-test-ledger-class-of
+            (& with-tlci.ledger)
+            (overlay-test-canonical (string.copy tlci)))
+          "disk")
+        (string.eq
+          (overlay-test-ledger-class-of
+            (& both.ledger)
+            (overlay-test-canonical (string.copy tlci)))
+          "")
+        (string.eq
+          (overlay-test-ledger-class-of
+            (& both.ledger)
+            (overlay-test-canonical (string.copy manifest)))
+          "disk")
+        (string.eq
+          (overlay-test-ledger-class-of
+            (& both.ledger)
+            (overlay-test-canonical (string.copy dep)))
+          "overlay")))))
 
 (defstruct OverlayTestPackageOutcome
   (status i64)
@@ -774,76 +756,74 @@
           (overlay-test-names-1 "b.tl")
           (overlay-test-names-1 (string.copy (& other))))
           [(Ok second-overlay)
-            (begin
-              (compiler_load.compiler-load-session-state-source-provider-install!
-                (owned_view.compiler-owned-shared-view first)
-                first-overlay)
-              (compiler_load.compiler-load-session-state-source-provider-install!
-                (owned_view.compiler-owned-shared-view second)
-                second-overlay)
-              (let
-                [first-read : String
-                  (compiler_load.compiler-load-session-state-read-source-text
-                    (owned_view.compiler-owned-shared-view first)
-                    (& b))]
-                [second-read : String
-                  (compiler_load.compiler-load-session-state-read-source-text
-                    (owned_view.compiler-owned-shared-view second)
-                    (& b))]
-                [serial-read : String
-                  (compiler_load.compiler-load-session-read-source-text (& b))]
-                [first-again : String
-                  (compiler_load.compiler-load-session-state-read-source-text
-                    (owned_view.compiler-owned-shared-view first)
-                    (& b))]
-                [first-ledger : source_overlay.CompilerSourceLedger
-                  (compiler_load.compiler-load-session-state-source-provider-finish!
-                    (owned_view.compiler-owned-shared-view first))]
-                [second-ledger : source_overlay.CompilerSourceLedger
-                  (compiler_load.compiler-load-session-state-source-provider-finish!
-                    (owned_view.compiler-owned-shared-view second))]
-                [first-content : source_overlay.CompilerSourceContent
-                  (overlay-test-ledger-content (& first-ledger) 0)]
-                [second-content : source_overlay.CompilerSourceContent
-                  (overlay-test-ledger-content (& second-ledger) 0)]
-                [renamed-content : source_overlay.CompilerSourceContent
-                  (overlay-test-content (& renamed))]
-                [other-content : source_overlay.CompilerSourceContent
-                  (overlay-test-content (& other))]
-                (and
-                  (string.eq (& first-read) (& renamed))
-                  (string.eq (& second-read) (& other))
-                  (string.eq (& serial-read) (& disk))
-                  (string.eq (& first-again) (& renamed))
-                  (not
-                    (compiler_load.compiler-load-session-state-source-provider-active?
-                      (& first)))
-                  (not
-                    (compiler_load.compiler-load-session-state-source-provider-active?
-                      (& second)))
-                  (=
-                    (source_overlay.compiler-source-ledger-count
-                      (& first-ledger))
-                    1)
-                  (=
-                    (source_overlay.compiler-source-ledger-count
-                      (& second-ledger))
-                    1)
-                  (not
-                    (source_overlay.compiler-source-ledger-failed?
-                      (& first-ledger)))
-                  (not
-                    (source_overlay.compiler-source-ledger-failed?
-                      (& second-ledger)))
-                  (string.eq
-                    (overlay-test-ledger-class (& first-ledger) "b.tl")
-                    "overlay")
-                  (source_overlay.compiler-source-content-eq?
-                    (& first-content)
-                    (& renamed-content))
-                  (source_overlay.compiler-source-content-eq?
-                    (& second-content)
-                    (& other-content)))))]
+            (compiler_load.compiler-load-session-state-source-provider-install!
+              (owned_view.compiler-owned-shared-view first)
+              first-overlay)
+            (compiler_load.compiler-load-session-state-source-provider-install!
+              (owned_view.compiler-owned-shared-view second)
+              second-overlay)
+            (let
+              [first-read : String
+                (compiler_load.compiler-load-session-state-read-source-text
+                  (owned_view.compiler-owned-shared-view first)
+                  (& b))]
+              [second-read : String
+                (compiler_load.compiler-load-session-state-read-source-text
+                  (owned_view.compiler-owned-shared-view second)
+                  (& b))]
+              [serial-read : String
+                (compiler_load.compiler-load-session-read-source-text (& b))]
+              [first-again : String
+                (compiler_load.compiler-load-session-state-read-source-text
+                  (owned_view.compiler-owned-shared-view first)
+                  (& b))]
+              [first-ledger : source_overlay.CompilerSourceLedger
+                (compiler_load.compiler-load-session-state-source-provider-finish!
+                  (owned_view.compiler-owned-shared-view first))]
+              [second-ledger : source_overlay.CompilerSourceLedger
+                (compiler_load.compiler-load-session-state-source-provider-finish!
+                  (owned_view.compiler-owned-shared-view second))]
+              [first-content : source_overlay.CompilerSourceContent
+                (overlay-test-ledger-content (& first-ledger) 0)]
+              [second-content : source_overlay.CompilerSourceContent
+                (overlay-test-ledger-content (& second-ledger) 0)]
+              [renamed-content : source_overlay.CompilerSourceContent
+                (overlay-test-content (& renamed))]
+              [other-content : source_overlay.CompilerSourceContent
+                (overlay-test-content (& other))]
+              (and
+                (string.eq (& first-read) (& renamed))
+                (string.eq (& second-read) (& other))
+                (string.eq (& serial-read) (& disk))
+                (string.eq (& first-again) (& renamed))
+                (not
+                  (compiler_load.compiler-load-session-state-source-provider-active?
+                    (& first)))
+                (not
+                  (compiler_load.compiler-load-session-state-source-provider-active?
+                    (& second)))
+                (=
+                  (source_overlay.compiler-source-ledger-count (& first-ledger))
+                  1)
+                (=
+                  (source_overlay.compiler-source-ledger-count
+                    (& second-ledger))
+                  1)
+                (not
+                  (source_overlay.compiler-source-ledger-failed?
+                    (& first-ledger)))
+                (not
+                  (source_overlay.compiler-source-ledger-failed?
+                    (& second-ledger)))
+                (string.eq
+                  (overlay-test-ledger-class (& first-ledger) "b.tl")
+                  "overlay")
+                (source_overlay.compiler-source-content-eq?
+                  (& first-content)
+                  (& renamed-content))
+                (source_overlay.compiler-source-content-eq?
+                  (& second-content)
+                  (& other-content))))]
           [(Err _) false])]
       [(Err _) false])))
 

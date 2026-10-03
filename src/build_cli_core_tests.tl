@@ -476,19 +476,17 @@
     [index : i64 0]
     [count : i64 (build.build-package-graph-node-vec-len nodes)]
     [paths : process.ProcessStringList (process.args-empty)]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            paths
-            (process.args-append
-              paths
-              (process.args-single
-                (build-package-graph-node-tlci-path
-                  (build.build-package-graph-node-vec-at nodes index)
-                  profile))))
-          (set! index (+ index 1))))
-      paths)))
+    (while (< index count)
+      (set!
+        paths
+        (process.args-append
+          paths
+          (process.args-single
+            (build-package-graph-node-tlci-path
+              (build.build-package-graph-node-vec-at nodes index)
+              profile))))
+      (set! index (+ index 1)))
+    paths))
 
 (define (build-package-graph-test-manifest [name : String]) : load.CompilerPkgManifest
   (load.CompilerPkgManifest
@@ -768,73 +766,70 @@
       [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
       [x-id : i64 (ci.intern-generated-canonical-name "x")]
       [scale-id : i64 (ci.intern-generated-canonical-name "scale")]
-      (begin
-        (ast.ast-spmd-param-class-list-push (&mut first-classes) Varying)
-        (ast.ast-spmd-param-class-list-push (&mut first-classes) Uniform)
-        (ast.ast-spmd-param-class-list-push (&mut second-classes) Uniform)
-        (ast.ast-spmd-param-class-list-push (&mut second-classes) Varying)
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization 8 (box first-classes) Varying 0))
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization 8 (box second-classes) Varying 1))
-        (let
-          [callable : tlci.TlciSpmdCallable
-            (build.build-package-tlci-callable
-              "pkg"
-              "pkg"
-              helper-id
+      (ast.ast-spmd-param-class-list-push (&mut first-classes) Varying)
+      (ast.ast-spmd-param-class-list-push (&mut first-classes) Uniform)
+      (ast.ast-spmd-param-class-list-push (&mut second-classes) Uniform)
+      (ast.ast-spmd-param-class-list-push (&mut second-classes) Varying)
+      (ast.ast-spmd-specialization-list-push
+        (&mut specializations)
+        (ast.AstSpmdSpecialization 8 (box first-classes) Varying 0))
+      (ast.ast-spmd-specialization-list-push
+        (&mut specializations)
+        (ast.AstSpmdSpecialization 8 (box second-classes) Varying 1))
+      (let
+        [callable : tlci.TlciSpmdCallable
+          (build.build-package-tlci-callable
+            "pkg"
+            "pkg"
+            helper-id
+            (ast.ast-param-cons
+              (ast.ast-param-id x-id (I64) false)
               (ast.ast-param-cons
-                (ast.ast-param-id x-id (I64) false)
-                (ast.ast-param-cons
-                  (ast.ast-param-id scale-id (I64) false)
-                  (ast.ast-param-list-new)))
-              (I64)
-              specializations
-              (Scalar))]
-          [ordinary-metadata : tlci.TlciMetadata
-            (build.build-package-tlci-metadata
-              (build-package-graph-test-manifest "pkg")
-              (tlci.tlci-spmd-callables-empty))]
-          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
-          (and
-            (string.eq ordinary-metadata.version "v1")
-            (=
-              (tlci.tlci-spmd-callables-len ordinary-metadata.spmd-callables)
-              0)
-            (string.eq callable.name "pkg/helper")
-            (string.eq callable.signature "(-> i64 i64 i64)")
-            (= (tlci.tlci-spmd-specializations-len emitted) 2)
-            (let
-              [item : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 0)]
-              [next : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 1)]
-              (and
-                (string.eq item.abi "spmd-call-v1")
-                (string.eq item.backend "scalar")
-                (= item.lanes 1)
-                (string.eq item.args "uv")
-                (string.eq item.result "v")
-                (= item.index-param 1)
-                (string.eq
-                  item.symbol
-                  (backend.compiler-backend-user-symbol-uncached
-                    (ci.intern-str
-                      (ci.intern-generated-canonical-name
-                        (lower.lower-spmd-package-symbol
-                          "pkg"
-                          "pkg/helper"
-                          "(-> i64 i64 i64)"
-                          (I64)
-                          Scalar
-                          1
-                          "uv"
-                          "v"
-                          1)))))
-                (string.eq next.args "vu")
-                (= next.index-param 0)))))))))
+                (ast.ast-param-id scale-id (I64) false)
+                (ast.ast-param-list-new)))
+            (I64)
+            specializations
+            (Scalar))]
+        [ordinary-metadata : tlci.TlciMetadata
+          (build.build-package-tlci-metadata
+            (build-package-graph-test-manifest "pkg")
+            (tlci.tlci-spmd-callables-empty))]
+        [emitted : tlci.TlciSpmdSpecializations callable.specializations]
+        (and
+          (string.eq ordinary-metadata.version "v1")
+          (= (tlci.tlci-spmd-callables-len ordinary-metadata.spmd-callables) 0)
+          (string.eq callable.name "pkg/helper")
+          (string.eq callable.signature "(-> i64 i64 i64)")
+          (= (tlci.tlci-spmd-specializations-len emitted) 2)
+          (let
+            [item : tlci.TlciSpmdSpecialization
+              (tlci.tlci-spmd-specializations-ref emitted 0)]
+            [next : tlci.TlciSpmdSpecialization
+              (tlci.tlci-spmd-specializations-ref emitted 1)]
+            (and
+              (string.eq item.abi "spmd-call-v1")
+              (string.eq item.backend "scalar")
+              (= item.lanes 1)
+              (string.eq item.args "uv")
+              (string.eq item.result "v")
+              (= item.index-param 1)
+              (string.eq
+                item.symbol
+                (backend.compiler-backend-user-symbol-uncached
+                  (ci.intern-str
+                    (ci.intern-generated-canonical-name
+                      (lower.lower-spmd-package-symbol
+                        "pkg"
+                        "pkg/helper"
+                        "(-> i64 i64 i64)"
+                        (I64)
+                        Scalar
+                        1
+                        "uv"
+                        "v"
+                        1)))))
+              (string.eq next.args "vu")
+              (= next.index-param 0))))))))
 
 (cfg
   test
@@ -848,38 +843,37 @@
         (ast.ast-spmd-specialization-list-new)]
       [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
       [x-id : i64 (ci.intern-generated-canonical-name "x")]
-      (begin
-        (ast.ast-spmd-param-class-list-push (&mut first-classes) Uniform)
-        (ast.ast-spmd-param-class-list-push (&mut second-classes) Uniform)
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization 8 (box first-classes) Uniform -1))
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization 16 (box second-classes) Uniform -1))
-        (let
-          [callable : tlci.TlciSpmdCallable
-            (build.build-package-tlci-callable
-              "pkg"
-              "pkg"
-              helper-id
-              (ast.ast-param-cons
-                (ast.ast-param-id x-id (I64) false)
-                (ast.ast-param-list-new))
-              (I64)
-              specializations
-              (Scalar))]
-          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
-          (and
-            (= (tlci.tlci-spmd-specializations-len emitted) 1)
-            (let
-              [item : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 0)]
-              (and
-                (= item.lanes 1)
-                (string.eq item.args "u")
-                (string.eq item.result "u")
-                (= item.index-param -1)))))))))
+      (ast.ast-spmd-param-class-list-push (&mut first-classes) Uniform)
+      (ast.ast-spmd-param-class-list-push (&mut second-classes) Uniform)
+      (ast.ast-spmd-specialization-list-push
+        (&mut specializations)
+        (ast.AstSpmdSpecialization 8 (box first-classes) Uniform -1))
+      (ast.ast-spmd-specialization-list-push
+        (&mut specializations)
+        (ast.AstSpmdSpecialization 16 (box second-classes) Uniform -1))
+      (let
+        [callable : tlci.TlciSpmdCallable
+          (build.build-package-tlci-callable
+            "pkg"
+            "pkg"
+            helper-id
+            (ast.ast-param-cons
+              (ast.ast-param-id x-id (I64) false)
+              (ast.ast-param-list-new))
+            (I64)
+            specializations
+            (Scalar))]
+        [emitted : tlci.TlciSpmdSpecializations callable.specializations]
+        (and
+          (= (tlci.tlci-spmd-specializations-len emitted) 1)
+          (let
+            [item : tlci.TlciSpmdSpecialization
+              (tlci.tlci-spmd-specializations-ref emitted 0)]
+            (and
+              (= item.lanes 1)
+              (string.eq item.args "u")
+              (string.eq item.result "u")
+              (= item.index-param -1))))))))
 
 (cfg
   test
@@ -910,79 +904,78 @@
                 [names : cli_svec.Vec (cli_svec.new)]
                 [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
                   (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-                (begin
-                  (build_string_i64_map.insert-ref!
-                    (&mut owned-sources)
-                    (load.compiler-load-normalize-path "pkg/src/macros.tl")
-                    1)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "dep/src/lib.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "dep/src/lib.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (build.build-package-tlci-collect-macros-into!
-                    decls
-                    paths
-                    ""
-                    ""
-                    "pkg"
-                    owned-sources
-                    (&mut names)
-                    (&mut captures))
-                  (let
-                    [collector : build.BuildPackageTlciMacroCollector
-                      (build.build-package-tlci-finish-macro-collector
-                        (&mut names)
-                        captures)]
-                    [catalog : (__tl_dyn-array String) collector.names]
-                    [_source : String
-                      (compiler_tlci_native_producer.embedded-native-source
-                        (owned_view.compiler-owned-shared-view catalog)
-                        (& collector.captures))]
-                    (and
-                      (= (array-length catalog) 2)
-                      (string.eq (array-ref catalog 0) "a.macros/fold")
-                      (string.eq (array-ref catalog 1) "z.macros/wrap")
-                      (= collector.captures.len 2)
-                      (>=
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "a.macros/fold")
+                (build_string_i64_map.insert-ref!
+                  (&mut owned-sources)
+                  (load.compiler-load-normalize-path "pkg/src/macros.tl")
+                  1)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "pkg/src/macros.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "pkg/src/macros.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "dep/src/lib.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "dep/src/lib.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "pkg/src/macros.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut paths)
+                  "pkg/src/macros.tl"
+                  cbi.compiler-builtin-id-fix-empty)
+                (build.build-package-tlci-collect-macros-into!
+                  decls
+                  paths
+                  ""
+                  ""
+                  "pkg"
+                  owned-sources
+                  (&mut names)
+                  (&mut captures))
+                (let
+                  [collector : build.BuildPackageTlciMacroCollector
+                    (build.build-package-tlci-finish-macro-collector
+                      (&mut names)
+                      captures)]
+                  [catalog : (__tl_dyn-array String) collector.names]
+                  [_source : String
+                    (compiler_tlci_native_producer.embedded-native-source
+                      (owned_view.compiler-owned-shared-view catalog)
+                      (& collector.captures))]
+                  (and
+                    (= (array-length catalog) 2)
+                    (string.eq (array-ref catalog 0) "a.macros/fold")
+                    (string.eq (array-ref catalog 1) "z.macros/wrap")
+                    (= collector.captures.len 2)
+                    (>=
+                      (compiler_tlci_native_producer.tlci-native-macro-capture-slot
+                        (& collector.captures)
+                        "a.macros/fold")
+                      0)
+                    (>=
+                      (compiler_tlci_native_producer.tlci-native-macro-capture-slot
+                        (& collector.captures)
+                        "z.macros/wrap")
+                      0)
+                    (<
+                      (compiler_tlci_native_producer.tlci-native-macro-capture-slot
+                        (& collector.captures)
+                        "dep.macros/foreign")
+                      0)
+                    (=
+                      (array-ref
+                        compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                         0)
-                      (>=
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "z.macros/wrap")
-                        0)
-                      (<
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "dep.macros/foreign")
-                        0)
-                      (=
-                        (array-ref
-                          compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                          0)
-                        2)))))])]))))
+                      2))))])]))))
 
 (cfg
   test
@@ -1026,17 +1019,16 @@
     (let
       [name : String "stage"]
       [dir : String (fs.path-join root (& name))]
-      (begin
-        (build-package-rollback-test-expect-ok
-          (fs.try-mkdir (& dir))
-          "build package rollback test mkdir stage")
-        (build.BuildPackageStagePaths
-          (owned_view.compiler-owned-shared-view dir)
-          (build-package-rollback-test-path dir "a")
-          (build-package-rollback-test-path dir "o")
-          (build-package-rollback-test-path dir "r")
-          (build-package-rollback-test-path dir "f")
-          (build-package-rollback-test-path dir "t"))))))
+      (build-package-rollback-test-expect-ok
+        (fs.try-mkdir (& dir))
+        "build package rollback test mkdir stage")
+      (build.BuildPackageStagePaths
+        (owned_view.compiler-owned-shared-view dir)
+        (build-package-rollback-test-path dir "a")
+        (build-package-rollback-test-path dir "o")
+        (build-package-rollback-test-path dir "r")
+        (build-package-rollback-test-path dir "f")
+        (build-package-rollback-test-path dir "t")))))
 
 (cfg
   test
@@ -1096,18 +1088,17 @@
     [stage : build.BuildPackageStagePaths]
     [final-a : String]
     [final-b : String]) : unit
-    (begin
-      (build.build-package-clean-stage
-        (owned_view.compiler-owned-shared-view stage))
-      (fs.try-remove-file-if-exists (& final-a))
-      (fs.try-remove-file-if-exists (& final-b))
-      (fs.try-remove-dir-if-exists (& final-a))
-      (fs.try-remove-dir-if-exists (& final-b))
-      (let
-        [stage-dir : String stage.dir]
-        (fs.try-remove-dir-if-exists (& stage-dir)))
-      (fs.try-remove-dir-if-exists (& root))
-      unit)))
+    (build.build-package-clean-stage
+      (owned_view.compiler-owned-shared-view stage))
+    (fs.try-remove-file-if-exists (& final-a))
+    (fs.try-remove-file-if-exists (& final-b))
+    (fs.try-remove-dir-if-exists (& final-a))
+    (fs.try-remove-dir-if-exists (& final-b))
+    (let
+      [stage-dir : String stage.dir]
+      (fs.try-remove-dir-if-exists (& stage-dir)))
+    (fs.try-remove-dir-if-exists (& root))
+    unit))
 
 (cfg
   test
@@ -1135,68 +1126,65 @@
             (owned_view.compiler-owned-shared-view stage.asm))
           (owned_view.compiler-owned-shared-view final-b)
           (owned_view.compiler-owned-shared-view stage.obj))]
-      (begin
-        (build-package-rollback-test-write backup-a "old-a")
-        (build-package-rollback-test-write backup-b "old-b")
-        (build-package-rollback-test-expect-ok
-          (fs.try-mkdir (& final-b))
-          "build package rollback test mkdir restore collision")
-        (build.build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          0)
-        (build.build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          1)
+      (build-package-rollback-test-write backup-a "old-a")
+      (build-package-rollback-test-write backup-b "old-b")
+      (build-package-rollback-test-expect-ok
+        (fs.try-mkdir (& final-b))
+        "build package rollback test mkdir restore collision")
+      (build.build-package-commit-plan-set-had-old!
+        (owned_view.compiler-owned-shared-view plan)
+        0)
+      (build.build-package-commit-plan-set-had-old!
+        (owned_view.compiler-owned-shared-view plan)
+        1)
+      (let
+        [rollback : build.BuildPackageRollbackDisposition
+          (build.build-package-commit-plan-rollback plan 0 2)]
+        [diagnostic : String
+          (build.build-package-commit-error-message
+            "primary commit error"
+            (owned_view.compiler-owned-shared-view rollback)
+            (owned_view.compiler-owned-shared-view stage.dir))]
+        (build.build-package-clean-stage-after-rollback
+          stage
+          (owned_view.compiler-owned-shared-view rollback))
+        (build.build-package-clean-stage-after-rollback
+          stage
+          (owned_view.compiler-owned-shared-view rollback))
         (let
-          [rollback : build.BuildPackageRollbackDisposition
-            (build.build-package-commit-plan-rollback plan 0 2)]
-          [diagnostic : String
-            (build.build-package-commit-error-message
-              "primary commit error"
-              (owned_view.compiler-owned-shared-view rollback)
-              (owned_view.compiler-owned-shared-view stage.dir))]
-          (begin
-            (build.build-package-clean-stage-after-rollback
-              stage
-              (owned_view.compiler-owned-shared-view rollback))
-            (build.build-package-clean-stage-after-rollback
-              stage
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [primary-needle : String "primary commit error"]
-              [restore-needle : String
-                "rollback failed to restore previous package artifact"]
-              [stage-needle : String "retained package artifact recovery stage"]
-              [ok : bool
-                (and
-                  (= rollback.len 2)
-                  (build-package-rollback-test-retained-at?
-                    rollback
-                    0
-                    backup-b
-                    final-b)
-                  (build-package-rollback-test-restored-at?
-                    rollback
-                    1
-                    backup-a
-                    final-a)
-                  (build.build-package-rollback-recovery-required? rollback)
-                  (build.build-package-file-text-eq?
-                    (owned_view.compiler-owned-shared-view final-a)
-                    "old-a")
-                  (build.build-package-file-text-eq? backup-b "old-b")
-                  (build-package-rollback-test-path-exists? stage.dir)
-                  (string.eq
-                    (string.substring
-                      (& diagnostic)
-                      0
-                      (string.string-length primary-needle))
-                    primary-needle)
-                  (string.contains (& diagnostic) (& restore-needle))
-                  (string.contains (& diagnostic) (& stage-needle)))]
-              (begin
-                (build-package-rollback-test-clean root stage final-a final-b)
-                ok))))))))
+          [primary-needle : String "primary commit error"]
+          [restore-needle : String
+            "rollback failed to restore previous package artifact"]
+          [stage-needle : String "retained package artifact recovery stage"]
+          [ok : bool
+            (and
+              (= rollback.len 2)
+              (build-package-rollback-test-retained-at?
+                rollback
+                0
+                backup-b
+                final-b)
+              (build-package-rollback-test-restored-at?
+                rollback
+                1
+                backup-a
+                final-a)
+              (build.build-package-rollback-recovery-required? rollback)
+              (build.build-package-file-text-eq?
+                (owned_view.compiler-owned-shared-view final-a)
+                "old-a")
+              (build.build-package-file-text-eq? backup-b "old-b")
+              (build-package-rollback-test-path-exists? stage.dir)
+              (string.eq
+                (string.substring
+                  (& diagnostic)
+                  0
+                  (string.string-length primary-needle))
+                primary-needle)
+              (string.contains (& diagnostic) (& restore-needle))
+              (string.contains (& diagnostic) (& stage-needle)))]
+          (build-package-rollback-test-clean root stage final-a final-b)
+          ok)))))
 
 (cfg
   test
@@ -1217,40 +1205,33 @@
           (build.build-package-commit-plan-new)
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
-      (begin
-        (build-package-rollback-test-write final "new")
-        (build-package-rollback-test-write backup "old")
-        (build.build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          0)
+      (build-package-rollback-test-write final "new")
+      (build-package-rollback-test-write backup "old")
+      (build.build-package-commit-plan-set-had-old!
+        (owned_view.compiler-owned-shared-view plan)
+        0)
+      (let
+        [rollback : build.BuildPackageRollbackDisposition
+          (build.build-package-commit-plan-rollback plan 1 1)]
+        (build.build-package-clean-stage-after-rollback
+          stage
+          (owned_view.compiler-owned-shared-view rollback))
         (let
-          [rollback : build.BuildPackageRollbackDisposition
-            (build.build-package-commit-plan-rollback plan 1 1)]
-          (begin
-            (build.build-package-clean-stage-after-rollback
-              stage
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [ok : bool
-                (and
-                  (= rollback.len 1)
-                  (= (string.string-length rollback.errors) 0)
-                  (not
-                    (build.build-package-rollback-recovery-required?
-                      (owned_view.compiler-owned-shared-view rollback)))
-                  (build-package-rollback-test-restored-at?
-                    rollback
-                    0
-                    backup
-                    final)
-                  (build.build-package-file-text-eq?
-                    (owned_view.compiler-owned-shared-view final)
-                    "old")
-                  (not (build-package-rollback-test-path-exists? backup))
-                  (not (build-package-rollback-test-path-exists? stage.dir)))]
-              (begin
-                (build-package-rollback-test-clean root stage final unused)
-                ok))))))))
+          [ok : bool
+            (and
+              (= rollback.len 1)
+              (= (string.string-length rollback.errors) 0)
+              (not
+                (build.build-package-rollback-recovery-required?
+                  (owned_view.compiler-owned-shared-view rollback)))
+              (build-package-rollback-test-restored-at? rollback 0 backup final)
+              (build.build-package-file-text-eq?
+                (owned_view.compiler-owned-shared-view final)
+                "old")
+              (not (build-package-rollback-test-path-exists? backup))
+              (not (build-package-rollback-test-path-exists? stage.dir)))]
+          (build-package-rollback-test-clean root stage final unused)
+          ok)))))
 
 (cfg
   test
@@ -1272,25 +1253,22 @@
           (owned_view.compiler-owned-shared-view stage.asm))]
       [rollback : build.BuildPackageRollbackDisposition
         (build.build-package-commit-plan-rollback plan 1 0)]
-      (begin
-        (build.build-package-clean-stage-after-rollback
-          stage
-          (owned_view.compiler-owned-shared-view rollback))
-        (let
-          [needle : String
-            "rollback failed to remove installed package artifact"]
-          [invalid-needle : String "io: invalid path"]
-          [ok : bool
-            (and
-              (= rollback.len 0)
-              (> (string.string-length rollback.errors) 0)
-              (string.contains (& rollback.errors) (& needle))
-              (string.contains (& rollback.errors) (& invalid-needle))
-              (not (build.build-package-rollback-recovery-required? rollback))
-              (not (build-package-rollback-test-path-exists? stage.dir)))]
-          (begin
-            (build-package-rollback-test-clean root stage final unused)
-            ok))))))
+      (build.build-package-clean-stage-after-rollback
+        stage
+        (owned_view.compiler-owned-shared-view rollback))
+      (let
+        [needle : String "rollback failed to remove installed package artifact"]
+        [invalid-needle : String "io: invalid path"]
+        [ok : bool
+          (and
+            (= rollback.len 0)
+            (> (string.string-length rollback.errors) 0)
+            (string.contains (& rollback.errors) (& needle))
+            (string.contains (& rollback.errors) (& invalid-needle))
+            (not (build.build-package-rollback-recovery-required? rollback))
+            (not (build-package-rollback-test-path-exists? stage.dir)))]
+        (build-package-rollback-test-clean root stage final unused)
+        ok))))
 
 (cfg
   test
@@ -1309,26 +1287,23 @@
           (owned_view.compiler-owned-shared-view stage.asm))]
       (match (build.build-package-commit-plan-run plan)
         [(Ok)
-          (begin
-            (build-package-rollback-test-clean root stage final unused)
-            false)]
+          (build-package-rollback-test-clean root stage final unused)
+          false]
         [(Err message rollback)
-          (begin
-            (build.build-package-clean-stage-after-rollback
-              stage
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [needle : String
-                "staged package artifact is missing or non-regular"]
-              [ok : bool
-                (and
-                  (= rollback.len 0)
-                  (= (string.string-length rollback.errors) 0)
-                  (string.contains (& message) (& needle))
-                  (not (build-package-rollback-test-path-exists? stage.dir)))]
-              (begin
-                (build-package-rollback-test-clean root stage final unused)
-                ok)))]))))
+          (build.build-package-clean-stage-after-rollback
+            stage
+            (owned_view.compiler-owned-shared-view rollback))
+          (let
+            [needle : String
+              "staged package artifact is missing or non-regular"]
+            [ok : bool
+              (and
+                (= rollback.len 0)
+                (= (string.string-length rollback.errors) 0)
+                (string.contains (& message) (& needle))
+                (not (build-package-rollback-test-path-exists? stage.dir)))]
+            (build-package-rollback-test-clean root stage final unused)
+            ok)]))))
 
 (cfg
   test
@@ -1349,30 +1324,26 @@
           (build.build-package-commit-plan-new)
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
-      (begin
-        (build-package-rollback-test-write final "old")
-        (build-package-rollback-test-write stage.asm "new")
-        (match (build.build-package-commit-plan-run plan)
-          [(Err _ rollback)
-            (begin
-              (build.build-package-clean-stage-after-rollback stage rollback)
-              (build-package-rollback-test-clean root stage final unused)
-              false)]
-          [(Ok)
-            (begin
-              (build.build-package-clean-stage
-                (owned_view.compiler-owned-shared-view stage))
-              (let
-                [ok : bool
-                  (and
-                    (build.build-package-file-text-eq?
-                      (owned_view.compiler-owned-shared-view final)
-                      "new")
-                    (not (build-package-rollback-test-path-exists? backup))
-                    (not (build-package-rollback-test-path-exists? stage.dir)))]
-                (begin
-                  (build-package-rollback-test-clean root stage final unused)
-                  ok)))])))))
+      (build-package-rollback-test-write final "old")
+      (build-package-rollback-test-write stage.asm "new")
+      (match (build.build-package-commit-plan-run plan)
+        [(Err _ rollback)
+          (build.build-package-clean-stage-after-rollback stage rollback)
+          (build-package-rollback-test-clean root stage final unused)
+          false]
+        [(Ok)
+          (build.build-package-clean-stage
+            (owned_view.compiler-owned-shared-view stage))
+          (let
+            [ok : bool
+              (and
+                (build.build-package-file-text-eq?
+                  (owned_view.compiler-owned-shared-view final)
+                  "new")
+                (not (build-package-rollback-test-path-exists? backup))
+                (not (build-package-rollback-test-path-exists? stage.dir)))]
+            (build-package-rollback-test-clean root stage final unused)
+            ok)]))))
 
 (cfg
   test
@@ -1471,17 +1442,16 @@
       [libraries : fs.FsStringVector (fs.string-vector-new)]
       [search-paths : fs.FsStringVector (fs.string-vector-new)]
       [args : fs.FsStringVector (fs.string-vector-new)]
-      (begin
-        (if (> (string.string-length library) 0)
-          (fs.string-vector-push! (&mut libraries) library)
-          unit)
-        (if (> (string.string-length search-path) 0)
-          (fs.string-vector-push! (&mut search-paths) search-path)
-          unit)
-        (if (> (string.string-length arg) 0)
-          (fs.string-vector-push! (&mut args) arg)
-          unit)
-        (load.CompilerPkgLinkSet libraries search-paths args)))))
+      (if (> (string.string-length library) 0)
+        (fs.string-vector-push! (&mut libraries) library)
+        unit)
+      (if (> (string.string-length search-path) 0)
+        (fs.string-vector-push! (&mut search-paths) search-path)
+        unit)
+      (if (> (string.string-length arg) 0)
+        (fs.string-vector-push! (&mut args) arg)
+        unit)
+      (load.CompilerPkgLinkSet libraries search-paths args))))
 
 (cfg
   test

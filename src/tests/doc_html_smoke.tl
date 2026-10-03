@@ -12,14 +12,13 @@
   [second-docs : doc_extract.DocExtraction]) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.with-capacity 2)]
-    (begin
-      (doc_module_vec.push-ref!
-        (&mut modules)
-        (doc_render.DocModule.Module "smoke<&>.tl" docs))
-      (doc_module_vec.push-ref!
-        (&mut modules)
-        (doc_render.DocModule.Module "second.tl" second-docs))
-      modules)))
+    (doc_module_vec.push-ref!
+      (&mut modules)
+      (doc_render.DocModule.Module "smoke<&>.tl" docs))
+    (doc_module_vec.push-ref!
+      (&mut modules)
+      (doc_render.DocModule.Module "second.tl" second-docs))
+    modules))
 
 (define (doc-html-smoke) : i64
   (let

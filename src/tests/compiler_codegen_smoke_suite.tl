@@ -57,9 +57,8 @@
         42
         1)]
     [(string.eq name "backend")
-      (begin
-        (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_backend_tests.compiler-backend-self-test))]
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler_backend_tests.compiler-backend-self-test)]
     [(string.eq name "backend-object-target")
       (object_target_tests.compiler-backend-object-target-tests-main)]
     [(string.eq name "x64-template-registry")
@@ -69,9 +68,8 @@
     [(string.eq name "driver-pic")
       (compiler_driver_smoke_tests.compiler-driver-pic-smoke-main)]
     [(string.eq name "driver-reader-context")
-      (begin
-        (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main))]
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main)]
     [(string.eq name "driver-generated-cfg")
       (compiler_driver_smoke_tests.compiler-driver-generated-cfg-smoke-main)]
     [(string.eq name "driver-typecheck-cache-owner")

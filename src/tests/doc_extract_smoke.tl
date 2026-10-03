@@ -16,61 +16,59 @@
   [signature-fragment : String]) : bool
   (match item
     [(Item kind item-name item-doc signature _)
-      (begin
-        (unless (= (doc_extract.doc-kind-tag kind) kind-tag) (return false))
-        (unless (string.eq item-name name) (return false))
-        (unless (string.eq item-doc doc-text) (return false))
-        (string.contains signature signature-fragment))]))
+      (unless (= (doc_extract.doc-kind-tag kind) kind-tag) (return false))
+      (unless (string.eq item-name name) (return false))
+      (unless (string.eq item-doc doc-text) (return false))
+      (string.contains signature signature-fragment)]))
 
 (define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
-  (begin
-    (unless (= (doc_extract.doc-item-list-count items) 6) (return false))
-    (unless
-      (doc-item-ok?
-        (doc_extract.doc-item-list-ref items 0)
-        1
-        "answer"
-        "answer doc\nstill answer"
-        "(define answer : i64 42)")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc_extract.doc-item-list-ref items 1)
-        2
-        "main"
-        "function doc"
-        "(define (main [argc : i64])")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc_extract.doc-item-list-ref items 2)
-        4
-        "Maybe"
-        "enum doc"
-        "(defenum Maybe")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc_extract.doc-item-list-ref items 3)
-        3
-        "io.emit"
-        "external doc"
-        "(extern (io.emit")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc_extract.doc-item-list-ref items 4)
-        5
-        "Point"
-        "struct doc"
-        "(defstruct Point")
-      (return false))
+  (unless (= (doc_extract.doc-item-list-count items) 6) (return false))
+  (unless
     (doc-item-ok?
-      (doc_extract.doc-item-list-ref items 5)
-      6
-      "guard"
-      "macro doc"
-      "(defmacro (guard")))
+      (doc_extract.doc-item-list-ref items 0)
+      1
+      "answer"
+      "answer doc\nstill answer"
+      "(define answer : i64 42)")
+    (return false))
+  (unless
+    (doc-item-ok?
+      (doc_extract.doc-item-list-ref items 1)
+      2
+      "main"
+      "function doc"
+      "(define (main [argc : i64])")
+    (return false))
+  (unless
+    (doc-item-ok?
+      (doc_extract.doc-item-list-ref items 2)
+      4
+      "Maybe"
+      "enum doc"
+      "(defenum Maybe")
+    (return false))
+  (unless
+    (doc-item-ok?
+      (doc_extract.doc-item-list-ref items 3)
+      3
+      "io.emit"
+      "external doc"
+      "(extern (io.emit")
+    (return false))
+  (unless
+    (doc-item-ok?
+      (doc_extract.doc-item-list-ref items 4)
+      5
+      "Point"
+      "struct doc"
+      "(defstruct Point")
+    (return false))
+  (doc-item-ok?
+    (doc_extract.doc-item-list-ref items 5)
+    6
+    "guard"
+    "macro doc"
+    "(defmacro (guard"))
 
 (define (doc-extract-declaration-smoke-ok?) : bool
   (match (doc_extract.doc-extract-source
@@ -139,42 +137,38 @@
   `(if ,condition ,body unit))
 ;: EOF unattached")
     [(Extraction module-doc items)
-      (begin
-        (unless
-          (string.eq
-            module-doc
-            "Module title\nsecond module line\nlater module")
-          (return (io.panic "doc-extract: module doc smoke mismatch")))
-        (unless
-          (= (doc_extract.doc-item-list-count items) 6)
-          (return (io.panic "doc-extract: item count smoke mismatch")))
-        (unless
-          (doc-extract-smoke-items-ok? items)
-          (return (io.panic "doc-extract: item doc smoke mismatch")))
-        (unless
-          (doc-extract-declaration-smoke-ok?)
-          (return (io.panic "doc-extract: declaration item mismatch")))
-        (unless
-          (doc-extract-source-line-smoke-ok?)
-          (return (io.panic "doc-extract: declaration source line mismatch")))
-        (match (doc_extract.doc-extract-source
-          ";# Legacy module
+      (unless
+        (string.eq module-doc "Module title\nsecond module line\nlater module")
+        (return (io.panic "doc-extract: module doc smoke mismatch")))
+      (unless
+        (= (doc_extract.doc-item-list-count items) 6)
+        (return (io.panic "doc-extract: item count smoke mismatch")))
+      (unless
+        (doc-extract-smoke-items-ok? items)
+        (return (io.panic "doc-extract: item doc smoke mismatch")))
+      (unless
+        (doc-extract-declaration-smoke-ok?)
+        (return (io.panic "doc-extract: declaration item mismatch")))
+      (unless
+        (doc-extract-source-line-smoke-ok?)
+        (return (io.panic "doc-extract: declaration source line mismatch")))
+      (match (doc_extract.doc-extract-source
+        ";# Legacy module
 ;: legacy item
 (define legacy : i64 1)")
-          [(Extraction legacy-module legacy-items)
-            (begin
-              (unless
-                (string.eq legacy-module "Legacy module")
-                (return (io.panic "doc-extract: legacy module doc mismatch")))
-              (unless
-                (= (doc_extract.doc-item-list-count legacy-items) 1)
-                (return (io.panic "doc-extract: legacy item count mismatch")))
-              (unless
-                (doc-item-ok?
-                  (doc_extract.doc-item-list-ref legacy-items 0)
-                  1
-                  "legacy"
-                  "legacy item"
-                  "(define legacy : i64 1)")
-                (return (io.panic "doc-extract: legacy item mismatch")))
-              42)]))]))
+        [(Extraction legacy-module legacy-items)
+          (unless
+            (string.eq legacy-module "Legacy module")
+            (return (io.panic "doc-extract: legacy module doc mismatch")))
+          (unless
+            (= (doc_extract.doc-item-list-count legacy-items) 1)
+            (return (io.panic "doc-extract: legacy item count mismatch")))
+          (unless
+            (doc-item-ok?
+              (doc_extract.doc-item-list-ref legacy-items 0)
+              1
+              "legacy"
+              "legacy item"
+              "(define legacy : i64 1)")
+            (return (io.panic "doc-extract: legacy item mismatch")))
+          42])]))

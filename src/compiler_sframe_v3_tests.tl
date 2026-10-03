@@ -102,12 +102,10 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
     [index : i64 0]
-    (begin
-      (while (< index (array-length bytes))
-        (begin
-          (set! (array-ref out index) (array-ref bytes index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (array-length bytes))
+      (set! (array-ref out index) (array-ref bytes index))
+      (set! index (+ index 1)))
+    out))
 
 (define (sframe-v3-test-bytes-eq?
   [left : (& left (__tl_dyn-array u8))]
@@ -115,14 +113,12 @@
   (let
     [same? : bool (= (array-length left) (array-length right))]
     [index : i64 0]
-    (begin
-      (while (and same? (< index (array-length left)))
-        (begin
-          (when
-            (!= (array-ref left index) (array-ref right index))
-            (set! same? false))
-          (set! index (+ index 1))))
-      same?)))
+    (while (and same? (< index (array-length left)))
+      (when
+        (!= (array-ref left index) (array-ref right index))
+        (set! same? false))
+      (set! index (+ index 1)))
+    same?))
 
 (define (sframe-v3-test-write-i64!
   [bytes : (&mut bytes (__tl_dyn-array u8))]
@@ -132,11 +128,10 @@
     [bits : u64 (cast value : u64)]
     [index : i64 0]
     (while (< index 8)
-      (begin
-        (set!
-          (array-ref bytes (+ offset index))
-          (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : u8))
-        (set! index (+ index 1))))))
+      (set!
+        (array-ref bytes (+ offset index))
+        (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : u8))
+      (set! index (+ index 1)))))
 
 ;; This intentionally shares no production reader or constants.  It catches a
 ;; producer/consumer bug that could otherwise agree on the same wrong layout.
@@ -252,87 +247,82 @@
     [linked : (__tl_dyn-array u8) (sframe-v3-test-copy (& golden))]
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
-    (begin
-      ;; GNU ld 2.47 places .sframe at 0x402000 and these functions at
-      ;; 0x401000/0x401002, then writes field-PC-relative signed addends.
-      (set! (array-ref linked 3) (cast 5 : u8))
-      (sframe-v3-test-write-i64! (&mut linked) 28 -4124)
-      (sframe-v3-test-write-i64! (&mut linked) 44 -4138)
-      (match (sframe.compiler-sframe-v3-decode (& linked) 0x402000 (& limits))
-        [(Err _) false]
-        [(Ok image)
-          (let
-            [first : sframe.CompilerSframeV3Function
-              (owned_view.compiler-owned-array-element-shared-view
-                image.functions
-                0)]
-            [second : sframe.CompilerSframeV3Function
-              (owned_view.compiler-owned-array-element-shared-view
-                image.functions
-                1)]
-            (and
-              image.sorted?
-              (= first.start-address 0x401000)
-              (= first.index-byte-offset 28)
-              (= first.raw-start-addend -4124)
-              (= second.start-address 0x401002)
-              (= second.index-byte-offset 44)
-              (= second.raw-start-addend -4138)
-              (match (sframe.compiler-sframe-v3-encode
-                (& image)
-                0x402000
-                (& limits))
-                [(Err _) false]
-                [(Ok encoded) (sframe-v3-test-bytes-eq? (& linked) (& encoded))])))]))))
+    ;; GNU ld 2.47 places .sframe at 0x402000 and these functions at
+    ;; 0x401000/0x401002, then writes field-PC-relative signed addends.
+    (set! (array-ref linked 3) (cast 5 : u8))
+    (sframe-v3-test-write-i64! (&mut linked) 28 -4124)
+    (sframe-v3-test-write-i64! (&mut linked) 44 -4138)
+    (match (sframe.compiler-sframe-v3-decode (& linked) 0x402000 (& limits))
+      [(Err _) false]
+      [(Ok image)
+        (let
+          [first : sframe.CompilerSframeV3Function
+            (owned_view.compiler-owned-array-element-shared-view
+              image.functions
+              0)]
+          [second : sframe.CompilerSframeV3Function
+            (owned_view.compiler-owned-array-element-shared-view
+              image.functions
+              1)]
+          (and
+            image.sorted?
+            (= first.start-address 0x401000)
+            (= first.index-byte-offset 28)
+            (= first.raw-start-addend -4124)
+            (= second.start-address 0x401002)
+            (= second.index-byte-offset 44)
+            (= second.raw-start-addend -4138)
+            (match (sframe.compiler-sframe-v3-encode
+              (& image)
+              0x402000
+              (& limits))
+              [(Err _) false]
+              [(Ok encoded) (sframe-v3-test-bytes-eq? (& linked) (& encoded))])))])))
 
 (define (sframe-v3-test-section-relative-normalization?) : bool
   (let
     [bytes : (__tl_dyn-array u8) (sframe-v3-test-binutils-basic)]
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
-    (begin
-      (set! (array-ref bytes 3) (cast 0 : u8))
-      (sframe-v3-test-write-i64! (&mut bytes) 28 72)
-      (sframe-v3-test-write-i64! (&mut bytes) 44 172)
-      (match (sframe.compiler-sframe-v3-decode (& bytes) 1000 (& limits))
-        [(Err _) false]
-        [(Ok image)
-          (let
-            [first : sframe.CompilerSframeV3Function
-              (owned_view.compiler-owned-array-element-shared-view
-                image.functions
-                0)]
-            [second : sframe.CompilerSframeV3Function
-              (owned_view.compiler-owned-array-element-shared-view
-                image.functions
-                1)]
-            (and
-              (not image.decoded-field-pcrel?)
-              (= first.start-address 1100)
-              (= second.start-address 1200)
-              (match (sframe.compiler-sframe-v3-encode
-                (& image)
-                1000
-                (& limits))
-                [(Err _) false]
-                [(Ok canonical)
-                  (and
-                    (= (array-ref canonical 3) (cast 4 : u8))
-                    (match (sframe.compiler-sframe-v3-decode
-                      (& canonical)
-                      1000
-                      (& limits))
-                      [(Err _) false]
-                      [(Ok normalized)
-                        (let
-                          [normalized-second : sframe.CompilerSframeV3Function
-                            (owned_view.compiler-owned-array-element-shared-view
-                              normalized.functions
-                              1)]
-                          (and
-                            normalized.decoded-field-pcrel?
-                            (= normalized-second.start-address 1200)
-                            (= normalized-second.raw-start-addend 156)))]))])))]))))
+    (set! (array-ref bytes 3) (cast 0 : u8))
+    (sframe-v3-test-write-i64! (&mut bytes) 28 72)
+    (sframe-v3-test-write-i64! (&mut bytes) 44 172)
+    (match (sframe.compiler-sframe-v3-decode (& bytes) 1000 (& limits))
+      [(Err _) false]
+      [(Ok image)
+        (let
+          [first : sframe.CompilerSframeV3Function
+            (owned_view.compiler-owned-array-element-shared-view
+              image.functions
+              0)]
+          [second : sframe.CompilerSframeV3Function
+            (owned_view.compiler-owned-array-element-shared-view
+              image.functions
+              1)]
+          (and
+            (not image.decoded-field-pcrel?)
+            (= first.start-address 1100)
+            (= second.start-address 1200)
+            (match (sframe.compiler-sframe-v3-encode (& image) 1000 (& limits))
+              [(Err _) false]
+              [(Ok canonical)
+                (and
+                  (= (array-ref canonical 3) (cast 4 : u8))
+                  (match (sframe.compiler-sframe-v3-decode
+                    (& canonical)
+                    1000
+                    (& limits))
+                    [(Err _) false]
+                    [(Ok normalized)
+                      (let
+                        [normalized-second : sframe.CompilerSframeV3Function
+                          (owned_view.compiler-owned-array-element-shared-view
+                            normalized.functions
+                            1)]
+                        (and
+                          normalized.decoded-field-pcrel?
+                          (= normalized-second.start-address 1200)
+                          (= normalized-second.raw-start-addend 156)))]))])))])))
 
 (define (sframe-v3-test-mask-image) : sframe.CompilerSframeV3Image
   (let
@@ -612,70 +602,69 @@
     [tiling : (__tl_dyn-array u8) (sframe-v3-test-copy (& golden))]
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
-    (begin
-      (set! (array-ref flags 3) (cast 6 : u8))
-      (set! (array-ref aux 7) (cast 1 : u8))
-      (set! (array-ref attr 62) (cast 3 : u8))
-      (set! (array-ref row 66) (cast 0x83 : u8))
-      (set! (array-ref row-order 76) (cast 0 : u8))
-      (set! (array-ref tiling 56) (cast 7 : u8))
-      (and
-        (sframe-v3-test-rejects-code?
-          (& flags)
-          (& limits)
-          sframe.compiler-sframe-v3-error-preamble)
-        (sframe-v3-test-rejects-code?
-          (& aux)
-          (& limits)
-          sframe.compiler-sframe-v3-error-preamble)
-        (sframe-v3-test-rejects-code?
-          (& attr)
-          (& limits)
-          sframe.compiler-sframe-v3-error-attribute)
-        (sframe-v3-test-rejects-code?
-          (& row)
-          (& limits)
-          sframe.compiler-sframe-v3-error-row)
-        (sframe-v3-test-rejects-code?
-          (& tiling)
-          (& limits)
-          sframe.compiler-sframe-v3-error-layout)
-        (sframe-v3-test-rejects-code?
-          (& row-order)
-          (& limits)
-          sframe.compiler-sframe-v3-error-row)
-        (let
-          [input-limit : sframe.CompilerSframeV3Limits
-            (sframe.CompilerSframeV3Limits 87 1000 10 10 10000 1000)]
-          [function-limit : sframe.CompilerSframeV3Limits
-            (sframe.CompilerSframeV3Limits 1000 1000 1 10 10000 1000)]
-          [row-limit : sframe.CompilerSframeV3Limits
-            (sframe.CompilerSframeV3Limits 1000 1000 10 4 10000 1000)]
-          [allocation-limit : sframe.CompilerSframeV3Limits
-            (sframe.CompilerSframeV3Limits 1000 1000 10 10 1 1000)]
-          [work-limit : sframe.CompilerSframeV3Limits
-            (sframe.CompilerSframeV3Limits 1000 1000 10 10 10000 1)]
-          (and
-            (sframe-v3-test-rejects-code?
-              (& golden)
-              (& input-limit)
-              sframe.compiler-sframe-v3-error-input-limit)
-            (sframe-v3-test-rejects-code?
-              (& golden)
-              (& function-limit)
-              sframe.compiler-sframe-v3-error-function-limit)
-            (sframe-v3-test-rejects-code?
-              (& golden)
-              (& row-limit)
-              sframe.compiler-sframe-v3-error-row-limit)
-            (sframe-v3-test-rejects-code?
-              (& golden)
-              (& allocation-limit)
-              sframe.compiler-sframe-v3-error-allocation-limit)
-            (sframe-v3-test-rejects-code?
-              (& golden)
-              (& work-limit)
-              sframe.compiler-sframe-v3-error-work-limit)))))))
+    (set! (array-ref flags 3) (cast 6 : u8))
+    (set! (array-ref aux 7) (cast 1 : u8))
+    (set! (array-ref attr 62) (cast 3 : u8))
+    (set! (array-ref row 66) (cast 0x83 : u8))
+    (set! (array-ref row-order 76) (cast 0 : u8))
+    (set! (array-ref tiling 56) (cast 7 : u8))
+    (and
+      (sframe-v3-test-rejects-code?
+        (& flags)
+        (& limits)
+        sframe.compiler-sframe-v3-error-preamble)
+      (sframe-v3-test-rejects-code?
+        (& aux)
+        (& limits)
+        sframe.compiler-sframe-v3-error-preamble)
+      (sframe-v3-test-rejects-code?
+        (& attr)
+        (& limits)
+        sframe.compiler-sframe-v3-error-attribute)
+      (sframe-v3-test-rejects-code?
+        (& row)
+        (& limits)
+        sframe.compiler-sframe-v3-error-row)
+      (sframe-v3-test-rejects-code?
+        (& tiling)
+        (& limits)
+        sframe.compiler-sframe-v3-error-layout)
+      (sframe-v3-test-rejects-code?
+        (& row-order)
+        (& limits)
+        sframe.compiler-sframe-v3-error-row)
+      (let
+        [input-limit : sframe.CompilerSframeV3Limits
+          (sframe.CompilerSframeV3Limits 87 1000 10 10 10000 1000)]
+        [function-limit : sframe.CompilerSframeV3Limits
+          (sframe.CompilerSframeV3Limits 1000 1000 1 10 10000 1000)]
+        [row-limit : sframe.CompilerSframeV3Limits
+          (sframe.CompilerSframeV3Limits 1000 1000 10 4 10000 1000)]
+        [allocation-limit : sframe.CompilerSframeV3Limits
+          (sframe.CompilerSframeV3Limits 1000 1000 10 10 1 1000)]
+        [work-limit : sframe.CompilerSframeV3Limits
+          (sframe.CompilerSframeV3Limits 1000 1000 10 10 10000 1)]
+        (and
+          (sframe-v3-test-rejects-code?
+            (& golden)
+            (& input-limit)
+            sframe.compiler-sframe-v3-error-input-limit)
+          (sframe-v3-test-rejects-code?
+            (& golden)
+            (& function-limit)
+            sframe.compiler-sframe-v3-error-function-limit)
+          (sframe-v3-test-rejects-code?
+            (& golden)
+            (& row-limit)
+            sframe.compiler-sframe-v3-error-row-limit)
+          (sframe-v3-test-rejects-code?
+            (& golden)
+            (& allocation-limit)
+            sframe.compiler-sframe-v3-error-allocation-limit)
+          (sframe-v3-test-rejects-code?
+            (& golden)
+            (& work-limit)
+            sframe.compiler-sframe-v3-error-work-limit))))))
 
 (define (sframe-v3-test-reserved-flex-control?) : bool
   (let
@@ -685,15 +674,14 @@
     (match (sframe.compiler-sframe-v3-encode (& image) 500000 (& limits))
       [(Err _) false]
       [(Ok bytes)
-        (begin
-          ;; First FLEX control begins at 54; set reserved bit two.
-          (set!
-            (array-ref bytes 54)
-            (cast (bit-or (cast (array-ref bytes 54) : i64) 4) : u8))
-          (sframe-v3-test-rejects-code?
-            (& bytes)
-            (& limits)
-            sframe.compiler-sframe-v3-error-row))])))
+        ;; First FLEX control begins at 54; set reserved bit two.
+        (set!
+          (array-ref bytes 54)
+          (cast (bit-or (cast (array-ref bytes 54) : i64) 4) : u8))
+        (sframe-v3-test-rejects-code?
+          (& bytes)
+          (& limits)
+          sframe.compiler-sframe-v3-error-row)])))
 
 (define (sframe-v3-test-zero-flex-control?) : bool
   (let
@@ -703,13 +691,12 @@
     (match (sframe.compiler-sframe-v3-encode (& image) 500000 (& limits))
       [(Err _) false]
       [(Ok bytes)
-        (begin
-          ;; A zero control is an omitted/padding word, never a CFA rule.
-          (set! (array-ref bytes 54) (cast 0 : u8))
-          (sframe-v3-test-rejects-code?
-            (& bytes)
-            (& limits)
-            sframe.compiler-sframe-v3-error-row))])))
+        ;; A zero control is an omitted/padding word, never a CFA rule.
+        (set! (array-ref bytes 54) (cast 0 : u8))
+        (sframe-v3-test-rejects-code?
+          (& bytes)
+          (& limits)
+          sframe.compiler-sframe-v3-error-row)])))
 
 (define (sframe-v3-test-explicit-policy?) : bool
   (let

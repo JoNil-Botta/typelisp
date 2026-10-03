@@ -138,17 +138,15 @@
   (let
     [canonical-index : i64 0]
     [bytes : i64 0]
-    (begin
-      (while (< canonical-index index.canonical-symbol-len)
-        (begin
-          (set!
-            bytes
-            (+
-              bytes
-              (string.string-length
-                (array-ref index.canonical-symbols canonical-index))))
-          (set! canonical-index (+ canonical-index 1))))
-      bytes)))
+    (while (< canonical-index index.canonical-symbol-len)
+      (set!
+        bytes
+        (+
+          bytes
+          (string.string-length
+            (array-ref index.canonical-symbols canonical-index))))
+      (set! canonical-index (+ canonical-index 1)))
+    bytes))
 
 (define (compiler-semantic-source-index-scope-region-count
   [index : (& index sem.CompilerSemanticSourceIndex)]) : i64
@@ -174,81 +172,77 @@
     [path-index : i64 0]
     [binding-index : i64 0]
     [candidate-index : i64 0]
-    (begin
-      (set!
+    (set!
+      bytes
+      (+
         bytes
         (+
-          bytes
+          (*
+            index.path-len
+            (comptime (size-of (type CompilerSemanticSourcePathInfo))))
           (+
             (*
-              index.path-len
-              (comptime (size-of (type CompilerSemanticSourcePathInfo))))
+              index.module-len
+              (comptime (size-of (type CompilerSemanticModuleInfo))))
             (+
               (*
-                index.module-len
-                (comptime (size-of (type CompilerSemanticModuleInfo))))
+                index.module-event-len
+                (comptime (size-of (type CompilerSemanticModuleEvent))))
               (+
                 (*
-                  index.module-event-len
-                  (comptime (size-of (type CompilerSemanticModuleEvent))))
-                (+
-                  (*
-                    index.scope-event-len
-                    (comptime (size-of (type CompilerSemanticScopeEvent))))
-                  (*
-                    index.binding-len
-                    (comptime (size-of (type CompilerSemanticBinding))))))))))
+                  index.scope-event-len
+                  (comptime (size-of (type CompilerSemanticScopeEvent))))
+                (*
+                  index.binding-len
+                  (comptime (size-of (type CompilerSemanticBinding))))))))))
+    (set!
+      bytes
+      (+
+        bytes
+        (+
+          (*
+            index.top-candidate-len
+            (comptime (size-of (type CompilerSemanticTopCandidateRef))))
+          (+
+            (* index.top-candidate-len (comptime (size-of (type String))))
+            (*
+              index.top-candidate-len
+              (comptime (size-of (type CompilerSemanticVisibleBinding))))))))
+    (while (< path-index index.path-len)
       (set!
         bytes
         (+
           bytes
-          (+
-            (*
-              index.top-candidate-len
-              (comptime (size-of (type CompilerSemanticTopCandidateRef))))
-            (+
-              (* index.top-candidate-len (comptime (size-of (type String))))
-              (*
-                index.top-candidate-len
-                (comptime (size-of (type CompilerSemanticVisibleBinding))))))))
-      (while (< path-index index.path-len)
-        (begin
-          (set!
-            bytes
-            (+
-              bytes
-              (string.string-length
-                (owned_view.compiler-owned-array-element-shared-view
-                  index.paths
-                  path-index).path)))
-          (set! path-index (+ path-index 1))))
-      (while (< binding-index index.binding-len)
-        (let
-          [binding : sem.CompilerSemanticBinding
+          (string.string-length
             (owned_view.compiler-owned-array-element-shared-view
-              index.bindings
-              binding-index)]
-          (begin
-            (set!
-              bytes
-              (+
-                bytes
-                (+
-                  (string.string-length binding.display-name)
-                  (string.string-length binding.resolved-type))))
-            (set! binding-index (+ binding-index 1)))))
-      (while (< candidate-index index.top-candidate-len)
-        (begin
-          (set!
+              index.paths
+              path-index).path)))
+      (set! path-index (+ path-index 1)))
+    (while (< binding-index index.binding-len)
+      (let
+        [binding : sem.CompilerSemanticBinding
+          (owned_view.compiler-owned-array-element-shared-view
+            index.bindings
+            binding-index)]
+        (set!
+          bytes
+          (+
             bytes
             (+
-              bytes
-              (string.string-length
-                (owned_view.compiler-owned-array-element-shared-view
-                  index.top-labels
-                  candidate-index))))
-          (set! candidate-index (+ candidate-index 1))))
-      bytes)))
+              (string.string-length binding.display-name)
+              (string.string-length binding.resolved-type))))
+        (set! binding-index (+ binding-index 1))))
+    (while (< candidate-index index.top-candidate-len)
+      (set!
+        bytes
+        (+
+          bytes
+          (string.string-length
+            (owned_view.compiler-owned-array-element-shared-view
+              index.top-labels
+              candidate-index))))
+      (set! candidate-index (+ candidate-index 1)))
+    bytes))
 
 (define (compiler-semantic-source-index-visible-binding-count
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -259,15 +253,13 @@
       (sem.compiler-semantic-visible-binding-cursor index query namespace-mask)]
     [count : i64 0]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
-          [(Some _ next)
-            (begin
-              (set! cursor next)
-              (set! count (+ count 1)))]
-          [(Done) (set! done true)]))
-      count)))
+    (while (not done)
+      (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
+        [(Some _ next)
+          (set! cursor next)
+          (set! count (+ count 1))]
+        [(Done) (set! done true)]))
+    count))
 
 ;; Return current-buffer records whenever recovery establishes safe identities.
 ;; Fatal prelude/lexing failures remain distinct from an owned partial index.
@@ -288,25 +280,23 @@
   (let
     [record-index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< record-index index.len))
-        (let
-          [record : sem.CompilerSemanticRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              index.records
-              record-index)]
-          (begin
-            (if (and
-              (match record.role
-                [(Definition) true]
-                [_ false])
-              record.editable
-              (string.eq record.display-name name)
-              (string.eq record.span.path path))
-              (set! found record-index)
-              unit)
-            (set! record-index (+ record-index 1)))))
-      found)))
+    (while (and (< found 0) (< record-index index.len))
+      (let
+        [record : sem.CompilerSemanticRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            index.records
+            record-index)]
+        (if (and
+          (match record.role
+            [(Definition) true]
+            [_ false])
+          record.editable
+          (string.eq record.display-name name)
+          (string.eq record.span.path path))
+          (set! found record-index)
+          unit)
+        (set! record-index (+ record-index 1))))
+    found))
 
 (define (compiler-check-semantic-index-record-ok?
   [source : (& source str)]
@@ -366,32 +356,30 @@
   (let
     [record-index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< record-index index.len))
-        (let
-          [record : sem.CompilerSemanticRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              index.records
-              record-index)]
-          [symbol : sem.CompilerSemanticSymbolId record.symbol]
-          (begin
-            (if (and
-              (string.eq record.display-name name)
-              (match role
-                [(Definition)
-                  (match record.role
-                    [(Definition) true]
-                    [_ false])]
-                [(Use)
-                  (match record.role
-                    [(Use) true]
-                    [_ false])])
-              (= symbol.local-ordinal local-ordinal)
-              (or (string.eq path "") (string.eq record.span.path path)))
-              (set! found record-index)
-              unit)
-            (set! record-index (+ record-index 1)))))
-      found)))
+    (while (and (< found 0) (< record-index index.len))
+      (let
+        [record : sem.CompilerSemanticRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            index.records
+            record-index)]
+        [symbol : sem.CompilerSemanticSymbolId record.symbol]
+        (if (and
+          (string.eq record.display-name name)
+          (match role
+            [(Definition)
+              (match record.role
+                [(Definition) true]
+                [_ false])]
+            [(Use)
+              (match record.role
+                [(Use) true]
+                [_ false])])
+          (= symbol.local-ordinal local-ordinal)
+          (or (string.eq path "") (string.eq record.span.path path)))
+          (set! found record-index)
+          unit)
+        (set! record-index (+ record-index 1))))
+    found))
 
 (define (compiler-semantic-source-index-find-name-occurrence
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -403,32 +391,30 @@
     [record-index : i64 0]
     [seen : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< record-index index.len))
-        (let
-          [record : sem.CompilerSemanticRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              index.records
-              record-index)]
-          (begin
-            (if (and
-              (string.eq record.display-name name)
-              (match role
-                [(Definition)
-                  (match record.role
-                    [(Definition) true]
-                    [_ false])]
-                [(Use)
-                  (match record.role
-                    [(Use) true]
-                    [_ false])])
-              (or (string.eq path "") (string.eq record.span.path path)))
-              (if (= seen occurrence)
-                (set! found record-index)
-                (set! seen (+ seen 1)))
-              unit)
-            (set! record-index (+ record-index 1)))))
-      found)))
+    (while (and (< found 0) (< record-index index.len))
+      (let
+        [record : sem.CompilerSemanticRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            index.records
+            record-index)]
+        (if (and
+          (string.eq record.display-name name)
+          (match role
+            [(Definition)
+              (match record.role
+                [(Definition) true]
+                [_ false])]
+            [(Use)
+              (match record.role
+                [(Use) true]
+                [_ false])])
+          (or (string.eq path "") (string.eq record.span.path path)))
+          (if (= seen occurrence)
+            (set! found record-index)
+            (set! seen (+ seen 1)))
+          unit)
+        (set! record-index (+ record-index 1))))
+    found))
 
 (define (compiler-semantic-source-index-name-symbol-match?
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -484,29 +470,27 @@
     [record-index : i64 0]
     [seen : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< record-index index.len))
-        (let
-          [record : sem.CompilerSemanticRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              index.records
-              record-index)]
-          (begin
-            (if (and
-              (match record.role
-                [(Use) true]
-                [_ false])
-              (match record.kind
-                [(Macro) true]
-                [_ false])
-              (= record.editable editable)
-              (string.eq record.display-name name))
-              (if (= seen occurrence)
-                (set! found record-index)
-                (set! seen (+ seen 1)))
-              unit)
-            (set! record-index (+ record-index 1)))))
-      found)))
+    (while (and (< found 0) (< record-index index.len))
+      (let
+        [record : sem.CompilerSemanticRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            index.records
+            record-index)]
+        (if (and
+          (match record.role
+            [(Use) true]
+            [_ false])
+          (match record.kind
+            [(Macro) true]
+            [_ false])
+          (= record.editable editable)
+          (string.eq record.display-name name))
+          (if (= seen occurrence)
+            (set! found record-index)
+            (set! seen (+ seen 1)))
+          unit)
+        (set! record-index (+ record-index 1))))
+    found))
 
 (define (compiler-semantic-source-index-count-macro-uses
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -515,48 +499,45 @@
   (let
     [record-index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< record-index index.len)
-        (let
-          [record : sem.CompilerSemanticRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              index.records
-              record-index)]
-          (begin
-            (if (and
-              (match record.role
-                [(Use) true]
-                [_ false])
-              (match record.kind
-                [(Macro) true]
-                [_ false])
-              (= record.editable editable)
-              (string.eq record.display-name name))
-              (set! count (+ count 1))
-              unit)
-            (set! record-index (+ record-index 1)))))
-      count)))
+    (while (< record-index index.len)
+      (let
+        [record : sem.CompilerSemanticRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            index.records
+            record-index)]
+        (if (and
+          (match record.role
+            [(Use) true]
+            [_ false])
+          (match record.kind
+            [(Macro) true]
+            [_ false])
+          (= record.editable editable)
+          (string.eq record.display-name name))
+          (set! count (+ count 1))
+          unit)
+        (set! record-index (+ record-index 1))))
+    count))
 
 (define (compiler-semantic-record-vec-growth-ok?) : bool
   (let
     [records : sem.CompilerSemanticRecordVec
       (sem.compiler-semantic-record-vec-new 1)]
-    (begin
-      (sem.compiler-semantic-record-vec-push!
-        (&mut records)
-        (sem.compiler-semantic-record-fallback))
-      (sem.compiler-semantic-record-vec-push!
-        (&mut records)
-        (sem.compiler-semantic-record-fallback))
-      (sem.compiler-semantic-record-vec-push!
-        (&mut records)
-        (sem.compiler-semantic-record-fallback))
-      (and
-        (= records.len 3)
-        (>= (array-length records.items) 3)
-        (array-ref records.live 0)
-        (array-ref records.live 1)
-        (array-ref records.live 2)))))
+    (sem.compiler-semantic-record-vec-push!
+      (&mut records)
+      (sem.compiler-semantic-record-fallback))
+    (sem.compiler-semantic-record-vec-push!
+      (&mut records)
+      (sem.compiler-semantic-record-fallback))
+    (sem.compiler-semantic-record-vec-push!
+      (&mut records)
+      (sem.compiler-semantic-record-fallback))
+    (and
+      (= records.len 3)
+      (>= (array-length records.items) 3)
+      (array-ref records.live 0)
+      (array-ref records.live 1)
+      (array-ref records.live 2))))
 
 (define (compiler-semantic-test-source-find-from
   [source : (& source str)]
@@ -569,12 +550,11 @@
         start)]
     [limit : i64
       (- (string.string-length source) (string.string-length needle))]
-    (begin
-      (while (<= index limit)
-        (if (string.is-string-prefix-at source (& needle) index)
-          (return index)
-          (set! index (+ index 1))))
-      -1)))
+    (while (<= index limit)
+      (if (string.is-string-prefix-at source (& needle) index)
+        (return index)
+        (set! index (+ index 1))))
+    -1))
 
 (define (compiler-semantic-test-visible-label-count
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -586,17 +566,15 @@
       (sem.compiler-semantic-visible-binding-cursor index query namespace-mask)]
     [count : i64 0]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
-          [(Some binding next)
-            (begin
-              (if (string.eq binding.display-name label)
-                (set! count (+ count 1))
-                unit)
-              (set! cursor next))]
-          [(Done) (set! done true)]))
-      count)))
+    (while (not done)
+      (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
+        [(Some binding next)
+          (if (string.eq binding.display-name label)
+            (set! count (+ count 1))
+            unit)
+          (set! cursor next)]
+        [(Done) (set! done true)]))
+    count))
 
 (define (compiler-semantic-test-visible-symbol?
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -608,17 +586,16 @@
     [cursor : sem.CompilerSemanticVisibleBindingCursor
       (sem.compiler-semantic-visible-binding-cursor index query namespace-mask)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
-          [(Some binding next)
-            (if (and
-              (string.eq binding.display-name label)
-              (sem.compiler-semantic-symbol-id-eq? binding.symbol symbol))
-              (return true)
-              (set! cursor next))]
-          [(Done) (set! done true)]))
-      false)))
+    (while (not done)
+      (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
+        [(Some binding next)
+          (if (and
+            (string.eq binding.display-name label)
+            (sem.compiler-semantic-symbol-id-eq? binding.symbol symbol))
+            (return true)
+            (set! cursor next))]
+        [(Done) (set! done true)]))
+    false))
 
 (define (compiler-semantic-test-visible-order-eq?
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -630,38 +607,31 @@
     [right : sem.CompilerSemanticVisibleBindingCursor
       (sem.compiler-semantic-visible-binding-cursor index query namespace-mask)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (sem.compiler-semantic-visible-binding-cursor-step index left)
-          [(Some left-binding left-next)
-            (match (sem.compiler-semantic-visible-binding-cursor-step
-              index
-              right)
-              [(Some right-binding right-next)
-                (if (and
-                  (string.eq
-                    left-binding.display-name
-                    right-binding.display-name)
-                  (=
-                    (compiler-semantic-binding-namespace-tag
-                      left-binding.namespace)
-                    (compiler-semantic-binding-namespace-tag
-                      right-binding.namespace))
-                  (sem.compiler-semantic-symbol-id-eq?
-                    left-binding.symbol
-                    right-binding.symbol))
-                  (begin
-                    (set! left left-next)
-                    (set! right right-next))
-                  (return false))]
-              [(Done) (return false)])]
-          [(Done)
-            (match (sem.compiler-semantic-visible-binding-cursor-step
-              index
-              right)
-              [(Some _ _) (return false)]
-              [(Done) (set! done true)])]))
-      true)))
+    (while (not done)
+      (match (sem.compiler-semantic-visible-binding-cursor-step index left)
+        [(Some left-binding left-next)
+          (match (sem.compiler-semantic-visible-binding-cursor-step index right)
+            [(Some right-binding right-next)
+              (if (and
+                (string.eq left-binding.display-name right-binding.display-name)
+                (=
+                  (compiler-semantic-binding-namespace-tag
+                    left-binding.namespace)
+                  (compiler-semantic-binding-namespace-tag
+                    right-binding.namespace))
+                (sem.compiler-semantic-symbol-id-eq?
+                  left-binding.symbol
+                  right-binding.symbol))
+                (begin
+                  (set! left left-next)
+                  (set! right right-next))
+                (return false))]
+            [(Done) (return false)])]
+        [(Done)
+          (match (sem.compiler-semantic-visible-binding-cursor-step index right)
+            [(Some _ _) (return false)]
+            [(Done) (set! done true)])]))
+    true))
 
 (define (compiler-semantic-test-query-at
   [index : (& index sem.CompilerSemanticSourceIndex)]
@@ -753,122 +723,120 @@
             (compiler-semantic-binding-namespace-all-mask))]
         [repeat : i64 0]
         [repeated-ok : bool true]
-        (begin
-          (while (< repeat 100)
-            (begin
-              (if (=
-                (compiler-semantic-source-index-visible-binding-count
-                  index
-                  bound-query
-                  (compiler-semantic-binding-namespace-all-mask))
-                repeated-count)
-                unit
-                (set! repeated-ok false))
-              (set! repeat (+ repeat 1))))
-          (and
-            (>= init-query.path-index 0)
-            (>= bound-query.path-index 0)
-            (>= after-query.path-index 0)
-            (string.eq qualified-import-record.display-name "imported-value")
-            (compiler-semantic-record-span-text-eq?
-              source
-              qualified-import-record
-              "dep.imported-value")
-            (compiler-semantic-test-visible-symbol?
-              index
-              init-query
-              (sem.compiler-semantic-binding-namespace-value-mask)
-              "answer"
-              parameter-record.symbol)
-            (compiler-semantic-test-visible-symbol?
-              index
-              bound-query
-              (sem.compiler-semantic-binding-namespace-value-mask)
-              "answer"
-              local-record.symbol)
-            (compiler-semantic-test-visible-symbol?
-              index
-              boundary-query
-              (sem.compiler-semantic-binding-namespace-value-mask)
-              "answer"
-              local-record.symbol)
-            (compiler-semantic-test-visible-symbol?
-              index
-              after-query
-              (sem.compiler-semantic-binding-namespace-value-mask)
-              "answer"
-              top-record.symbol)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-value-mask)
-                "answer")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-value-mask)
-                "imported-value")
-              0)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-value-mask)
-                "Pair")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-type-mask)
-                "Pair")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-macro-mask)
-                "wrap")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                bound-query
-                (sem.compiler-semantic-binding-namespace-macro-mask)
-                "when")
-              1)
-            (=
-              (compiler-semantic-test-visible-label-count
-                index
-                init-query
-                (sem.compiler-semantic-binding-namespace-value-mask)
-                "match-use")
-              1)
-            (compiler-semantic-test-visible-order-eq?
+        (while (< repeat 100)
+          (if (=
+            (compiler-semantic-source-index-visible-binding-count
               index
               bound-query
               (compiler-semantic-binding-namespace-all-mask))
-            repeated-ok
-            (> repeated-count 0)
-            (> (compiler-semantic-source-index-path-count index) 0)
-            (> (compiler-semantic-source-index-scope-region-count index) 0)
-            (> (compiler-semantic-source-index-top-candidate-count index) 0)
-            (> (compiler-semantic-source-index-retained-byte-estimate index) 0)
-            (=
-              (compiler-semantic-source-index-visible-binding-count
-                index
-                (sem.CompilerSemanticVisibleBindingQuery -1 -1 999999)
-                (compiler-semantic-binding-namespace-all-mask))
-              0)
-            (match (sem.compiler-semantic-source-index-query
+            repeated-count)
+            unit
+            (set! repeated-ok false))
+          (set! repeat (+ repeat 1)))
+        (and
+          (>= init-query.path-index 0)
+          (>= bound-query.path-index 0)
+          (>= after-query.path-index 0)
+          (string.eq qualified-import-record.display-name "imported-value")
+          (compiler-semantic-record-span-text-eq?
+            source
+            qualified-import-record
+            "dep.imported-value")
+          (compiler-semantic-test-visible-symbol?
+            index
+            init-query
+            (sem.compiler-semantic-binding-namespace-value-mask)
+            "answer"
+            parameter-record.symbol)
+          (compiler-semantic-test-visible-symbol?
+            index
+            bound-query
+            (sem.compiler-semantic-binding-namespace-value-mask)
+            "answer"
+            local-record.symbol)
+          (compiler-semantic-test-visible-symbol?
+            index
+            boundary-query
+            (sem.compiler-semantic-binding-namespace-value-mask)
+            "answer"
+            local-record.symbol)
+          (compiler-semantic-test-visible-symbol?
+            index
+            after-query
+            (sem.compiler-semantic-binding-namespace-value-mask)
+            "answer"
+            top-record.symbol)
+          (=
+            (compiler-semantic-test-visible-label-count
               index
-              path
-              (+ (string.string-length source) 1))
-              [(None) true]
-              [_ false])))))))
+              bound-query
+              (sem.compiler-semantic-binding-namespace-value-mask)
+              "answer")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              bound-query
+              (sem.compiler-semantic-binding-namespace-value-mask)
+              "imported-value")
+            0)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              bound-query
+              (sem.compiler-semantic-binding-namespace-value-mask)
+              "Pair")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              bound-query
+              (sem.compiler-semantic-binding-namespace-type-mask)
+              "Pair")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              bound-query
+              (sem.compiler-semantic-binding-namespace-macro-mask)
+              "wrap")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              bound-query
+              (sem.compiler-semantic-binding-namespace-macro-mask)
+              "when")
+            1)
+          (=
+            (compiler-semantic-test-visible-label-count
+              index
+              init-query
+              (sem.compiler-semantic-binding-namespace-value-mask)
+              "match-use")
+            1)
+          (compiler-semantic-test-visible-order-eq?
+            index
+            bound-query
+            (compiler-semantic-binding-namespace-all-mask))
+          repeated-ok
+          (> repeated-count 0)
+          (> (compiler-semantic-source-index-path-count index) 0)
+          (> (compiler-semantic-source-index-scope-region-count index) 0)
+          (> (compiler-semantic-source-index-top-candidate-count index) 0)
+          (> (compiler-semantic-source-index-retained-byte-estimate index) 0)
+          (=
+            (compiler-semantic-source-index-visible-binding-count
+              index
+              (sem.CompilerSemanticVisibleBindingQuery -1 -1 999999)
+              (compiler-semantic-binding-namespace-all-mask))
+            0)
+          (match (sem.compiler-semantic-source-index-query
+            index
+            path
+            (+ (string.string-length source) 1))
+            [(None) true]
+            [_ false]))))))
 
 (define (compiler-check-semantic-index-base-ok?) : bool
   (let
@@ -1157,10 +1125,9 @@
                         "(define broken : i64 true)"
                         (svec.new))
                         [(Ok _ replacement)
-                          (begin
-                            (sem.compiler-semantic-source-index-release!
-                              (&mut replacement))
-                            false)]
+                          (sem.compiler-semantic-source-index-release!
+                            (&mut replacement))
+                          false]
                         [(Partial diagnostics replacement)
                           (let
                             [ok : bool
@@ -1178,10 +1145,9 @@
                                     path
                                     "broken")
                                   0))]
-                            (begin
-                              (sem.compiler-semantic-source-index-release!
-                                (&mut replacement))
-                              ok))]
+                            (sem.compiler-semantic-source-index-release!
+                              (&mut replacement))
+                            ok)]
                         [(Err _) false])]
                     [ok : bool
                       (and
@@ -1346,29 +1312,22 @@
                           (sem.compiler-semantic-source-index-len (& first))
                           first-len)
                         (string.eq answer.display-name "answer"))]
-                    (begin
-                      (sem.compiler-semantic-source-index-release!
-                        (&mut second))
-                      (sem.compiler-semantic-source-index-release! (&mut first))
-                      (and
-                        ok
-                        (= (sem.compiler-semantic-source-index-len (& first)) 0)
-                        (=
-                          (sem.compiler-semantic-source-index-len (& second))
-                          0))))]
+                    (sem.compiler-semantic-source-index-release! (&mut second))
+                    (sem.compiler-semantic-source-index-release! (&mut first))
+                    (and
+                      ok
+                      (= (sem.compiler-semantic-source-index-len (& first)) 0)
+                      (= (sem.compiler-semantic-source-index-len (& second)) 0)))]
                 [(Partial _ partial)
-                  (begin
-                    (sem.compiler-semantic-source-index-release! (&mut partial))
-                    (sem.compiler-semantic-source-index-release! (&mut first))
-                    false)]
+                  (sem.compiler-semantic-source-index-release! (&mut partial))
+                  (sem.compiler-semantic-source-index-release! (&mut first))
+                  false]
                 [(Err _)
-                  (begin
-                    (sem.compiler-semantic-source-index-release! (&mut first))
-                    false)]))))]
+                  (sem.compiler-semantic-source-index-release! (&mut first))
+                  false]))))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-macro-records-ok?
@@ -1670,15 +1629,13 @@
                                 "emit-one"
                                 true)
                               0))]
-                        (begin
-                          (sem.compiler-semantic-source-index-release!
-                            (&mut replacement))
-                          empty))]
-                    [(Partial _ partial)
-                      (begin
                         (sem.compiler-semantic-source-index-release!
-                          (&mut partial))
-                        false)]
+                          (&mut replacement))
+                        empty)]
+                    [(Partial _ partial)
+                      (sem.compiler-semantic-source-index-release!
+                        (&mut partial))
+                      false]
                     [(Err _) false])]
                 [ok : bool
                   (and
@@ -1694,31 +1651,27 @@
                       first-local.symbol
                       second-local.symbol)
                     (= first-local.span.start-byte second-local.span.start-byte))]
-                (begin
-                  (sem.compiler-semantic-source-index-release! (&mut second))
-                  (sem.compiler-semantic-source-index-release! (&mut first))
-                  (and
-                    ok
-                    (=
-                      owners-before
-                      (compiler-semantic-source-index-live-owner-count))
-                    (not
-                      (tc.tc-macro-call-site-state-enabled?
-                        (tc.tc-job-state-macro-call-sites
-                          (tc.tc-serial-job-state)))))))]
+                (sem.compiler-semantic-source-index-release! (&mut second))
+                (sem.compiler-semantic-source-index-release! (&mut first))
+                (and
+                  ok
+                  (=
+                    owners-before
+                    (compiler-semantic-source-index-live-owner-count))
+                  (not
+                    (tc.tc-macro-call-site-state-enabled?
+                      (tc.tc-job-state-macro-call-sites
+                        (tc.tc-serial-job-state))))))]
             [(Partial _ partial)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                false)]
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              false]
             [(Err _)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                false)]))]
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              false]))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-inferred-visibility-ok?
@@ -2093,29 +2046,22 @@
                         (string.eq
                           alias-definition.resolved-type
                           "(-> i64 i64)"))]
-                    (begin
-                      (sem.compiler-semantic-source-index-release!
-                        (&mut second))
-                      (sem.compiler-semantic-source-index-release! (&mut first))
-                      (and
-                        ok
-                        (= (sem.compiler-semantic-source-index-len (& first)) 0)
-                        (=
-                          (sem.compiler-semantic-source-index-len (& second))
-                          0))))]
+                    (sem.compiler-semantic-source-index-release! (&mut second))
+                    (sem.compiler-semantic-source-index-release! (&mut first))
+                    (and
+                      ok
+                      (= (sem.compiler-semantic-source-index-len (& first)) 0)
+                      (= (sem.compiler-semantic-source-index-len (& second)) 0)))]
                 [(Partial _ partial)
-                  (begin
-                    (sem.compiler-semantic-source-index-release! (&mut partial))
-                    (sem.compiler-semantic-source-index-release! (&mut first))
-                    false)]
+                  (sem.compiler-semantic-source-index-release! (&mut partial))
+                  (sem.compiler-semantic-source-index-release! (&mut first))
+                  false]
                 [(Err _)
-                  (begin
-                    (sem.compiler-semantic-source-index-release! (&mut first))
-                    false)]))))]
+                  (sem.compiler-semantic-source-index-release! (&mut first))
+                  false]))))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 ;; Slice pattern binders are ordinary locals: element binders take the element
@@ -2173,13 +2119,11 @@
                   (>= tail-use-index 0)
                   (string.eq head.resolved-type "i64")
                   (string.eq tail.resolved-type "(& (Slice i64))"))]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                ok))))]
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              ok)))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-retained-transitions-ok?) : bool
@@ -2211,9 +2155,8 @@
     [roots : svec.Vec
       (let
         [items : svec.Vec (svec.new)]
-        (begin
-          (svec.push-ref! (&mut items) "stdlib")
-          items))]
+        (svec.push-ref! (&mut items) "stdlib")
+        items)]
     (match (compiler-check-source-index-with-roots
       (owned_view.compiler-owned-shared-view path)
       source
@@ -2289,13 +2232,11 @@
               (string.eq
                 (sem.compiler-semantic-source-index-get (& index) raw-index).resolved-type
                 "(CFunc non-null (-> i64 i64))"))]
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut index))
-            (and ok (= (sem.compiler-semantic-source-index-len (& index)) 0))))]
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          (and ok (= (sem.compiler-semantic-source-index-len (& index)) 0)))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-dense-visibility-ok?
@@ -2570,13 +2511,11 @@
                 "state"
                 0
                 3))]
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut index))
-            ok))]
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          ok)]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-spmd-paired-scopes-ok?) : bool
@@ -2658,114 +2597,110 @@
         (let
           [shadow-chain-ok : bool true]
           [shadow-occurrence : i64 0]
-          (begin
-            (while (<= shadow-occurrence 10)
-              (begin
-                (if (compiler-semantic-source-index-name-symbol-match?
+          (while (<= shadow-occurrence 10)
+            (if (compiler-semantic-source-index-name-symbol-match?
+              (& index)
+              path
+              "shadow"
+              shadow-occurrence
+              shadow-occurrence)
+              unit
+              (set! shadow-chain-ok false))
+            (set! shadow-occurrence (+ shadow-occurrence 1)))
+          (let
+            [ok : bool
+              (and
+                shadow-chain-ok
+                ;; The first sibling's nested chain must restore the
+                ;; parameter before the next sibling initializer and after
+                ;; both siblings have completed.
+                (compiler-semantic-source-index-name-symbol-match?
                   (& index)
                   path
                   "shadow"
-                  shadow-occurrence
-                  shadow-occurrence)
-                  unit
-                  (set! shadow-chain-ok false))
-                (set! shadow-occurrence (+ shadow-occurrence 1))))
-            (let
-              [ok : bool
-                (and
-                  shadow-chain-ok
-                  ;; The first sibling's nested chain must restore the
-                  ;; parameter before the next sibling initializer and after
-                  ;; both siblings have completed.
-                  (compiler-semantic-source-index-name-symbol-match?
+                  0
+                  11)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "shadow"
+                  11
+                  12)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "shadow"
+                  0
+                  13)
+                ;; Active unquote and its caller parameter retain distinct,
+                ;; stable local identities.
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "value"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "value"
+                  1
+                  1)
+                (>=
+                  (compiler-semantic-source-index-find-name-occurrence
                     (& index)
                     path
-                    "shadow"
-                    0
-                    11)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "shadow"
-                    11
-                    12)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "shadow"
-                    0
-                    13)
-                  ;; Active unquote and its caller parameter retain distinct,
-                  ;; stable local identities.
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "value"
-                    0
+                    "macro-local"
+                    Definition
                     0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "value"
-                    1
-                    1)
-                  (>=
-                    (compiler-semantic-source-index-find-name-occurrence
-                      (& index)
-                      path
-                      "macro-local"
-                      Definition
-                      0)
-                    0)
-                  ;; Match patterns, resources, foreach indices, and SPMD
-                  ;; indices all extend only their lexical child snapshots.
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "item"
-                    0
-                    0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "resource"
-                    0
-                    0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "i"
-                    0
-                    0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "j"
-                    0
-                    0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "k"
-                    0
-                    0)
-                  (compiler-semantic-source-index-name-symbol-match?
-                    (& index)
-                    path
-                    "prefix"
-                    0
-                    0)
-                  (compiler-check-semantic-index-dense-visibility-ok?
-                    (& index)
-                    path
-                    source))]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut index))
-                ok))))]
+                  0)
+                ;; Match patterns, resources, foreach indices, and SPMD
+                ;; indices all extend only their lexical child snapshots.
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "item"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "resource"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "i"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "j"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "k"
+                  0
+                  0)
+                (compiler-semantic-source-index-name-symbol-match?
+                  (& index)
+                  path
+                  "prefix"
+                  0
+                  0)
+                (compiler-check-semantic-index-dense-visibility-ok?
+                  (& index)
+                  path
+                  source))]
+            (sem.compiler-semantic-source-index-release! (&mut index))
+            ok))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-partial-type-error-ok?) : bool
@@ -2932,27 +2867,23 @@
                     (sem.compiler-semantic-symbol-id-eq?
                       partial-later.symbol
                       complete-later.symbol))]
-                (begin
-                  (sem.compiler-semantic-source-index-release! (&mut complete))
-                  (sem.compiler-semantic-source-index-release! (&mut partial))
-                  (and
-                    ok
-                    (=
-                      owners-before
-                      (compiler-semantic-source-index-live-owner-count)))))]
+                (sem.compiler-semantic-source-index-release! (&mut complete))
+                (sem.compiler-semantic-source-index-release! (&mut partial))
+                (and
+                  ok
+                  (=
+                    owners-before
+                    (compiler-semantic-source-index-live-owner-count))))]
             [(Partial _ unexpected)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut unexpected))
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                false)]
+              (sem.compiler-semantic-source-index-release! (&mut unexpected))
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              false]
             [(Err _)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                false)]))]
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              false]))]
       [(Ok _ unexpected)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut unexpected))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut unexpected))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-partial-syntax-ok?) : bool
@@ -3036,23 +2967,19 @@
                     (sem.compiler-semantic-symbol-id-eq?
                       partial-first.symbol
                       complete-first.symbol))]
-                (begin
-                  (sem.compiler-semantic-source-index-release! (&mut complete))
-                  (sem.compiler-semantic-source-index-release! (&mut partial))
-                  ok))]
+                (sem.compiler-semantic-source-index-release! (&mut complete))
+                (sem.compiler-semantic-source-index-release! (&mut partial))
+                ok)]
             [(Partial _ unexpected)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut unexpected))
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                false)]
+              (sem.compiler-semantic-source-index-release! (&mut unexpected))
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              false]
             [(Err _)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                false)]))]
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              false]))]
       [(Ok _ unexpected)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut unexpected))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut unexpected))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-partial-diagnostics-ok?) : bool
@@ -3095,13 +3022,11 @@
               (>= later-index 0)
               (< missing-index 0)
               (compiler-semantic-record-span-text-eq? source later "later"))]
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut partial))
-            ok))]
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          ok)]
       [(Ok _ unexpected)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut unexpected))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut unexpected))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-partial-edge-result-ok?
@@ -3127,13 +3052,11 @@
             (if expected-present
               (>= record-index 0)
               (< record-index 0)))]
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          ok))]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        ok)]
     [(Ok _ unexpected)
-      (begin
-        (sem.compiler-semantic-source-index-release! (&mut unexpected))
-        false)]
+      (sem.compiler-semantic-source-index-release! (&mut unexpected))
+      false]
     [(Err _) false]))
 
 (define (compiler-check-semantic-index-partial-edge-cases-ok?) : bool
@@ -3154,36 +3077,32 @@
         false)]
     [iteration : i64 0]
     [bounded : bool true]
-    (begin
-      (while (< iteration 8)
-        (begin
-          (if (compiler-check-semantic-index-partial-edge-result-ok?
-            (owned_view.compiler-owned-shared-view path)
-            "(define current : i64 true)"
-            "current"
-            true)
-            unit
-            (set! bounded false))
-          (set! iteration (+ iteration 1))))
-      (and
-        before-first
-        bad-import
-        bounded
-        (= owners-before (compiler-semantic-source-index-live-owner-count))
-        (match (compiler-check-source-index-with-roots
-          path
-          "\"unterminated"
-          (svec.new))
-          [(Err diagnostics)
-            (> (cdiag.compiler-diagnostic-list-count (deref diagnostics)) 0)]
-          [(Ok _ unexpected)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut unexpected))
-              false)]
-          [(Partial _ unexpected)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut unexpected))
-              false)])))))
+    (while (< iteration 8)
+      (if (compiler-check-semantic-index-partial-edge-result-ok?
+        (owned_view.compiler-owned-shared-view path)
+        "(define current : i64 true)"
+        "current"
+        true)
+        unit
+        (set! bounded false))
+      (set! iteration (+ iteration 1)))
+    (and
+      before-first
+      bad-import
+      bounded
+      (= owners-before (compiler-semantic-source-index-live-owner-count))
+      (match (compiler-check-source-index-with-roots
+        path
+        "\"unterminated"
+        (svec.new))
+        [(Err diagnostics)
+          (> (cdiag.compiler-diagnostic-list-count (deref diagnostics)) 0)]
+        [(Ok _ unexpected)
+          (sem.compiler-semantic-source-index-release! (&mut unexpected))
+          false]
+        [(Partial _ unexpected)
+          (sem.compiler-semantic-source-index-release! (&mut unexpected))
+          false]))))
 
 (define (compiler-check-semantic-index-partial-ok?) : bool
   (and
@@ -3556,27 +3475,23 @@
                       (compiler-semantic-source-index-canonical-key-byte-count
                         (& first))
                       0))]
-                (begin
-                  (sem.compiler-semantic-source-index-release! (&mut second))
-                  (sem.compiler-semantic-source-index-release! (&mut first))
-                  (and
-                    ok
-                    (=
-                      owners-before
-                      (compiler-semantic-source-index-live-owner-count)))))]
+                (sem.compiler-semantic-source-index-release! (&mut second))
+                (sem.compiler-semantic-source-index-release! (&mut first))
+                (and
+                  ok
+                  (=
+                    owners-before
+                    (compiler-semantic-source-index-live-owner-count))))]
             [(Partial _ partial)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut partial))
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                false)]
+              (sem.compiler-semantic-source-index-release! (&mut partial))
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              false]
             [(Err _)
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                false)]))]
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              false]))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-canonical-shift-ok?) : bool
@@ -3625,23 +3540,19 @@
                     (& first-record)
                     (& second)
                     (& second-record)))]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut second))
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                ok))]
+              (sem.compiler-semantic-source-index-release! (&mut second))
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              ok)]
           [(Partial _ partial)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut partial))
-              (sem.compiler-semantic-source-index-release! (&mut first))
-              false)]
+            (sem.compiler-semantic-source-index-release! (&mut partial))
+            (sem.compiler-semantic-source-index-release! (&mut first))
+            false]
           [(Err _)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut first))
-              false)])]
+            (sem.compiler-semantic-source-index-release! (&mut first))
+            false])]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-canonical-collision-ok?) : bool
@@ -3713,13 +3624,11 @@
                   (& left-local)
                   (& index)
                   (& right-local))))]
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut index))
-            ok))]
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          ok)]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-canonical-rename-ok?) : bool
@@ -3757,23 +3666,19 @@
                     (& first-record)
                     (& second)
                     (& second-record)))]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut second))
-                (sem.compiler-semantic-source-index-release! (&mut first))
-                ok))]
+              (sem.compiler-semantic-source-index-release! (&mut second))
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              ok)]
           [(Partial _ partial)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut partial))
-              (sem.compiler-semantic-source-index-release! (&mut first))
-              false)]
+            (sem.compiler-semantic-source-index-release! (&mut partial))
+            (sem.compiler-semantic-source-index-release! (&mut first))
+            false]
           [(Err _)
-            (begin
-              (sem.compiler-semantic-source-index-release! (&mut first))
-              false)])]
+            (sem.compiler-semantic-source-index-release! (&mut first))
+            false])]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-semantic-index-canonical-ok?) : bool
@@ -4070,13 +3975,12 @@
             (not selection-timing-ok))
             (let
               [release-start : i64 (compiler-semantic-index-smoke-timing-start)]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut index))
-                (compiler-semantic-index-smoke-timing-record
-                  "semantic-nominal-release"
-                  release-start
-                  1)
-                false))
+              (sem.compiler-semantic-source-index-release! (&mut index))
+              (compiler-semantic-index-smoke-timing-record
+                "semantic-nominal-release"
+                release-start
+                1)
+              false)
             (let
               [assertion-start : i64
                 (compiler-semantic-index-smoke-timing-start)]
@@ -4319,34 +4223,31 @@
                     0
                     1))]
               [release-start : i64 (compiler-semantic-index-smoke-timing-start)]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut index))
-                (let
-                  [release-timing-ok : bool
-                    (compiler-semantic-index-smoke-timing-record
-                      "semantic-nominal-release"
-                      release-start
-                      0)]
-                  (and
-                    ok
-                    assertion-timing-ok
-                    release-timing-ok
-                    (= (sem.compiler-semantic-source-index-len (& index)) 0)))))))]
+              (sem.compiler-semantic-source-index-release! (&mut index))
+              (let
+                [release-timing-ok : bool
+                  (compiler-semantic-index-smoke-timing-record
+                    "semantic-nominal-release"
+                    release-start
+                    0)]
+                (and
+                  ok
+                  assertion-timing-ok
+                  release-timing-ok
+                  (= (sem.compiler-semantic-source-index-len (& index)) 0))))))]
       [(Partial _ partial)
-        (begin
-          (compiler-semantic-index-smoke-timing-record
-            "semantic-nominal-build"
-            build-start
-            1)
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (compiler-semantic-index-smoke-timing-record
+          "semantic-nominal-build"
+          build-start
+          1)
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _)
-        (begin
-          (compiler-semantic-index-smoke-timing-record
-            "semantic-nominal-build"
-            build-start
-            1)
-          false)])))
+        (compiler-semantic-index-smoke-timing-record
+          "semantic-nominal-build"
+          build-start
+          1)
+        false])))
 
 (define (compiler-check-semantic-index-exact-top-candidate-storage-ok?) : bool
   (let
@@ -4383,39 +4284,33 @@
         (let
           [candidate-index : i64 0]
           [sparse-macro-count : i64 0]
-          (begin
-            (while (< candidate-index index.top-candidate-len)
-              (begin
-                (if (string.eq
-                  (array-ref index.top-labels candidate-index)
-                  "sparse-candidate")
-                  (set! sparse-macro-count (+ sparse-macro-count 1))
-                  unit)
-                (set! candidate-index (+ candidate-index 1))))
-            (let
-              [ok : bool
-                (and
-                  (>= index.module-len 12)
-                  (= sparse-macro-count 12)
-                  (< sparse-macro-count (* 12 index.module-len))
-                  (=
-                    (array-length index.top-candidates)
-                    index.top-candidate-len)
-                  (= (array-length index.top-labels) index.top-candidate-len)
-                  (=
-                    (array-length index.top-visible-bindings)
-                    index.top-candidate-len))]
-              (begin
-                (sem.compiler-semantic-source-index-release! (&mut index))
-                (and
-                  ok
-                  (=
-                    (compiler-semantic-source-index-live-owner-count)
-                    owners-before))))))]
+          (while (< candidate-index index.top-candidate-len)
+            (if (string.eq
+              (array-ref index.top-labels candidate-index)
+              "sparse-candidate")
+              (set! sparse-macro-count (+ sparse-macro-count 1))
+              unit)
+            (set! candidate-index (+ candidate-index 1)))
+          (let
+            [ok : bool
+              (and
+                (>= index.module-len 12)
+                (= sparse-macro-count 12)
+                (< sparse-macro-count (* 12 index.module-len))
+                (= (array-length index.top-candidates) index.top-candidate-len)
+                (= (array-length index.top-labels) index.top-candidate-len)
+                (=
+                  (array-length index.top-visible-bindings)
+                  index.top-candidate-len))]
+            (sem.compiler-semantic-source-index-release! (&mut index))
+            (and
+              ok
+              (=
+                (compiler-semantic-source-index-live-owner-count)
+                owners-before))))]
       [(Partial _ partial)
-        (begin
-          (sem.compiler-semantic-source-index-release! (&mut partial))
-          false)]
+        (sem.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 ;; Rechecking the same source under alternating cfg inputs must invalidate the
@@ -4445,30 +4340,27 @@
         (svec.new)
         cfgs)
         [(Ok _ index)
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut index))
-            true)]
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          true]
         [(Partial _ partial)
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut partial))
-            false)]
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          false]
         [(Err _) false])]
     (and
       complete
       (= owners-before (compiler-semantic-source-index-live-owner-count)))))
 
 (define (compiler-check-semantic-index-generated-cfg-ok?) : bool
-  (begin
-    (unless
-      (compiler-check-semantic-index-generated-cfg-one-ok? true)
-      (io.panic "semantic-index: enabled generated cfg failed"))
-    (unless
-      (compiler-check-semantic-index-generated-cfg-one-ok? false)
-      (io.panic "semantic-index: disabled generated cfg failed"))
-    (unless
-      (compiler-check-semantic-index-generated-cfg-one-ok? true)
-      (io.panic "semantic-index: repeated generated cfg failed"))
-    true))
+  (unless
+    (compiler-check-semantic-index-generated-cfg-one-ok? true)
+    (io.panic "semantic-index: enabled generated cfg failed"))
+  (unless
+    (compiler-check-semantic-index-generated-cfg-one-ok? false)
+    (io.panic "semantic-index: disabled generated cfg failed"))
+  (unless
+    (compiler-check-semantic-index-generated-cfg-one-ok? true)
+    (io.panic "semantic-index: repeated generated cfg failed"))
+  true)
 
 ;; A binder from a match pattern is in scope through every form of a
 ;; multi-form arm body: the use in the last form resolves to the pattern.
@@ -4518,9 +4410,8 @@
                         (& index)
                         use-index).span.start-byte
                       definition.span.start-byte)))))]
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut index))
-            ok))]
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          ok)]
       [_ false])))
 
 (define (compiler-check-semantic-index-ok?) : bool

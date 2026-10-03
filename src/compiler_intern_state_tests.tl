@@ -98,100 +98,99 @@
           17
           1
           left-source))]
-    (begin
-      (test.assert-i64-eq
-        (intern-template-source-identity-size)
-        8
-        "template identity remains one machine word")
-      (test.assert-i64-eq
-        (intern-fresh-local-identity-size)
-        8
-        "fresh-local identity remains one machine word")
-      (test.assert-i64-eq
+    (test.assert-i64-eq
+      (intern-template-source-identity-size)
+      8
+      "template identity remains one machine word")
+    (test.assert-i64-eq
+      (intern-fresh-local-identity-size)
+      8
+      "fresh-local identity remains one machine word")
+    (test.assert-i64-eq
+      (cis.intern-template-source-identity-raw template)
+      (cis.intern-template-source-identity-raw template-again)
+      "template records canonicalize identical components")
+    (test.assert-i64-eq
+      (intern-template-record-source-or
+        left-session
         (cis.intern-template-source-identity-raw template)
-        (cis.intern-template-source-identity-raw template-again)
-        "template records canonicalize identical components")
-      (test.assert-i64-eq
-        (intern-template-record-source-or
-          left-session
-          (cis.intern-template-source-identity-raw template)
-          -1)
-        left-source
-        "template record round-trips its source component")
-      (test.assert-true
-        (intern-fresh-record-components-match?
-          left-session
-          (cis.intern-fresh-local-identity-raw fresh)
-          17
-          left-source)
-        "fresh-local record round-trips ordinal and source")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          left-session
-          (cis.intern-template-source-identity-raw template)
-          -1)
-        left-source
-        "mixed renderer decodes a template source")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          left-session
-          (cis.intern-fresh-local-identity-raw fresh)
-          -1)
-        left-source
-        "mixed renderer decodes a fresh local")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          left-session
-          (cis.intern-macro-global-identity-raw macro-global)
-          -1)
-        left-source
-        "mixed renderer decodes a macro global")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          left-session
-          (cis.intern-macro-local-identity-raw macro-local)
-          -1)
-        left-source
-        "mixed renderer decodes a macro local")
-      (test.assert-false
-        (cis.intern-structural-session-template-source-id?
-          right-session
-          (cis.intern-template-source-identity-raw template))
-        "template decoder rejects a wrong owner")
-      (test.assert-false
-        (cis.intern-structural-session-fresh-local-id?
-          left-session
-          (cis.intern-template-source-identity-raw template))
-        "fresh-local decoder rejects the template kind")
-      (test.assert-false
-        (cis.intern-structural-session-template-source-id?
-          left-session
-          malformed-template)
-        "template decoder rejects a populated reserved lane")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          left-session
-          malformed-template
-          -1)
-        -1
-        "mixed renderer rejects a malformed template")
-      (test.assert-false
-        (cis.intern-structural-session-fresh-local-id?
-          left-session
-          malformed-fresh)
-        "fresh-local decoder rejects a populated reserved lane")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-syntax-source-name-id-or
-          right-session
-          (cis.intern-template-source-identity-raw template)
-          -1)
-        -1
-        "mixed renderer rejects a wrong owner")
-      (test.assert-false
-        (=
-          (cis.intern-template-source-identity-raw template)
-          (cis.intern-template-source-identity-raw right-template))
-        "different sessions produce distinct process-local handles"))))
+        -1)
+      left-source
+      "template record round-trips its source component")
+    (test.assert-true
+      (intern-fresh-record-components-match?
+        left-session
+        (cis.intern-fresh-local-identity-raw fresh)
+        17
+        left-source)
+      "fresh-local record round-trips ordinal and source")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        (cis.intern-template-source-identity-raw template)
+        -1)
+      left-source
+      "mixed renderer decodes a template source")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        (cis.intern-fresh-local-identity-raw fresh)
+        -1)
+      left-source
+      "mixed renderer decodes a fresh local")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        (cis.intern-macro-global-identity-raw macro-global)
+        -1)
+      left-source
+      "mixed renderer decodes a macro global")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        (cis.intern-macro-local-identity-raw macro-local)
+        -1)
+      left-source
+      "mixed renderer decodes a macro local")
+    (test.assert-false
+      (cis.intern-structural-session-template-source-id?
+        right-session
+        (cis.intern-template-source-identity-raw template))
+      "template decoder rejects a wrong owner")
+    (test.assert-false
+      (cis.intern-structural-session-fresh-local-id?
+        left-session
+        (cis.intern-template-source-identity-raw template))
+      "fresh-local decoder rejects the template kind")
+    (test.assert-false
+      (cis.intern-structural-session-template-source-id?
+        left-session
+        malformed-template)
+      "template decoder rejects a populated reserved lane")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        malformed-template
+        -1)
+      -1
+      "mixed renderer rejects a malformed template")
+    (test.assert-false
+      (cis.intern-structural-session-fresh-local-id?
+        left-session
+        malformed-fresh)
+      "fresh-local decoder rejects a populated reserved lane")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        right-session
+        (cis.intern-template-source-identity-raw template)
+        -1)
+      -1
+      "mixed renderer rejects a wrong owner")
+    (test.assert-false
+      (=
+        (cis.intern-template-source-identity-raw template)
+        (cis.intern-template-source-identity-raw right-template))
+      "different sessions produce distinct process-local handles")))
 
 (test
   compiler-intern-fresh-local-deliberate-hash-collision
@@ -208,14 +207,13 @@
     [colliding : i64
       (cis.intern-fresh-local-identity-raw
         (cis.intern-structural-session-fresh-local-identity session 512 source))]
-    (begin
-      (test.assert-false (= first colliding) "colliding records do not alias")
-      (test.assert-true
-        (intern-fresh-record-components-match? session first 0 source)
-        "first colliding record remains reachable")
-      (test.assert-true
-        (intern-fresh-record-components-match? session colliding 512 source)
-        "linear probing retains the colliding record"))))
+    (test.assert-false (= first colliding) "colliding records do not alias")
+    (test.assert-true
+      (intern-fresh-record-components-match? session first 0 source)
+      "first colliding record remains reachable")
+    (test.assert-true
+      (intern-fresh-record-components-match? session colliding 512 source)
+      "linear probing retains the colliding record")))
 
 (test
   compiler-intern-template-fresh-stale-reset
@@ -229,29 +227,27 @@
         (cis.intern-structural-session-template-source-identity
           stale-session
           source))]
-    (begin
-      (ci.intern-compat-state-reset! (&mut state))
-      (let
-        [next-source : i64
-          (ci.intern-compat-state-intern (&mut state) "reset-name")]
-        [next-session : cis.InternStructuralSessionHandle
-          (intern-identity-test-session (& state))]
-        [next-template : i64
-          (cis.intern-template-source-identity-raw
-            (cis.intern-structural-session-template-source-identity
-              next-session
-              next-source))]
-        (begin
-          (test.assert-false
-            (cis.intern-structural-session-valid? stale-session)
-            "reset invalidates the captured structural session")
-          (test.assert-i64-eq
-            (intern-template-record-source-or stale-session stale-template -1)
-            -1
-            "stale template handle fails closed")
-          (test.assert-false
-            (= stale-template next-template)
-            "reset re-owners newly canonicalized records"))))))
+    (ci.intern-compat-state-reset! (&mut state))
+    (let
+      [next-source : i64
+        (ci.intern-compat-state-intern (&mut state) "reset-name")]
+      [next-session : cis.InternStructuralSessionHandle
+        (intern-identity-test-session (& state))]
+      [next-template : i64
+        (cis.intern-template-source-identity-raw
+          (cis.intern-structural-session-template-source-identity
+            next-session
+            next-source))]
+      (test.assert-false
+        (cis.intern-structural-session-valid? stale-session)
+        "reset invalidates the captured structural session")
+      (test.assert-i64-eq
+        (intern-template-record-source-or stale-session stale-template -1)
+        -1
+        "stale template handle fails closed")
+      (test.assert-false
+        (= stale-template next-template)
+        "reset re-owners newly canonicalized records"))))
 
 (test
   compiler-intern-fresh-local-growth-beyond-pool-capacity
@@ -265,48 +261,46 @@
     [limit : i64 131073]
     [index : i64 0]
     [last : i64 -1]
-    (begin
-      (while (< index limit)
-        (begin
-          (set!
-            last
-            (cis.intern-fresh-local-identity-raw
-              (cis.intern-structural-session-fresh-local-identity
-                session
-                index
-                source)))
-          (set! index (+ index 1))))
-      (test.assert-true
-        (intern-fresh-record-components-match? session last (- limit 1) source)
-        "the record after the old 131072 pool limit round-trips")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-kind-count
-          session
-          (ci.intern-structural-kind-fresh-local))
-        limit
-        "fresh-local kind count includes every growth insertion")
-      (test.assert-i64-eq
-        (cis.intern-structural-session-kind-count
-          session
-          (ci.intern-structural-kind-template-source))
-        1
-        "template-source kind count remains independent")
-      (test.assert-i64-eq
-        (intern-structural-session-record-count session)
-        (+ limit 1)
-        "structural record count is independent of source-name capacity")
-      (test.assert-true
-        (>= (intern-structural-session-record-capacity session) limit)
-        "record columns grow to retain collision-probed insertions")
-      (test.assert-i64-eq
-        (ci.intern-structural-record-slot-bytes)
-        37
-        "each reserved structural record slot uses 37 payload bytes")
-      (test.assert-true
-        (>=
-          (intern-structural-session-record-reserved-bytes session)
-          (* limit (ci.intern-structural-record-slot-bytes)))
-        "reserved-byte metric covers all retained records"))))
+    (while (< index limit)
+      (set!
+        last
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity
+            session
+            index
+            source)))
+      (set! index (+ index 1)))
+    (test.assert-true
+      (intern-fresh-record-components-match? session last (- limit 1) source)
+      "the record after the old 131072 pool limit round-trips")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-fresh-local))
+      limit
+      "fresh-local kind count includes every growth insertion")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-template-source))
+      1
+      "template-source kind count remains independent")
+    (test.assert-i64-eq
+      (intern-structural-session-record-count session)
+      (+ limit 1)
+      "structural record count is independent of source-name capacity")
+    (test.assert-true
+      (>= (intern-structural-session-record-capacity session) limit)
+      "record columns grow to retain collision-probed insertions")
+    (test.assert-i64-eq
+      (ci.intern-structural-record-slot-bytes)
+      37
+      "each reserved structural record slot uses 37 payload bytes")
+    (test.assert-true
+      (>=
+        (intern-structural-session-record-reserved-bytes session)
+        (* limit (ci.intern-structural-record-slot-bytes)))
+      "reserved-byte metric covers all retained records")))
 
 (cfg
   test

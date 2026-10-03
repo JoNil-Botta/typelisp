@@ -15,14 +15,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (ir.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (ir.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (import compiler_builtin_ids as cbi)
 
@@ -57,29 +56,28 @@
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (match (compiler_backend.compiler-backend-emit-program-target-with-mode
-      (match (compiler_optimize.optimize-program-with-spans-and-level
-        (bounds-check-smoke-program)
-        (ir.compiler-source-spans-empty)
-        2)
-        [(Program optimized _) optimized])
-      (Linux)
-      (Scalar)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (match (compiler_backend.compiler-backend-emit-program-target-with-mode
+    (match (compiler_optimize.optimize-program-with-spans-and-level
+      (bounds-check-smoke-program)
       (ir.compiler-source-spans-empty)
-      false)
-      [(Ok asm)
-        (let
-          [symbol-count : i64
-            (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
-          [defines-abort : bool
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              "tl_oob_abort:\n")]
-          (if (not (= symbol-count 1))
-            1
-            (if defines-abort
-              2
-              42)))]
-      [(Err _) 2])))
+      2)
+      [(Program optimized _) optimized])
+    (Linux)
+    (Scalar)
+    (ir.compiler-source-spans-empty)
+    false)
+    [(Ok asm)
+      (let
+        [symbol-count : i64
+          (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
+        [defines-abort : bool
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "tl_oob_abort:\n")]
+        (if (not (= symbol-count 1))
+          1
+          (if defines-abort
+            2
+            42)))]
+    [(Err _) 2]))

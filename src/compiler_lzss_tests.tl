@@ -14,30 +14,24 @@
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
     [index : i64 0]
-    (begin
-      (while (< index prefix-len)
-        (begin
-          (set!
-            (array-ref out index)
-            (cast (string.string-ref prefix index) : u8))
-          (set! index (+ index 1))))
-      (let
-        [header-index : i64 0]
-        (while (< header-index header-len)
-          (begin
-            (set!
-              (array-ref out (+ prefix-len header-index))
-              (cast (string.string-ref header header-index) : u8))
-            (set! header-index (+ header-index 1)))))
-      (let
-        [token-index : i64 0]
-        (while (< token-index (array-length tokens))
-          (begin
-            (set!
-              (array-ref out (+ prefix-len header-len token-index))
-              (array-ref tokens token-index))
-            (set! token-index (+ token-index 1)))))
-      out)))
+    (while (< index prefix-len)
+      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8))
+      (set! index (+ index 1)))
+    (let
+      [header-index : i64 0]
+      (while (< header-index header-len)
+        (set!
+          (array-ref out (+ prefix-len header-index))
+          (cast (string.string-ref header header-index) : u8))
+        (set! header-index (+ header-index 1))))
+    (let
+      [token-index : i64 0]
+      (while (< token-index (array-length tokens))
+        (set!
+          (array-ref out (+ prefix-len header-len token-index))
+          (array-ref tokens token-index))
+        (set! token-index (+ token-index 1))))
+    out))
 
 (define (compiler-lzss-test-rejects?
   [payload : (__tl_dyn-array u8)]

@@ -71,18 +71,17 @@
       [capacity : i64 (array-length map.keys)]
       [index : i64 0]
       (while (< index capacity)
-        (begin
-          (if (> (array-ref map.keys index) 0)
-            (let
-              [handle : i64 (array-ref map.values index)]
-              (set!
-                (array-ref map.values index)
-                (compiler-registry-handle-shift-owner-index
-                  handle
-                  insertion-index
-                  delta)))
-            unit)
-          (set! index (+ index 1)))))))
+        (if (> (array-ref map.keys index) 0)
+          (let
+            [handle : i64 (array-ref map.values index)]
+            (set!
+              (array-ref map.values index)
+              (compiler-registry-handle-shift-owner-index
+                handle
+                insertion-index
+                delta)))
+          unit)
+        (set! index (+ index 1))))))
 
 (define (compiler-registries-shift-owner-indices
   [registries : csym.CompilerRegistries]
@@ -90,16 +89,15 @@
   [delta : i64]) : csym.CompilerRegistries
   (match (csym.compiler-registries-shared-view registries)
     [(CompilerRegistries variants fields identity)
-      (begin
-        (compiler-registry-shift-map-owner-indices!
-          (&mut variants)
-          insertion-index
-          delta)
-        (compiler-registry-shift-map-owner-indices!
-          (&mut fields)
-          insertion-index
-          delta)
-        (CompilerRegistries variants fields identity))]))
+      (compiler-registry-shift-map-owner-indices!
+        (&mut variants)
+        insertion-index
+        delta)
+      (compiler-registry-shift-map-owner-indices!
+        (&mut fields)
+        insertion-index
+        delta)
+      (CompilerRegistries variants fields identity)]))
 
 ;; Extend an existing registry across an additive declaration splice. Callers
 ;; must conservatively reject imports and other surfaces that can alter alias
@@ -459,25 +457,24 @@
     [(Ok program)
       (let
         [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
-        (begin
-          (ast.ast-decl-path-list-push-with-owner-id
-            (&mut paths)
-            "module.tl"
-            cbi.compiler-builtin-id-fix-empty)
-          (ast.ast-decl-path-list-push-with-owner-id
-            (&mut paths)
-            "first.tl"
-            cbi.compiler-builtin-id-fix-empty)
-          (ast.ast-decl-path-list-push-with-owner-id
-            (&mut paths)
-            "duplicate.tl"
-            cbi.compiler-builtin-id-fix-empty)
-          (match (csym.build-compiler-symbols-with-paths program paths)
-            [(Err message)
-              (string.eq
-                message
-                "symbols: duplicate value declaration left/same (first declared in first.tl; duplicate in duplicate.tl)")]
-            [(Ok _) false])))]
+        (ast.ast-decl-path-list-push-with-owner-id
+          (&mut paths)
+          "module.tl"
+          cbi.compiler-builtin-id-fix-empty)
+        (ast.ast-decl-path-list-push-with-owner-id
+          (&mut paths)
+          "first.tl"
+          cbi.compiler-builtin-id-fix-empty)
+        (ast.ast-decl-path-list-push-with-owner-id
+          (&mut paths)
+          "duplicate.tl"
+          cbi.compiler-builtin-id-fix-empty)
+        (match (csym.build-compiler-symbols-with-paths program paths)
+          [(Err message)
+            (string.eq
+              message
+              "symbols: duplicate value declaration left/same (first declared in first.tl; duplicate in duplicate.tl)")]
+          [(Ok _) false]))]
     [(Err _) false]))
 
 (define (compiler-symbols-variant-value-collisions-ok?) : bool
@@ -788,32 +785,29 @@
     [entry-count : i64 192]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index entry-count)
-        (begin
-          (csym.compiler-symbol-map-put!
-            (&mut map)
-            index
-            (csym.compiler-registry-make-handle
-              (csym.compiler-symbol-kind-enum-variant)
-              index
-              0))
-          (set! index (+ index 1))))
-      (compiler-registry-shift-map-owner-indices! (&mut map) 0 1)
-      (set! index 0)
-      (while (< index entry-count)
-        (begin
-          (if (=
-            (compiler-registry-lookup-score
-              (csym.compiler-symbol-map-lookup-id (& map) index)
-              (csym.compiler-symbol-kind-enum-variant)
-              (+ index 1)
-              0)
-            1)
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (< index entry-count)
+      (csym.compiler-symbol-map-put!
+        (&mut map)
+        index
+        (csym.compiler-registry-make-handle
+          (csym.compiler-symbol-kind-enum-variant)
+          index
+          0))
+      (set! index (+ index 1)))
+    (compiler-registry-shift-map-owner-indices! (&mut map) 0 1)
+    (set! index 0)
+    (while (< index entry-count)
+      (if (=
+        (compiler-registry-lookup-score
+          (csym.compiler-symbol-map-lookup-id (& map) index)
+          (csym.compiler-symbol-kind-enum-variant)
+          (+ index 1)
+          0)
+        1)
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (compiler-registries-incremental-base-source) : String
   "(module nested
@@ -1198,21 +1192,19 @@
   (let
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and
-        (< found 0)
-        (< index (csym.compiler-symbols-decl-count symbols)))
-        (let
-          [name-id : i64
-            (csym.compiler-symbols-decl-name-id-at-index symbols index)]
-          (begin
-            (if (and
-              (ci.intern-renderable-id? name-id)
-              (string.eq (ci.intern-str name-id) name))
-              (set! found index)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and
+      (< found 0)
+      (< index (csym.compiler-symbols-decl-count symbols)))
+      (let
+        [name-id : i64
+          (csym.compiler-symbols-decl-name-id-at-index symbols index)]
+        (if (and
+          (ci.intern-renderable-id? name-id)
+          (string.eq (ci.intern-str name-id) name))
+          (set! found index)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 ;; The in-place owner-name comparison: 1 equal, 0 different, -1 unresolved, or
 ;; -2 when a resolved answer disagrees with comparing the rendered owner name.
@@ -1601,31 +1593,30 @@
     [direct-id : i64 7]
     [structural-a : i64 (csym.compiler-composite-pair-key-id 131073 262147)]
     [structural-b : i64 (csym.compiler-composite-pair-key-id 131074 262148)]
-    (begin
-      (csym.compiler-symbol-map-bind-id! (&mut map) direct-id 101)
-      (csym.compiler-symbol-map-bind-id! (&mut map) structural-a 201)
-      (csym.compiler-symbol-map-bind-id! (&mut map) structural-b 202)
-      (and
-        (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
-          [(Some handle) (= handle 101)]
-          [(None) false])
-        (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
-          [(Some handle) (= handle 201)]
-          [(None) false])
-        (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
-          [(Some handle) (= handle 202)]
-          [(None) false])
-        (csym.compiler-symbol-map-remove-id! (&mut map) structural-a)
-        (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
-          [(Some _) false]
-          [(None) true])
-        (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
-          [(Some handle) (= handle 202)]
-          [(None) false])
-        (csym.compiler-symbol-map-remove-id! (&mut map) direct-id)
-        (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
-          [(Some _) false]
-          [(None) true])))))
+    (csym.compiler-symbol-map-bind-id! (&mut map) direct-id 101)
+    (csym.compiler-symbol-map-bind-id! (&mut map) structural-a 201)
+    (csym.compiler-symbol-map-bind-id! (&mut map) structural-b 202)
+    (and
+      (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
+        [(Some handle) (= handle 101)]
+        [(None) false])
+      (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
+        [(Some handle) (= handle 201)]
+        [(None) false])
+      (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
+        [(Some handle) (= handle 202)]
+        [(None) false])
+      (csym.compiler-symbol-map-remove-id! (&mut map) structural-a)
+      (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
+        [(Some _) false]
+        [(None) true])
+      (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
+        [(Some handle) (= handle 202)]
+        [(None) false])
+      (csym.compiler-symbol-map-remove-id! (&mut map) direct-id)
+      (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
+        [(Some _) false]
+        [(None) true]))))
 
 (define (compiler-symbols-direct-qualified-add-ok?) : bool
   (let
@@ -1668,16 +1659,12 @@
         [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
         [count : i64 (ast.ast-decl-list-len (& decls))]
-        (begin
-          (while (< index count)
-            (match (ast.ast-decl-list-get
-              (& decls)
-              index
-              (ast.ast-decl-fallback))
-              [(Import decl-meta (Spec _ _ _ (Some alias-id) _))
-                (return alias-id)]
-              [_ (set! index (+ index 1))]))
-          -1))]))
+        (while (< index count)
+          (match (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))
+            [(Import decl-meta (Spec _ _ _ (Some alias-id) _))
+              (return alias-id)]
+            [_ (set! index (+ index 1))]))
+        -1)]))
 
 (define (compiler-symbols-import-alias-ok?) : bool
   (match (parser.parse-ast-source
@@ -1917,28 +1904,27 @@
 (define (compiler-symbol-map-structure-ok?) : bool
   (let
     [map : csym.CompilerSymbolMap (csym.compiler-symbol-map-with-capacity 4)]
-    (begin
-      ;; These keys share low hash bits, exercising probing, growth, deletion,
-      ;; tombstone reuse, and update without relying on compiler declarations.
-      (csym.compiler-symbol-map-put! (&mut map) 0 10)
-      (csym.compiler-symbol-map-put! (&mut map) 4 20)
-      (csym.compiler-symbol-map-put! (&mut map) 8 30)
-      (csym.compiler-symbol-map-put! (&mut map) 12 40)
-      (csym.compiler-symbol-map-put! (&mut map) 4 21)
-      (unless (csym.compiler-symbol-map-remove-id! (&mut map) 8) (return false))
-      (csym.compiler-symbol-map-put! (&mut map) 16 50)
-      (and
-        (= (array-length map.keys) 8)
-        (= map.len 4)
-        (= map.deleted 0)
-        (= (csym.compiler-symbol-map-lookup-handle-id (& map) 0) 10)
-        (= (csym.compiler-symbol-map-lookup-handle-id (& map) 4) 21)
-        (=
-          (csym.compiler-symbol-map-lookup-handle-id (& map) 8)
-          (csym.compiler-symbol-map-missing-handle))
-        (= (csym.compiler-symbol-map-lookup-handle-id (& map) 12) 40)
-        (= (csym.compiler-symbol-map-lookup-handle-id (& map) 16) 50)
-        (not (csym.compiler-symbol-map-remove-id! (&mut map) 24))))))
+    ;; These keys share low hash bits, exercising probing, growth, deletion,
+    ;; tombstone reuse, and update without relying on compiler declarations.
+    (csym.compiler-symbol-map-put! (&mut map) 0 10)
+    (csym.compiler-symbol-map-put! (&mut map) 4 20)
+    (csym.compiler-symbol-map-put! (&mut map) 8 30)
+    (csym.compiler-symbol-map-put! (&mut map) 12 40)
+    (csym.compiler-symbol-map-put! (&mut map) 4 21)
+    (unless (csym.compiler-symbol-map-remove-id! (&mut map) 8) (return false))
+    (csym.compiler-symbol-map-put! (&mut map) 16 50)
+    (and
+      (= (array-length map.keys) 8)
+      (= map.len 4)
+      (= map.deleted 0)
+      (= (csym.compiler-symbol-map-lookup-handle-id (& map) 0) 10)
+      (= (csym.compiler-symbol-map-lookup-handle-id (& map) 4) 21)
+      (=
+        (csym.compiler-symbol-map-lookup-handle-id (& map) 8)
+        (csym.compiler-symbol-map-missing-handle))
+      (= (csym.compiler-symbol-map-lookup-handle-id (& map) 12) 40)
+      (= (csym.compiler-symbol-map-lookup-handle-id (& map) 16) 50)
+      (not (csym.compiler-symbol-map-remove-id! (&mut map) 24)))))
 
 (define (compiler-symbols-dotted-variant-id-paths-ok?) : bool
   (match (parser.parse-ast-source
@@ -2125,34 +2111,30 @@
         [recorded-owner : i64 (ci.intern "dependency.source")]
         [rewritten-owner : i64 (ci.intern "consumer.visible")]
         [provenance : i64 (ci.intern "deps/example/src/lib.tl")]
-        (begin
-          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-            (&mut paths)
-            "deps/example/src/lib.tl"
-            recorded-owner
-            provenance)
-          (ast.ast-decl-module-list-push-id (&mut modules) rewritten-owner)
-          (let
-            [rewritten : ast.AstDeclPathList
-              (ast.ast-decl-path-list-with-modules paths modules)]
-            (match (csym.build-compiler-symbols-with-paths
-              program
-              (owned_view.compiler-owned-shared-view rewritten))
-              [(Ok symbols)
-                (and
-                  (=
-                    (ast.ast-decl-path-list-owner-id (& rewritten) 0 -1)
-                    rewritten-owner)
-                  (=
-                    (csym.compiler-symbols-provenance-id-at-index-or
-                      symbols
-                      0
-                      -1)
-                    provenance)
-                  (=
-                    (ast.ast-decl-path-list-provenance-id (& rewritten) 0 -1)
-                    provenance))]
-              [(Err _) false]))))]
+        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+          (&mut paths)
+          "deps/example/src/lib.tl"
+          recorded-owner
+          provenance)
+        (ast.ast-decl-module-list-push-id (&mut modules) rewritten-owner)
+        (let
+          [rewritten : ast.AstDeclPathList
+            (ast.ast-decl-path-list-with-modules paths modules)]
+          (match (csym.build-compiler-symbols-with-paths
+            program
+            (owned_view.compiler-owned-shared-view rewritten))
+            [(Ok symbols)
+              (and
+                (=
+                  (ast.ast-decl-path-list-owner-id (& rewritten) 0 -1)
+                  rewritten-owner)
+                (=
+                  (csym.compiler-symbols-provenance-id-at-index-or symbols 0 -1)
+                  provenance)
+                (=
+                  (ast.ast-decl-path-list-provenance-id (& rewritten) 0 -1)
+                  provenance))]
+            [(Err _) false])))]
     [(Err _) false]))
 
 ;; Registry handle bounds: members round-trip through the handle around index
@@ -2268,10 +2250,9 @@
     " members"))
 
 (define (compiler-symbols-self-test) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (match (parser.parse-ast-source
-      "(import stdlib.test)
+  (cbi.compiler-builtin-refresh!)
+  (match (parser.parse-ast-source
+    "(import stdlib.test)
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
 (extern (io.emit-string [arg0 : String]) : unit)
@@ -2285,59 +2266,56 @@
       (if (and (= x 42) true)
           (match (Some x) [(Some v) v] [_ 0])
           0))))")
-      [(Ok program)
-        (match (csym.build-compiler-symbols program)
-          [(Ok symbols)
-            (match (csym.build-compiler-registries program)
-              [(Ok registries)
-                (let
-                  [ok : bool true]
-                  (begin
-                    (set!
-                      ok
-                      (and
-                        ok
-                        (= (compiler-symbols-smoke-score symbols) 10)
-                        (=
-                          (compiler-registries-smoke-score symbols registries)
-                          8)
-                        (compiler-registry-handle-bounds-ok?)
-                        (compiler-symbols-duplicate-value-ok?)
-                        (compiler-symbols-duplicate-type-ok?)
-                        (compiler-symbols-module-duplicate-diagnostics-ok?)
-                        (compiler-symbols-module-duplicate-with-paths-ok?)
-                        (compiler-symbols-variant-value-collisions-ok?)
-                        (compiler-symbols-root-shadows-imported-variant-ok?)
-                        (compiler-symbols-struct-value-collisions-ok?)
-                        (compiler-registries-duplicate-variant-ok?)
-                        (compiler-registries-cross-enum-variant-ok?)
-                        (compiler-registries-duplicate-field-ok?)
-                        (compiler-registry-large-owner-handle-ok?)
-                        (compiler-registry-shift-map-full-ok?)
-                        (compiler-registries-incremental-splice-ok?)
-                        (compiler-registries-lifetime-field-indexed-ok?)
-                        (compiler-symbols-append-splice-ok?)
-                        (compiler-symbols-append-external-macro-alias-ok?)
-                        (compiler-symbols-nominal-decl-ok?)
-                        (compiler-symbols-module-scope-ok?)
-                        (compiler-symbols-owner-compare-ok?)
-                        (compiler-symbols-structural-id-api-ok?)
-                        (compiler-symbols-decl-span-view-ok?)
-                        (compiler-symbol-map-fast-path-ok?)
-                        (compiler-symbols-direct-qualified-add-ok?)
-                        (compiler-symbols-import-alias-ok?)
-                        (compiler-symbols-comptime-root-helper-alias-ok?)
-                        (compiler-symbols-macro-namespace-ok?)
-                        (compiler-symbols-duplicate-macro-ok?)
-                        (compiler-symbols-value-macro-namespace-ok?)
-                        (compiler-symbol-map-structure-ok?)
-                        (compiler-symbols-dotted-variant-id-paths-ok?)
-                        (compiler-symbols-dotted-suffix-owner-module-id-ok?)
-                        (compiler-symbols-module-id-identity-ok?)
-                        (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?)))
-                    (if ok
-                      42
-                      (io.panic "symbols: smoke score mismatch"))))]
-              [(Err message) (io.panic message)])]
-          [(Err message) (io.panic message)])]
-      [(Err message) (io.panic message)])))
+    [(Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(Ok registries)
+              (let
+                [ok : bool true]
+                (set!
+                  ok
+                  (and
+                    ok
+                    (= (compiler-symbols-smoke-score symbols) 10)
+                    (= (compiler-registries-smoke-score symbols registries) 8)
+                    (compiler-registry-handle-bounds-ok?)
+                    (compiler-symbols-duplicate-value-ok?)
+                    (compiler-symbols-duplicate-type-ok?)
+                    (compiler-symbols-module-duplicate-diagnostics-ok?)
+                    (compiler-symbols-module-duplicate-with-paths-ok?)
+                    (compiler-symbols-variant-value-collisions-ok?)
+                    (compiler-symbols-root-shadows-imported-variant-ok?)
+                    (compiler-symbols-struct-value-collisions-ok?)
+                    (compiler-registries-duplicate-variant-ok?)
+                    (compiler-registries-cross-enum-variant-ok?)
+                    (compiler-registries-duplicate-field-ok?)
+                    (compiler-registry-large-owner-handle-ok?)
+                    (compiler-registry-shift-map-full-ok?)
+                    (compiler-registries-incremental-splice-ok?)
+                    (compiler-registries-lifetime-field-indexed-ok?)
+                    (compiler-symbols-append-splice-ok?)
+                    (compiler-symbols-append-external-macro-alias-ok?)
+                    (compiler-symbols-nominal-decl-ok?)
+                    (compiler-symbols-module-scope-ok?)
+                    (compiler-symbols-owner-compare-ok?)
+                    (compiler-symbols-structural-id-api-ok?)
+                    (compiler-symbols-decl-span-view-ok?)
+                    (compiler-symbol-map-fast-path-ok?)
+                    (compiler-symbols-direct-qualified-add-ok?)
+                    (compiler-symbols-import-alias-ok?)
+                    (compiler-symbols-comptime-root-helper-alias-ok?)
+                    (compiler-symbols-macro-namespace-ok?)
+                    (compiler-symbols-duplicate-macro-ok?)
+                    (compiler-symbols-value-macro-namespace-ok?)
+                    (compiler-symbol-map-structure-ok?)
+                    (compiler-symbols-dotted-variant-id-paths-ok?)
+                    (compiler-symbols-dotted-suffix-owner-module-id-ok?)
+                    (compiler-symbols-module-id-identity-ok?)
+                    (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?)))
+                (if ok
+                  42
+                  (io.panic "symbols: smoke score mismatch")))]
+            [(Err message) (io.panic message)])]
+        [(Err message) (io.panic message)])]
+    [(Err message) (io.panic message)]))

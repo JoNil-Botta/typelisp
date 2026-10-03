@@ -1590,6 +1590,18 @@
         (= outer-view 3)
         (= later-view 4)
         (= reused later-view)
+        (=
+          (ast.ast-node-pool-context-expr-source-owner pools literal)
+          inner-view)
+        (=
+          (ast.ast-node-pool-context-expr-source-owner pools same-view)
+          inner-view)
+        (=
+          (ast.ast-node-pool-context-expr-source-owner pools outer-view)
+          outer-view)
+        (= (ast.ast-node-pool-context-expr-source-owner pools reused) -1)
+        (= (ast.ast-node-pool-context-expr-source-owner pools -1) -1)
+        (= (ast.ast-node-pool-context-expr-source-owner pools 999999) -1)
         (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 1)
         (= (ast.ast-node-pool-context-expr-respan-count pools) 1)
         (ast.ast-node-pool-context-expr-span-oracle-ok? pools)

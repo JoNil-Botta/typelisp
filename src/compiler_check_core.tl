@@ -18,6 +18,23 @@
 (import compiler_target_cfg_core as target_cfg)
 (import sym_i64_env)
 
+;; The observed consumer runs before checker pools retire. Fact producers
+;; supply their observer and publication callback; ordinary check imports do
+;; not depend on their record schema or collector.
+(defenum CompilerSemanticCheckInput
+  (Source String String)
+  (File String)
+  (PackageEntry String String compiler_load.CompilerPkgDeps bool))
+
+(defstruct CompilerObservedCheckRequest
+  (input CompilerSemanticCheckInput)
+  (stdlib-roots svec.Vec)
+  (cfgs sym_i64_env.SymI64Env)
+  (job-state tc.TcJobState)
+  (observer tc.TcSemanticObserver)
+  (consumer-context i64)
+  (consumer (-> i64 unit)))
+
 (defenum ResultCompilerCheck
   (Ok tc.CompilerTypecheckSummary cdiag.CompilerAdvisoryList)
   (Err (Box cdiag.CompilerDiagnosticList) cdiag.CompilerAdvisoryList))
@@ -207,7 +224,8 @@
         cfgs
         cache-scope
         (ast.ast-node-pool-context-capture-active)
-        (ci.intern-compat-state-capture-active)))
+        (ci.intern-compat-state-capture-active)
+        (tc.tc-job-state-semantic-observer job-state)))
       [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
@@ -311,7 +329,8 @@
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope : String]) : ResultCompilerCheckWithPaths
+  [cache-scope : String]
+  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (match loaded
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (let
@@ -326,7 +345,7 @@
             stdlib-roots
             cfgs
             cache-scope
-            (tc.tc-serial-job-state))
+            job-state)
             [(ResultCompilerCheck.Ok summary advisories)
               (ResultCompilerCheckWithPaths.Ok summary owned-paths advisories)]
             [(ResultCompilerCheck.Err diag advisories)
@@ -336,7 +355,7 @@
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithPaths.Err
           (cdiag.compiler-diagnostic-list-box-single diag)
-          (compiler-check-serial-advisories)))]))
+          (compiler-check-advisories-for-job job-state)))]))
 
 (define (compiler-check-file-with-roots
   [path : String]
@@ -452,10 +471,11 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithPaths
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (begin
     (compiler-check-reset-pools!)
-    (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
+    (tc.tc-job-state-reset-advisories! job-state)
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-loaded-cache-with-paths
       (owned_view.compiler-owned-shared-view path)
@@ -471,7 +491,8 @@
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
         stdlib-roots
-        cfgs))))
+        cfgs)
+      job-state)))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg
@@ -479,6 +500,58 @@
     source
     (svec.new)
     (compiler-check-language-cfgs)))
+
+(define (compiler-check-observed-request
+  [request : CompilerObservedCheckRequest]) : ResultCompilerCheck
+  (let
+    [job : tc.TcJobState request.job-state]
+    [parse-state : parser.CompilerParseState (parser.compiler-parse-state-new)]
+    [_binding-tokens : unit
+      (parser.compiler-parse-state-set-binding-origins! (& parse-state) true)]
+    [parse-cfgs : sym_i64_env.SymI64Env
+      (parser.compiler-parse-state-cfgs
+        parse-state
+        (owned_view.compiler-owned-shared-view request.cfgs))]
+    [previous : tc.TcSemanticObserver (tc.tc-job-state-semantic-observer job)]
+    [_install : unit
+      (tc.tc-job-state-set-semantic-observer! job request.observer)]
+    [result : ResultCompilerCheck
+      (match request.input
+        [(CompilerSemanticCheckInput.Source path source)
+          (compiler-check-source-with-roots-and-cfg-and-job-state
+            path
+            source
+            request.stdlib-roots
+            parse-cfgs
+            job)]
+        [(CompilerSemanticCheckInput.File path)
+          (compiler-check-source-with-roots-and-cfg-and-job-state
+            (owned_view.compiler-owned-shared-view path)
+            (compiler_load.compiler-load-session-read-source-text path)
+            request.stdlib-roots
+            parse-cfgs
+            job)]
+        [(CompilerSemanticCheckInput.PackageEntry
+            path
+            manifest-dir
+            deps
+            emit-entry)
+          (match (compiler-check-package-entry-file-with-roots-and-cfg
+            path
+            request.stdlib-roots
+            manifest-dir
+            deps
+            emit-entry
+            parse-cfgs
+            job)
+            [(ResultCompilerCheckWithPaths.Ok summary _ advisories)
+              (ResultCompilerCheck.Ok summary advisories)]
+            [(ResultCompilerCheckWithPaths.Err diagnostics advisories)
+              (ResultCompilerCheck.Err diagnostics advisories)])])]
+    (begin
+      (tc.tc-job-state-set-semantic-observer! job previous)
+      (request.consumer request.consumer-context)
+      result)))
 
 (define (compiler-check-source-with-roots-and-cfg-and-job-state
   [path : String]
@@ -652,7 +725,8 @@
             manifest-dir
             deps
             emit-entry
-            cfgs)]
+            cfgs
+            (tc.tc-serial-job-state))]
         [ledger : source_overlay.CompilerSourceLedger
           (compiler_load.compiler-load-session-state-source-provider-finish!
             state)]

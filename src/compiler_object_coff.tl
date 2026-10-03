@@ -961,21 +961,21 @@
 (define (compiler-object-coff-render
   [image : (& image cobj.CompilerObjectImage)]) : ResultCompilerObjectCoff
   (if (compiler-object-coff-image-supported? image)
-    (match (compiler-object-coff-layout-with-limit
-      image
-      compiler-object-coff-max-output-size)
-      [(Ok output-size)
-        (let
-          [out : byte_buf_core.ByteBufBuilder
-            (byte_buf_core.byte-buf-builder-with-capacity output-size)]
-          (compiler-object-coff-push-file-header! (&mut out) image)
-          (compiler-object-coff-push-section-headers! (&mut out) image)
-          (compiler-object-coff-render-sections! (&mut out) image)
-          (compiler-object-coff-render-relocations! (&mut out) image)
-          (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
-          (compiler-object-coff-render-string-table! (&mut out) image)
-          (Ok (layout.compiler-object-layout-bytes-string (& out))))]
-      [(Err message) (Err message)])
+    (let
+      [output-size
+        (try
+          (compiler-object-coff-layout-with-limit
+            image
+            compiler-object-coff-max-output-size))]
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity output-size)]
+      (compiler-object-coff-push-file-header! (&mut out) image)
+      (compiler-object-coff-push-section-headers! (&mut out) image)
+      (compiler-object-coff-render-sections! (&mut out) image)
+      (compiler-object-coff-render-relocations! (&mut out) image)
+      (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
+      (compiler-object-coff-render-string-table! (&mut out) image)
+      (Ok (layout.compiler-object-layout-bytes-string (& out))))
     (Err
       "coff: object image contains unsupported text, f64, or relocation records")))
 

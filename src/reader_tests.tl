@@ -1043,37 +1043,32 @@
 ;; A list never straddles a segment: one that would cross a boundary starts at
 ;; the next segment, the skipped rows hold the filler, and a list longer than a
 ;; segment still reads back in order. Growth never moves a row.
-(define (sp-node-pool-test-list [count : i64] [span : token.SourceSpan]) : reader.SpannedSexpr
+;; Builds a list of `count` Int rows and returns its first row id (-1 when the
+;; list does not have `count` rows).
+(define (sp-node-pool-test-list [count : i64] [span : token.SourceSpan]) : i64
   (let
     [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
     [i : i64 0]
     (while (< i count)
       (set! builder (reader.spanned-sexpr-builder-push builder (Int i "" span)))
       (set! i (+ i 1)))
-    (reader.spanned-sexpr-list-from-builder builder span)))
+    (match (reader.spanned-sexpr-list-from-builder builder span)
+      [(List start length _)
+        (if (= length count)
+          start
+          -1)]
+      [_ -1])))
 
-(define (sp-node-pool-test-start [list : (& list reader.SpannedSexpr)]) : i64
-  (match list
-    [(List start _ _) (deref start)]
-    [_ -1]))
-
-(define (sp-node-pool-test-list-reads?
-  [list : (& list reader.SpannedSexpr)]
-  [count : i64]) : bool
-  (match list
-    [(List start-ref length-ref _)
-      (let
-        [start : i64 (deref start-ref)]
-        [length : i64 (deref length-ref)]
-        [ok : bool (= length count)]
-        [i : i64 0]
-        (while (and ok (< i length))
-          (match (reader.sp-node-get (+ start i))
-            [(Int value _ _) (set! ok (= value i))]
-            [_ (set! ok false)])
-          (set! i (+ i 1)))
-        ok)]
-    [_ false]))
+(define (sp-node-pool-test-list-reads? [start : i64] [count : i64]) : bool
+  (let
+    [ok : bool true]
+    [i : i64 0]
+    (while (and ok (< i count))
+      (match (reader.sp-node-get (+ start i))
+        [(Int value _ _) (set! ok (= value i))]
+        [_ (set! ok false)])
+      (set! i (+ i 1)))
+    ok))
 
 (define (sp-node-pool-segment-placement-ok?) : bool
   (let
@@ -1086,22 +1081,22 @@
           (reader.sp-node-pool-reserve! 1)
           (Int 7 "__tl_pool_placement" span)))]
     [first-address : i64 (reader.sp-node-pool-row-address 0)]
-    [straddler : reader.SpannedSexpr (sp-node-pool-test-list 10 span)]
-    [long : reader.SpannedSexpr (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
-    [after : reader.SpannedSexpr (sp-node-pool-test-list 3 span)]
+    [straddler : i64 (sp-node-pool-test-list 10 span)]
+    [long : i64 (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
+    [after : i64 (sp-node-pool-test-list 3 span)]
     [placed : bool
       (and
-        (= (sp-node-pool-test-start (& straddler)) rows)
-        (= (sp-node-pool-test-start (& long)) (* 2 rows))
-        (= (sp-node-pool-test-start (& after)) (+ (* 4 rows) 5))
+        (= straddler rows)
+        (= long (* 2 rows))
+        (= after (+ (* 4 rows) 5))
         (match (reader.sp-node-get (- rows 1))
           [(Int value text _) (and (= value 0) (string.eq text ""))]
           [_ false]))]
     [reads : bool
       (and
-        (sp-node-pool-test-list-reads? (& straddler) 10)
-        (sp-node-pool-test-list-reads? (& long) (+ (* 2 rows) 5))
-        (sp-node-pool-test-list-reads? (& after) 3))]
+        (sp-node-pool-test-list-reads? straddler 10)
+        (sp-node-pool-test-list-reads? long (+ (* 2 rows) 5))
+        (sp-node-pool-test-list-reads? after 3))]
     [stable : bool (= (reader.sp-node-pool-row-address 0) first-address)]
     (reader.sp-node-pool-reset!)
     (and placed reads stable)))

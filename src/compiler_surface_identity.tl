@@ -301,13 +301,13 @@
         [(match (cis.intern-structural-session-template-source-record-for-raw
             session
             id)
-            [(cis.InternMaybeTemplateSourceRecord.Some _) true]
-            [(cis.InternMaybeTemplateSourceRecord.No) false])
+            [(Some _) true]
+            [(No) false])
           (match (cis.intern-structural-session-template-source-record-for-raw
             session
             id)
-            [(cis.InternMaybeTemplateSourceRecord.No) -2]
-            [(cis.InternMaybeTemplateSourceRecord.Some record)
+            [(No) -2]
+            [(Some record)
               (let
                 [source-ref : i64
                   (surface-identity-local-ref
@@ -321,18 +321,18 @@
         [(match (cis.intern-structural-session-macro-global-record-for-raw
             session
             id)
-            [(cis.InternMaybeMacroGlobalRecord.Some _) true]
-            [(cis.InternMaybeMacroGlobalRecord.No) false])
+            [(Some _) true]
+            [(No) false])
           (match (cis.intern-structural-session-macro-global-record-for-raw
             session
             id)
-            [(cis.InternMaybeMacroGlobalRecord.No) -2]
-            [(cis.InternMaybeMacroGlobalRecord.Some record)
+            [(No) -2]
+            [(Some record)
               (let
                 [role : i64
                   (match record.role
-                    [(cis.InternMacroGlobalRole.Legacy) 0]
-                    [(cis.InternMacroGlobalRole.Context) 1])]
+                    [(Legacy) 0]
+                    [(Context) 1])]
                 [module-ref : i64
                   (surface-identity-local-ref
                     record.definition-module-id
@@ -352,18 +352,18 @@
         [(match (cis.intern-structural-session-macro-local-record-for-raw
             session
             id)
-            [(cis.InternMaybeMacroLocalRecord.Some _) true]
-            [(cis.InternMaybeMacroLocalRecord.No) false])
+            [(Some _) true]
+            [(No) false])
           (match (cis.intern-structural-session-macro-local-record-for-raw
             session
             id)
-            [(cis.InternMaybeMacroLocalRecord.No) -2]
-            [(cis.InternMaybeMacroLocalRecord.Some record)
+            [(No) -2]
+            [(Some record)
               (match (cis.intern-structural-session-macro-definition-record
                 session
                 record.macro-definition)
-                [(cis.InternMaybeMacroDefinitionRecord.No) -2]
-                [(cis.InternMaybeMacroDefinitionRecord.Some definition)
+                [(No) -2]
+                [(Some definition)
                   (let
                     [module-ref : i64
                       (surface-identity-local-ref
@@ -396,13 +396,13 @@
         [(match (cis.intern-structural-session-fresh-local-record-for-raw
             session
             id)
-            [(cis.InternMaybeFreshLocalRecord.Some _) true]
-            [(cis.InternMaybeFreshLocalRecord.No) false])
+            [(Some _) true]
+            [(No) false])
           (match (cis.intern-structural-session-fresh-local-record-for-raw
             session
             id)
-            [(cis.InternMaybeFreshLocalRecord.No) -2]
-            [(cis.InternMaybeFreshLocalRecord.Some record)
+            [(No) -2]
+            [(Some record)
               (let
                 [source-ref : i64
                   (surface-identity-local-ref
@@ -474,8 +474,8 @@
           [role-code : i64 (/ owner image-stride)]
           [role : cis.InternMacroGlobalRole
             (if (= role-code 0)
-              cis.InternMacroGlobalRole.Legacy
-              cis.InternMacroGlobalRole.Context)]
+              Legacy
+              Context)]
           (if (or (> role-code 1) (>= source-ref image-stride))
             -1
             (cis.intern-macro-global-identity-raw
@@ -609,8 +609,7 @@
       (not (surface-identity-safe-count? module-count))
       (not (surface-identity-safe-count? source-count))
       (not (surface-identity-safe-count? generated-count)))
-      (ResultSurfaceIdentityPayload.Err
-        "surface identity: bad magic, schema, or count")
+      (Err "surface identity: bad magic, schema, or count")
       (let
         [package-name : String (surface-identity-reader-string! (&mut reader))]
         [source-hash : String (surface-identity-reader-string! (&mut reader))]
@@ -681,15 +680,12 @@
             [payload : SurfaceIdentityPayload
               (SurfaceIdentityPayload key source-names generated)]
             (cond
-              [(not reader.ok?)
-                (ResultSurfaceIdentityPayload.Err reader.error-message)]
+              [(not reader.ok?) (Err reader.error-message)]
               [(not (= reader.offset reader.end))
-                (ResultSurfaceIdentityPayload.Err
-                  "surface identity: trailing payload bytes")]
+                (Err "surface identity: trailing payload bytes")]
               [(not (surface-identity-payload-valid? (& payload)))
-                (ResultSurfaceIdentityPayload.Err
-                  "surface identity: invalid package key or identity graph")]
-              [else (ResultSurfaceIdentityPayload.Ok payload)])))))))
+                (Err "surface identity: invalid package key or identity graph")]
+              [else (Ok payload)])))))))
 
 (define (surface-identity-hydrate-generated!
   [record : SurfaceGeneratedIdentity]
@@ -732,8 +728,7 @@
   [payload : SurfaceIdentityPayload]
   [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (if (not (surface-identity-key-eq? payload.key expected-key))
-    (ResultSurfaceIdentityHydration.KeyMismatch
-      "surface identity: package key mismatch")
+    (KeyMismatch "surface identity: package key mismatch")
     (let
       [source-count : i64 (array-length payload.source-names)]
       [remap : (__tl_dyn-array i64)
@@ -760,17 +755,14 @@
                   index)
                 remap))
             (set! index (+ index 1))))
-        (ResultSurfaceIdentityHydration.Ok
-          (SurfaceIdentityHydration payload.key remap))))))
+        (Ok (SurfaceIdentityHydration payload.key remap))))))
 
 (define (surface-identity-hydrate
   [bytes : (__tl_dyn-array u8)]
   [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
-    [(ResultSurfaceIdentityPayload.Err message)
-      (ResultSurfaceIdentityHydration.Err message)]
-    [(ResultSurfaceIdentityPayload.Ok payload)
-      (surface-identity-hydrate-payload payload expected-key)]))
+    [(Err message) (Err message)]
+    [(Ok payload) (surface-identity-hydrate-payload payload expected-key)]))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -867,8 +859,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? (& payload)))
-      (ResultSurfaceIdentityBytes.Err
-        "surface identity: invalid package key or identity graph")
+      (Err "surface identity: invalid package key or identity graph")
       (let
         [key : SurfaceIdentityKey payload.key]
         [source-names : (__tl_dyn-array String) payload.source-names]
@@ -924,5 +915,4 @@
                 (byte_le.push-u64! (&mut out) record.ref2)
                 (surface-identity-push-string! (&mut out) record.name)
                 (set! index (+ index 1)))))
-          (ResultSurfaceIdentityBytes.Ok
-            (byte_buf_core.byte-buf-builder-finish-array (& out))))))))
+          (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))))))

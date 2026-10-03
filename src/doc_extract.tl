@@ -47,54 +47,54 @@
 
 (define (doc-kind-tag [kind : DocItemKind]) : i64
   (match kind
-    [(DocItemKind.Define) 1]
-    [(DocItemKind.Function) 2]
-    [(DocItemKind.Extern) 3]
-    [(DocItemKind.DefEnum) 4]
-    [(DocItemKind.DefStruct) 5]
-    [(DocItemKind.DefMacro) 6]
-    [(DocItemKind.GeneratedImport) 7]))
+    [(Define) 1]
+    [(Function) 2]
+    [(Extern) 3]
+    [(DefEnum) 4]
+    [(DefStruct) 5]
+    [(DefMacro) 6]
+    [(GeneratedImport) 7]))
 
 (define (doc-kind-name [kind : DocItemKind]) : String
   (match kind
-    [(DocItemKind.Define) "define"]
-    [(DocItemKind.Function) "define-function"]
-    [(DocItemKind.Extern) "extern"]
-    [(DocItemKind.DefEnum) "defenum"]
-    [(DocItemKind.DefStruct) "defstruct"]
-    [(DocItemKind.DefMacro) "defmacro"]
-    [(DocItemKind.GeneratedImport) "generated-module-import"]))
+    [(Define) "define"]
+    [(Function) "define-function"]
+    [(Extern) "extern"]
+    [(DefEnum) "defenum"]
+    [(DefStruct) "defstruct"]
+    [(DefMacro) "defmacro"]
+    [(GeneratedImport) "generated-module-import"]))
 
 (define (doc-extraction-module-doc [docs : DocExtraction]) : String
   (match docs
-    [(DocExtraction.Extraction module-doc _) module-doc]))
+    [(Extraction module-doc _) module-doc]))
 
 (define (doc-extraction-items [docs : DocExtraction]) : doc_item_vec.Vec
   (match docs
-    [(DocExtraction.Extraction _ items) items]))
+    [(Extraction _ items) items]))
 
 (define (doc-item-kind [item : DocItem]) : DocItemKind
   (match item
-    [(DocItem.Item kind _ _ _ _) kind]))
+    [(Item kind _ _ _ _) kind]))
 
 (define (doc-item-name [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ name _ _ _) name]))
+    [(Item _ name _ _ _) name]))
 
 (define (doc-item-doc [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ _ doc-text _ _) doc-text]))
+    [(Item _ _ doc-text _ _) doc-text]))
 
 (define (doc-item-signature [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ _ _ signature _) signature]))
+    [(Item _ _ _ signature _) signature]))
 
 (define (doc-item-source-line [item : DocItem]) : i64
   (match item
-    [(DocItem.Item _ _ _ _ source-line) source-line]))
+    [(Item _ _ _ _ source-line) source-line]))
 
 (define (doc-item-fallback) : DocItem
-  (DocItem.Item (DocItemKind.Define) "" "" "" 0))
+  (Item (Define) "" "" "" 0))
 
 (define (doc-item-list-count [items : (& items doc_item_vec.Vec)]) : i64
   (doc_item_vec.len (& items)))
@@ -327,7 +327,7 @@
           src
           name-idx
           (- (doc-decl-symbol-end src name-idx n) name-idx)))
-      (DocMaybeDeclInfo.No))))
+      (No))))
 
 (define (doc-info-after-define [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
@@ -336,8 +336,8 @@
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
-      (doc-info-after-name (DocItemKind.Function) src (+ next 1))
-      (doc-info-after-name (DocItemKind.Define) src next))))
+      (doc-info-after-name (Function) src (+ next 1))
+      (doc-info-after-name (Define) src next))))
 
 (define (doc-info-after-extern [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
@@ -346,8 +346,8 @@
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
-      (doc-info-after-name (DocItemKind.Extern) src (+ next 1))
-      (doc-info-after-name (DocItemKind.Extern) src next))))
+      (doc-info-after-name (Extern) src (+ next 1))
+      (doc-info-after-name (Extern) src next))))
 
 (define (doc-info-after-defmacro [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
@@ -356,8 +356,8 @@
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
-      (doc-info-after-name (DocItemKind.DefMacro) src (+ next 1))
-      (DocMaybeDeclInfo.No))))
+      (doc-info-after-name (DefMacro) src (+ next 1))
+      (No))))
 
 (define (doc-decl-info-at-list [src : (& src str)] [open-idx : i64]) : DocMaybeDeclInfo
   (let
@@ -379,14 +379,14 @@
               [(string.eq head "define") (doc-info-after-define src after-head)]
               [(string.eq head "extern") (doc-info-after-extern src after-head)]
               [(string.eq head "defenum")
-                (doc-info-after-name (DocItemKind.DefEnum) src after-head)]
+                (doc-info-after-name (DefEnum) src after-head)]
               [(string.eq head "defstruct")
-                (doc-info-after-name (DocItemKind.DefStruct) src after-head)]
+                (doc-info-after-name (DefStruct) src after-head)]
               [(string.eq head "defmacro")
                 (doc-info-after-defmacro src after-head)]
-              [else (DocMaybeDeclInfo.No)]))
-          (DocMaybeDeclInfo.No)))
-      (DocMaybeDeclInfo.No))))
+              [else (No)]))
+          (No)))
+      (No))))
 
 (define (doc-decl-info [signature : (& signature str)]) : DocMaybeDeclInfo
   (let
@@ -477,14 +477,14 @@
                           [(DocDeclInfo kind name)
                             (__tl_array-push!
                               items
-                              (DocItem.Item
+                              (Item
                                 kind
                                 name
                                 (unsafe
                                   (ptr-read (ptr-addr-of pending-doc)))
                                 signature
                                 (doc-source-line-at src line-start)))]
-                          [(DocMaybeDeclInfo.No) unit])
+                          [(No) unit])
                         unit)
                       (set! pending-doc "")
                       (set! pending-has false)

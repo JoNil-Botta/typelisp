@@ -108,7 +108,7 @@
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 (cli-spec-skip-space specs 0)]
-    [result : CliOptionMatch (CliOptionMatch.None)]
+    [result : CliOptionMatch (None)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
@@ -135,7 +135,7 @@
                           (cli-spec-token-end specs value)))))
                   (set!
                     result
-                    (CliOptionMatch.Found
+                    (Found
                       (string.substring
                         specs
                         i
@@ -179,11 +179,11 @@
       (begin
         (set! args.index index)
         (match (cli-option-lookup (& args.specs) (& arg))
-          [(CliOptionMatch.None)
+          [(None)
             (begin
               (set! args.name "")
               (set! args.next (+ index 1)))]
-          [(CliOptionMatch.Found name arity)
+          [(Found name arity)
             (begin
               (set! args.name name)
               (set! args.next (+ index (+ arity 1)))

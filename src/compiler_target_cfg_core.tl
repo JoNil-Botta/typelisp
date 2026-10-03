@@ -20,19 +20,19 @@
   (Err String))
 
 (define (compiler-target-cfg-default) : CompilerTargetCfg
-  CompilerTargetCfg.Linux)
+  Linux)
 
 (define (compiler-target-cfg-host) : CompilerTargetCfg
-  (cfg windows CompilerTargetCfg.Windows CompilerTargetCfg.Linux))
+  (cfg windows Windows Linux))
 
 (define (compiler-target-cfg-parse [value : String]) : ResultCompilerTargetCfg
   (cond
     [(or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-      (ResultCompilerTargetCfg.Ok CompilerTargetCfg.Linux)]
+      (Ok Linux)]
     [(or (string.eq value "windows-x86_64") (string.eq value "windows_x86_64"))
-      (ResultCompilerTargetCfg.Ok CompilerTargetCfg.Windows)]
+      (Ok Windows)]
     [else
-      (ResultCompilerTargetCfg.Err
+      (Err
         (str_cat.str-cat
           "unknown target "
           value
@@ -60,8 +60,8 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (match target
-      [(CompilerTargetCfg.Linux) (compiler-target-enable-linux-cfgs cfgs)]
-      [(CompilerTargetCfg.Windows) (compiler-target-enable-windows-cfgs cfgs)])))
+      [(Linux) (compiler-target-enable-linux-cfgs cfgs)]
+      [(Windows) (compiler-target-enable-windows-cfgs cfgs)])))
 
 (define (compiler-target-cfgs-with-names-from
   [target : CompilerTargetCfg]

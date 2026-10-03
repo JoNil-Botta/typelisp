@@ -135,12 +135,11 @@
 
 (define (compiler-advisory-phase [advisory : (& advisory CompilerAdvisory)]) : CompilerAdvisoryPhase
   (match advisory.phase
-    [(CompilerAdvisoryPhase.Semantic) (CompilerAdvisoryPhase.Semantic)]
-    [(CompilerAdvisoryPhase.Lowering) (CompilerAdvisoryPhase.Lowering)]
-    [(CompilerAdvisoryPhase.Optimization) (CompilerAdvisoryPhase.Optimization)]
-    [(CompilerAdvisoryPhase.RegisterAllocation)
-      (CompilerAdvisoryPhase.RegisterAllocation)]
-    [(CompilerAdvisoryPhase.Backend) (CompilerAdvisoryPhase.Backend)]))
+    [(Semantic) (Semantic)]
+    [(Lowering) (Lowering)]
+    [(Optimization) (Optimization)]
+    [(RegisterAllocation) (RegisterAllocation)]
+    [(Backend) (Backend)]))
 
 (define (compiler-advisory-diagnostic
   [advisory : (& advisory CompilerAdvisory)]) : CompilerDiagnostic
@@ -469,44 +468,32 @@
 (define (compiler-diagnostic-code-for-typecheck-kind
   [kind : CompilerTypecheckKind]) : String
   (match kind
-    [(CompilerTypecheckKind.Unclassified) (compiler-diagnostic-code-typecheck)]
-    [(CompilerTypecheckKind.UnboundName)
-      (compiler-diagnostic-code-typecheck-unbound-name)]
-    [(CompilerTypecheckKind.ArityMismatch)
-      (compiler-diagnostic-code-typecheck-arity-mismatch)]
-    [(CompilerTypecheckKind.NonExhaustiveMatch)
+    [(Unclassified) (compiler-diagnostic-code-typecheck)]
+    [(UnboundName) (compiler-diagnostic-code-typecheck-unbound-name)]
+    [(ArityMismatch) (compiler-diagnostic-code-typecheck-arity-mismatch)]
+    [(NonExhaustiveMatch)
       (compiler-diagnostic-code-typecheck-non-exhaustive-match)]
-    [(CompilerTypecheckKind.UnknownStructField)
+    [(UnknownStructField)
       (compiler-diagnostic-code-typecheck-unknown-struct-field)]
-    [(CompilerTypecheckKind.RegionEscape)
-      (compiler-diagnostic-code-typecheck-region-escape)]
-    [(CompilerTypecheckKind.TypeMismatch)
-      (compiler-diagnostic-code-typecheck-type-mismatch)]
-    [(CompilerTypecheckKind.BorrowViolation)
-      (compiler-diagnostic-code-typecheck-borrow-violation)]
-    [(CompilerTypecheckKind.MoveViolation)
-      (compiler-diagnostic-code-typecheck-move-violation)]
-    [(CompilerTypecheckKind.UnsafeContext)
-      (compiler-diagnostic-code-typecheck-unsafe-context)]
-    [(CompilerTypecheckKind.LifetimeMismatch)
-      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
-    [(CompilerTypecheckKind.ResourceOwnership)
+    [(RegionEscape) (compiler-diagnostic-code-typecheck-region-escape)]
+    [(TypeMismatch) (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(BorrowViolation) (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(MoveViolation) (compiler-diagnostic-code-typecheck-move-violation)]
+    [(UnsafeContext) (compiler-diagnostic-code-typecheck-unsafe-context)]
+    [(LifetimeMismatch) (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(ResourceOwnership)
       (compiler-diagnostic-code-typecheck-resource-ownership)]
-    [(CompilerTypecheckKind.ArenaOwnership)
-      (compiler-diagnostic-code-typecheck-arena-ownership)]
-    [(CompilerTypecheckKind.Pattern)
-      (compiler-diagnostic-code-typecheck-pattern)]
-    [(CompilerTypecheckKind.Spmd) (compiler-diagnostic-code-typecheck-spmd)]
-    [(CompilerTypecheckKind.Place) (compiler-diagnostic-code-typecheck-place)]
-    [(CompilerTypecheckKind.ControlFlow)
-      (compiler-diagnostic-code-typecheck-control-flow)]
-    [(CompilerTypecheckKind.ThreadSafety)
-      (compiler-diagnostic-code-typecheck-thread-safety)]
-    [(CompilerTypecheckKind.ComptimeConstraint)
+    [(ArenaOwnership) (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(Pattern) (compiler-diagnostic-code-typecheck-pattern)]
+    [(Spmd) (compiler-diagnostic-code-typecheck-spmd)]
+    [(Place) (compiler-diagnostic-code-typecheck-place)]
+    [(ControlFlow) (compiler-diagnostic-code-typecheck-control-flow)]
+    [(ThreadSafety) (compiler-diagnostic-code-typecheck-thread-safety)]
+    [(ComptimeConstraint)
       (compiler-diagnostic-code-typecheck-comptime-constraint)]
-    [(CompilerTypecheckKind.UnsafeCallableEffect)
+    [(UnsafeCallableEffect)
       (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
-    [(CompilerTypecheckKind.ForeignGlobalWrite)
+    [(ForeignGlobalWrite)
       (compiler-diagnostic-code-typecheck-foreign-global-write)]))
 
 ;; The kind tag sits in front of the message text: `__tl_tc_kind:<code>:`.
@@ -527,27 +514,27 @@
 ;; passes the tag as the first piece of that same concatenation.
 (define (compiler-diagnostic-typecheck-tag [kind : CompilerTypecheckKind]) : String
   (match kind
-    [(CompilerTypecheckKind.Unclassified) "__tl_tc_kind:E0200:"]
-    [(CompilerTypecheckKind.UnboundName) "__tl_tc_kind:E0201:"]
-    [(CompilerTypecheckKind.ArityMismatch) "__tl_tc_kind:E0202:"]
-    [(CompilerTypecheckKind.NonExhaustiveMatch) "__tl_tc_kind:E0203:"]
-    [(CompilerTypecheckKind.UnknownStructField) "__tl_tc_kind:E0204:"]
-    [(CompilerTypecheckKind.RegionEscape) "__tl_tc_kind:E0205:"]
-    [(CompilerTypecheckKind.TypeMismatch) "__tl_tc_kind:E0206:"]
-    [(CompilerTypecheckKind.BorrowViolation) "__tl_tc_kind:E0207:"]
-    [(CompilerTypecheckKind.MoveViolation) "__tl_tc_kind:E0208:"]
-    [(CompilerTypecheckKind.UnsafeContext) "__tl_tc_kind:E0209:"]
-    [(CompilerTypecheckKind.LifetimeMismatch) "__tl_tc_kind:E0210:"]
-    [(CompilerTypecheckKind.ResourceOwnership) "__tl_tc_kind:E0211:"]
-    [(CompilerTypecheckKind.ArenaOwnership) "__tl_tc_kind:E0212:"]
-    [(CompilerTypecheckKind.Pattern) "__tl_tc_kind:E0213:"]
-    [(CompilerTypecheckKind.Spmd) "__tl_tc_kind:E0214:"]
-    [(CompilerTypecheckKind.Place) "__tl_tc_kind:E0215:"]
-    [(CompilerTypecheckKind.ControlFlow) "__tl_tc_kind:E0216:"]
-    [(CompilerTypecheckKind.ThreadSafety) "__tl_tc_kind:E0217:"]
-    [(CompilerTypecheckKind.ComptimeConstraint) "__tl_tc_kind:E0218:"]
-    [(CompilerTypecheckKind.UnsafeCallableEffect) "__tl_tc_kind:E0219:"]
-    [(CompilerTypecheckKind.ForeignGlobalWrite) "__tl_tc_kind:E0220:"]))
+    [(Unclassified) "__tl_tc_kind:E0200:"]
+    [(UnboundName) "__tl_tc_kind:E0201:"]
+    [(ArityMismatch) "__tl_tc_kind:E0202:"]
+    [(NonExhaustiveMatch) "__tl_tc_kind:E0203:"]
+    [(UnknownStructField) "__tl_tc_kind:E0204:"]
+    [(RegionEscape) "__tl_tc_kind:E0205:"]
+    [(TypeMismatch) "__tl_tc_kind:E0206:"]
+    [(BorrowViolation) "__tl_tc_kind:E0207:"]
+    [(MoveViolation) "__tl_tc_kind:E0208:"]
+    [(UnsafeContext) "__tl_tc_kind:E0209:"]
+    [(LifetimeMismatch) "__tl_tc_kind:E0210:"]
+    [(ResourceOwnership) "__tl_tc_kind:E0211:"]
+    [(ArenaOwnership) "__tl_tc_kind:E0212:"]
+    [(Pattern) "__tl_tc_kind:E0213:"]
+    [(Spmd) "__tl_tc_kind:E0214:"]
+    [(Place) "__tl_tc_kind:E0215:"]
+    [(ControlFlow) "__tl_tc_kind:E0216:"]
+    [(ThreadSafety) "__tl_tc_kind:E0217:"]
+    [(ComptimeConstraint) "__tl_tc_kind:E0218:"]
+    [(UnsafeCallableEffect) "__tl_tc_kind:E0219:"]
+    [(ForeignGlobalWrite) "__tl_tc_kind:E0220:"]))
 
 ;; `message` tagged with `kind`.
 (define (compiler-diagnostic-typecheck-tagged

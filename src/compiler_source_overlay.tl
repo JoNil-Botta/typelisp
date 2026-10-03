@@ -158,13 +158,13 @@
   [path : (& path str)]
   [text : (& text str)]) : ResultCompilerSourceContent
   (match (sha256.digest (byte_buf.str-as-bytes text))
-    [(sha256.Sha256FinalizeOk digest)
-      (ResultCompilerSourceContent.Ok
+    [(Sha256FinalizeOk digest)
+      (Ok
         (CompilerSourceContent
           (string.string-length text)
           (sha256.to-hex (& digest))))]
-    [(sha256.Sha256FinalizeErr _)
-      (ResultCompilerSourceContent.Err
+    [(Sha256FinalizeErr _)
+      (Err
         (compiler-source-overlay-error
           compiler-source-overlay-error-content
           path
@@ -173,9 +173,9 @@
 ;; Owned copies of values held in borrowed tables.
 (define (compiler-source-class-copy [class : (& class CompilerSourceClass)]) : CompilerSourceClass
   (match class
-    [(CompilerSourceClass.Disk) (CompilerSourceClass.Disk)]
-    [(CompilerSourceClass.Embedded) (CompilerSourceClass.Embedded)]
-    [(CompilerSourceClass.Overlay) (CompilerSourceClass.Overlay)]))
+    [(Disk) (Disk)]
+    [(Embedded) (Embedded)]
+    [(Overlay) (Overlay)]))
 
 (define (compiler-source-content-copy
   [content : (& content CompilerSourceContent)]) : CompilerSourceContent
@@ -187,10 +187,8 @@
     (string.copy (& input.path))
     (string.copy (& input.bytes))
     (match (& input.base)
-      [(CompilerSourceOverlayBase.Any) (CompilerSourceOverlayBase.Any)]
-      [(CompilerSourceOverlayBase.Expect content)
-        (CompilerSourceOverlayBase.Expect
-          (compiler-source-content-copy content))])))
+      [(Any) (Any)]
+      [(Expect content) (Expect (compiler-source-content-copy content))])))
 
 (define (compiler-source-content-eq?
   [left : (& left CompilerSourceContent)]
@@ -269,8 +267,8 @@
 
 (define (compiler-source-read-text [path : (& path str)]) : io.ResultIoString
   (match (io.try-read-file path)
-    [(io.OkIoBytes bytes) (io.OkIoString (byte_buf.to-string bytes))]
-    [(io.ErrIoBytes failure) (io.ErrIoString failure)]))
+    [(OkIoBytes bytes) (OkIoString (byte_buf.to-string bytes))]
+    [(ErrIoBytes failure) (ErrIoString failure)]))
 
 ;; An empty admission request and a way to add one replacement to it.
 (define (compiler-source-overlay-inputs) : overlay_input_vec.Vec
@@ -407,7 +405,7 @@
                   (set! failed true))]
               [else
                 (match (compiler-source-read-text (& input.path))
-                  [(io.ErrIoString _)
+                  [(ErrIoString _)
                     (begin
                       (set!
                         failure
@@ -416,24 +414,24 @@
                           (& input.path)
                           "overlay source does not exist on disk"))
                       (set! failed true))]
-                  [(io.OkIoString disk-text)
+                  [(OkIoString disk-text)
                     (match (compiler-source-overlay-base-check
                       (& input.path)
                       (& disk-text)
                       (& input.base))
-                      [(CompilerSourceOverlayStatus.Err base-failure)
+                      [(Err base-failure)
                         (begin
                           (set! failure base-failure)
                           (set! failed true))]
-                      [(CompilerSourceOverlayStatus.Ok)
+                      [(Ok)
                         (match (compiler-source-content-identity
                           (& input.path)
                           (& input.bytes))
-                          [(ResultCompilerSourceContent.Err content-failure)
+                          [(Err content-failure)
                             (begin
                               (set! failure content-failure)
                               (set! failed true))]
-                          [(ResultCompilerSourceContent.Ok content)
+                          [(Ok content)
                             (begin
                               (overlay_entry_vec.push-ref!
                                 (&mut entries)
@@ -444,9 +442,8 @@
                               (set! total (+ total size)))])])])])
             (set! index (+ index 1)))))
       (if failed
-        (ResultCompilerSourceOverlay.Err failure)
-        (ResultCompilerSourceOverlay.Ok
-          (CompilerSourceOverlay generation root cwd entries limits))))))
+        (Err failure)
+        (Ok (CompilerSourceOverlay generation root cwd entries limits))))))
 
 ;; Check a destination's current disk bytes against the base its candidate was
 ;; planned from.
@@ -455,15 +452,14 @@
   [disk-text : (& disk-text str)]
   [base : (& base CompilerSourceOverlayBase)]) : CompilerSourceOverlayStatus
   (match base
-    [(CompilerSourceOverlayBase.Any) (CompilerSourceOverlayStatus.Ok)]
-    [(CompilerSourceOverlayBase.Expect expected)
+    [(Any) (Ok)]
+    [(Expect expected)
       (match (compiler-source-content-identity path disk-text)
-        [(ResultCompilerSourceContent.Err failure)
-          (CompilerSourceOverlayStatus.Err failure)]
-        [(ResultCompilerSourceContent.Ok current)
+        [(Err failure) (Err failure)]
+        [(Ok current)
           (if (compiler-source-content-eq? (& current) expected)
-            (CompilerSourceOverlayStatus.Ok)
-            (CompilerSourceOverlayStatus.Err
+            (Ok)
+            (Err
               (compiler-source-overlay-error
                 compiler-source-overlay-error-stale-base
                 path
@@ -493,11 +489,11 @@
               unit)
             (set! index (+ index 1)))))
       (if (< offender 0)
-        (CompilerSourceOverlayStatus.Ok)
+        (Ok)
         (let
           [entry : CompilerSourceOverlayEntry
             (compiler-source-overlay-entry overlay offender)]
-          (CompilerSourceOverlayStatus.Err
+          (Err
             (compiler-source-overlay-error
               compiler-source-overlay-error-not-editable
               (& entry.path)
@@ -683,9 +679,8 @@
   (if ledger.failed
     unit
     (match (compiler-source-content-identity path text)
-      [(ResultCompilerSourceContent.Err failure)
-        (compiler-source-ledger-fail! ledger failure)]
-      [(ResultCompilerSourceContent.Ok content)
+      [(Err failure) (compiler-source-ledger-fail! ledger failure)]
+      [(Ok content)
         (compiler-source-ledger-record! ledger class path logical-path content)])))
 
 ;; Canonical paths of the ledger's disk entries whose bytes differ from the
@@ -704,17 +699,17 @@
             (compiler-source-ledger-get ledger index)]
           (begin
             (match entry.class
-              [(CompilerSourceClass.Disk)
+              [(Disk)
                 (let
                   [current : bool
                     (match (compiler-source-read-text (& entry.path))
-                      [(io.ErrIoString _) false]
-                      [(io.OkIoString text)
+                      [(ErrIoString _) false]
+                      [(OkIoString text)
                         (match (compiler-source-content-identity
                           (& entry.path)
                           (& text))
-                          [(ResultCompilerSourceContent.Err _) false]
-                          [(ResultCompilerSourceContent.Ok content)
+                          [(Err _) false]
+                          [(Ok content)
                             (compiler-source-content-eq?
                               (& content)
                               (& entry.content))])])]
@@ -747,7 +742,7 @@
             (if (and
               (>= recorded 0)
               (match (compiler-source-ledger-get ledger recorded).class
-                [(CompilerSourceClass.Overlay) true]
+                [(Overlay) true]
                 [_ false]))
               unit
               (source_path_vec.push-ref!

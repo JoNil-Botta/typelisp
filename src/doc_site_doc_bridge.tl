@@ -62,7 +62,7 @@
   [source : String]
   [source-url : String]) : String
   (doc_html.doc-html-module-section-with-source-url
-    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))
+    (Module path (doc_extract.doc-extract-source source))
     source-url))
 
 (define (bridge-doc-html-search-records-for-module
@@ -71,7 +71,7 @@
   [source : String]) : String
   (doc_html.doc-html-search-records-for-module
     page
-    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))))
+    (Module path (doc_extract.doc-extract-source source))))
 
 (define (bridge-doc-html-json-string [text : (& text str)]) : String
   (doc_html.doc-html-json-string text))

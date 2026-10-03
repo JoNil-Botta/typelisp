@@ -203,12 +203,12 @@
 
 (define (compile-cli-target [value : String]) : ResultCompileCliTarget
   (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (ResultCompileCliTarget.Ok (backend.CompilerBackendTarget.Linux))
+    (Ok (Linux))
     (if (or
       (string.eq value "windows-x86_64")
       (string.eq value "windows_x86_64"))
-      (ResultCompileCliTarget.Ok (backend.CompilerBackendTarget.Windows))
-      (ResultCompileCliTarget.Err (compile-cli-unknown-target value)))))
+      (Ok (Windows))
+      (Err (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
   (str_cat.str-cat
@@ -223,14 +223,11 @@
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
-    [(string.eq value "scalar")
-      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Scalar))]
-    [(string.eq value "avx2")
-      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Avx2))]
-    [(string.eq value "avx512")
-      (ResultCompileCliBackendMode.Ok (backend.CompilerBackendMode.Avx512))]
+    [(string.eq value "scalar") (Ok (Scalar))]
+    [(string.eq value "avx2") (Ok (Avx2))]
+    [(string.eq value "avx512") (Ok (Avx512))]
     [else
-      (ResultCompileCliBackendMode.Err
+      (Err
         (str_cat.str-cat
           "Error: unknown backend mode '"
           value
@@ -248,13 +245,13 @@
 
 (define (compile-cli-options) : CompileCliOptions
   (CompileCliOptions
-    (backend.CompilerBackendTarget.Linux)
+    (Linux)
     false
     (cli_svec.new)
     (cli_svec.new)
     (opt.compiler-optimize-default-level)
     false
-    (backend.CompilerBackendMode.Scalar)))
+    (Scalar)))
 
 ;; Apply an option both compile modes accept. False when the current option
 ;; is another one.
@@ -281,12 +278,11 @@
             args
             "compile: --target was provided more than once")
           (match (compile-cli-target (cli_option.cli-args-value args))
-            [(ResultCompileCliTarget.Ok parsed-target)
+            [(Ok parsed-target)
               (begin
                 (set! options.target parsed-target)
                 (set! options.has-target true))]
-            [(ResultCompileCliTarget.Err message)
-              (cli_option.cli-args-fail! args message)]))
+            [(Err message) (cli_option.cli-args-fail! args message)]))
         true)]
     [(string.eq args.name "--opt-level")
       (let
@@ -314,10 +310,8 @@
     [(string.eq args.name "--backend-mode")
       (begin
         (match (compile-cli-backend-mode (cli_option.cli-args-value args))
-          [(ResultCompileCliBackendMode.Ok parsed-mode)
-            (set! options.backend-mode parsed-mode)]
-          [(ResultCompileCliBackendMode.Err message)
-            (cli_option.cli-args-fail! args message)])
+          [(Ok parsed-mode) (set! options.backend-mode parsed-mode)]
+          [(Err message) (cli_option.cli-args-fail! args message)])
         true)]
     [(string.eq args.name "--profile-allocations")
       (begin
@@ -343,10 +337,9 @@
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (cond
-    [(>= input-idx count)
-      (ResultCompileCliConfig.Err "compile: expected source path")]
+    [(>= input-idx count) (Err "compile: expected source path")]
     [(cli_option.cli-flag? (io.arg input-idx))
-      (ResultCompileCliConfig.Err "compile: expected source path before flags")]
+      (Err "compile: expected source path before flags")]
     [else
       (let
         [input-path : String (io.arg input-idx)]
@@ -424,18 +417,17 @@
                     (set! compile-cli-trace-passes-requested true))]
                 [else (compile-cli-unknown-argument! (&mut args))])))
           (cond
-            [args.failed (ResultCompileCliConfig.Err args.error)]
+            [args.failed (Err args.error)]
             [(and emit-ir pic)
-              (ResultCompileCliConfig.Err
-                "compile: --pic cannot be combined with --emit-ir")]
+              (Err "compile: --pic cannot be combined with --emit-ir")]
             [(and compile-cli-no-entry-requested pic)
-              (ResultCompileCliConfig.Err
+              (Err
                 "compile: --no-entry cannot be combined with --pic, whose assembly never has an entry")]
             [(and compile-cli-no-entry-requested emit-ir)
-              (ResultCompileCliConfig.Err
+              (Err
                 "compile: --no-entry selects assembly output and cannot be combined with --emit-ir or --dump-ir")]
             [else
-              (ResultCompileCliConfig.Ok
+              (Ok
                 (CompileCliConfig.Config
                   (string.copy (& input-path))
                   (if (and emit-ir (not has-output))
@@ -454,7 +446,7 @@
   (if (or
     (>= batch-path-idx count)
     (cli_option.cli-flag? (io.arg batch-path-idx)))
-    (ResultCompileCliBatchConfig.Err "compile: --batch requires a list file")
+    (Err "compile: --batch requires a list file")
     (let
       [batch-path : String (io.arg batch-path-idx)]
       [args : cli_option.CliArgs
@@ -511,21 +503,21 @@
                       (set! args.next (+ args.next 1)))])]
               [else (compile-cli-unknown-argument! (&mut args))])))
         (cond
-          [args.failed (ResultCompileCliBatchConfig.Err args.error)]
+          [args.failed (Err args.error)]
           [(and
               has-windows-coff-plan
               (or
                 (not options.has-target)
                 (not (backend.compiler-backend-target-windows? options.target))))
-            (ResultCompileCliBatchConfig.Err
+            (Err
               "compile: --windows-coff-plan requires --target windows-x86_64")]
           [(and
               has-windows-coff-plan
               (string.eq batch-path windows-coff-plan-path))
-            (ResultCompileCliBatchConfig.Err
+            (Err
               "compile: --windows-coff-plan result path must differ from the batch input")]
           [else
-            (ResultCompileCliBatchConfig.Ok
+            (Ok
               (CompileCliBatchConfig.Config
                 batch-path
                 options.has-target
@@ -542,12 +534,11 @@
 (define (compile-cli-dispatch [count : i64]) : CompileCliAction
   (if (and (> count 2) (string.eq (io.arg 2) "--batch"))
     (match (compile-cli-batch-config-from 3 count)
-      [(ResultCompileCliBatchConfig.Ok config) (CompileCliAction.Batch config)]
-      [(ResultCompileCliBatchConfig.Err message)
-        (CompileCliAction.Error message)])
+      [(Ok config) (Batch config)]
+      [(Err message) (Error message)])
     (match (compile-cli-config-from 2 count)
-      [(ResultCompileCliConfig.Ok config) (CompileCliAction.Run config)]
-      [(ResultCompileCliConfig.Err message) (CompileCliAction.Error message)])))
+      [(Ok config) (Run config)]
+      [(Err message) (Error message)])))
 
 (define (compile-cli-print-ir-verification-error [message : String]) : unit
   (io.print-error
@@ -558,9 +549,9 @@
   [message : String]) : i64
   (begin
     (match result
-      [(compiler_driver_core.ResultCompilerDriver.Ok _ advisories)
+      [(Ok _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-      [(compiler_driver_core.ResultCompilerDriver.Err _ advisories)
+      [(Err _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
     (compile-cli-print-ir-verification-error message)
     1))
@@ -570,9 +561,9 @@
   [message : String]) : i64
   (begin
     (match result
-      [(compiler_driver_core.ResultCompilerDriverBuffer.Ok _ advisories)
+      [(Ok _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-      [(compiler_driver_core.ResultCompilerDriverBuffer.Err _ advisories)
+      [(Err _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
     (compile-cli-print-ir-verification-error message)
     1))
@@ -582,9 +573,9 @@
   [message : String]) : i64
   (begin
     (match result
-      [(compiler_driver_core.ResultCompilerDriverPic.Ok _ advisories)
+      [(Ok _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-      [(compiler_driver_core.ResultCompilerDriverPic.Err _ advisories)
+      [(Err _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
     (compile-cli-print-ir-verification-error message)
     1))
@@ -778,22 +769,14 @@
   [message : String]) : ResultCompileCliWindowsBatchEntry
   (begin
     (match result
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-          _
-          _
-          advisories)
+      [(CoffObject _ _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
-          _
-          _
-          advisories)
+      [(Assembly _ _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
-          _
-          advisories)
+      [(Err _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
     (compile-cli-print-ir-verification-error message)
-    (ResultCompileCliWindowsBatchEntry.Err 1)))
+    (Err 1)))
 
 (define (compile-cli-write-windows-batch-artifact
   [_state : compiler_driver_core.CompilerDriverState]
@@ -805,10 +788,7 @@
       result
       (opt.compiler-opt-debug-verification-error))
     (match result
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-          object
-          _
-          advisories)
+      [(CoffObject object _ advisories)
         (let
           [write-status : i64
             (begin
@@ -821,8 +801,8 @@
               (match (io.try-write-file
                 (& object-path)
                 (byte_buf.str-as-bytes (& object)))
-                [(io.OkIoUnit) 0]
-                [(io.ErrIoUnit error)
+                [(OkIoUnit) 0]
+                [(ErrIoUnit error)
                   (begin
                     (io.print-error
                       (str_cat.str-cat
@@ -853,15 +833,9 @@
                     "Wrote "
                     (owned_view.compiler-owned-shared-view object-path)
                     "\n"))
-                (ResultCompileCliWindowsBatchEntry.Ok
-                  "coff-object"
-                  object-path
-                  "none"))
-              (ResultCompileCliWindowsBatchEntry.Err write-status))))]
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
-          asm
-          category
-          advisories)
+                (Ok "coff-object" object-path "none"))
+              (Err write-status))))]
+      [(Assembly asm category advisories)
         (let
           [write-status : i64
             (begin
@@ -895,14 +869,12 @@
                     "Wrote "
                     (owned_view.compiler-owned-shared-view assembly-path)
                     "\n"))
-                (ResultCompileCliWindowsBatchEntry.Ok
+                (Ok
                   "assembly"
                   assembly-path
                   (backend.compiler-direct-object-fallback-category category)))
-              (ResultCompileCliWindowsBatchEntry.Err write-status))))]
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
-          diag
-          advisories)
+              (Err write-status))))]
+      [(Err diag advisories)
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
@@ -915,7 +887,7 @@
           (io.print-error
             (compiler_driver_core.compiler-driver-render-source-diagnostic
               (cdiag.compiler-diagnostic-box-shared-view diag)))
-          (ResultCompileCliWindowsBatchEntry.Err 1))])))
+          (Err 1))])))
 
 (define (compile-cli-run-windows-batch-file
   [state : compiler_driver_core.CompilerDriverState]
@@ -1002,7 +974,7 @@
             compile-startup-profile
             (startup_profile.compiler-startup-profile-mark-preflight-end!)
             unit)
-          (ResultCompileCliWindowsBatchEntry.Err doctest-status))))))
+          (Err doctest-status))))))
 
 (define (compile-cli-run-batch-inline-tests-from
   [entries : (& entries cli_svec.Vec)]
@@ -1185,7 +1157,7 @@
       (compile-cli-batch-parse-entries-into! text start line n (&mut entries))]
     (if (= status 0)
       (ResultCompileCliBatchEntryList.Ok entries)
-      (ResultCompileCliBatchEntryList.Err status))))
+      (Err status))))
 
 (define (compile-cli-windows-batch-parse-entries-into!
   [text : (& text str)]
@@ -1310,7 +1282,7 @@
         (&mut entries))]
     (if (= status 0)
       (ResultCompileCliWindowsBatchEntryList.Ok entries)
-      (ResultCompileCliWindowsBatchEntryList.Err status))))
+      (Err status))))
 
 (define (compile-cli-run-batch-entries-from
   [state : compiler_driver_core.CompilerDriverState]
@@ -1577,7 +1549,7 @@
           (compiler_driver_core.compiler-driver-restore-arena-owner-current!
             (arena.raw-handle home))
           (match entry-result
-            [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
+            [(Ok kind path category)
               (begin
                 (cli_svec.push-ref!
                   results
@@ -1586,7 +1558,7 @@
                 (cli_svec.push-ref! results path)
                 (cli_svec.push-ref! results category)
                 0)]
-            [(ResultCompileCliWindowsBatchEntry.Err entry-status) entry-status]))]
+            [(Err entry-status) entry-status]))]
       (begin
         (allocation_profile.compiler-allocation-profile-control!
           2
@@ -1685,11 +1657,11 @@
     (match (io.try-write-file
       (& plan-path)
       (byte_buf.str-as-bytes (& contents)))
-      [(io.OkIoUnit)
+      [(OkIoUnit)
         (begin
           (io.print-format "{}" (str_cat.str-cat "Wrote " plan-path "\n"))
           0)]
-      [(io.ErrIoUnit error)
+      [(ErrIoUnit error)
         (begin
           (io.print-error
             (str_cat.str-cat
@@ -1744,7 +1716,7 @@
     start
     line
     (string.string-length text))
-    [(ResultCompileCliBatchEntryList.Ok entries)
+    [(Ok entries)
       (let
         [_install-preflight-state : unit
           (begin
@@ -1773,7 +1745,7 @@
             backend-mode
             opt-level)
           inline-test-status))]
-    [(ResultCompileCliBatchEntryList.Err status) status]))
+    [(Err status) status]))
 
 (define (compile-cli-run-windows-batch-from
   [state : compiler_driver_core.CompilerDriverState]
@@ -1791,7 +1763,7 @@
     start
     line
     (string.string-length text))
-    [(ResultCompileCliWindowsBatchEntryList.Ok entries)
+    [(Ok entries)
       (let
         [_install-preflight-state : unit
           (begin
@@ -1813,12 +1785,12 @@
             backend-mode
             opt-level)
           inline-test-status))]
-    [(ResultCompileCliWindowsBatchEntryList.Err status) status]))
+    [(Err status) status]))
 
 (define (compile-cli-remove-stale-windows-batch-plan [plan-path : String]) : i64
   (match (fs.try-remove-file-if-exists (& plan-path))
-    [(io.OkIoUnit) 0]
-    [(io.ErrIoUnit error)
+    [(OkIoUnit) 0]
+    [(ErrIoUnit error)
       (begin
         (io.print-error
           (str_cat.str-cat
@@ -1835,7 +1807,7 @@
       (compiler_driver_core.compiler-driver-state-session-program-cache-disable
         (compiler_driver_core.compiler-driver-state-new-for-compile))]
     (match config
-      [(CompileCliBatchConfig.Config
+      [(Config
           batch-path
           has-target
           target
@@ -1897,14 +1869,14 @@
 
 (define (compile-cli-run-action [action : CompileCliAction]) : i64
   (match action
-    [(CompileCliAction.Run config)
+    [(Run config)
       (begin
         (cfg
           compile-startup-profile
           (startup_profile.compiler-startup-profile-mark-cli-compile-action!)
           unit)
         (match config
-          [(CompileCliConfig.Config
+          [(Config
               input-path
               output-path
               emit-ir
@@ -1948,8 +1920,8 @@
                   (startup_profile.compiler-startup-profile-print!)
                   unit)
                 status))]))]
-    [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
-    [(CompileCliAction.Error message)
+    [(Batch config) (compile-cli-run-batch config)]
+    [(Error message)
       (begin
         (io.print-error message)
         1)]))

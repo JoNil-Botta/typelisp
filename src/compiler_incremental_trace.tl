@@ -209,12 +209,8 @@
       (match (compiler_incremental_identity.compiler-incremental-decode-identity-metadata
         parent
         (& id-limits))
-        [(compiler_incremental_identity.ResultCompilerIncrementalDecodedQuery.Ok
-            _)
-          true]
-        [(compiler_incremental_identity.ResultCompilerIncrementalDecodedQuery.Err
-            _)
-          false]))))
+        [(Ok _) true]
+        [(Err _) false]))))
 
 (define (compiler-trace-begin
   [parent : compiler_incremental_identity.CompilerIncrementalIdentity]
@@ -229,24 +225,24 @@
     [owned-bytes : i64 (+ 128 (* 4 (array-length parent.transcript)))]
     (cond
       [(not (compiler-trace-limits-valid? (& limits)))
-        (ResultCompilerIncrementalTraceBuilder.Err
+        (Err
           (compiler-trace-error
             compiler-trace-error-limit
             "trace limits are invalid"))]
       [(not (compiler-trace-parent-valid? (& parent) (& limits)))
-        (ResultCompilerIncrementalTraceBuilder.Err
+        (Err
           (compiler-trace-error
             compiler-trace-error-parent
             "parent query identity is invalid"))]
       [(or
           (> header-bytes limits.max-bytes)
           (> owned-bytes limits.max-owned-bytes))
-        (ResultCompilerIncrementalTraceBuilder.Err
+        (Err
           (compiler-trace-error
             compiler-trace-error-limit
             "trace parent exceeds builder budget"))]
       [else
-        (ResultCompilerIncrementalTraceBuilder.Ok
+        (Ok
           (CompilerIncrementalTraceBuilder
             1
             parent
@@ -269,7 +265,7 @@
       (& edge)
       (& builder.parent)
       (& builder.limits))
-      [(ResultCompilerIncrementalTraceRecord.Ok record)
+      [(Ok record)
         (let
           [record-bytes : i64
             (compiler_incremental_identity.compiler-incremental-add-size
@@ -300,7 +296,7 @@
               (set! builder.planned-bytes planned)
               (set! builder.owned-bytes owned)
               true)))]
-      [(ResultCompilerIncrementalTraceRecord.Err _)
+      [(Err _)
         (begin
           (set! builder.state 3)
           false)])
@@ -310,15 +306,15 @@
 
 (define (compiler-trace-key-tag [key : (& key CompilerIncrementalTraceKey)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view key)
-    [(CompilerIncrementalTraceKey.Source _) 1]
-    [(CompilerIncrementalTraceKey.ImportSurface _ _) 2]
-    [(CompilerIncrementalTraceKey.ImportResolution _ _) 3]
-    [(CompilerIncrementalTraceKey.Configuration _) 4]
-    [(CompilerIncrementalTraceKey.CompilerBuild) 5]
-    [(CompilerIncrementalTraceKey.Stdlib _) 6]
-    [(CompilerIncrementalTraceKey.Package _ _) 7]
-    [(CompilerIncrementalTraceKey.MacroComptime _ _) 8]
-    [(CompilerIncrementalTraceKey.Child _ _ _) 9]))
+    [(Source _) 1]
+    [(ImportSurface _ _) 2]
+    [(ImportResolution _ _) 3]
+    [(Configuration _) 4]
+    [(CompilerBuild) 5]
+    [(Stdlib _) 6]
+    [(Package _ _) 7]
+    [(MacroComptime _ _) 8]
+    [(Child _ _ _) 9]))
 
 (define (compiler-trace-reason-valid? [code : i64]) : bool
   (and (>= code 1) (<= code 3)))
@@ -328,19 +324,18 @@
   [limits
     : (& limits compiler_incremental_identity.CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceContent.Present content)
+    [(Present content)
       (compiler_incremental_identity.compiler-incremental-content-valid?
         (& content)
         limits)]
-    [(CompilerIncrementalTraceContent.Absent code)
-      (compiler-trace-reason-valid? code)]))
+    [(Absent code) (compiler-trace-reason-valid? code)]))
 
 (define (compiler-trace-semantic-valid?
   [value : (& value CompilerIncrementalTraceSemantic)]
   [limits
     : (& limits compiler_incremental_identity.CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceSemantic.Present semantic)
+    [(Present semantic)
       (and
         (compiler_incremental_identity.compiler-incremental-child-valid?
           (& semantic.identity)
@@ -349,20 +344,18 @@
           (& semantic.identity.domain)
           (&
             compiler_incremental_identity.compiler-incremental-semantic-output-domain)))]
-    [(CompilerIncrementalTraceSemantic.Absent code)
-      (compiler-trace-reason-valid? code)]))
+    [(Absent code) (compiler-trace-reason-valid? code)]))
 
 (define (compiler-trace-artifact-valid?
   [value : (& value CompilerIncrementalTraceArtifact)]
   [limits
     : (& limits compiler_incremental_identity.CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceArtifact.Present child)
+    [(Present child)
       (compiler_incremental_identity.compiler-incremental-child-valid?
         (& child)
         limits)]
-    [(CompilerIncrementalTraceArtifact.Absent code)
-      (compiler-trace-reason-valid? code)]))
+    [(Absent code) (compiler-trace-reason-valid? code)]))
 
 (define (compiler-trace-edge-valid?
   [edge : (& edge CompilerIncrementalTraceEdge)]
@@ -373,19 +366,19 @@
     [id-limits : compiler_incremental_identity.CompilerIncrementalIdentityLimits
       (compiler-trace-identity-limits limits)]
     (match (owned_view.compiler-owned-reference-shared-view (& edge.key))
-      [(CompilerIncrementalTraceKey.Source path)
+      [(Source path)
         (if (and
           (compiler_incremental_identity.compiler-incremental-path-valid?
             (& path)
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.Source value)
+            [(Source value)
               (and
                 (compiler-trace-content-valid? (& value) (& id-limits))
                 (match (owned_view.compiler-owned-reference-shared-view
                   (& value))
-                  [(CompilerIncrementalTraceContent.Present content)
+                  [(Present content)
                     (compiler_incremental_identity.compiler-incremental-string-eq?
                       (& content.domain)
                       "typelisp.source-content")]
@@ -393,7 +386,7 @@
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.ImportSurface package module)
+      [(ImportSurface package module)
         (if (and
           (compiler_incremental_identity.compiler-incremental-text-valid?
             (& package)
@@ -405,12 +398,12 @@
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.ImportSurface value)
+            [(ImportSurface value)
               (compiler-trace-semantic-valid? (& value) (& id-limits))]
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.ImportResolution package module)
+      [(ImportResolution package module)
         (if (and
           (compiler_incremental_identity.compiler-incremental-text-valid?
             (& package)
@@ -422,29 +415,29 @@
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.ImportResolution value)
+            [(ImportResolution value)
               (compiler-trace-artifact-valid? (& value) (& id-limits))]
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.Configuration field)
+      [(Configuration field)
         (if (and
           (compiler_incremental_identity.compiler-incremental-domain-valid?
             (& field)
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.Configuration value)
+            [(Configuration value)
               (compiler_incremental_identity.compiler-incremental-child-valid?
                 (& value)
                 (& id-limits))]
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.CompilerBuild)
+      [(CompilerBuild)
         (match (owned_view.compiler-owned-reference-shared-view
           (& edge.observation))
-          [(CompilerIncrementalTraceObservation.CompilerBuild value)
+          [(CompilerBuild value)
             (if (and
               (compiler_incremental_identity.compiler-incremental-child-valid?
                 (& value)
@@ -456,7 +449,7 @@
               0
               compiler-trace-error-edge)]
           [_ compiler-trace-error-edge])]
-      [(CompilerIncrementalTraceKey.Stdlib distribution)
+      [(Stdlib distribution)
         (if (and
           (compiler_incremental_identity.compiler-incremental-text-valid?
             (& distribution)
@@ -464,7 +457,7 @@
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.Stdlib value)
+            [(Stdlib value)
               (and
                 (compiler_incremental_identity.compiler-incremental-content-valid?
                   (& value)
@@ -475,7 +468,7 @@
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.Package package version)
+      [(Package package version)
         (if (and
           (compiler_incremental_identity.compiler-incremental-text-valid?
             (& package)
@@ -487,7 +480,7 @@
             limits.max-edge-bytes)
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.Package value)
+            [(Package value)
               (and
                 (compiler_incremental_identity.compiler-incremental-content-valid?
                   (& value)
@@ -498,7 +491,7 @@
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.MacroComptime phase request)
+      [(MacroComptime phase request)
         (if (and
           (compiler_incremental_identity.compiler-incremental-domain-valid?
             (& phase)
@@ -508,12 +501,12 @@
             (& id-limits))
           (match (owned_view.compiler-owned-reference-shared-view
             (& edge.observation))
-            [(CompilerIncrementalTraceObservation.MacroComptime value)
+            [(MacroComptime value)
               (compiler-trace-semantic-valid? (& value) (& id-limits))]
             [_ false]))
           0
           compiler-trace-error-edge)]
-      [(CompilerIncrementalTraceKey.Child sequence ordinal child)
+      [(Child sequence ordinal child)
         (cond
           [(or
               (not
@@ -529,7 +522,7 @@
             compiler-trace-error-self]
           [(match (owned_view.compiler-owned-reference-shared-view
               (& edge.observation))
-              [(CompilerIncrementalTraceObservation.Child value)
+              [(Child value)
                 (and
                   (compiler_incremental_identity.compiler-incremental-child-valid?
                     (& value.identity)
@@ -553,9 +546,9 @@
         (&mut out)
         (compiler-trace-key-tag key))
       (match (owned_view.compiler-owned-reference-shared-view key)
-        [(CompilerIncrementalTraceKey.Source path)
+        [(Source path)
           (binary.compiler-incremental-binary-push-string! (&mut out) (& path))]
-        [(CompilerIncrementalTraceKey.ImportSurface package module)
+        [(ImportSurface package module)
           (begin
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
@@ -563,7 +556,7 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& module)))]
-        [(CompilerIncrementalTraceKey.ImportResolution package module)
+        [(ImportResolution package module)
           (begin
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
@@ -571,14 +564,14 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& module)))]
-        [(CompilerIncrementalTraceKey.Configuration field)
+        [(Configuration field)
           (binary.compiler-incremental-binary-push-string! (&mut out) (& field))]
-        [(CompilerIncrementalTraceKey.CompilerBuild) unit]
-        [(CompilerIncrementalTraceKey.Stdlib distribution)
+        [(CompilerBuild) unit]
+        [(Stdlib distribution)
           (binary.compiler-incremental-binary-push-string!
             (&mut out)
             (& distribution))]
-        [(CompilerIncrementalTraceKey.Package package version)
+        [(Package package version)
           (begin
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
@@ -586,7 +579,7 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& version)))]
-        [(CompilerIncrementalTraceKey.MacroComptime phase request)
+        [(MacroComptime phase request)
           (begin
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
@@ -594,7 +587,7 @@
             (compiler_incremental_identity.compiler-incremental-push-child!
               (&mut out)
               (& request)))]
-        [(CompilerIncrementalTraceKey.Child sequence ordinal child)
+        [(Child sequence ordinal child)
           (begin
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
@@ -616,18 +609,18 @@
   (if (or
     (not (compiler-trace-limits-valid? limits))
     (not (compiler-trace-parent-valid? parent limits)))
-    (ResultCompilerIncrementalTraceLogicalKey.Err
+    (Err
       (compiler-trace-error
         compiler-trace-error-parent
         "invalid trace parent or limits"))
     (let
       [valid : bool
         (match (owned_view.compiler-owned-reference-shared-view key)
-          [(CompilerIncrementalTraceKey.Source path)
+          [(Source path)
             (compiler_incremental_identity.compiler-incremental-path-valid?
               (& path)
               limits.max-edge-bytes)]
-          [(CompilerIncrementalTraceKey.ImportSurface package module)
+          [(ImportSurface package module)
             (and
               (compiler_incremental_identity.compiler-incremental-text-valid?
                 (& package)
@@ -637,7 +630,7 @@
                 (& module)
                 false
                 limits.max-edge-bytes))]
-          [(CompilerIncrementalTraceKey.ImportResolution package module)
+          [(ImportResolution package module)
             (and
               (compiler_incremental_identity.compiler-incremental-text-valid?
                 (& package)
@@ -647,17 +640,17 @@
                 (& module)
                 false
                 limits.max-edge-bytes))]
-          [(CompilerIncrementalTraceKey.Configuration field)
+          [(Configuration field)
             (compiler_incremental_identity.compiler-incremental-domain-valid?
               (& field)
               limits.max-edge-bytes)]
-          [(CompilerIncrementalTraceKey.CompilerBuild) true]
-          [(CompilerIncrementalTraceKey.Stdlib distribution)
+          [(CompilerBuild) true]
+          [(Stdlib distribution)
             (compiler_incremental_identity.compiler-incremental-text-valid?
               (& distribution)
               false
               limits.max-edge-bytes)]
-          [(CompilerIncrementalTraceKey.Package package version)
+          [(Package package version)
             (and
               (compiler_incremental_identity.compiler-incremental-text-valid?
                 (& package)
@@ -667,7 +660,7 @@
                 (& version)
                 false
                 limits.max-edge-bytes))]
-          [(CompilerIncrementalTraceKey.MacroComptime phase request)
+          [(MacroComptime phase request)
             (let
               [id-limits : compiler_incremental_identity.CompilerIncrementalIdentityLimits
                 (compiler-trace-identity-limits limits)]
@@ -678,7 +671,7 @@
                 (compiler_incremental_identity.compiler-incremental-child-valid?
                   (& request)
                   (& id-limits))))]
-          [(CompilerIncrementalTraceKey.Child sequence ordinal child)
+          [(Child sequence ordinal child)
             (and
               (compiler_incremental_identity.compiler-incremental-domain-valid?
                 (& sequence)
@@ -690,18 +683,18 @@
                   (& child.transcript)
                   (& parent.transcript))))])]
       (if (not valid)
-        (ResultCompilerIncrementalTraceLogicalKey.Err
+        (Err
           (compiler-trace-error
             compiler-trace-error-edge
             "invalid trace logical key"))
         (let
           [bytes : String (compiler-trace-encode-key key)]
           (if (> (string.string-length bytes) limits.max-edge-bytes)
-            (ResultCompilerIncrementalTraceLogicalKey.Err
+            (Err
               (compiler-trace-error
                 compiler-trace-error-limit
                 "trace logical key is too large"))
-            (ResultCompilerIncrementalTraceLogicalKey.Ok
+            (Ok
               (CompilerIncrementalTraceLogicalKey
                 (compiler-trace-key-tag key)
                 bytes))))))))
@@ -710,13 +703,13 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : (& value CompilerIncrementalTraceContent)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceContent.Present content)
+    [(Present content)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 1)
         (compiler_incremental_identity.compiler-incremental-push-content!
           out
           (& content)))]
-    [(CompilerIncrementalTraceContent.Absent reason)
+    [(Absent reason)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 2)
         (binary.compiler-incremental-binary-push-u8! out reason))]))
@@ -725,13 +718,13 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : (& value CompilerIncrementalTraceSemantic)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceSemantic.Present semantic)
+    [(Present semantic)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 1)
         (compiler_incremental_identity.compiler-incremental-push-child!
           out
           (& semantic.identity)))]
-    [(CompilerIncrementalTraceSemantic.Absent reason)
+    [(Absent reason)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 2)
         (binary.compiler-incremental-binary-push-u8! out reason))]))
@@ -740,13 +733,13 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : (& value CompilerIncrementalTraceArtifact)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
-    [(CompilerIncrementalTraceArtifact.Present child)
+    [(Present child)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 1)
         (compiler_incremental_identity.compiler-incremental-push-child!
           out
           (& child)))]
-    [(CompilerIncrementalTraceArtifact.Absent reason)
+    [(Absent reason)
       (begin
         (binary.compiler-incremental-binary-push-u8! out 2)
         (binary.compiler-incremental-binary-push-u8! out reason))]))
@@ -758,31 +751,30 @@
       (byte_buf_core.byte-buf-builder-with-capacity 128)]
     (begin
       (match (owned_view.compiler-owned-reference-shared-view value)
-        [(CompilerIncrementalTraceObservation.Source content)
-          (compiler-trace-push-content! (&mut out) (& content))]
-        [(CompilerIncrementalTraceObservation.ImportSurface semantic)
+        [(Source content) (compiler-trace-push-content! (&mut out) (& content))]
+        [(ImportSurface semantic)
           (compiler-trace-push-semantic! (&mut out) (& semantic))]
-        [(CompilerIncrementalTraceObservation.ImportResolution artifact)
+        [(ImportResolution artifact)
           (compiler-trace-push-artifact! (&mut out) (& artifact))]
-        [(CompilerIncrementalTraceObservation.Configuration child)
+        [(Configuration child)
           (compiler_incremental_identity.compiler-incremental-push-child!
             (&mut out)
             (& child))]
-        [(CompilerIncrementalTraceObservation.CompilerBuild child)
+        [(CompilerBuild child)
           (compiler_incremental_identity.compiler-incremental-push-child!
             (&mut out)
             (& child))]
-        [(CompilerIncrementalTraceObservation.Stdlib content)
+        [(Stdlib content)
           (compiler_incremental_identity.compiler-incremental-push-content!
             (&mut out)
             (& content))]
-        [(CompilerIncrementalTraceObservation.Package content)
+        [(Package content)
           (compiler_incremental_identity.compiler-incremental-push-content!
             (&mut out)
             (& content))]
-        [(CompilerIncrementalTraceObservation.MacroComptime semantic)
+        [(MacroComptime semantic)
           (compiler-trace-push-semantic! (&mut out) (& semantic))]
-        [(CompilerIncrementalTraceObservation.Child semantic)
+        [(Child semantic)
           (compiler_incremental_identity.compiler-incremental-push-child!
             (&mut out)
             (& semantic.identity))])
@@ -811,16 +803,16 @@
           (>
             (string.string-length observation)
             (- limits.max-edge-bytes (string.string-length key))))
-          (ResultCompilerIncrementalTraceRecord.Err
+          (Err
             (compiler-trace-error
               compiler-trace-error-limit
               "trace edge exceeds byte limit"))
-          (ResultCompilerIncrementalTraceRecord.Ok
+          (Ok
             (CompilerIncrementalTraceRecord
               key
               observation
               (compiler-trace-key-tag (& edge.key))))))
-      (ResultCompilerIncrementalTraceRecord.Err
+      (Err
         (compiler-trace-error
           valid
           (if (= valid compiler-trace-error-self)
@@ -831,7 +823,7 @@
 ;; consumed; an error path cannot return the partially encoded transcript.
 (define (compiler-trace-finalize [builder : CompilerIncrementalTraceBuilder]) : ResultCompilerIncrementalTrace
   (if (not (= builder.state 1))
-    (ResultCompilerIncrementalTrace.Err
+    (Err
       (compiler-trace-error
         compiler-trace-error-state
         "trace transaction is not open"))
@@ -880,7 +872,7 @@
                   (< work 0)
                   (> work builder.limits.max-work))
                 (return
-                  (ResultCompilerIncrementalTrace.Err
+                  (Err
                     (compiler-trace-error
                       compiler-trace-error-limit
                       "trace byte or work limit exceeded"))))
@@ -899,7 +891,7 @@
             (when
               (or (< work 0) (> work builder.limits.max-work))
               (return
-                (ResultCompilerIncrementalTrace.Err
+                (Err
                   (compiler-trace-error
                     compiler-trace-error-limit
                     "trace sorting work limit exceeded"))))
@@ -932,7 +924,7 @@
                         (& record.observation)
                         (& last-value))
                       (return
-                        (ResultCompilerIncrementalTrace.Err
+                        (Err
                           (compiler-trace-error
                             compiler-trace-error-conflict
                             "inconsistent observations for a trace key"))))
@@ -980,13 +972,13 @@
                 (byte_buf_core.byte-buf-builder-finish-array (& out))]
               (match (compiler_incremental_identity.compiler-incremental-digest-array
                 (& bytes))
-                [(sha256.Sha256FinalizeErr _)
-                  (ResultCompilerIncrementalTrace.Err
+                [(Sha256FinalizeErr _)
+                  (Err
                     (compiler-trace-error
                       compiler-trace-error-corrupt
                       "trace fingerprint generation failed"))]
-                [(sha256.Sha256FinalizeOk digest)
-                  (ResultCompilerIncrementalTrace.Ok
+                [(Sha256FinalizeOk digest)
+                  (Ok
                     (CompilerIncrementalTrace
                       compiler-incremental-trace-schema
                       builder.parent
@@ -1161,9 +1153,7 @@
                 (match (compiler_incremental_identity.compiler-incremental-identity-decode
                   (& child-bytes)
                   (& id-limits))
-                  [(compiler_incremental_identity.ResultCompilerIncrementalDecodedQuery.Ok
-                      _)
-                    true]
+                  [(Ok _) true]
                   [_ false])))]
           [else false]))
       (set!
@@ -1247,10 +1237,10 @@
   [limits : (& limits CompilerIncrementalTraceLimits)]) : ResultCompilerIncrementalTraceRecords
   (cond
     [(not (compiler-trace-limits-valid? limits))
-      (ResultCompilerIncrementalTraceRecords.Err
+      (Err
         (compiler-trace-error compiler-trace-error-limit "invalid trace limits"))]
     [(> (array-length trace.transcript) limits.max-bytes)
-      (ResultCompilerIncrementalTraceRecords.Err
+      (Err
         (compiler-trace-error
           compiler-trace-error-limit
           "trace exceeds byte limit"))]
@@ -1259,10 +1249,10 @@
         (not
           (match (compiler_incremental_identity.compiler-incremental-digest-array
             (& trace.transcript))
-            [(sha256.Sha256FinalizeOk digest)
+            [(Sha256FinalizeOk digest)
               (sha256.digest-eq? (& digest) (& trace.fingerprint))]
             [_ false])))
-      (ResultCompilerIncrementalTraceRecords.Err
+      (Err
         (compiler-trace-error
           compiler-trace-error-corrupt
           "invalid trace fingerprint or parent"))]
@@ -1296,7 +1286,7 @@
               (!= schema compiler-incremental-trace-schema)
               (!= trace.schema schema))
             (return
-              (ResultCompilerIncrementalTraceRecords.Err
+              (Err
                 (compiler-trace-error
                   compiler-trace-error-schema
                   "unsupported trace schema or domain"))))
@@ -1309,14 +1299,14 @@
               (!= count trace.edge-count)
               (> count (- reader.cursor.end reader.cursor.offset)))
             (return
-              (ResultCompilerIncrementalTraceRecords.Err
+              (Err
                 (compiler-trace-error
                   compiler-trace-error-corrupt
                   "invalid trace header"))))
           (when
             (> count limits.max-edges)
             (return
-              (ResultCompilerIncrementalTraceRecords.Err
+              (Err
                 (compiler-trace-error
                   compiler-trace-error-limit
                   "trace edge count exceeds limit"))))
@@ -1354,7 +1344,7 @@
                           (& last-key)
                           (& record.key)))))
                   (return
-                    (ResultCompilerIncrementalTraceRecords.Err
+                    (Err
                       (compiler-trace-error
                         compiler-trace-error-corrupt
                         "invalid trace record"))))
@@ -1364,7 +1354,7 @@
           (if (or
             (not reader.cursor.ok?)
             (!= reader.cursor.offset reader.cursor.end))
-            (ResultCompilerIncrementalTraceRecords.Err
+            (Err
               (compiler-trace-error
                 compiler-trace-error-corrupt
                 "trailing or truncated trace"))
@@ -1384,30 +1374,26 @@
 (define (compiler-trace-invalid-result [error : CompilerIncrementalTraceError]) : CompilerIncrementalTraceCompare
   (cond
     [(= error.code compiler-trace-error-schema)
-      (CompilerIncrementalTraceCompare.Miss compiler-trace-miss-schema -1)]
+      (Miss compiler-trace-miss-schema -1)]
     [(= error.code compiler-trace-error-limit)
-      (CompilerIncrementalTraceCompare.Miss compiler-trace-miss-limit -1)]
-    [else (CompilerIncrementalTraceCompare.Corrupt error)]))
+      (Miss compiler-trace-miss-limit -1)]
+    [else (Corrupt error)]))
 
 (define (compiler-trace-compare
   [left : (& left CompilerIncrementalTrace)]
   [right : (& right CompilerIncrementalTrace)]
   [limits : (& limits CompilerIncrementalTraceLimits)]) : CompilerIncrementalTraceCompare
   (match (compiler-trace-decode left limits)
-    [(ResultCompilerIncrementalTraceRecords.Err error)
-      (compiler-trace-invalid-result error)]
-    [(ResultCompilerIncrementalTraceRecords.Ok left-records)
+    [(Err error) (compiler-trace-invalid-result error)]
+    [(Ok left-records)
       (match (compiler-trace-decode right limits)
-        [(ResultCompilerIncrementalTraceRecords.Err error)
-          (compiler-trace-invalid-result error)]
-        [(ResultCompilerIncrementalTraceRecords.Ok right-records)
+        [(Err error) (compiler-trace-invalid-result error)]
+        [(Ok right-records)
           (if (not
             (binary.compiler-incremental-binary-bytes-eq?
               (& left.parent.transcript)
               (& right.parent.transcript)))
-            (CompilerIncrementalTraceCompare.Miss
-              compiler-trace-miss-query-kind
-              -1)
+            (Miss compiler-trace-miss-query-kind -1)
             (let
               [index : i64 0]
               [left-count : i64 (trace_record_vec.len (& left-records))]
@@ -1435,7 +1421,7 @@
                               (& a.observation)
                               (& b.observation))))
                         (return
-                          (CompilerIncrementalTraceCompare.Miss
+                          (Miss
                             (compiler-trace-kind-miss
                               (if (stdlib.sort.string-less-borrowed?
                                 (& b.key)
@@ -1454,7 +1440,5 @@
                         (owned_view.compiler-owned-array-element-shared-view
                           right-records.slots
                           index))]
-                    (CompilerIncrementalTraceCompare.Miss
-                      (compiler-trace-kind-miss record.kind)
-                      index))
-                  (CompilerIncrementalTraceCompare.Hit)))))])]))
+                    (Miss (compiler-trace-kind-miss record.kind) index))
+                  (Hit)))))])]))

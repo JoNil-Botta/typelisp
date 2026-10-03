@@ -81,11 +81,11 @@
 (define (compiler-x64-template-related-data
   [id : x64.CompilerX64ExecutableTemplateId]) : String
   (match id
-    [(x64.CompilerX64ExecutableTemplateId.WindowsObjectStartContribution)
+    [(WindowsObjectStartContribution)
       ".pdata:_tl_start..L_tl_start_end->.L_tl_start_xdata|xdata-size=8|xdata-hash=2141552412"]
-    [(x64.CompilerX64ExecutableTemplateId.WindowsObjectMainFiberContribution)
+    [(WindowsObjectMainFiberContribution)
       ".pdata:.L_tl_main_fiber..L_tl_main_fiber_end->.L_tl_start_xdata|xdata-size=8|xdata-hash=2141552412"]
-    [(x64.CompilerX64ExecutableTemplateId.WindowsObjectOverflowFilterContribution)
+    [(WindowsObjectOverflowFilterContribution)
       ".pdata:.L_tl_stack_overflow_filter..L_tl_stack_overflow_filter_end->.L_tl_start_xdata|xdata-size=8|xdata-hash=2141552412"]
     [_ ""]))
 

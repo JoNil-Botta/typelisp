@@ -50,14 +50,14 @@
       [(match (cis.intern-structural-session-template-source-record-for-raw
           session
           name)
-          [(cis.InternMaybeTemplateSourceRecord.Some _) true]
-          [(cis.InternMaybeTemplateSourceRecord.No) false])
+          [(Some _) true]
+          [(No) false])
         "surface ast: template-source identity is not portable"]
       [(match (cis.intern-structural-session-fresh-local-record-for-raw
           session
           name)
-          [(cis.InternMaybeFreshLocalRecord.Some _) true]
-          [(cis.InternMaybeFreshLocalRecord.No) false])
+          [(Some _) true]
+          [(No) false])
         "surface ast: fresh-local identity is not portable"]
       [(ci.intern-generated-id-active? name)
         "surface ast: generated identity is outside the captured package table"]
@@ -169,7 +169,7 @@
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (match (ast.ast-array-shared-view params.slots index)
-            [(ast.AstMacroParam.Param name ty variadic type-kinds)
+            [(Param name ty variadic type-kinds)
               (begin
                 (codec.surface-ast-write-name! out context name)
                 (codec.surface-ast-write-type! out context ty)
@@ -207,32 +207,32 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [cleanup : ast.AstFieldCleanup]) : unit
     (match cleanup
-      [(ast.AstFieldCleanup.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstFieldCleanup.Fn name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name!
             out
             context
             (ci.intern-syntax-id-value name)))]
-      [(ast.AstFieldCleanup.Owned) (codec.surface-ast-write-i64! out 2)])))
+      [(Owned) (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-field-cleanup!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstFieldCleanup.No]
+      [(= tag 0) No]
       [(= tag 1)
-        (ast.AstFieldCleanup.Fn
+        (Fn
           (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))]
-      [(= tag 2) ast.AstFieldCleanup.Owned]
+      [(= tag 2) Owned]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid field cleanup")
-          ast.AstFieldCleanup.No)])))
+          No)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -247,7 +247,7 @@
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (match (ast.ast-array-shared-view fields.slots index)
-            [(ast.AstFieldDef.Def name ty cleanup)
+            [(Def name ty cleanup)
               (begin
                 (codec.surface-ast-write-name!
                   out
@@ -283,8 +283,8 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [repr : ast.AstStructRepr]) : unit
     (match repr
-      [(ast.AstStructRepr.Default) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstStructRepr.C align fields)
+      [(Default) (codec.surface-ast-write-i64! out 0)]
+      [(C align fields)
         (let
           [index : i64 0]
           (begin
@@ -320,20 +320,20 @@
   [repr : (& repr ast.AstStructRepr)]
   [fields : (& fields ast.AstFieldDefList)]) : unit
   (match repr
-    [(ast.AstStructRepr.C _ aligns)
+    [(C _ aligns)
       (when
         (> (ast.ast-field-aligns-len aligns) fields.len)
         (codec.surface-ast-reader-fail!
           reader
           "surface ast: field alignments exceed the struct's fields"))]
-    [(ast.AstStructRepr.Default) unit]))
+    [(Default) unit]))
 
 (define (surface-ast-read-struct-repr!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructRepr
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
-      ast.AstStructRepr.Default
+      Default
       (if (= tag 1)
         (let
           [align : i64 (surface-ast-read-declared-align! reader)]
@@ -356,12 +356,12 @@
               (codec.surface-ast-reader-fail!
                 reader
                 "surface ast: field alignment list ends in an absent entry"))
-            (ast.AstStructRepr.C align fields)))
+            (C align fields)))
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid struct repr")
-          ast.AstStructRepr.Default)))))
+          Default)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -370,30 +370,29 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [abi : ast.AstExternAbi]) : unit
     (match abi
-      [(ast.AstExternAbi.C) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstExternAbi.CVarargsOpen) (codec.surface-ast-write-i64! out 1)]
-      [(ast.AstExternAbi.CVarargsTyped ty)
+      [(C) (codec.surface-ast-write-i64! out 0)]
+      [(CVarargsOpen) (codec.surface-ast-write-i64! out 1)]
+      [(CVarargsTyped ty)
         (begin
           (codec.surface-ast-write-i64! out 2)
           (codec.surface-ast-write-type! out context ty))]
-      [(ast.AstExternAbi.TypeLisp) (codec.surface-ast-write-i64! out 3)])))
+      [(TypeLisp) (codec.surface-ast-write-i64! out 3)])))
 
 (define (surface-ast-read-extern-abi!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternAbi
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstExternAbi.C]
-      [(= tag 1) ast.AstExternAbi.CVarargsOpen]
-      [(= tag 2)
-        (ast.AstExternAbi.CVarargsTyped (codec.surface-ast-read-type! reader))]
-      [(= tag 3) ast.AstExternAbi.TypeLisp]
+      [(= tag 0) C]
+      [(= tag 1) CVarargsOpen]
+      [(= tag 2) (CVarargsTyped (codec.surface-ast-read-type! reader))]
+      [(= tag 3) TypeLisp]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid extern abi")
-          ast.AstExternAbi.C)])))
+          C)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -403,22 +402,22 @@
     (codec.surface-ast-write-i64!
       out
       (match kind
-        [(ast.AstExternKind.Value) 0]
-        [(ast.AstExternKind.Function) 1]))))
+        [(Value) 0]
+        [(Function) 1]))))
 
 (define (surface-ast-read-extern-kind!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternKind
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
-      ast.AstExternKind.Value
+      Value
       (if (= tag 1)
-        ast.AstExternKind.Function
+        Function
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid extern kind")
-          ast.AstExternKind.Value)))))
+          Value)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -432,15 +431,15 @@
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (match (ast.ast-array-shared-view links.slots index)
-            [(ast.AstExternLinkInput.Lib text)
+            [(Lib text)
               (begin
                 (codec.surface-ast-write-i64! out 0)
                 (codec.surface-ast-write-string! out text))]
-            [(ast.AstExternLinkInput.Search text)
+            [(Search text)
               (begin
                 (codec.surface-ast-write-i64! out 1)
                 (codec.surface-ast-write-string! out text))]
-            [(ast.AstExternLinkInput.Arg text)
+            [(Arg text)
               (begin
                 (codec.surface-ast-write-i64! out 2)
                 (codec.surface-ast-write-string! out text))])
@@ -482,14 +481,14 @@
     (codec.surface-ast-write-i64!
       out
       (match value
-        [(ast.AstSpmdParamClass.Uniform) 0]
-        [(ast.AstSpmdParamClass.Varying) 1]))))
+        [(Uniform) 0]
+        [(Varying) 1]))))
 
 (define (surface-ast-read-spmd-param-class!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClass
   (if (= (codec.surface-ast-read-i64! reader) 0)
-    ast.AstSpmdParamClass.Uniform
-    ast.AstSpmdParamClass.Varying))
+    Uniform
+    Varying))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -532,24 +531,24 @@
     (codec.surface-ast-write-i64!
       out
       (match value
-        [(ast.AstSpmdResultClass.Unit) 0]
-        [(ast.AstSpmdResultClass.Uniform) 1]
-        [(ast.AstSpmdResultClass.Varying) 2]))))
+        [(Unit) 0]
+        [(Uniform) 1]
+        [(Varying) 2]))))
 
 (define (surface-ast-read-spmd-result-class!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdResultClass
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstSpmdResultClass.Unit]
-      [(= tag 1) ast.AstSpmdResultClass.Uniform]
-      [(= tag 2) ast.AstSpmdResultClass.Varying]
+      [(= tag 0) Unit]
+      [(= tag 1) Uniform]
+      [(= tag 2) Varying]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid spmd result class")
-          ast.AstSpmdResultClass.Unit)])))
+          Unit)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -605,12 +604,12 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [metadata : ast.AstFnMetadata]) : unit
     (match metadata
-      [(ast.AstFnMetadata.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstFnMetadata.Export name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Export name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context (ci.intern-id-value name)))]
-      [(ast.AstFnMetadata.SpmdCallable items)
+      [(SpmdCallable items)
         (begin
           (codec.surface-ast-write-i64! out 2)
           (surface-ast-write-spmd-specialization-list! out (deref items)))])))
@@ -620,19 +619,18 @@
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstFnMetadata.No]
+      [(= tag 0) No]
       [(= tag 1)
-        (ast.AstFnMetadata.Export
+        (Export
           (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader)))]
       [(= tag 2)
-        (ast.AstFnMetadata.SpmdCallable
-          (box (surface-ast-read-spmd-specialization-list! reader)))]
+        (SpmdCallable (box (surface-ast-read-spmd-specialization-list! reader)))]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid function metadata")
-          ast.AstFnMetadata.No)])))
+          No)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -756,8 +754,8 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [metadata : ast.AstImportedSpmdMetadata]) : unit
     (match metadata
-      [(ast.AstImportedSpmdMetadata.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstImportedSpmdMetadata.Package _ _ name callables)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Package _ _ name callables)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context (ci.intern-id-value name))
@@ -771,7 +769,7 @@
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstImportedSpmdMetadata.No]
+      [(= tag 0) No]
       [(= tag 1)
         (let
           [name : ci.InternId
@@ -785,13 +783,13 @@
             (codec.surface-ast-reader-fail!
               reader
               "surface ast: imported SPMD metadata needs source validation")
-            (ast.AstImportedSpmdMetadata.Package "" "" name (box callables))))]
+            (Package "" "" name (box callables))))]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid imported spmd metadata")
-          ast.AstImportedSpmdMetadata.No)])))
+          No)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -800,7 +798,7 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [metadata : ast.AstExternMetadata]) : unit
     (match metadata
-      [(ast.AstExternMetadata.Metadata abi symbol links flags imported)
+      [(Metadata abi symbol links flags imported)
         (begin
           (surface-ast-write-extern-abi! out context abi)
           (codec.surface-ast-write-name!
@@ -813,7 +811,7 @@
 
 (define (surface-ast-read-extern-metadata!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
-  (ast.AstExternMetadata.Metadata
+  (Metadata
     (surface-ast-read-extern-abi! reader)
     (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
     (surface-ast-read-extern-link-list! reader)
@@ -827,33 +825,32 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [cleanup : ast.AstVariantPayloadCleanup]) : unit
     (match cleanup
-      [(ast.AstVariantPayloadCleanup.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstVariantPayloadCleanup.Fn name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name!
             out
             context
             (ci.intern-syntax-id-value name)))]
-      [(ast.AstVariantPayloadCleanup.Owned)
-        (codec.surface-ast-write-i64! out 2)])))
+      [(Owned) (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-variant-cleanup!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstVariantPayloadCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstVariantPayloadCleanup.No]
+      [(= tag 0) No]
       [(= tag 1)
-        (ast.AstVariantPayloadCleanup.Fn
+        (Fn
           (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))]
-      [(= tag 2) ast.AstVariantPayloadCleanup.Owned]
+      [(= tag 2) Owned]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid variant cleanup")
-          ast.AstVariantPayloadCleanup.No)])))
+          No)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -868,7 +865,7 @@
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (match (ast.ast-array-shared-view variants.slots index)
-            [(ast.AstVariantDef.Def name fields cleanups)
+            [(Def name fields cleanups)
               (let
                 [cleanup-index : i64 0]
                 (begin
@@ -923,8 +920,8 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [cleanup : ast.AstStructCleanup]) : unit
     (match cleanup
-      [(ast.AstStructCleanup.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstStructCleanup.Fn name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name!
@@ -935,9 +932,8 @@
 (define (surface-ast-read-struct-cleanup!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
-    ast.AstStructCleanup.No
-    (ast.AstStructCleanup.Fn
-      (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
+    No
+    (Fn (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -946,8 +942,8 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [cleanup : ast.AstEnumCleanup]) : unit
     (match cleanup
-      [(ast.AstEnumCleanup.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstEnumCleanup.Fn name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name!
@@ -958,9 +954,8 @@
 (define (surface-ast-read-enum-cleanup!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstEnumCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
-    ast.AstEnumCleanup.No
-    (ast.AstEnumCleanup.Fn
-      (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
+    No
+    (Fn (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -969,8 +964,8 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [value : ast.AstMaybeModuleName]) : unit
     (match value
-      [(ast.AstMaybeModuleName.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstMaybeModuleName.Some name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Some name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name))])))
@@ -978,8 +973,8 @@
 (define (surface-ast-read-maybe-module-name!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeModuleName
   (if (= (codec.surface-ast-read-i64! reader) 0)
-    ast.AstMaybeModuleName.No
-    (ast.AstMaybeModuleName.Some (codec.surface-ast-read-name! reader))))
+    No
+    (Some (codec.surface-ast-read-name! reader))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -988,8 +983,8 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [value : ast.AstMaybeImportAlias]) : unit
     (match value
-      [(ast.AstMaybeImportAlias.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstMaybeImportAlias.Some name)
+      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(Some name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name))])))
@@ -997,8 +992,8 @@
 (define (surface-ast-read-maybe-import-alias!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeImportAlias
   (if (= (codec.surface-ast-read-i64! reader) 0)
-    ast.AstMaybeImportAlias.No
-    (ast.AstMaybeImportAlias.Some (codec.surface-ast-read-name! reader))))
+    No
+    (Some (codec.surface-ast-read-name! reader))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -1007,18 +1002,18 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [kind : ast.AstImportKind]) : unit
     (match kind
-      [(ast.AstImportKind.Module) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstImportKind.ModuleAll) (codec.surface-ast-write-i64! out 3)]
-      [(ast.AstImportKind.ModuleItem item)
+      [(Module) (codec.surface-ast-write-i64! out 0)]
+      [(ModuleAll) (codec.surface-ast-write-i64! out 3)]
+      [(ModuleItem item)
         (begin
           (codec.surface-ast-write-i64! out 4)
           (codec.surface-ast-write-name! out context item))]
-      [(ast.AstImportKind.Macro call module-name)
+      [(Macro call module-name)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-i64! out call)
           (surface-ast-write-maybe-module-name! out context module-name))]
-      [(ast.AstImportKind.MacroDecls call module-name)
+      [(MacroDecls call module-name)
         (begin
           (codec.surface-ast-write-i64! out 2)
           (codec.surface-ast-write-i64! out call)
@@ -1029,24 +1024,23 @@
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstImportKind.Module]
+      [(= tag 0) Module]
       [(= tag 1)
-        (ast.AstImportKind.Macro
+        (Macro
           (codec.surface-ast-read-i64! reader)
           (surface-ast-read-maybe-module-name! reader))]
       [(= tag 2)
-        (ast.AstImportKind.MacroDecls
+        (MacroDecls
           (codec.surface-ast-read-i64! reader)
           (surface-ast-read-maybe-module-name! reader))]
-      [(= tag 3) ast.AstImportKind.ModuleAll]
-      [(= tag 4)
-        (ast.AstImportKind.ModuleItem (codec.surface-ast-read-name! reader))]
+      [(= tag 3) ModuleAll]
+      [(= tag 4) (ModuleItem (codec.surface-ast-read-name! reader))]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid import kind")
-          ast.AstImportKind.Module)])))
+          Module)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -1055,7 +1049,7 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [spec : ast.AstImportSpec]) : unit
     (match spec
-      [(ast.AstImportSpec.Spec kind path module-name alias span)
+      [(Spec kind path module-name alias span)
         (begin
           (surface-ast-write-import-kind! out context kind)
           (codec.surface-ast-write-string! out path)
@@ -1065,7 +1059,7 @@
 
 (define (surface-ast-read-import-spec!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportSpec
-  (ast.AstImportSpec.Spec
+  (Spec
     (surface-ast-read-import-kind! reader)
     (codec.surface-ast-read-string! reader)
     (surface-ast-read-maybe-module-name! reader)
@@ -1085,14 +1079,14 @@
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (match (ast.ast-array-shared-view variants.slots index)
-            [(ast.AstDispatchVariant.Variant isa name)
+            [(Variant isa name)
               (begin
                 (codec.surface-ast-write-i64!
                   out
                   (match isa
-                    [(ast.AstDispatchIsa.Scalar) 0]
-                    [(ast.AstDispatchIsa.Avx2) 1]
-                    [(ast.AstDispatchIsa.Avx512) 2]))
+                    [(Scalar) 0]
+                    [(Avx2) 1]
+                    [(Avx512) 2]))
                 (codec.surface-ast-write-name! out context name))])
           (set! index (+ index 1)))))))
 
@@ -1109,15 +1103,15 @@
           [tag : i64 (codec.surface-ast-read-i64! reader)]
           [isa : ast.AstDispatchIsa
             (cond
-              [(= tag 0) ast.AstDispatchIsa.Scalar]
-              [(= tag 1) ast.AstDispatchIsa.Avx2]
-              [(= tag 2) ast.AstDispatchIsa.Avx512]
+              [(= tag 0) Scalar]
+              [(= tag 1) Avx2]
+              [(= tag 2) Avx512]
               [else
                 (begin
                   (codec.surface-ast-reader-fail!
                     reader
                     "surface ast: invalid dispatch isa")
-                  ast.AstDispatchIsa.Scalar)])]
+                  Scalar)])]
           (begin
             (set!
               (array-ref slots index)
@@ -1134,17 +1128,17 @@
     [_context : (&mut context codec.SurfaceAstWriteContext)]
     [meta : ast.AstDeclMeta]) : unit
     (match (deref meta.value)
-      [(ast.AstDeclMetaValue.Runtime markers)
+      [(Runtime markers)
         (begin
           (codec.surface-ast-write-i64! out 0)
           (codec.surface-ast-write-i64! out markers))]
-      [(ast.AstDeclMetaValue.Comptime generated markers)
+      [(Comptime generated markers)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-i64! out markers)
           (match generated
-            [(ast.AstGeneratedDeclMeta.No) (codec.surface-ast-write-i64! out 0)]
-            [(ast.AstGeneratedDeclMeta.Some generator item args key)
+            [(No) (codec.surface-ast-write-i64! out 0)]
+            [(Some generator item args key)
               (begin
                 (codec.surface-ast-write-i64! out 1)
                 (codec.surface-ast-write-string! out generator)
@@ -1181,9 +1175,9 @@
     [generated-tag : i64 (codec.surface-ast-read-i64! reader)]
     [generated : ast.AstGeneratedDeclMeta
       (if (= generated-tag 0)
-        ast.AstGeneratedDeclMeta.No
+        No
         (if (= generated-tag 1)
-          (ast.AstGeneratedDeclMeta.Some
+          (Some
             (codec.surface-ast-read-string! reader)
             (codec.surface-ast-read-string! reader)
             (expr_codec.surface-ast-read-expr-list! reader)
@@ -1192,7 +1186,7 @@
             (codec.surface-ast-reader-fail!
               reader
               "surface ast: invalid generated declaration metadata")
-            ast.AstGeneratedDeclMeta.No)))]
+            No)))]
     (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime generated markers)))))
 
 (cfg
@@ -1201,13 +1195,13 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [metadata : ast.AstTestMetadata]) : unit
     (match (deref metadata.value)
-      [(ast.AstTestMetadataValue.None) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstTestMetadataValue.Metadata ignore-reason slow)
+      [(None) (codec.surface-ast-write-i64! out 0)]
+      [(Metadata ignore-reason slow)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (match ignore-reason
-            [(ast.AstTestIgnoreReason.No) (codec.surface-ast-write-i64! out 0)]
-            [(ast.AstTestIgnoreReason.Some reason)
+            [(No) (codec.surface-ast-write-i64! out 0)]
+            [(Some reason)
               (begin
                 (codec.surface-ast-write-i64! out 1)
                 (codec.surface-ast-write-string! out reason))])
@@ -1228,7 +1222,7 @@
           [ignore-tag : i64 (codec.surface-ast-read-i64! reader)]
           [ignore-reason : ast.AstTestIgnoreReason
             (cond
-              [(= ignore-tag 0) ast.AstTestIgnoreReason.No]
+              [(= ignore-tag 0) No]
               [(= ignore-tag 1)
                 (let
                   [reason : String (codec.surface-ast-read-string! reader)]
@@ -1238,13 +1232,13 @@
                         reader
                         "surface ast: empty test ignore reason")
                       unit)
-                    (ast.AstTestIgnoreReason.Some reason)))]
+                    (Some reason)))]
               [else
                 (begin
                   (codec.surface-ast-reader-fail!
                     reader
                     "surface ast: invalid test ignore metadata")
-                  ast.AstTestIgnoreReason.No)])]
+                  No)])]
           [slow-tag : i64 (codec.surface-ast-read-i64! reader)]
           [slow : bool
             (cond
@@ -1271,23 +1265,23 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [decl : ast.AstDecl]) : unit
     (match decl
-      [(ast.AstDecl.Module name)
+      [(Module name)
         (begin
           (codec.surface-ast-write-i64! out 0)
           (codec.surface-ast-write-name! out context name))]
-      [(ast.AstDecl.ModuleBody name body)
+      [(ModuleBody name body)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-decl-list! out context (deref body)))]
-      [(ast.AstDecl.Def meta name maybe-ty value)
+      [(Def meta name maybe-ty value)
         (begin
           (codec.surface-ast-write-i64! out 2)
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-maybe-type! out context maybe-ty)
           (codec.surface-ast-write-i64! out value))]
-      [(ast.AstDecl.DefFn meta name params ret body metadata)
+      [(DefFn meta name params ret body metadata)
         (begin
           (codec.surface-ast-write-i64! out 3)
           (surface-ast-write-decl-meta! out context meta)
@@ -1296,7 +1290,7 @@
           (codec.surface-ast-write-type! out context ret)
           (codec.surface-ast-write-i64! out body)
           (surface-ast-write-fn-metadata! out context metadata))]
-      [(ast.AstDecl.DefMacro meta name params ret body)
+      [(DefMacro meta name params ret body)
         (begin
           (codec.surface-ast-write-i64! out 4)
           (surface-ast-write-decl-meta! out context meta)
@@ -1304,7 +1298,7 @@
           (surface-ast-write-macro-param-list! out context params)
           (codec.surface-ast-write-type! out context ret)
           (codec.surface-ast-write-i64! out body))]
-      [(ast.AstDecl.Extern meta name kind metadata ty)
+      [(Extern meta name kind metadata ty)
         (begin
           (codec.surface-ast-write-i64! out 5)
           (surface-ast-write-decl-meta! out context meta)
@@ -1312,14 +1306,14 @@
           (surface-ast-write-extern-kind! out kind)
           (surface-ast-write-extern-metadata! out context (deref metadata))
           (codec.surface-ast-write-type! out context ty))]
-      [(ast.AstDecl.DefEnum meta name cleanup variants)
+      [(DefEnum meta name cleanup variants)
         (begin
           (codec.surface-ast-write-i64! out 6)
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-enum-cleanup! out context cleanup)
           (surface-ast-write-variant-def-list! out context variants))]
-      [(ast.AstDecl.DefEnumLifetimes meta name lifetimes cleanup variants)
+      [(DefEnumLifetimes meta name lifetimes cleanup variants)
         (begin
           (codec.surface-ast-write-i64! out 7)
           (surface-ast-write-decl-meta! out context meta)
@@ -1327,7 +1321,7 @@
           (codec.surface-ast-write-lifetime-list! out context lifetimes)
           (surface-ast-write-enum-cleanup! out context cleanup)
           (surface-ast-write-variant-def-list! out context variants))]
-      [(ast.AstDecl.DefStruct meta name repr cleanup fields)
+      [(DefStruct meta name repr cleanup fields)
         (begin
           (codec.surface-ast-write-i64! out 8)
           (surface-ast-write-decl-meta! out context meta)
@@ -1335,7 +1329,7 @@
           (surface-ast-write-struct-repr! out repr)
           (surface-ast-write-struct-cleanup! out context cleanup)
           (surface-ast-write-field-def-list! out context fields))]
-      [(ast.AstDecl.DefStructLifetimes meta name lifetimes repr cleanup fields)
+      [(DefStructLifetimes meta name lifetimes repr cleanup fields)
         (begin
           (codec.surface-ast-write-i64! out 9)
           (surface-ast-write-decl-meta! out context meta)
@@ -1344,45 +1338,45 @@
           (surface-ast-write-struct-repr! out repr)
           (surface-ast-write-struct-cleanup! out context cleanup)
           (surface-ast-write-field-def-list! out context fields))]
-      [(ast.AstDecl.Import meta spec)
+      [(Import meta spec)
         (begin
           (codec.surface-ast-write-i64! out 10)
           (surface-ast-write-decl-meta! out context meta)
           (surface-ast-write-import-spec! out context spec))]
-      [(ast.AstDecl.IncludeStr name path)
+      [(IncludeStr name path)
         (begin
           (codec.surface-ast-write-i64! out 11)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-string! out path))]
-      [(ast.AstDecl.IncludeStrComptime name path)
+      [(IncludeStrComptime name path)
         (begin
           (codec.surface-ast-write-i64! out 12)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-string! out path))]
-      [(ast.AstDecl.IncludeStrLzss name path)
+      [(IncludeStrLzss name path)
         (begin
           (codec.surface-ast-write-i64! out 13)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-string! out path))]
-      [(ast.AstDecl.IncludeBin name path)
+      [(IncludeBin name path)
         (begin
           (codec.surface-ast-write-i64! out 14)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-string! out path))]
-      [(ast.AstDecl.DefDispatch meta name variants)
+      [(DefDispatch meta name variants)
         (begin
           (codec.surface-ast-write-i64! out 15)
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-dispatch-variant-list! out context variants))]
-      [(ast.AstDecl.Test name body metadata span)
+      [(Test name body metadata span)
         (begin
           (codec.surface-ast-write-i64! out 16)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-i64! out body)
           (surface-ast-write-test-metadata! out metadata)
           (codec.surface-ast-write-span! out span))]
-      [(ast.AstDecl.Unsafe inner)
+      [(Unsafe inner)
         (begin
           (codec.surface-ast-write-i64! out 17)
           (surface-ast-write-decl! out context (deref inner)))])))
@@ -1410,19 +1404,19 @@
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) (ast.AstDecl.Module (codec.surface-ast-read-name! reader))]
+      [(= tag 0) (Module (codec.surface-ast-read-name! reader))]
       [(= tag 1)
-        (ast.AstDecl.ModuleBody
+        (ModuleBody
           (codec.surface-ast-read-name! reader)
           (box (surface-ast-read-decl-list! reader)))]
       [(= tag 2)
-        (ast.AstDecl.Def
+        (Def
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-maybe-type! reader)
           (codec.surface-ast-read-i64! reader))]
       [(= tag 3)
-        (ast.AstDecl.DefFn
+        (DefFn
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (expr_codec.surface-ast-read-param-list! reader)
@@ -1430,27 +1424,27 @@
           (codec.surface-ast-read-i64! reader)
           (surface-ast-read-fn-metadata! reader))]
       [(= tag 4)
-        (ast.AstDecl.DefMacro
+        (DefMacro
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (surface-ast-read-macro-param-list! reader)
           (codec.surface-ast-read-type! reader)
           (codec.surface-ast-read-i64! reader))]
       [(= tag 5)
-        (ast.AstDecl.Extern
+        (Extern
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (surface-ast-read-extern-kind! reader)
           (box (surface-ast-read-extern-metadata! reader))
           (codec.surface-ast-read-type! reader))]
       [(= tag 6)
-        (ast.AstDecl.DefEnum
+        (DefEnum
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (surface-ast-read-enum-cleanup! reader)
           (surface-ast-read-variant-def-list! reader))]
       [(= tag 7)
-        (ast.AstDecl.DefEnumLifetimes
+        (DefEnumLifetimes
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-lifetime-list! reader)
@@ -1467,7 +1461,7 @@
             (surface-ast-read-field-def-list! reader)]
           (begin
             (surface-ast-check-field-aligns! reader (& repr) (& fields))
-            (ast.AstDecl.DefStruct meta name repr cleanup fields)))]
+            (DefStruct meta name repr cleanup fields)))]
       [(= tag 9)
         (let
           [meta : ast.AstDeclMeta (surface-ast-read-decl-meta! reader)]
@@ -1481,51 +1475,45 @@
             (surface-ast-read-field-def-list! reader)]
           (begin
             (surface-ast-check-field-aligns! reader (& repr) (& fields))
-            (ast.AstDecl.DefStructLifetimes
-              meta
-              name
-              lifetimes
-              repr
-              cleanup
-              fields)))]
+            (DefStructLifetimes meta name lifetimes repr cleanup fields)))]
       [(= tag 10)
-        (ast.AstDecl.Import
+        (Import
           (surface-ast-read-decl-meta! reader)
           (surface-ast-read-import-spec! reader))]
       [(= tag 11)
-        (ast.AstDecl.IncludeStr
+        (IncludeStr
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-string! reader))]
       [(= tag 12)
-        (ast.AstDecl.IncludeStrComptime
+        (IncludeStrComptime
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-string! reader))]
       [(= tag 13)
-        (ast.AstDecl.IncludeStrLzss
+        (IncludeStrLzss
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-string! reader))]
       [(= tag 14)
-        (ast.AstDecl.IncludeBin
+        (IncludeBin
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-string! reader))]
       [(= tag 15)
-        (ast.AstDecl.DefDispatch
+        (DefDispatch
           (surface-ast-read-decl-meta! reader)
           (codec.surface-ast-read-name! reader)
           (surface-ast-read-dispatch-variant-list! reader))]
       [(= tag 16)
-        (ast.AstDecl.Test
+        (Test
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-i64! reader)
           (surface-ast-read-test-metadata! reader)
           (codec.surface-ast-read-span! reader))]
-      [(= tag 17) (ast.AstDecl.Unsafe (box (surface-ast-read-decl! reader)))]
+      [(= tag 17) (Unsafe (box (surface-ast-read-decl! reader)))]
       [else
         (begin
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid declaration tag")
-          (ast.AstDecl.Module (codec.surface-ast-read-name! reader)))])))
+          (Module (codec.surface-ast-read-name! reader)))])))
 
 (define (surface-ast-read-decl-list!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclList
@@ -1627,11 +1615,11 @@
       (begin
         (while true
           (match (sym_i64_env.sym-i64-view cursor)
-            [(sym_i64_env.SymI64ViewNil)
+            [(SymI64ViewNil)
               (begin
                 (codec.surface-ast-write-i64! out 0)
                 (return unit))]
-            [(sym_i64_env.SymI64ViewBind key value rest)
+            [(SymI64ViewBind key value rest)
               (begin
                 (codec.surface-ast-write-i64! out 1)
                 (codec.surface-ast-write-name! out context key)
@@ -1693,7 +1681,7 @@
               (ast.ast-node-pool-context-expr-get pools index))
             (set! index (+ index 1))))
         (match program
-          [(ast.AstProgram.Program decls)
+          [(Program decls)
             (surface-ast-write-decl-list! out context (deref decls))])
         (surface-ast-write-paths! out context paths)
         (surface-ast-write-modules! out context modules)
@@ -1730,7 +1718,7 @@
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       (begin
         (match compaction
-          [(ast.AstProgramCompaction compacted-program compacted-pools)
+          [(AstProgramCompaction compacted-program compacted-pools)
             (surface-ast-write-compacted!
               (&mut out)
               (&mut context)
@@ -1745,8 +1733,8 @@
           (begin
             (arena.destroy-safe! surface-arena)
             (if (codec.surface-ast-write-valid? (& context))
-              (ResultSurfaceAstBytes.Ok bytes)
-              (ResultSurfaceAstBytes.Err
+              (Ok bytes)
+              (Err
                 (surface-ast-invalid-identity-message
                   structural-session
                   (codec.surface-ast-write-invalid-name context))))))))))
@@ -1807,8 +1795,7 @@
       (not (= magic surface-ast-magic))
       (not (= schema surface-ast-schema-version))
       (not (= identity-count expected-identity-count)))
-      (ResultSurfaceAstHydration.Err
-        "surface ast: bad magic, schema, or identity binding")
+      (Err "surface ast: bad magic, schema, or identity binding")
       (begin
         (surface-ast-decode-pools! (&mut reader) pools type-count expr-count)
         (let
@@ -1823,11 +1810,9 @@
               pools)]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))
-              (ResultSurfaceAstHydration.Err
-                (codec.surface-ast-reader-message (& reader)))]
+              (Err (codec.surface-ast-reader-message (& reader)))]
             [(not (= (codec.surface-ast-reader-offset (& reader)) byte-count))
-              (ResultSurfaceAstHydration.Err
-                "surface ast: trailing payload bytes")]
+              (Err "surface ast: trailing payload bytes")]
             [(or
                 (not
                   (=
@@ -1837,8 +1822,5 @@
                   (=
                     (ast.ast-decl-list-len (& decls))
                     (ast.ast-decl-module-list-len (& modules)))))
-              (ResultSurfaceAstHydration.Err
-                "surface ast: declaration provenance lists are misaligned")]
-            [else
-              (ResultSurfaceAstHydration.Ok
-                (SurfaceAstHydration decls paths modules seen pools))]))))))
+              (Err "surface ast: declaration provenance lists are misaligned")]
+            [else (Ok (SurfaceAstHydration decls paths modules seen pools))]))))))

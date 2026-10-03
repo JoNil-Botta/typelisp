@@ -89,32 +89,27 @@
 
 (define (source-tool-default-target) : backend.CompilerBackendTarget
   (if (string.eq (env.path-separator) ";")
-    (backend.CompilerBackendTarget.Windows)
-    (backend.CompilerBackendTarget.Linux)))
+    (Windows)
+    (Linux)))
 
 (define (source-tool-default-target-name) : String
   (source-tool-target-name (source-tool-default-target)))
 
 (define (source-tool-target [value : String]) : ResultSourceToolTarget
   (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (ResultSourceToolTarget.Ok (backend.CompilerBackendTarget.Linux))
+    (Ok (Linux))
     (if (or
       (string.eq value "windows-x86_64")
       (string.eq value "windows_x86_64"))
-      (ResultSourceToolTarget.Ok (backend.CompilerBackendTarget.Windows))
-      (ResultSourceToolTarget.Err (str_cat.str-cat "unknown target " value)))))
+      (Ok (Windows))
+      (Err (str_cat.str-cat "unknown target " value)))))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
-    [(string.eq value "scalar")
-      (ResultSourceToolBackendMode.Ok (backend.CompilerBackendMode.Scalar))]
-    [(string.eq value "avx2")
-      (ResultSourceToolBackendMode.Ok (backend.CompilerBackendMode.Avx2))]
-    [(string.eq value "avx512")
-      (ResultSourceToolBackendMode.Ok (backend.CompilerBackendMode.Avx512))]
-    [else
-      (ResultSourceToolBackendMode.Err
-        (str_cat.str-cat command ": unknown backend mode " value))]))
+    [(string.eq value "scalar") (Ok (Scalar))]
+    [(string.eq value "avx2") (Ok (Avx2))]
+    [(string.eq value "avx512") (Ok (Avx512))]
+    [else (Err (str_cat.str-cat command ": unknown backend mode " value))]))
 
 (define (source-tool-args-append
   [args : process.ProcessStringList]
@@ -327,9 +322,8 @@
   [target : backend.CompilerBackendTarget]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
   (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (not (source-tool-link-inputs-empty? link-inputs))]
-    [(backend.CompilerBackendTarget.Windows) false]))
+    [(Linux) (not (source-tool-link-inputs-empty? link-inputs))]
+    [(Windows) false]))
 
 (define (source-tool-link-inputs-add-lib
   [inputs : SourceToolLinkInputs]
@@ -444,7 +438,7 @@
   [inputs : SourceToolLinkInputs]
   [item : ast.AstExternLinkInput]) : SourceToolLinkInputs
   (match item
-    [(ast.AstExternLinkInput.Lib name)
+    [(Lib name)
       (SourceToolLinkInputs
         (source-tool-args-append-unique
           (source-tool-link-inputs-libs inputs)
@@ -453,7 +447,7 @@
         (source-tool-link-inputs-raw-args inputs)
         (source-tool-link-inputs-archives inputs)
         (source-tool-link-inputs-origins inputs))]
-    [(ast.AstExternLinkInput.Search dir)
+    [(Search dir)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-args-append-unique
@@ -462,7 +456,7 @@
         (source-tool-link-inputs-raw-args inputs)
         (source-tool-link-inputs-archives inputs)
         (source-tool-link-inputs-origins inputs))]
-    [(ast.AstExternLinkInput.Arg arg-value)
+    [(Arg arg-value)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-link-inputs-search-dirs inputs)
@@ -492,12 +486,12 @@
   [decls : ast.AstDeclList]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) inputs]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) inputs]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (ast.ast-decl-unwrapped decl)
-          [(ast.AstDecl.Extern decl-meta _ _ metadata _)
+          [(Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : ast.AstExternLinkInputList
                 (ast.ast-extern-metadata-link-inputs (deref metadata))]
@@ -519,15 +513,15 @@
     (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
-      (ResultSourceToolLinkInputs.Ok
+    [(Ok decls _ _ _)
+      (Ok
         (source-tool-link-inputs-merge
           (source-tool-link-inputs-from-decls
             decls
             (source-tool-link-inputs-empty))
           explicit-inputs))]
-    [(load.ResultCompilerLoadWithPaths.Err diag)
-      (ResultSourceToolLinkInputs.Err
+    [(Err diag)
+      (Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
           (deref diag)))]))
 
@@ -564,8 +558,8 @@
 
 (define (source-tool-try-read-file [path : (& path str)]) : io.ResultIoString
   (match (io.try-read-file path)
-    [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
-    [(io.ErrIoBytes error) (io.ErrIoString error)]))
+    [(OkIoBytes contents) (OkIoString (byte_buf.to-string contents))]
+    [(ErrIoBytes error) (ErrIoString error)]))
 
 (define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists path))
@@ -581,8 +575,8 @@
 
 (define (source-tool-path-command-exists? [candidate : (& candidate str)]) : bool
   (match (source-tool-try-file-exists? candidate)
-    [(io.OkIoBool exists) exists]
-    [(io.ErrIoBool _) false]))
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
 
 (define (source-tool-windows-host?) : bool
   (string.eq (env.path-separator) ";"))
@@ -626,19 +620,19 @@
     (let
       [name : String "PATH"]
       (match (env.path-list (& name))
-        [(env.EnvSomeStringList paths)
+        [(EnvSomeStringList paths)
           (source-tool-find-command-on-path tool paths)]
-        [(env.EnvNoStringList) tool]))))
+        [(EnvNoStringList) tool]))))
 
 (define (source-tool-env-command-or-default
   [name : String]
   [default-command : String]) : String
   (match (env.get (& name))
-    [(env.EnvSomeString value)
+    [(EnvSomeString value)
       (if (string.eq value "")
         default-command
         value)]
-    [(env.EnvNoString) default-command]))
+    [(EnvNoString) default-command]))
 
 (define (source-tool-resolved-env-command-or-default
   [name : String]
@@ -648,8 +642,8 @@
 
 (define (source-tool-env-command-set? [name : String]) : bool
   (match (env.get (& name))
-    [(env.EnvSomeString value) (not (string.eq value ""))]
-    [(env.EnvNoString) false]))
+    [(EnvSomeString value) (not (string.eq value ""))]
+    [(EnvNoString) false]))
 
 (define (source-tool-replace-extension
   [input-path : String]
@@ -679,35 +673,33 @@
   [source : String]
   [target : backend.CompilerBackendTarget]) : String
   (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (source-tool-replace-extension source "")]
-    [(backend.CompilerBackendTarget.Windows)
-      (source-tool-replace-extension source ".exe")]))
+    [(Linux) (source-tool-replace-extension source "")]
+    [(Windows) (source-tool-replace-extension source ".exe")]))
 
 (define (source-tool-object-extension [target : backend.CompilerBackendTarget]) : String
   (match target
-    [(backend.CompilerBackendTarget.Linux) "o"]
-    [(backend.CompilerBackendTarget.Windows) "obj"]))
+    [(Linux) "o"]
+    [(Windows) "obj"]))
 
 (define (source-tool-executable-extension
   [target : backend.CompilerBackendTarget]) : String
   (match target
-    [(backend.CompilerBackendTarget.Linux) ""]
-    [(backend.CompilerBackendTarget.Windows) ".exe"]))
+    [(Linux) ""]
+    [(Windows) ".exe"]))
 
 (define (source-tool-static-library-extension
   [target : backend.CompilerBackendTarget]) : String
   (match target
-    [(backend.CompilerBackendTarget.Linux) ".a"]
-    [(backend.CompilerBackendTarget.Windows) ".lib"]))
+    [(Linux) ".a"]
+    [(Windows) ".lib"]))
 
 (define (source-tool-static-library-filename
   [name : String]
   [target : backend.CompilerBackendTarget]) : String
   (match target
-    [(backend.CompilerBackendTarget.Linux)
+    [(Linux)
       (str_cat.str-cat "lib" name (source-tool-static-library-extension target))]
-    [(backend.CompilerBackendTarget.Windows)
+    [(Windows)
       (str_cat.str-cat name (source-tool-static-library-extension target))]))
 
 (define (source-tool-artifact-stem [source : (& source str)]) : String
@@ -743,9 +735,8 @@
 
 (define (source-tool-create-temp-dir [prefix : String]) : ResultSourceToolString
   (match (fs.try-create-temp-dir (& prefix))
-    [(io.OkIoString path) (ResultSourceToolString.Ok path)]
-    [(io.ErrIoString error)
-      (ResultSourceToolString.Err (io.error-message error))]))
+    [(OkIoString path) (Ok path)]
+    [(ErrIoString error) (Err (io.error-message error))]))
 
 (define (source-tool-cannot-read-module-message
   [source : String]
@@ -765,10 +756,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (match (source-tool-try-read-file source)
-    [(io.ErrIoString error)
-      (ResultSourceToolString.Err
-        (source-tool-cannot-read-module-message source error))]
-    [(io.OkIoString _)
+    [(ErrIoString error)
+      (Err (source-tool-cannot-read-module-message source error))]
+    [(OkIoString _)
       (match (compiler_driver_core.compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
         source
         target
@@ -778,17 +768,16 @@
         mode
         cfgs
         (source-tool-linux-crt-entry? target link-inputs))
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+        [(Ok asm advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
-            (ResultSourceToolString.Ok
-              (source-tool-augment-assembly-for-target asm target)))]
-        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+            (Ok (source-tool-augment-assembly-for-target asm target)))]
+        [(Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
-            (ResultSourceToolString.Err
+            (Err
               (compiler_driver_core.compiler-driver-render-source-diagnostic
                 (deref diag))))])]))
 
@@ -815,13 +804,11 @@
     [(not
         (compiler_object_elf.compiler-object-elf-sections-supported?
           image.sections))
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+      (Fallback ObjectEncoding)]
     [(not
         (compiler_object_elf.compiler-object-elf-relocation-list-supported?
           image.relocations))
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
+      (Fallback ObjectRelocation)]
     [(not
         (and
           (compiler_object_elf.compiler-object-elf-relocation-sites-known?
@@ -830,39 +817,35 @@
           (compiler_object_elf.compiler-object-elf-text-targets-known? image)
           (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
             image)))
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
+      (Fallback ObjectFixup)]
     [(not (compiler_object_elf.compiler-object-elf-image-supported? image))
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+      (Fallback ObjectEncoding)]
     [(match kind
-        [(backend.CompilerDirectObjectArtifactKind.Bin)
+        [(Bin)
           (not
             (or
               (cobj.compiler-object-symbol-list-contains?
                 image.symbols
                 "_tl_start"
-                (cobj.CompilerObjectSymbolBinding.Export)
-                (cobj.CompilerObjectSymbolKind.Function))
+                (Export)
+                (Function))
               (cobj.compiler-object-symbol-list-contains?
                 image.symbols
                 "main"
-                (cobj.CompilerObjectSymbolBinding.Export)
-                (cobj.CompilerObjectSymbolKind.Function))))]
-        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
+                (Export)
+                (Function))))]
+        [(StaticLib) false])
+      (Fallback MissingEntrySymbol)]
     [(match kind
-        [(backend.CompilerDirectObjectArtifactKind.Bin)
+        [(Bin)
           (<=
             (compiler_object_elf.compiler-object-elf-section-raw-size
               image
-              (cobj.CompilerObjectSectionKind.Text))
+              (Text))
             0)]
-        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
-      (SourceToolLinuxDirectObjectEligibility.Fallback
-        backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
-    [else SourceToolLinuxDirectObjectEligibility.Eligible]))
+        [(StaticLib) false])
+      (Fallback EmptyTextSection)]
+    [else Eligible]))
 
 (define (source-tool-render-linux-direct-object
   [kind : backend.CompilerDirectObjectArtifactKind]
@@ -870,25 +853,18 @@
   (match (source-tool-linux-direct-object-eligibility
     kind
     (owned_view.compiler-owned-shared-view image))
-    [(SourceToolLinuxDirectObjectEligibility.Fallback reason)
-      (ResultSourceToolLinuxDirectObject.Fallback reason)]
-    [(SourceToolLinuxDirectObjectEligibility.Eligible)
+    [(Fallback reason) (Fallback reason)]
+    [(Eligible)
       (match (compiler_object_elf.compiler-object-elf-render image)
-        [(compiler_object_elf.ResultCompilerObjectElf.Ok object)
-          (ResultSourceToolLinuxDirectObject.Ok object)]
-        [(compiler_object_elf.ResultCompilerObjectElf.Err _)
-          (ResultSourceToolLinuxDirectObject.Fallback
-            backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
+        [(Ok object) (Ok object)]
+        [(Err _) (Fallback ObjectEncoding)])]))
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (match (source-tool-render-linux-direct-object
-    backend.CompilerDirectObjectArtifactKind.Bin
-    image)
-    [(ResultSourceToolLinuxDirectObject.Ok object)
-      (ResultSourceToolString.Ok object)]
-    [(ResultSourceToolLinuxDirectObject.Fallback reason)
-      (ResultSourceToolString.Err
+  (match (source-tool-render-linux-direct-object Bin image)
+    [(Ok object) (Ok object)]
+    [(Fallback reason)
+      (Err
         (str_cat.str-cat
           "linux direct object unavailable: "
           (backend.compiler-direct-object-fallback-transcript reason)))]))
@@ -911,12 +887,9 @@
   (if (source-tool-windows-direct-object-linkable?
     (owned_view.compiler-owned-shared-view image))
     (match (compiler_object_coff.compiler-object-coff-render image)
-      [(compiler_object_coff.ResultCompilerObjectCoff.Ok obj)
-        (ResultSourceToolString.Ok obj)]
-      [(compiler_object_coff.ResultCompilerObjectCoff.Err message)
-        (ResultSourceToolString.Err message)])
-    (ResultSourceToolString.Err
-      (source-tool-windows-direct-object-unavailable-message))))
+      [(Ok obj) (Ok obj)]
+      [(Err message) (Err message)])
+    (Err (source-tool-windows-direct-object-unavailable-message))))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -940,10 +913,9 @@
   [contents : (& contents str)]
   [context : String]) : SourceToolCommandStatus
   (match (io.try-write-file path (byte_buf.str-as-bytes contents))
-    [(io.OkIoUnit) SourceToolCommandStatus.Ok]
-    [(io.ErrIoUnit error)
-      (SourceToolCommandStatus.Err
-        (str_cat.str-cat context ": " (io.error-message error)))]))
+    [(OkIoUnit) Ok]
+    [(ErrIoUnit error)
+      (Err (str_cat.str-cat context ": " (io.error-message error)))]))
 
 (define (source-tool-forward-output [output : (& output process.ProcessOutput)]) : unit
   (begin
@@ -1119,12 +1091,12 @@
     [command-to-run : process.ProcessCommand
       (source-tool-command-for-target target command)]
     (match (process.output command-to-run)
-      [(process.OkProcessOutput output)
+      [(OkProcessOutput output)
         (begin
           (source-tool-forward-output output)
           (if (process.success? output)
-            SourceToolCommandStatus.Ok
-            (SourceToolCommandStatus.Err
+            Ok
+            (Err
               (str_cat.str-cat
                 "Error: "
                 role
@@ -1137,8 +1109,8 @@
                 (let
                   [stderr : String (process.output-stderr output)]
                   (source-tool-link-failure-notes (& stderr) (& link-inputs)))))))]
-      [(process.ErrProcessOutput error)
-        (SourceToolCommandStatus.Err
+      [(ErrProcessOutput error)
+        (Err
           (str_cat.str-cat
             "Error: failed to run "
             role
@@ -1342,7 +1314,7 @@
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolCommand
   (if (source-tool-env-command-set? "TYPELISP_WINDOWS_LINK")
-    (ResultSourceToolCommand.Ok
+    (Ok
       (source-tool-windows-linker-fallback-command
         obj-path
         bin-path
@@ -1351,15 +1323,15 @@
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "link.exe"]
       (match (msvc.find-tool (& target) (& tool))
-        [(msvc.OkMsvcTool resolved-tool)
-          (ResultSourceToolCommand.Ok
+        [(OkMsvcTool resolved-tool)
+          (Ok
             (process.command-with-env-list
               (process.command
                 (msvc.tool-executable resolved-tool)
                 (source-tool-windows-linker-args obj-path bin-path link-inputs))
               (msvc.tool-process-env resolved-tool)))]
-        [(msvc.ErrMsvcTool _)
-          (ResultSourceToolCommand.Ok
+        [(ErrMsvcTool _)
+          (Ok
             (source-tool-windows-linker-fallback-command
               obj-path
               bin-path
@@ -1453,18 +1425,18 @@
         (source-tool-resolve-command "llvm-ar"))]
     (cond
       [(source-tool-windows-llvm-archiver-name? command)
-        (ResultSourceToolCommand.Ok
+        (Ok
           (source-tool-windows-llvm-archiver-command
             command
             obj-path
             archive-path))]
       [(source-tool-windows-msvc-archiver-name? command)
-        (ResultSourceToolCommand.Ok
+        (Ok
           (process.command
             command
             (source-tool-windows-msvc-archiver-args obj-path archive-path)))]
       [else
-        (ResultSourceToolCommand.Err
+        (Err
           "TYPELISP_WINDOWS_LIB must resolve to llvm-ar(.exe) or MSVC lib(.exe); deterministic Windows archives require llvm-ar --format=coff rcsD or lib.exe /Brepro")])))
 
 (define (source-tool-windows-archiver-command
@@ -1476,15 +1448,15 @@
       [target : String "x86_64-pc-windows-msvc"]
       [tool : String "lib.exe"]
       (match (msvc.find-tool (& target) (& tool))
-        [(msvc.OkMsvcTool resolved-tool)
-          (ResultSourceToolCommand.Ok
+        [(OkMsvcTool resolved-tool)
+          (Ok
             (process.command-with-env-list
               (process.command
                 (msvc.tool-executable resolved-tool)
                 (source-tool-windows-msvc-archiver-args obj-path archive-path))
               (msvc.tool-process-env resolved-tool)))]
-        [(msvc.ErrMsvcTool _)
-          (ResultSourceToolCommand.Ok
+        [(ErrMsvcTool _)
+          (Ok
             (source-tool-windows-llvm-archiver-command
               (source-tool-resolve-command "llvm-ar")
               obj-path
@@ -1510,12 +1482,12 @@
   [asm-path : String]
   [obj-path : String]) : SourceToolCommandStatus
   (match target
-    [(backend.CompilerBackendTarget.Linux)
+    [(Linux)
       (source-tool-run-command
         "assembler"
         target
         (source-tool-assembler-command asm-path obj-path))]
-    [(backend.CompilerBackendTarget.Windows)
+    [(Windows)
       (source-tool-run-command
         "assembler"
         target
@@ -1527,7 +1499,7 @@
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match target
-    [(backend.CompilerBackendTarget.Linux)
+    [(Linux)
       (source-tool-run-command-for
         "linker"
         target
@@ -1536,32 +1508,29 @@
           bin-path
           (owned_view.compiler-owned-shared-view link-inputs))
         link-inputs)]
-    [(backend.CompilerBackendTarget.Windows)
+    [(Windows)
       (match (source-tool-windows-linker-command
         obj-path
         bin-path
         (owned_view.compiler-owned-shared-view link-inputs))
-        [(ResultSourceToolCommand.Ok command)
+        [(Ok command)
           (source-tool-run-command-for "linker" target command link-inputs)]
-        [(ResultSourceToolCommand.Err message)
-          (SourceToolCommandStatus.Err message)])]))
+        [(Err message) (Err message)])]))
 
 (define (source-tool-archive
   [target : backend.CompilerBackendTarget]
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
   (match target
-    [(backend.CompilerBackendTarget.Linux)
+    [(Linux)
       (source-tool-run-command
         "archiver"
         target
         (source-tool-archiver-command obj-path archive-path))]
-    [(backend.CompilerBackendTarget.Windows)
+    [(Windows)
       (match (source-tool-windows-archiver-command obj-path archive-path)
-        [(ResultSourceToolCommand.Ok command)
-          (source-tool-run-command "archiver" target command)]
-        [(ResultSourceToolCommand.Err message)
-          (SourceToolCommandStatus.Err message)])]))
+        [(Ok command) (source-tool-run-command "archiver" target command)]
+        [(Err message) (Err message)])]))
 
 (define (source-tool-assemble-and-link
   [target : backend.CompilerBackendTarget]
@@ -1573,10 +1542,8 @@
     target
     asm-path
     (owned_view.compiler-owned-shared-view obj-path))
-    [(SourceToolCommandStatus.Ok)
-      (source-tool-link target obj-path bin-path link-inputs)]
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolCommandStatus.Err message)]))
+    [(Ok) (source-tool-link target obj-path bin-path link-inputs)]
+    [(Err message) (Err message)]))
 
 (define (source-tool-assemble-and-archive
   [target : backend.CompilerBackendTarget]
@@ -1587,10 +1554,8 @@
     target
     asm-path
     (owned_view.compiler-owned-shared-view obj-path))
-    [(SourceToolCommandStatus.Ok)
-      (source-tool-archive target obj-path archive-path)]
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolCommandStatus.Err message)]))
+    [(Ok) (source-tool-archive target obj-path archive-path)]
+    [(Err message) (Err message)]))
 
 (define (source-tool-write-direct-object-and-link
   [obj-path : String]
@@ -1600,13 +1565,11 @@
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolDirectObjectStatus.Err message)]
-    [(SourceToolCommandStatus.Ok)
+    [(Err message) (Err message)]
+    [(Ok)
       (match (source-tool-link target obj-path bin-path link-inputs)
-        [(SourceToolCommandStatus.Ok) SourceToolDirectObjectStatus.Ok]
-        [(SourceToolCommandStatus.Err message)
-          (SourceToolDirectObjectStatus.Err message)])]))
+        [(Ok) Ok]
+        [(Err message) (Err message)])]))
 
 (define (source-tool-write-direct-object-and-archive
   [obj-path : String]
@@ -1615,13 +1578,11 @@
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolDirectObjectStatus.Err message)]
-    [(SourceToolCommandStatus.Ok)
+    [(Err message) (Err message)]
+    [(Ok)
       (match (source-tool-archive target obj-path archive-path)
-        [(SourceToolCommandStatus.Ok) SourceToolDirectObjectStatus.Ok]
-        [(SourceToolCommandStatus.Err message)
-          (SourceToolDirectObjectStatus.Err message)])]))
+        [(Ok) Ok]
+        [(Err message) (Err message)])]))
 
 ;; --- One link route ----------------------------------------------------------
 ;;
@@ -1676,13 +1637,13 @@
 
 (define (source-tool-program-lowered? [program : (& program SourceToolProgram)]) : bool
   (match program
-    [(SourceToolProgram.Lowered _ _) true]
+    [(Lowered _ _) true]
     [_ false]))
 
 (define (source-tool-program-assembly?
   [program : (& program SourceToolProgram)]) : bool
   (match program
-    [(SourceToolProgram.Assembly _) true]
+    [(Assembly _) true]
     [_ false]))
 
 ;; Serialize an emitted object image for the target's linker, or say why the
@@ -1691,21 +1652,18 @@
   [target : backend.CompilerBackendTarget]
   [result : compiler_driver_core.ResultCompilerDriverObject]) : ResultSourceToolString
   (match result
-    [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
+    [(Ok image advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
         (match target
-          [(backend.CompilerBackendTarget.Linux)
-            (source-tool-render-linkable-linux-elf-object image)]
-          [(backend.CompilerBackendTarget.Windows)
-            (source-tool-render-linkable-windows-coff-object image)]))]
-    [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category _)
-      (ResultSourceToolString.Err
-        (backend.compiler-direct-object-fallback-category category))]
-    [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
+          [(Linux) (source-tool-render-linkable-linux-elf-object image)]
+          [(Windows) (source-tool-render-linkable-windows-coff-object image)]))]
+    [(Unavailable category _)
+      (Err (backend.compiler-direct-object-fallback-category category))]
+    [(Err diag advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (ResultSourceToolString.Err
+        (Err
           (compiler_driver_core.compiler-driver-render-source-diagnostic
             (deref diag))))]))
 
@@ -1721,12 +1679,11 @@
   (let
     [crt-entry : bool (source-tool-linux-crt-entry? target link-inputs)]
     (match program
-      [(SourceToolProgram.Source stdlib-roots cfgs)
+      [(Source stdlib-roots cfgs)
         (match (source-tool-try-read-file source)
-          [(io.ErrIoString error)
-            (ResultSourceToolString.Err
-              (source-tool-cannot-read-module-message source error))]
-          [(io.OkIoString _)
+          [(ErrIoString error)
+            (Err (source-tool-cannot-read-module-message source error))]
+          [(OkIoString _)
             (source-tool-render-object-result
               target
               (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
@@ -1738,7 +1695,7 @@
                 mode
                 cfgs
                 crt-entry))])]
-      [(SourceToolProgram.Lowered lowered spans)
+      [(Lowered lowered spans)
         (source-tool-render-object-result
           target
           (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
@@ -1748,12 +1705,11 @@
             spans
             target
             true
-            (backend.CompilerBackendMode.Scalar)
+            (Scalar)
             opt-level
             true
             crt-entry))]
-      [(SourceToolProgram.Assembly _)
-        (ResultSourceToolString.Err "assembly has no direct object route")])))
+      [(Assembly _) (Err "assembly has no direct object route")])))
 
 ;; The direct object route, taken only when TYPELISP_{LINUX,WINDOWS}_DIRECT_OBJECT
 ;; enables it for the target and no debug information is requested. Lowered
@@ -1767,10 +1723,8 @@
     (if (and
       (not (ir.compiler-debug-info-enabled?))
       (match request.target
-        [(backend.CompilerBackendTarget.Linux)
-          (source-tool-linux-direct-object-enabled?)]
-        [(backend.CompilerBackendTarget.Windows)
-          (source-tool-windows-direct-object-enabled?)])
+        [(Linux) (source-tool-linux-direct-object-enabled?)]
+        [(Windows) (source-tool-windows-direct-object-enabled?)])
       (not (source-tool-program-assembly? (& request.program)))
       (or (not lowered) (backend.compiler-backend-mode-scalar? request.mode)))
       (match (source-tool-emit-object
@@ -1780,7 +1734,7 @@
         request.opt-level
         request.mode
         request.link-inputs)
-        [(ResultSourceToolString.Ok obj)
+        [(Ok obj)
           (source-tool-write-direct-object-and-link
             request.files.obj
             request.files.bin
@@ -1790,9 +1744,8 @@
             (if lowered
               "test: failed to write direct object artifact"
               "source-tool: failed to write direct object artifact"))]
-        [(ResultSourceToolString.Err message)
-          (SourceToolDirectObjectStatus.Unavailable message)])
-      (SourceToolDirectObjectStatus.Unavailable "direct object disabled"))))
+        [(Err message) (Unavailable message)])
+      (Unavailable "direct object disabled"))))
 
 ;; Emit a program as assembly for the external assembler.
 (define (source-tool-emit-program-assembly
@@ -1803,7 +1756,7 @@
   [mode : backend.CompilerBackendMode]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (match program
-    [(SourceToolProgram.Source stdlib-roots cfgs)
+    [(Source stdlib-roots cfgs)
       (source-tool-emit-assembly
         source
         target
@@ -1812,7 +1765,7 @@
         mode
         cfgs
         link-inputs)]
-    [(SourceToolProgram.Lowered lowered spans)
+    [(Lowered lowered spans)
       (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
         source
         lowered
@@ -1821,20 +1774,19 @@
         true
         mode
         opt-level)
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+        [(Ok asm advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
-            (ResultSourceToolString.Ok
-              (source-tool-augment-assembly-for-target asm target)))]
-        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+            (Ok (source-tool-augment-assembly-for-target asm target)))]
+        [(Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
-            (ResultSourceToolString.Err
+            (Err
               (compiler_driver_core.compiler-driver-render-source-diagnostic
                 (deref diag))))])]
-    [(SourceToolProgram.Assembly asm) (ResultSourceToolString.Ok asm)]))
+    [(Assembly asm) (Ok asm)]))
 
 ;; Compile `request`'s program and link it into `request.files.bin`: through a
 ;; direct object when that route is enabled and the object is linkable, else
@@ -1842,10 +1794,9 @@
 (define (source-tool-link-program [request : SourceToolLinkRequest]) : SourceToolCommandStatus
   (match (source-tool-try-direct-object-and-link
     (owned_view.compiler-owned-shared-view request))
-    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-    [(SourceToolDirectObjectStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolDirectObjectStatus.Unavailable _)
+    [(Ok) Ok]
+    [(Err message) (Err message)]
+    [(Unavailable _)
       (match (source-tool-emit-program-assembly
         request.source
         request.program
@@ -1853,16 +1804,14 @@
         request.opt-level
         request.mode
         request.link-inputs)
-        [(ResultSourceToolString.Err message)
-          (SourceToolCommandStatus.Err message)]
-        [(ResultSourceToolString.Ok asm)
+        [(Err message) (Err message)]
+        [(Ok asm)
           (match (source-tool-write-file
             request.files.asm
             asm
             request.write-context)
-            [(SourceToolCommandStatus.Err message)
-              (SourceToolCommandStatus.Err message)]
-            [(SourceToolCommandStatus.Ok)
+            [(Err message) (Err message)]
+            [(Ok)
               (source-tool-assemble-and-link
                 request.target
                 request.files.asm
@@ -1884,9 +1833,8 @@
     [bin-path : String
       (owned_view.compiler-owned-shared-view request.files.bin)]
     (match (source-tool-link-program request)
-      [(SourceToolCommandStatus.Err message)
-        (SourceToolRunOutcome.LinkFailed message)]
-      [(SourceToolCommandStatus.Ok)
+      [(Err message) (LinkFailed message)]
+      [(Ok)
         (let
           [command : process.ProcessCommand
             (source-tool-command-for-target
@@ -1897,9 +1845,8 @@
           (match (if inherit
             (process.inherit command)
             (process.output command))
-            [(process.OkProcessOutput output) (SourceToolRunOutcome.Ran output)]
-            [(process.ErrProcessOutput error)
-              (SourceToolRunOutcome.SpawnFailed error)]))])))
+            [(OkProcessOutput output) (Ran output)]
+            [(ErrProcessOutput error) (SpawnFailed error)]))])))
 
 (define (source-tool-build-source-in-temp
   [source : String]
@@ -1931,11 +1878,11 @@
             target
             (cfg_core.compiler-cfg-empty))
           link-inputs)
-          [(ResultSourceToolLinkInputs.Err message)
+          [(Err message)
             (begin
               (io.print-error message)
               1)]
-          [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
+          [(Ok effective-link-inputs)
             (begin
               (compiler_driver_core.compiler-driver-reset-file-state!)
               (match (source-tool-link-program
@@ -1950,11 +1897,11 @@
                   effective-link-inputs
                   (owned_view.compiler-owned-shared-view files)
                   "build: failed to write assembly artifact"))
-                [(SourceToolCommandStatus.Err message)
+                [(Err message)
                   (begin
                     (io.print-error message)
                     1)]
-                [(SourceToolCommandStatus.Ok)
+                [(Ok)
                   (begin
                     (io.print-format
                       "{}"
@@ -1977,7 +1924,7 @@
   [mode : backend.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
-    [(ResultSourceToolString.Ok temp-dir)
+    [(Ok temp-dir)
       (source-tool-build-source-in-temp
         source
         output
@@ -1988,7 +1935,7 @@
         mode
         link-inputs
         temp-dir)]
-    [(ResultSourceToolString.Err message)
+    [(Err message)
       (begin
         (io.print-error
           (str_cat.str-cat "build: failed to create temp dir: " message))
@@ -2028,11 +1975,11 @@
           (source-tool-cfg-names-to-env
             (owned_view.compiler-owned-shared-view cfg-names)))
         link-inputs)
-        [(ResultSourceToolLinkInputs.Err message)
+        [(Err message)
           (begin
             (io.print-error message)
             1)]
-        [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
+        [(Ok effective-link-inputs)
           (begin
             (compiler_driver_core.compiler-driver-reset-file-state!)
             (match (source-tool-link-and-run
@@ -2050,17 +1997,17 @@
               runtime-args
               (process.env-empty)
               stream-output)
-              [(SourceToolRunOutcome.LinkFailed message)
+              [(LinkFailed message)
                 (begin
                   (io.print-error message)
                   1)]
-              [(SourceToolRunOutcome.Ran output)
+              [(Ran output)
                 (let
                   [status : i64 (process.output-status output)]
                   (begin
                     (unless stream-output (source-tool-forward-output output))
                     status))]
-              [(SourceToolRunOutcome.SpawnFailed error)
+              [(SpawnFailed error)
                 (begin
                   (io.print-error
                     (str_cat.str-cat
@@ -2086,7 +2033,7 @@
   [link-inputs : SourceToolLinkInputs]
   [stream-output : bool]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
-    [(ResultSourceToolString.Ok temp-dir)
+    [(Ok temp-dir)
       (source-tool-run-source-in-temp
         source
         target
@@ -2098,7 +2045,7 @@
         link-inputs
         stream-output
         temp-dir)]
-    [(ResultSourceToolString.Err message)
+    [(Err message)
       (begin
         (io.print-error
           (str_cat.str-cat "run: failed to create temp dir: " message))

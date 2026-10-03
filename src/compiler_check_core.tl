@@ -94,9 +94,7 @@
         "|0|0|0\n"))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (target_cfg.compiler-target-cfgs
-    target_cfg.CompilerTargetCfg.Linux
-    (cfg_core.compiler-cfg-empty)))
+  (target_cfg.compiler-target-cfgs Linux (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : cdiag.CompilerDiagnostic]
@@ -186,14 +184,13 @@
               (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
             (set! index (+ index 1))))
         (match result
-          [(ResultCompilerCheck.Ok _ advisories)
-            (ResultCompilerCheck.Err (box owned-parse) advisories)]
-          [(ResultCompilerCheck.Err semantic-diagnostics advisories)
+          [(Ok _ advisories) (Err (box owned-parse) advisories)]
+          [(Err semantic-diagnostics advisories)
             (begin
               (compiler-check-diagnostic-list-insert-all-source-order
                 (deref semantic-diagnostics)
                 (&mut owned-parse))
-              (ResultCompilerCheck.Err (box owned-parse) advisories))])))))
+              (Err (box owned-parse) advisories))])))))
 
 (define (compiler-check-reset-pools!) : unit
   (compiler_load.compiler-load-session-reset-pools!))
@@ -226,16 +223,14 @@
         (ast.ast-node-pool-context-capture-active)
         (ci.intern-compat-state-capture-active)
         (tc.tc-job-state-semantic-observer job-state)))
-      [(tc.ResultCompilerTypecheck.Ok summary)
+      [(Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheck.Ok
-            summary
-            (compiler-check-advisories-for-job job-state)))]
-      [(tc.ResultCompilerTypecheck.Err diag)
+          (Ok summary (compiler-check-advisories-for-job job-state)))]
+      [(Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheck.Err
+          (Err
             (box
               (compiler-check-diagnostics-with-fallback-path (deref diag) path))
             (compiler-check-advisories-for-job job-state)))])))
@@ -250,11 +245,7 @@
   [cache-scope : String]
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (match loaded
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        entry-decls
-        entry-paths
-        entry-modules
-        _)
+    [(Ok entry-decls entry-paths entry-modules _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (compiler-check-program
@@ -269,10 +260,10 @@
           cfgs
           cache-scope
           job-state))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+    [(Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err
+        (Err
           (cdiag.compiler-diagnostic-list-box-single diag)
           (compiler-check-advisories-for-job job-state)))]))
 
@@ -290,26 +281,24 @@
     (owned_view.compiler-owned-shared-view path)
     source
     cfgs)
-    [(parser.ResultAstProgramRecovery.Fatal diagnostics)
+    [(Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err
-          diagnostics
-          (compiler-check-advisories-for-job job-state)))]
-    [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
+        (Err diagnostics (compiler-check-advisories-for-job job-state)))]
+    [(Parsed program diagnostics)
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
             (owned_view.compiler-owned-shared-view path)
             (compiler_load.compiler-load-canonical-module-id-from-path path)
-            ast.AstMaybeModuleName.No)]
+            No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-program-with-paths-and-roots-expect-cfg
             path
             program
             prelude-seen
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            ast.AstMaybeModuleName.No
+            No
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
@@ -332,7 +321,7 @@
   [cache-scope : String]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (match loaded
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+    [(Ok decls paths modules _)
       (let
         [owned-paths : ast.AstDeclPathList
           (ast.ast-decl-path-list-with-modules paths modules)]
@@ -346,14 +335,12 @@
             cfgs
             cache-scope
             job-state)
-            [(ResultCompilerCheck.Ok summary advisories)
-              (ResultCompilerCheckWithPaths.Ok summary owned-paths advisories)]
-            [(ResultCompilerCheck.Err diag advisories)
-              (ResultCompilerCheckWithPaths.Err diag advisories)])))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+            [(Ok summary advisories) (Ok summary owned-paths advisories)]
+            [(Err diag advisories) (Err diag advisories)])))]
+    [(Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheckWithPaths.Err
+        (Err
           (cdiag.compiler-diagnostic-list-box-single diag)
           (compiler-check-advisories-for-job job-state)))]))
 
@@ -389,24 +376,24 @@
     (owned_view.compiler-owned-shared-view path)
     source
     cfgs)
-    [(parser.ResultAstProgramRecovery.Fatal diagnostics)
+    [(Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err diagnostics (compiler-check-serial-advisories)))]
-    [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
+        (Err diagnostics (compiler-check-serial-advisories)))]
+    [(Parsed program diagnostics)
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
             (owned_view.compiler-owned-shared-view path)
             (compiler_load.compiler-load-canonical-module-id-from-path path)
-            ast.AstMaybeModuleName.No)]
+            No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
             path
             program
             prelude-seen
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            ast.AstMaybeModuleName.No
+            No
             manifest-dir
             deps
             cfgs
@@ -443,11 +430,7 @@
       (owned_view.compiler-owned-shared-view manifest-dir)
       (owned_view.compiler-owned-shared-view deps)
       cfgs)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
+      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-package-source-with-prelude-recovery
           path
           source
@@ -458,10 +441,10 @@
           manifest-dir
           deps
           cfgs)]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+      [(Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err
+          (Err
             (cdiag.compiler-diagnostic-list-box-single diag)
             (compiler-check-serial-advisories)))])))
 
@@ -517,25 +500,21 @@
       (tc.tc-job-state-set-semantic-observer! job request.observer)]
     [result : ResultCompilerCheck
       (match request.input
-        [(CompilerSemanticCheckInput.Source path source)
+        [(Source path source)
           (compiler-check-source-with-roots-and-cfg-and-job-state
             path
             source
             request.stdlib-roots
             parse-cfgs
             job)]
-        [(CompilerSemanticCheckInput.File path)
+        [(File path)
           (compiler-check-source-with-roots-and-cfg-and-job-state
             (owned_view.compiler-owned-shared-view path)
             (compiler_load.compiler-load-session-read-source-text path)
             request.stdlib-roots
             parse-cfgs
             job)]
-        [(CompilerSemanticCheckInput.PackageEntry
-            path
-            manifest-dir
-            deps
-            emit-entry)
+        [(PackageEntry path manifest-dir deps emit-entry)
           (match (compiler-check-package-entry-file-with-roots-and-cfg
             path
             request.stdlib-roots
@@ -544,10 +523,8 @@
             emit-entry
             parse-cfgs
             job)
-            [(ResultCompilerCheckWithPaths.Ok summary _ advisories)
-              (ResultCompilerCheck.Ok summary advisories)]
-            [(ResultCompilerCheckWithPaths.Err diagnostics advisories)
-              (ResultCompilerCheck.Err diagnostics advisories)])])]
+            [(Ok summary _ advisories) (Ok summary advisories)]
+            [(Err diagnostics advisories) (Err diagnostics advisories)])])]
     (begin
       (tc.tc-job-state-set-semantic-observer! job previous)
       (request.consumer request.consumer-context)
@@ -567,11 +544,7 @@
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       cfgs)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
+      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-source-with-prelude-recovery
           path
           source
@@ -585,10 +558,10 @@
             stdlib-roots
             cfgs)
           job-state)]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+      [(Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err
+          (Err
             (cdiag.compiler-diagnostic-list-box-single diag)
             (compiler-check-advisories-for-job job-state)))])))
 
@@ -612,8 +585,7 @@
     [count : i64 (svec.len stdlib-roots)]
     [index : i64 0]
     [rejected : bool false]
-    [status : source_overlay.CompilerSourceOverlayStatus
-      (source_overlay.CompilerSourceOverlayStatus.Ok)]
+    [status : source_overlay.CompilerSourceOverlayStatus (Ok)]
     (begin
       (while (and (not rejected) (< index count))
         (let
@@ -622,13 +594,11 @@
             (match (source_overlay.compiler-source-overlay-check-not-under
               overlay
               (& root))
-              [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+              [(Err failure)
                 (begin
-                  (set!
-                    status
-                    (source_overlay.CompilerSourceOverlayStatus.Err failure))
+                  (set! status (Err failure))
                   (set! rejected true))]
-              [(source_overlay.CompilerSourceOverlayStatus.Ok) unit])
+              [(Ok) unit])
             (set! index (+ index 1)))))
       status)))
 
@@ -641,15 +611,14 @@
   [ledger : (& ledger source_overlay.CompilerSourceLedger)]
   [passed : bool]) : source_overlay.CompilerSourceOverlayStatus
   (if (source_overlay.compiler-source-ledger-failed? ledger)
-    (source_overlay.CompilerSourceOverlayStatus.Err
-      (source_overlay.compiler-source-ledger-failure ledger))
+    (Err (source_overlay.compiler-source-ledger-failure ledger))
     (let
       [unread : svec.Vec
         (source_overlay.compiler-source-overlay-unread overlay ledger)]
       [first : String (svec.get (& unread) 0 "")]
       (if (or (not passed) (= (svec.len (& unread)) 0))
-        (source_overlay.CompilerSourceOverlayStatus.Ok)
-        (source_overlay.CompilerSourceOverlayStatus.Err
+        (Ok)
+        (Err
           (source_overlay.compiler-source-overlay-error
             source_overlay.compiler-source-overlay-error-unread
             (& first)
@@ -665,9 +634,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlay
   (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
-    [(source_overlay.CompilerSourceOverlayStatus.Err failure)
-      (ResultCompilerCheckOverlay.Rejected failure)]
-    [(source_overlay.CompilerSourceOverlayStatus.Ok)
+    [(Err failure) (Rejected failure)]
+    [(Ok)
       (let
         [state : compiler_load.CompilerLoadSessionState
           (compiler_load.compiler-load-serial-test-session-state)]
@@ -690,13 +658,10 @@
           (& overlay)
           (& ledger)
           (match (& check)
-            [(ResultCompilerCheck.Ok _ _) true]
-            [(ResultCompilerCheck.Err _ _) false]))
-          [(source_overlay.CompilerSourceOverlayStatus.Err failure)
-            (ResultCompilerCheckOverlay.Rejected failure)]
-          [(source_overlay.CompilerSourceOverlayStatus.Ok)
-            (ResultCompilerCheckOverlay.Checked
-              (CompilerCheckOverlayResult check ledger))]))]))
+            [(Ok _ _) true]
+            [(Err _ _) false]))
+          [(Err failure) (Rejected failure)]
+          [(Ok) (Checked (CompilerCheckOverlayResult check ledger))]))]))
 
 ;; The package-entry form of `compiler-check-file-with-overlay`.
 (define (compiler-check-package-entry-file-with-overlay
@@ -708,9 +673,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlayPackage
   (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
-    [(source_overlay.CompilerSourceOverlayStatus.Err failure)
-      (ResultCompilerCheckOverlayPackage.Rejected failure)]
-    [(source_overlay.CompilerSourceOverlayStatus.Ok)
+    [(Err failure) (Rejected failure)]
+    [(Ok)
       (let
         [state : compiler_load.CompilerLoadSessionState
           (compiler_load.compiler-load-serial-test-session-state)]
@@ -734,10 +698,7 @@
           (& overlay)
           (& ledger)
           (match (& check)
-            [(ResultCompilerCheckWithPaths.Ok _ _ _) true]
-            [(ResultCompilerCheckWithPaths.Err _ _) false]))
-          [(source_overlay.CompilerSourceOverlayStatus.Err failure)
-            (ResultCompilerCheckOverlayPackage.Rejected failure)]
-          [(source_overlay.CompilerSourceOverlayStatus.Ok)
-            (ResultCompilerCheckOverlayPackage.Checked
-              (CompilerCheckOverlayPackageResult check ledger))]))]))
+            [(Ok _ _ _) true]
+            [(Err _ _) false]))
+          [(Err failure) (Rejected failure)]
+          [(Ok) (Checked (CompilerCheckOverlayPackageResult check ledger))]))]))

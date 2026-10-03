@@ -106,32 +106,32 @@
 ;; typed-id payload `Token.Sym` and the source-preserving `Token.Int`.
 (define (tag [t : Token]) : i64
   (match t
-    [(Token.LParen) 1]
-    [(Token.RParen) 2]
-    [(Token.Int _ _) 3]
-    [(Token.Sym _) 4]
-    [(Token.End) 5]
-    [(Token.Str _) 6]
-    [(Token.Char _) 7]
-    [(Token.Float _) 8]
-    [(Token.LBracket) 9]
-    [(Token.RBracket) 10]
-    [(Token.Quote) 11]
-    [(Token.Backtick) 12]
-    [(Token.Comma) 13]
-    [(Token.CommaAt) 14]))
+    [(LParen) 1]
+    [(RParen) 2]
+    [(Int _ _) 3]
+    [(Sym _) 4]
+    [(End) 5]
+    [(Str _) 6]
+    [(Char _) 7]
+    [(Float _) 8]
+    [(LBracket) 9]
+    [(RBracket) 10]
+    [(Quote) 11]
+    [(Backtick) 12]
+    [(Comma) 13]
+    [(CommaAt) 14]))
 
 ;; Integer payload of `Token.Int` (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
 (define (int [t : (& t Token)]) : i64
   (match t
-    [(Token.Int value _) (deref value)]
+    [(Int value _) (deref value)]
     [_ 0]))
 
 ;; Original source spelling of `Token.Int` (empty string for any other kind).
 (define (int-text [t : (& t Token)]) : String
   (match t
-    [(Token.Int _ text)
+    [(Int _ text)
       (if (= (string.string-length text) 0)
         ""
         (string.copy text))]
@@ -141,27 +141,27 @@
 ;; a non-symbol is not represented by a raw negative name sentinel.
 (define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Sym id) (deref id)]
+    [(Sym id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
 (define (sym [t : Token]) : String
   (match t
-    [(Token.LParen) ""]
-    [(Token.RParen) ""]
-    [(Token.Int _ _) ""]
-    [(Token.Sym id) (ci.intern-id-str id)]
-    [(Token.End) ""]
-    [(Token.Str _) ""]
-    [(Token.Char _) ""]
-    [(Token.Float _) ""]
-    [(Token.LBracket) ""]
-    [(Token.RBracket) ""]
-    [(Token.Quote) ""]
-    [(Token.Backtick) ""]
-    [(Token.Comma) ""]
-    [(Token.CommaAt) ""]))
+    [(LParen) ""]
+    [(RParen) ""]
+    [(Int _ _) ""]
+    [(Sym id) (ci.intern-id-str id)]
+    [(End) ""]
+    [(Str _) ""]
+    [(Char _) ""]
+    [(Float _) ""]
+    [(LBracket) ""]
+    [(RBracket) ""]
+    [(Quote) ""]
+    [(Backtick) ""]
+    [(Comma) ""]
+    [(CommaAt) ""]))
 
 ;; String text of `Token.Str` (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -169,26 +169,26 @@
 ;; `Token.Str` and a `Token.Sym` with the same characters stay distinguishable.
 (define (str [t : Token]) : String
   (match t
-    [(Token.LParen) ""]
-    [(Token.RParen) ""]
-    [(Token.Int _ _) ""]
-    [(Token.Sym _) ""]
-    [(Token.End) ""]
-    [(Token.Str id) (ci.intern-id-str id)]
-    [(Token.Char _) ""]
-    [(Token.Float _) ""]
-    [(Token.LBracket) ""]
-    [(Token.RBracket) ""]
-    [(Token.Quote) ""]
-    [(Token.Backtick) ""]
-    [(Token.Comma) ""]
-    [(Token.CommaAt) ""]))
+    [(LParen) ""]
+    [(RParen) ""]
+    [(Int _ _) ""]
+    [(Sym _) ""]
+    [(End) ""]
+    [(Str id) (ci.intern-id-str id)]
+    [(Char _) ""]
+    [(Float _) ""]
+    [(LBracket) ""]
+    [(RBracket) ""]
+    [(Quote) ""]
+    [(Backtick) ""]
+    [(Comma) ""]
+    [(CommaAt) ""]))
 
 ;; Parser-assigned renderable identity of a string literal. Callers classify by
 ;; tag before projecting, so missing remains outside the name-id type.
 (define (str-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Str id) (deref id)]
+    [(Str id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
@@ -196,7 +196,7 @@
 ;; does not need a string->f64 primitive.
 (define (float [t : (& t Token)]) : String
   (match t
-    [(Token.Float text) (string.copy text)]
+    [(Float text) (string.copy text)]
     [_ ""]))
 
 ;; Character payload of `Token.Char` (NUL for any other kind): projects the
@@ -204,7 +204,7 @@
 ;; symbols, ints, and strings.
 (define (char [t : (& t Token)]) : char
   (match t
-    [(Token.Char value) (deref value)]
+    [(Char value) (deref value)]
     [_ '\0']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
@@ -227,20 +227,20 @@
 
 (define (tag-ref [t : (& t Token)]) : i64
   (match t
-    [(Token.LParen) 1]
-    [(Token.RParen) 2]
-    [(Token.Int _ _) 3]
-    [(Token.Sym _) 4]
-    [(Token.End) 5]
-    [(Token.Str _) 6]
-    [(Token.Char _) 7]
-    [(Token.Float _) 8]
-    [(Token.LBracket) 9]
-    [(Token.RBracket) 10]
-    [(Token.Quote) 11]
-    [(Token.Backtick) 12]
-    [(Token.Comma) 13]
-    [(Token.CommaAt) 14]))
+    [(LParen) 1]
+    [(RParen) 2]
+    [(Int _ _) 3]
+    [(Sym _) 4]
+    [(End) 5]
+    [(Str _) 6]
+    [(Char _) 7]
+    [(Float _) 8]
+    [(LBracket) 9]
+    [(RBracket) 10]
+    [(Quote) 11]
+    [(Backtick) 12]
+    [(Comma) 13]
+    [(CommaAt) 14]))
 
 (define (spanned-token-tok [s : SpannedToken]) : Token
   s.tok)

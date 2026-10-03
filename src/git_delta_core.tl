@@ -135,13 +135,12 @@
     (begin
       (when
         (or (< start 0) (> start length))
-        (return (ResultGitDeltaVarint.Err "git delta: invalid varint start")))
+        (return (Err "git delta: invalid varint start")))
       (while true
         (begin
           (when
             (>= index length)
-            (return
-              (ResultGitDeltaVarint.Err "git delta: truncated size varint")))
+            (return (Err "git delta: truncated size varint")))
           (let
             [octet : i64 (git-delta-byte bytes index)]
             [chunk : i64 (bit-and octet 127)]
@@ -150,21 +149,18 @@
               ;; single payload bit would exceed that domain.
               (when
                 (or (> shift 63) (> chunk (shr 9223372036854775807 shift)))
-                (return
-                  (ResultGitDeltaVarint.Err
-                    "git delta: size varint overflows i64")))
+                (return (Err "git delta: size varint overflows i64")))
               (set! value (bit-or value (shl chunk shift)))
               (set! index (+ index 1))
               (set! count (+ count 1))
               (when
                 (= (bit-and octet 128) 0)
-                (return (ResultGitDeltaVarint.Ok (GitDeltaVarint value index))))
+                (return (Ok (GitDeltaVarint value index))))
               (when
                 (>= count 9)
-                (return
-                  (ResultGitDeltaVarint.Err "git delta: excessive size varint")))
+                (return (Err "git delta: excessive size varint")))
               (set! shift (+ shift 7))))))
-      (ResultGitDeltaVarint.Err "git delta: unreachable size varint state"))))
+      (Err "git delta: unreachable size varint state"))))
 
 ;: Decode Git's biased, big-endian OFS_DELTA distance and check that it points
 ;: strictly backward from `object-offset` without crossing offset zero.
@@ -180,15 +176,13 @@
     (begin
       (when
         (or (< start 0) (> start length))
-        (return
-          (ResultGitDeltaOfsBase.Err "git delta: invalid OFS_DELTA start")))
+        (return (Err "git delta: invalid OFS_DELTA start")))
       (when
         (<= object-offset 0)
-        (return (ResultGitDeltaOfsBase.Err "git delta: invalid object offset")))
+        (return (Err "git delta: invalid object offset")))
       (when
         (>= index length)
-        (return
-          (ResultGitDeltaOfsBase.Err "git delta: truncated OFS_DELTA offset")))
+        (return (Err "git delta: truncated OFS_DELTA offset")))
       (let
         [first : i64 (git-delta-byte bytes index)]
         (begin
@@ -199,14 +193,10 @@
             (begin
               (when
                 (>= index length)
-                (return
-                  (ResultGitDeltaOfsBase.Err
-                    "git delta: truncated OFS_DELTA offset")))
+                (return (Err "git delta: truncated OFS_DELTA offset")))
               (when
                 (>= count 9)
-                (return
-                  (ResultGitDeltaOfsBase.Err
-                    "git delta: excessive OFS_DELTA offset")))
+                (return (Err "git delta: excessive OFS_DELTA offset")))
               (let
                 [next : i64 (git-delta-byte bytes index)]
                 [chunk : i64 (bit-and next 127)]
@@ -216,20 +206,15 @@
                     (or
                       (= value 9223372036854775807)
                       (> (+ value 1) (shr 9223372036854775807 7)))
-                    (return
-                      (ResultGitDeltaOfsBase.Err
-                        "git delta: OFS_DELTA offset overflows i64")))
+                    (return (Err "git delta: OFS_DELTA offset overflows i64")))
                   (set! value (bit-or (shl (+ value 1) 7) chunk))
                   (set! index (+ index 1))
                   (set! count (+ count 1)))))))
         (cond
-          [(<= value 0)
-            (ResultGitDeltaOfsBase.Err "git delta: zero OFS_DELTA distance")]
+          [(<= value 0) (Err "git delta: zero OFS_DELTA distance")]
           [(> value object-offset)
-            (ResultGitDeltaOfsBase.Err "git delta: OFS_DELTA offset underflow")]
-          [else
-            (ResultGitDeltaOfsBase.Ok
-              (GitDeltaOfsBase value (- object-offset value) index))])))))
+            (Err "git delta: OFS_DELTA offset underflow")]
+          [else (Ok (GitDeltaOfsBase value (- object-offset value) index))])))))
 
 (define (git-delta-expansion-within-limit?
   [result-bytes : i64]
@@ -289,48 +274,43 @@
     (begin
       (unless
         (git-delta-limits-valid? limits)
-        (return (ResultGitDeltaBytes.Err "git delta: invalid limits")))
+        (return (Err "git delta: invalid limits")))
       (unless
         (git-delta-budget-valid? budget limits)
-        (return (ResultGitDeltaBytes.Err "git delta: invalid budget state")))
+        (return (Err "git delta: invalid budget state")))
       (when
         (> base-length limits.max-object-bytes)
-        (return
-          (ResultGitDeltaBytes.Err "git delta: base exceeds object limit")))
+        (return (Err "git delta: base exceeds object limit")))
       (when
         (> delta-length limits.max-delta-bytes)
-        (return (ResultGitDeltaBytes.Err "git delta: delta exceeds byte limit")))
+        (return (Err "git delta: delta exceeds byte limit")))
       (unless
         (git-delta-budget-charge-work! budget limits delta-length)
-        (return
-          (ResultGitDeltaBytes.Err "git delta: total work limit exceeded")))
+        (return (Err "git delta: total work limit exceeded")))
       (match (git-delta-read-size-varint delta index)
-        [(ResultGitDeltaVarint.Err message)
-          (return (ResultGitDeltaBytes.Err message))]
-        [(ResultGitDeltaVarint.Ok decoded)
+        [(Err message) (return (Err message))]
+        [(Ok decoded)
           (begin
             (set! declared-base decoded.value)
             (set! index decoded.next))])
       (when
         (!= declared-base base-length)
-        (return (ResultGitDeltaBytes.Err "git delta: base length mismatch")))
+        (return (Err "git delta: base length mismatch")))
       (match (git-delta-read-size-varint delta index)
-        [(ResultGitDeltaVarint.Err message)
-          (return (ResultGitDeltaBytes.Err message))]
-        [(ResultGitDeltaVarint.Ok decoded)
+        [(Err message) (return (Err message))]
+        [(Ok decoded)
           (begin
             (set! result-length decoded.value)
             (set! index decoded.next))])
       (when
         (> result-length limits.max-object-bytes)
-        (return
-          (ResultGitDeltaBytes.Err "git delta: result exceeds object limit")))
+        (return (Err "git delta: result exceeds object limit")))
       (unless
         (git-delta-expansion-within-limit?
           result-length
           delta-length
           limits.max-expansion-ratio)
-        (return (ResultGitDeltaBytes.Err "git delta: expansion ratio exceeded")))
+        (return (Err "git delta: expansion ratio exceeded")))
       ;; Allocation happens only after both length headers and all caller caps
       ;; have been checked.
       (let
@@ -513,14 +493,12 @@
                               insert-size)
                             (set! index (+ index insert-size)))])))))))
           (cond
-            [(not valid) (ResultGitDeltaBytes.Err error)]
+            [(not valid) (Err error)]
             [(!= (byte_buf.byte-buf-builder-len (& out)) result-length)
-              (ResultGitDeltaBytes.Err "git delta: result length mismatch")]
+              (Err "git delta: result length mismatch")]
             [(!= index delta-length)
-              (ResultGitDeltaBytes.Err "git delta: trailing instruction bytes")]
-            [else
-              (ResultGitDeltaBytes.Ok
-                (byte_buf.byte-buf-builder-finish-string (& out)))]))))))
+              (Err "git delta: trailing instruction bytes")]
+            [else (Ok (byte_buf.byte-buf-builder-finish-string (& out)))]))))))
 
 ;: Convenience boundary for one independent delta application.
 (define (git-delta-apply
@@ -607,36 +585,36 @@
   [left : (& left GitDeltaObjectKind)]
   [right : (& right GitDeltaObjectKind)]) : bool
   (match left
-    [(GitDeltaObjectKind.Blob)
+    [(Blob)
       (match right
-        [(GitDeltaObjectKind.Blob) true]
+        [(Blob) true]
         [_ false])]
-    [(GitDeltaObjectKind.Tree)
+    [(Tree)
       (match right
-        [(GitDeltaObjectKind.Tree) true]
+        [(Tree) true]
         [_ false])]
-    [(GitDeltaObjectKind.Commit)
+    [(Commit)
       (match right
-        [(GitDeltaObjectKind.Commit) true]
+        [(Commit) true]
         [_ false])]
-    [(GitDeltaObjectKind.Tag)
+    [(Tag)
       (match right
-        [(GitDeltaObjectKind.Tag) true]
+        [(Tag) true]
         [_ false])]))
 
 (define (git-delta-kind-owned-copy [kind : (& kind GitDeltaObjectKind)]) : GitDeltaObjectKind
   (match kind
-    [(GitDeltaObjectKind.Blob) (GitDeltaObjectKind.Blob)]
-    [(GitDeltaObjectKind.Tree) (GitDeltaObjectKind.Tree)]
-    [(GitDeltaObjectKind.Commit) (GitDeltaObjectKind.Commit)]
-    [(GitDeltaObjectKind.Tag) (GitDeltaObjectKind.Tag)]))
+    [(Blob) (Blob)]
+    [(Tree) (Tree)]
+    [(Commit) (Commit)]
+    [(Tag) (Tag)]))
 
 (define (git-delta-expected-kind-matches?
   [expected : (& expected GitDeltaExpectedKind)]
   [actual : (& actual GitDeltaObjectKind)]) : bool
   (match expected
-    [(GitDeltaExpectedKind.Any) true]
-    [(GitDeltaExpectedKind.Exact required) (git-delta-kind-eq? required actual)]))
+    [(Any) true]
+    [(Exact required) (git-delta-kind-eq? required actual)]))
 
 (define (git-delta-resolve-offset-lookup!
   [entries : (& entries (__tl_dyn-array GitDeltaEntry))]
@@ -652,20 +630,15 @@
     (begin
       (when
         (or (< base-offset 0) (<= current-offset base-offset))
-        (return
-          (ResultGitDeltaDependency.Err
-            "git delta: OFS dependency is not strictly backward")))
+        (return (Err "git delta: OFS dependency is not strictly backward")))
       (unless
         (git-delta-budget-charge-lookup! budget limits)
-        (return
-          (ResultGitDeltaDependency.Err "git delta: lookup limit exceeded")))
+        (return (Err "git delta: lookup limit exceeded")))
       (while (< index (array-length lookups))
         (begin
           (unless
             (git-delta-budget-charge-work! budget limits 1)
-            (return
-              (ResultGitDeltaDependency.Err
-                "git delta: total work limit exceeded")))
+            (return (Err "git delta: total work limit exceeded")))
           (let
             [candidate : (& lookups GitDeltaOffsetLookup)
               (& (array-ref lookups index))]
@@ -677,15 +650,13 @@
                 unit)
               (set! index (+ index 1))))))
       (cond
-        [(= matches 0)
-          (ResultGitDeltaDependency.Err "git delta: missing OFS base")]
-        [(> matches 1)
-          (ResultGitDeltaDependency.Err "git delta: ambiguous OFS base")]
+        [(= matches 0) (Err "git delta: missing OFS base")]
+        [(> matches 1) (Err "git delta: ambiguous OFS base")]
         [(or (< target 0) (>= target (array-length entries)))
-          (ResultGitDeltaDependency.Err "git delta: invalid OFS lookup target")]
+          (Err "git delta: invalid OFS lookup target")]
         [(!= (git-delta-entry-at entries target).offset base-offset)
-          (ResultGitDeltaDependency.Err "git delta: inconsistent OFS lookup")]
-        [else (ResultGitDeltaDependency.Ok target)]))))
+          (Err "git delta: inconsistent OFS lookup")]
+        [else (Ok target)]))))
 
 (define (git-delta-resolve-id-lookup!
   [entries : (& entries (__tl_dyn-array GitDeltaEntry))]
@@ -702,18 +673,15 @@
     (begin
       (when
         (= (string.string-length object-id) 0)
-        (return (ResultGitDeltaDependency.Err "git delta: empty REF object id")))
+        (return (Err "git delta: empty REF object id")))
       (unless
         (git-delta-budget-charge-lookup! budget limits)
-        (return
-          (ResultGitDeltaDependency.Err "git delta: lookup limit exceeded")))
+        (return (Err "git delta: lookup limit exceeded")))
       (while (< index (array-length lookups))
         (begin
           (unless
             (git-delta-budget-charge-work! budget limits 1)
-            (return
-              (ResultGitDeltaDependency.Err
-                "git delta: total work limit exceeded")))
+            (return (Err "git delta: total work limit exceeded")))
           (let
             [candidate : (& lookups GitDeltaIdLookup)
               (& (array-ref lookups index))]
@@ -722,43 +690,38 @@
                 (begin
                   (set! matches (+ matches 1))
                   (match (& candidate.target)
-                    [(GitDeltaIdTarget.Entry entry-index)
+                    [(Entry entry-index)
                       (begin
                         (set! target-kind 0)
                         (set! target-index (deref entry-index)))]
-                    [(GitDeltaIdTarget.Thin thin-index)
+                    [(Thin thin-index)
                       (begin
                         (set! target-kind 1)
                         (set! target-index (deref thin-index)))]))
                 unit)
               (set! index (+ index 1))))))
       (cond
-        [(= matches 0)
-          (ResultGitDeltaDependency.Err "git delta: missing REF base")]
-        [(> matches 1)
-          (ResultGitDeltaDependency.Err "git delta: ambiguous REF base")]
+        [(= matches 0) (Err "git delta: missing REF base")]
+        [(> matches 1) (Err "git delta: ambiguous REF base")]
         [(= target-kind 0)
           (if (or (< target-index 0) (>= target-index (array-length entries)))
-            (ResultGitDeltaDependency.Err "git delta: invalid REF entry target")
+            (Err "git delta: invalid REF entry target")
             (if (string.eq
               (git-delta-entry-at entries target-index).object-id
               object-id)
-              (ResultGitDeltaDependency.Ok target-index)
-              (ResultGitDeltaDependency.Err
-                "git delta: inconsistent REF entry lookup")))]
+              (Ok target-index)
+              (Err "git delta: inconsistent REF entry lookup")))]
         [(= target-kind 1)
           (if (or
             (< target-index 0)
             (>= target-index (array-length thin-bases)))
-            (ResultGitDeltaDependency.Err "git delta: invalid thin base target")
+            (Err "git delta: invalid thin base target")
             (if (string.eq
               (git-delta-thin-at thin-bases target-index).object-id
               object-id)
-              (ResultGitDeltaDependency.Ok (- 0 (+ target-index 1)))
-              (ResultGitDeltaDependency.Err
-                "git delta: inconsistent thin base lookup")))]
-        [else
-          (ResultGitDeltaDependency.Err "git delta: invalid REF lookup target")]))))
+              (Ok (- 0 (+ target-index 1)))
+              (Err "git delta: inconsistent thin base lookup")))]
+        [else (Err "git delta: invalid REF lookup target")]))))
 
 (define (git-delta-copy-owned [value : (& value str)]) : String
   (string.substring value 0 (string.string-length value)))
@@ -784,7 +747,7 @@
     (begin
       (unless
         (git-delta-limits-valid? limits)
-        (return (ResultGitDeltaResolvedSet.Err "git delta: invalid limits")))
+        (return (Err "git delta: invalid limits")))
       (while (< root count)
         (begin
           (if (!= (array-ref states root) 2)
@@ -807,18 +770,17 @@
                               limits
                               1)
                             (return
-                              (ResultGitDeltaResolvedSet.Err
-                                "git delta: total work limit exceeded")))
+                              (Err "git delta: total work limit exceeded")))
                           (set! (array-ref states slot) 1)
                           (match (& entry.body)
-                            [(GitDeltaEntryBody.Stored kind bytes)
+                            [(Stored kind bytes)
                               (let
                                 [length : i64 (string.string-length bytes)]
                                 (begin
                                   (when
                                     (> length limits.max-object-bytes)
                                     (return
-                                      (ResultGitDeltaResolvedSet.Err
+                                      (Err
                                         "git delta: stored object exceeds limit")))
                                   (unless
                                     (git-delta-budget-charge-work!
@@ -826,7 +788,7 @@
                                       limits
                                       length)
                                     (return
-                                      (ResultGitDeltaResolvedSet.Err
+                                      (Err
                                         "git delta: total work limit exceeded")))
                                   (set!
                                     (array-ref objects slot)
@@ -836,12 +798,12 @@
                                     (git-delta-kind-owned-copy kind))
                                   (set! (array-ref states slot) 2)
                                   (set! stack-count (- stack-count 1))))]
-                            [(GitDeltaEntryBody.Ofs base-offset _ _)
+                            [(Ofs base-offset _ _)
                               (begin
                                 (when
                                   (> stack-count limits.max-depth)
                                   (return
-                                    (ResultGitDeltaResolvedSet.Err
+                                    (Err
                                       "git delta: chain depth limit exceeded")))
                                 (match (git-delta-resolve-offset-lookup!
                                   entries
@@ -850,10 +812,8 @@
                                   (deref base-offset)
                                   limits
                                   (&mut budget))
-                                  [(ResultGitDeltaDependency.Err message)
-                                    (return
-                                      (ResultGitDeltaResolvedSet.Err message))]
-                                  [(ResultGitDeltaDependency.Ok dependency)
+                                  [(Err message) (return (Err message))]
+                                  [(Ok dependency)
                                     (begin
                                       (set!
                                         (array-ref dependencies slot)
@@ -861,26 +821,25 @@
                                       (cond
                                         [(= (array-ref states dependency) 1)
                                           (return
-                                            (ResultGitDeltaResolvedSet.Err
-                                              "git delta: dependency cycle"))]
+                                            (Err "git delta: dependency cycle"))]
                                         [(= (array-ref states dependency) 0)
                                           (begin
                                             (when
                                               (>= stack-count count)
                                               (return
-                                                (ResultGitDeltaResolvedSet.Err
+                                                (Err
                                                   "git delta: dependency stack overflow")))
                                             (set!
                                               (array-ref stack stack-count)
                                               dependency)
                                             (set! stack-count (+ stack-count 1)))]
                                         [else unit]))]))]
-                            [(GitDeltaEntryBody.Ref object-id _ _)
+                            [(Ref object-id _ _)
                               (begin
                                 (when
                                   (> stack-count limits.max-depth)
                                   (return
-                                    (ResultGitDeltaResolvedSet.Err
+                                    (Err
                                       "git delta: chain depth limit exceeded")))
                                 (match (git-delta-resolve-id-lookup!
                                   entries
@@ -889,10 +848,8 @@
                                   object-id
                                   limits
                                   (&mut budget))
-                                  [(ResultGitDeltaDependency.Err message)
-                                    (return
-                                      (ResultGitDeltaResolvedSet.Err message))]
-                                  [(ResultGitDeltaDependency.Ok dependency)
+                                  [(Err message) (return (Err message))]
+                                  [(Ok dependency)
                                     (begin
                                       (set!
                                         (array-ref dependencies slot)
@@ -901,14 +858,14 @@
                                         (cond
                                           [(= (array-ref states dependency) 1)
                                             (return
-                                              (ResultGitDeltaResolvedSet.Err
+                                              (Err
                                                 "git delta: dependency cycle"))]
                                           [(= (array-ref states dependency) 0)
                                             (begin
                                               (when
                                                 (>= stack-count count)
                                                 (return
-                                                  (ResultGitDeltaResolvedSet.Err
+                                                  (Err
                                                     "git delta: dependency stack overflow")))
                                               (set!
                                                 (array-ref stack stack-count)
@@ -921,8 +878,7 @@
                       [(= state 1)
                         (let
                           [dependency : i64 (array-ref dependencies slot)]
-                          [base-kind : GitDeltaObjectKind
-                            (GitDeltaObjectKind.Blob)]
+                          [base-kind : GitDeltaObjectKind (Blob)]
                           [base-bytes : String ""]
                           [base-depth : i64 0]
                           (begin
@@ -931,7 +887,7 @@
                                 (when
                                   (!= (array-ref states dependency) 2)
                                   (return
-                                    (ResultGitDeltaResolvedSet.Err
+                                    (Err
                                       "git delta: unresolved dependency state")))
                                 (unless
                                   (git-delta-budget-charge-work!
@@ -940,8 +896,7 @@
                                     (string.string-length
                                       (& (array-ref objects dependency))))
                                   (return
-                                    (ResultGitDeltaResolvedSet.Err
-                                      "git delta: total work limit exceeded")))
+                                    (Err "git delta: total work limit exceeded")))
                                 (set!
                                   base-bytes
                                   (git-delta-copy-owned
@@ -958,8 +913,7 @@
                                         thin-index
                                         (array-length tables.thin-bases)))
                                     (return
-                                      (ResultGitDeltaResolvedSet.Err
-                                        "git delta: invalid thin dependency")))
+                                      (Err "git delta: invalid thin dependency")))
                                   (let
                                     [thin : (& tables GitDeltaThinBase)
                                       (git-delta-thin-at
@@ -971,7 +925,7 @@
                                       (when
                                         (> thin-length limits.max-object-bytes)
                                         (return
-                                          (ResultGitDeltaResolvedSet.Err
+                                          (Err
                                             "git delta: thin base exceeds object limit")))
                                       (unless
                                         (git-delta-budget-charge-work!
@@ -979,7 +933,7 @@
                                           limits
                                           thin-length)
                                         (return
-                                          (ResultGitDeltaResolvedSet.Err
+                                          (Err
                                             "git delta: total work limit exceeded")))
                                       (set!
                                         base-bytes
@@ -990,50 +944,42 @@
                             (when
                               (>= base-depth limits.max-depth)
                               (return
-                                (ResultGitDeltaResolvedSet.Err
-                                  "git delta: chain depth limit exceeded")))
+                                (Err "git delta: chain depth limit exceeded")))
                             (match (& entry.body)
-                              [(GitDeltaEntryBody.Stored _ _)
+                              [(Stored _ _)
                                 (return
-                                  (ResultGitDeltaResolvedSet.Err
-                                    "git delta: invalid stored entry state"))]
-                              [(GitDeltaEntryBody.Ofs _ expected delta)
+                                  (Err "git delta: invalid stored entry state"))]
+                              [(Ofs _ expected delta)
                                 (begin
                                   (unless
                                     (git-delta-expected-kind-matches?
                                       expected
                                       base-kind)
                                     (return
-                                      (ResultGitDeltaResolvedSet.Err
-                                        "git delta: object type mismatch")))
+                                      (Err "git delta: object type mismatch")))
                                   (match (git-delta-apply-with-budget
                                     (& base-bytes)
                                     delta
                                     limits
                                     (&mut budget))
-                                    [(ResultGitDeltaBytes.Err message)
-                                      (return
-                                        (ResultGitDeltaResolvedSet.Err message))]
-                                    [(ResultGitDeltaBytes.Ok object)
+                                    [(Err message) (return (Err message))]
+                                    [(Ok object)
                                       (set! (array-ref objects slot) object)]))]
-                              [(GitDeltaEntryBody.Ref _ expected delta)
+                              [(Ref _ expected delta)
                                 (begin
                                   (unless
                                     (git-delta-expected-kind-matches?
                                       expected
                                       base-kind)
                                     (return
-                                      (ResultGitDeltaResolvedSet.Err
-                                        "git delta: object type mismatch")))
+                                      (Err "git delta: object type mismatch")))
                                   (match (git-delta-apply-with-budget
                                     (& base-bytes)
                                     delta
                                     limits
                                     (&mut budget))
-                                    [(ResultGitDeltaBytes.Err message)
-                                      (return
-                                        (ResultGitDeltaResolvedSet.Err message))]
-                                    [(ResultGitDeltaBytes.Ok object)
+                                    [(Err message) (return (Err message))]
+                                    [(Ok object)
                                       (set! (array-ref objects slot) object)]))])
                             (set! (array-ref kinds slot) base-kind)
                             (set! (array-ref depths slot) (+ base-depth 1))
@@ -1044,5 +990,4 @@
                 unit))
             unit)
           (set! root (+ root 1))))
-      (ResultGitDeltaResolvedSet.Ok
-        (GitDeltaResolvedSet objects kinds budget reconstructed)))))
+      (Ok (GitDeltaResolvedSet objects kinds budget reconstructed)))))

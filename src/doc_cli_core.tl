@@ -166,8 +166,8 @@
   [seen : (&mut seen doc_path_map.Map)]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Nil) unit]
-    [(ast.AstDeclPathListStep.Cons path rest)
+    [(Nil) unit]
+    [(Cons path rest)
       (let
         [rest : ast.AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref!
@@ -200,9 +200,8 @@
   [seen : (&mut seen doc_path_map.Map)]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Nil)
-      (doc_expand.ResultDocExpandedModules.Ok (doc_module_vec.new))]
-    [(ast.AstDeclPathListStep.Cons path rest)
+    [(Nil) (doc_expand.ResultDocExpandedModules.Ok (doc_module_vec.new))]
+    [(Cons path rest)
       (let
         [rest : ast.AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref!
@@ -221,7 +220,7 @@
               (owned_view.compiler-owned-shared-view stdlib-roots)
               pools
               (owned_view.compiler-owned-shared-view intern-state))
-              [(doc_expand.ResultDocExpandedModules.Ok head-modules)
+              [(Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
                   load-state
                   job-state
@@ -230,15 +229,13 @@
                   rest
                   seen
                   stdlib-roots)
-                  [(doc_expand.ResultDocExpandedModules.Ok tail-modules)
+                  [(Ok tail-modules)
                     (doc_expand.ResultDocExpandedModules.Ok
                       (doc_render.doc-module-list-append
                         head-modules
                         tail-modules))]
-                  [(doc_expand.ResultDocExpandedModules.Err message)
-                    (doc_expand.ResultDocExpandedModules.Err message)])]
-              [(doc_expand.ResultDocExpandedModules.Err message)
-                (doc_expand.ResultDocExpandedModules.Err message)]))
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)]))
           (doc-generated-modules-from-source-paths-into
             load-state
             job-state
@@ -349,7 +346,7 @@
       (owned_view.compiler-owned-shared-view intern-state)
       input-path
       (owned_view.compiler-owned-shared-view stdlib-roots))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(Ok decls paths _ _)
         (match (doc-generated-modules-from-source-paths
           (owned_view.compiler-owned-shared-view load-state)
           job-state
@@ -359,7 +356,7 @@
             (owned_view.compiler-owned-shared-view input-path)
             (owned_view.compiler-owned-shared-view paths))
           (owned_view.compiler-owned-shared-view stdlib-roots))
-          [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
+          [(Ok source-generated-modules)
             (let
               ;; Expansion from public source docs is authoritative and errors
               ;; above fail the command. Loaded graph expansion is best-effort:
@@ -374,9 +371,8 @@
                   stdlib-roots
                   pools
                   intern-state)
-                  [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
-                  [(doc_expand.ResultDocExpandedModules.Err _)
-                    (doc_module_vec.new)])]
+                  [(Ok modules) modules]
+                  [(Err _) (doc_module_vec.new)])]
               (begin
                 (doc-write-text
                   output-path
@@ -388,19 +384,19 @@
                       source-generated-modules)))
                 (doc-print-wrote output-path)
                 0))]
-          [(doc_expand.ResultDocExpandedModules.Err message)
+          [(Err message)
             (begin
               (io.print-error message)
               1)])]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+      [(Err diag)
         (begin
           (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
           1)])))
 
 (define (doc-ensure-directory [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
-    [(io.OkIoUnit) true]
-    [(io.ErrIoUnit error)
+    [(OkIoUnit) true]
+    [(ErrIoUnit error)
       (begin
         (io.print-error
           (str_cat.str-cat
@@ -437,8 +433,8 @@
   (let
     [name : String "TYPELISP_DOC_OPEN_PROGRAM"]
     (match (env.get (& name))
-      [(env.EnvSomeString value) value]
-      [(env.EnvNoString) (cfg windows "explorer.exe" "xdg-open")])))
+      [(EnvSomeString value) value]
+      [(EnvNoString) (cfg windows "explorer.exe" "xdg-open")])))
 
 (define (doc-open-generated-index [index-path : String]) : unit
   (if (not (doc-graphical-session?))
@@ -464,11 +460,11 @@
   [_no-deps? : bool]) : i64
   (match (package_source_core.package-source-set-digest
     (owned_view.compiler-owned-shared-view source-set))
-    [(package_source_core.ResultPackageSourceDigest.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat "doc: " message "\n"))
         1)]
-    [(package_source_core.ResultPackageSourceDigest.Ok source-digest)
+    [(Ok source-digest)
       (let
         [target-dir : String
           (fs.path-join-owned-pair source-set.manifest-dir "target")]
@@ -544,13 +540,13 @@
     "doc"
     manifest-path
     has-manifest)
-    [(package_source_core.ResultPackageSourceSet.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat message "\n"))
         1)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
+    [(Ok source-set)
       (match output-path
-        [(DocMaybeString.Some out)
+        [(Some out)
           (begin
             (doc-write-text
               out
@@ -558,8 +554,7 @@
                 (doc-modules-from-package-sources source-set.sources)))
             (doc-print-wrote out)
             0)]
-        [(DocMaybeString.No)
-          (doc-generate-package-local-site source-set open? no-deps?)])]))
+        [(No) (doc-generate-package-local-site source-set open? no-deps?)])]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
@@ -671,11 +666,11 @@
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
-    [(io.OkIoBytes contents)
+    [(OkIoBytes contents)
       (ResultDocTestBatchPaths.Ok
         (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
-    [(io.ErrIoBytes error)
-      (ResultDocTestBatchPaths.Err
+    [(ErrIoBytes error)
+      (Err
         (str_cat.str-cat
           "doc: failed to read --batch list file: "
           (io.error-message error)))]))
@@ -687,35 +682,27 @@
   [stdlib-roots : doc_svec.Vec]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (match batch-list
-    [(DocMaybeString.Some list-path)
+    [(Some list-path)
       (if has-manifest
-        (ResultDocTestCliConfig.Err
-          "doc: cannot combine --batch with --manifest-path")
+        (Err "doc: cannot combine --batch with --manifest-path")
         (if (not (doc_svec.is-empty? (& input-paths)))
-          (ResultDocTestCliConfig.Err
-            "doc: cannot combine input paths with --batch")
+          (Err "doc: cannot combine input paths with --batch")
           (match (doc-test-batch-paths list-path)
-            [(ResultDocTestBatchPaths.Ok paths)
+            [(Ok paths)
               (if (doc_svec.is-empty? (& paths))
-                (ResultDocTestCliConfig.Err "doc: --batch list is empty")
-                (ResultDocTestCliConfig.Ok
-                  (DocTestCliConfig.File paths stdlib-roots)))]
-            [(ResultDocTestBatchPaths.Err message)
-              (ResultDocTestCliConfig.Err message)])))]
-    [(DocMaybeString.No)
+                (Err "doc: --batch list is empty")
+                (Ok (DocTestCliConfig.File paths stdlib-roots)))]
+            [(Err message) (Err message)])))]
+    [(No)
       (cond
         [doc-test-prefix-cache-stats
-          (ResultDocTestCliConfig.Err
-            "doc: --prefix-cache-stats requires --batch")]
+          (Err "doc: --prefix-cache-stats requires --batch")]
         [(doc_svec.is-empty? (& input-paths))
-          (ResultDocTestCliConfig.Ok
+          (Ok
             (DocTestCliConfig.Package manifest-path has-manifest stdlib-roots))]
         [has-manifest
-          (ResultDocTestCliConfig.Err
-            "doc: cannot combine input paths with --manifest-path")]
-        [else
-          (ResultDocTestCliConfig.Ok
-            (DocTestCliConfig.File input-paths stdlib-roots))])]))
+          (Err "doc: cannot combine input paths with --manifest-path")]
+        [else (Ok (DocTestCliConfig.File input-paths stdlib-roots))])]))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (let
@@ -729,7 +716,7 @@
     [manifest-path : String ""]
     [has-manifest : bool false]
     [stdlib-roots : doc_svec.Vec (doc_svec.new)]
-    [batch-list : DocMaybeString (DocMaybeString.No)]
+    [batch-list : DocMaybeString (No)]
     (begin
       (set! doc-test-prefix-cache-stats false)
       (while (cli_option.cli-args-next! (&mut args))
@@ -748,12 +735,10 @@
                 (set! has-manifest true)))]
           [(string.eq args.name "--batch")
             (match batch-list
-              [(DocMaybeString.Some _)
+              [(Some _)
                 (cli_option.cli-args-fail! (&mut args) "doc: duplicate --batch")]
-              [(DocMaybeString.No)
-                (set!
-                  batch-list
-                  (DocMaybeString.Some (cli_option.cli-args-value (& args))))])]
+              [(No)
+                (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
           [(string.eq args.name "--prefix-cache-stats")
             (set! doc-test-prefix-cache-stats true)]
           [(cli_option.cli-flag? args.arg)
@@ -761,7 +746,7 @@
           [else
             (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
       (if args.failed
-        (ResultDocTestCliConfig.Err args.error)
+        (Err args.error)
         (doc-test-config-finish
           input-paths
           manifest-path
@@ -850,12 +835,11 @@
     "doc"
     manifest-path
     has-manifest)
-    [(package_source_core.ResultPackageSourceSet.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat message "\n"))
         1)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (doc-test-package-files source-set.sources stdlib-roots 0)]))
+    [(Ok source-set) (doc-test-package-files source-set.sources stdlib-roots 0)]))
 
 (define (doc-default-config-finish
   [input-paths : doc_svec.Vec]
@@ -869,38 +853,19 @@
     [(not (doc_svec.is-empty? (& input-paths)))
       (cond
         [has-manifest
-          (ResultDocDefaultCliConfig.Err
-            "doc: cannot combine input paths with --manifest-path")]
+          (Err "doc: cannot combine input paths with --manifest-path")]
         [open?
-          (ResultDocDefaultCliConfig.Err
-            "doc: --open is only valid for package local HTML site output")]
+          (Err "doc: --open is only valid for package local HTML site output")]
         [no-deps?
-          (ResultDocDefaultCliConfig.Err
-            "doc: --no-deps is only valid for package documentation")]
-        [else
-          (ResultDocDefaultCliConfig.Ok
-            (DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots))])]
+          (Err "doc: --no-deps is only valid for package documentation")]
+        [else (Ok (Explicit input-paths output-path stdlib-roots))])]
     [else
       (match output-path
-        [(DocMaybeString.Some out)
+        [(Some out)
           (if open?
-            (ResultDocDefaultCliConfig.Err
-              "doc: --open requires local HTML site output; omit -o")
-            (ResultDocDefaultCliConfig.Ok
-              (DocDefaultCliConfig.Package
-                manifest-path
-                has-manifest
-                (DocMaybeString.Some out)
-                false
-                no-deps?)))]
-        [(DocMaybeString.No)
-          (ResultDocDefaultCliConfig.Ok
-            (DocDefaultCliConfig.Package
-              manifest-path
-              has-manifest
-              (DocMaybeString.No)
-              open?
-              no-deps?))])]))
+            (Err "doc: --open requires local HTML site output; omit -o")
+            (Ok (Package manifest-path has-manifest (Some out) false no-deps?)))]
+        [(No) (Ok (Package manifest-path has-manifest (No) open? no-deps?))])]))
 
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
   (let
@@ -911,7 +876,7 @@
         base
         count)]
     [input-paths : doc_svec.Vec (doc_svec.new)]
-    [output-path : DocMaybeString (DocMaybeString.No)]
+    [output-path : DocMaybeString (No)]
     [manifest-path : String ""]
     [open? : bool false]
     [no-deps? : bool false]
@@ -925,12 +890,10 @@
               (cli_option.cli-args-value (& args)))]
           [(string.eq args.name "-o")
             (match output-path
-              [(DocMaybeString.Some _)
+              [(Some _)
                 (cli_option.cli-args-fail! (&mut args) "doc: duplicate -o")]
-              [(DocMaybeString.No)
-                (set!
-                  output-path
-                  (DocMaybeString.Some (cli_option.cli-args-value (& args))))])]
+              [(No)
+                (set! output-path (Some (cli_option.cli-args-value (& args))))])]
           ;; An empty --manifest-path value reads as absent, so a later one is
           ;; not a duplicate.
           [(string.eq args.name "--manifest-path")
@@ -952,7 +915,7 @@
           [else
             (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
       (if args.failed
-        (ResultDocDefaultCliConfig.Err args.error)
+        (Err args.error)
         (doc-default-config-finish
           input-paths
           output-path
@@ -982,14 +945,14 @@
   [output-path : DocMaybeString]
   [stdlib-roots : doc_svec.Vec]) : i64
   (match output-path
-    [(DocMaybeString.Some out)
+    [(Some out)
       (if (doc_svec.is-empty? (& input-paths))
         (doc-invalid-args)
         (doc-generate-loaded-file
           (doc_svec.get (& input-paths) 0 "")
           out
           stdlib-roots))]
-    [(DocMaybeString.No)
+    [(No)
       (let
         [path-count : i64 (doc_svec.len (& input-paths))]
         (if (= path-count 2)
@@ -1023,9 +986,9 @@
     (compiler_load.compiler-load-session-cache-enable!)
     (compiler_load.compiler-load-session-program-cache-disable!)
     (match (doc-test-config-from base (io.arg-count))
-      [(ResultDocTestCliConfig.Ok config)
+      [(Ok config)
         (match config
-          [(DocTestCliConfig.File input-paths stdlib-roots)
+          [(File input-paths stdlib-roots)
             (let
               [status : i64
                 (begin
@@ -1042,9 +1005,9 @@
                   (tc.tc-prefix-snapshot-cache-print-stats "doc-test-batch")
                   unit)
                 status))]
-          [(DocTestCliConfig.Package manifest-path has-manifest stdlib-roots)
+          [(Package manifest-path has-manifest stdlib-roots)
             (doc-test-package manifest-path has-manifest stdlib-roots)])]
-      [(ResultDocTestCliConfig.Err message)
+      [(Err message)
         (begin
           (io.print-error message)
           1)])))
@@ -1066,23 +1029,18 @@
 
 (define (doc-main-default [base : i64]) : i64
   (match (doc-default-config-from base (io.arg-count))
-    [(ResultDocDefaultCliConfig.Ok config)
+    [(Ok config)
       (match config
-        [(DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)
+        [(Explicit input-paths output-path stdlib-roots)
           (doc-run-explicit-default input-paths output-path stdlib-roots)]
-        [(DocDefaultCliConfig.Package
-            manifest-path
-            has-manifest
-            output-path
-            open?
-            no-deps?)
+        [(Package manifest-path has-manifest output-path open? no-deps?)
           (doc-generate-package
             manifest-path
             has-manifest
             output-path
             open?
             no-deps?)])]
-    [(ResultDocDefaultCliConfig.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]))

@@ -124,9 +124,9 @@
 (define (pointer-proof-operation-conversion?
   [operation : PointerProofOperation]) : bool
   (match operation
-    [(PointerProofOperation.PointerCast) true]
-    [(PointerProofOperation.PointerToInteger) true]
-    [(PointerProofOperation.IntegerToPointer) true]
+    [(PointerCast) true]
+    [(PointerToInteger) true]
+    [(IntegerToPointer) true]
     [_ false]))
 
 (define (pointer-proof-input-new) : PointerProofInput
@@ -147,11 +147,11 @@
                 (use_vec.new)
                 (function_vec.new)
                 (symbol_map.with-capacity 8)
-                PointerProofProgramBinding.Missing
+                Missing
                 ""
                 ""
                 ""
-                ir.CompilerMaybeSourceSpan.No))
+                No))
             (unsafe
               (ptr->int (__tl_array-data storage))))))]
     (begin
@@ -252,7 +252,7 @@
           (string.copy (& storage.failure-path))
           (string.copy (& storage.default-path)))]
       (match storage.failure-span
-        [(ir.CompilerMaybeSourceSpan.Some span)
+        [(Some span)
           (diagnostic.compiler-diagnostic-from-ast-span path span message)]
         [_ (diagnostic.compiler-diagnostic-at-start path message)]))))
 
@@ -271,7 +271,7 @@
       (arena.Arena storage.arena)
       (begin
         (match source-type
-          [(PointerProofType.Missing)
+          [(Missing)
             (pointer-proof-input-fail-at!
               input
               "pointer proof: missing source type"
@@ -279,7 +279,7 @@
               span)]
           [_ unit])
         (match span
-          [(ir.CompilerMaybeSourceSpan.No)
+          [(No)
             (when
               (pointer-proof-operation-conversion? operation)
               (pointer-proof-input-fail-at!
@@ -335,9 +335,9 @@
   [program : ir.CompilerIrProgram]
   [spans : ir.CompilerSourceSpans]) : PointerProofProgramIdentity
   (match program
-    [(ir.CompilerIrProgram.Program globals functions externs)
+    [(Program globals functions externs)
       (match spans
-        [(ir.CompilerSourceSpans.Spans entries instructions _)
+        [(Spans entries instructions _)
           (PointerProofProgramIdentity
             (unsafe
               (ptr->int (__tl_array-data globals.slots)))
@@ -364,7 +364,7 @@
     (begin
       (match (unsafe
         (ptr-read (ptr-addr-of program)))
-        [(ir.CompilerIrProgram.Program _ functions _)
+        [(Program _ functions _)
           (let
             [index : i64 0]
             (begin
@@ -377,7 +377,7 @@
                 (match (unsafe
                   (ptr-read
                     (ptr-offset (__tl_array-data functions.slots) index)))
-                  [(ir.CompilerIrFunction.Function symbol _ _ _ _ _)
+                  [(Function symbol _ _ _ _ _)
                     (begin
                       (when
                         (<
@@ -393,8 +393,7 @@
       (set! storage (pointer-proof-input-storage input))
       (set!
         storage.binding
-        (PointerProofProgramBinding.Bound
-          (pointer-proof-program-identity program spans)))
+        (Bound (pointer-proof-program-identity program spans)))
       (pointer-proof-input-store! input storage))))
 
 (define (pointer-proof-input-begin-error [input : PointerProofInput]) : String
@@ -403,9 +402,8 @@
     (let
       [storage : PointerProofStorage (pointer-proof-input-storage input)]
       (match storage.binding
-        [(PointerProofProgramBinding.Bound _)
-          "pointer proof: input already belongs to a lowering job"]
-        [(PointerProofProgramBinding.Missing)
+        [(Bound _) "pointer proof: input already belongs to a lowering job"]
+        [(Missing)
           (if (or
             (> (use_vec.len (& storage.uses)) 0)
             (> (string.string-length (& storage.failure)) 0))
@@ -423,9 +421,8 @@
       (if (> (string.string-length (& storage.failure)) 0)
         storage.failure
         (match storage.binding
-          [(PointerProofProgramBinding.Missing)
-            "pointer proof: incomplete lowering input"]
-          [(PointerProofProgramBinding.Bound expected)
+          [(Missing) "pointer proof: incomplete lowering input"]
+          [(Bound expected)
             (let
               [actual : PointerProofProgramIdentity
                 (pointer-proof-program-identity program spans)]
@@ -451,20 +448,18 @@
   (if (or
     (not (= input.control reference.owner))
     (= (pointer-proof-input-address input) (cast 0 : u64)))
-    (ResultPointerProofUse.Err
-      "pointer proof: foreign or retired semantic reference")
+    (Err "pointer proof: foreign or retired semantic reference")
     (let
       [storage : PointerProofStorage (pointer-proof-input-storage input)]
       (if (or
         (> (string.string-length (& storage.failure)) 0)
         (< reference.index 0)
         (>= reference.index (use_vec.len (& storage.uses))))
-        (ResultPointerProofUse.Err "pointer proof: missing semantic occurrence")
+        (Err "pointer proof: missing semantic occurrence")
         (match storage.binding
-          [(PointerProofProgramBinding.Missing)
-            (ResultPointerProofUse.Err "pointer proof: incomplete input")]
+          [(Missing) (Err "pointer proof: incomplete input")]
           [_
-            (ResultPointerProofUse.Ok
+            (Ok
               (unsafe
                 (ptr-read
                   (ptr-offset
@@ -480,20 +475,18 @@
 
 (define (pointer-proof-input-function [input : PointerProofInput] [index : i64]) : ResultPointerProofFunction
   (if (= (pointer-proof-input-address input) (cast 0 : u64))
-    (ResultPointerProofFunction.Err "pointer proof: missing or retired input")
+    (Err "pointer proof: missing or retired input")
     (let
       [storage : PointerProofStorage (pointer-proof-input-storage input)]
       (if (or
         (> (string.string-length (& storage.failure)) 0)
         (< index 0)
         (>= index (function_vec.len (& storage.functions))))
-        (ResultPointerProofFunction.Err
-          "pointer proof: missing function binding")
+        (Err "pointer proof: missing function binding")
         (match storage.binding
-          [(PointerProofProgramBinding.Missing)
-            (ResultPointerProofFunction.Err "pointer proof: incomplete input")]
+          [(Missing) (Err "pointer proof: incomplete input")]
           [_
-            (ResultPointerProofFunction.Ok
+            (Ok
               (unsafe
                 (ptr-read
                   (ptr-offset (__tl_array-data storage.functions.slots) index))))])))))

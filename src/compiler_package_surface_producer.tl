@@ -50,7 +50,7 @@
 ;; before the frontend owner is released.
 (define package-surface-capture-state : (__tl_dyn-array
     PackageSurfaceCaptureState)
-  (__tl_make-array (PackageSurfaceCaptureState.Inactive)))
+  (__tl_make-array (Inactive)))
 (define package-surface-capture-result-arena : i64
   0)
 
@@ -131,16 +131,15 @@
     (set! package-surface-capture-result-arena (arena.tl_arena_current))
     (set!
       (array-ref package-surface-capture-state 0)
-      (PackageSurfaceCaptureState.Pending key seen (arena.tl_arena_current)))))
+      (Pending key seen (arena.tl_arena_current)))))
 
 (define (package-surface-program-decl-count [program : ast.AstProgram]) : i64
   (match program
-    [(ast.AstProgram.Program decls-box)
-      (ast.ast-decl-list-len (& (__tl-box-place decls-box)))]))
+    [(Program decls-box) (ast.ast-decl-list-len (& (__tl-box-place decls-box)))]))
 
 (define (package-surface-modules [program : ast.AstProgram]) : ast.AstDeclModuleList
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -163,7 +162,7 @@
   [paths : ast.AstDeclPathList]
   [pools : ast.AstNodePoolContext]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Pending key seen result-arena)
+    [(Pending key seen result-arena)
       (let
         [macro-decl-count : i64
           (package-surface-program-decl-count
@@ -172,7 +171,7 @@
           (surface_facts.surface-typecheck-facts-recording-start! result-arena)
           (set!
             (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Expanded
+            (Expanded
               key
               structural-session
               seen
@@ -181,8 +180,8 @@
               pools
               macro-decl-count
               result-arena))))]
-    [(PackageSurfaceCaptureState.Inactive) unit]
-    [(PackageSurfaceCaptureState.Err _) unit]
+    [(Inactive) unit]
+    [(Err _) unit]
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
@@ -206,11 +205,10 @@
     [modules : ast.AstDeclModuleList
       (package-surface-modules (owned_view.compiler-owned-shared-view program))]
     (match (surface_identity.surface-identity-encode identity-payload)
-      [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-        (package-surface-capture-error! message)]
-      [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+      [(Err message) (package-surface-capture-error! message)]
+      [(Ok identity-bytes)
         (match program
-          [(ast.AstProgram.Program decls-box)
+          [(Program decls-box)
             (match (surface_ast.surface-ast-encode
               structural-session
               (deref decls-box)
@@ -220,20 +218,18 @@
               pools
               source-count
               identity-count)
-              [(surface_ast.ResultSurfaceAstBytes.Err message)
-                (package-surface-capture-error! message)]
-              [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
+              [(Err message) (package-surface-capture-error! message)]
+              [(Ok ast-bytes)
                 (match (surface_facts.surface-typecheck-facts-encode
                   facts
                   structural-session
                   source-count
                   identity-count)
-                  [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-                    (package-surface-capture-error! message)]
-                  [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok fact-bytes)
+                  [(Err message) (package-surface-capture-error! message)]
+                  [(Ok fact-bytes)
                     (set!
                       (array-ref package-surface-capture-state 0)
-                      (PackageSurfaceCaptureState.Ready
+                      (Ready
                         (PackageSurfacePayloads
                           identity-bytes
                           ast-bytes
@@ -245,7 +241,7 @@
   [summary-functions : i64]
   [summary-externs : i64]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Expanded
+    [(Expanded
         key
         structural-session
         seen
@@ -272,7 +268,7 @@
             paths
             pools
             facts)))]
-    [(PackageSurfaceCaptureState.Inactive) unit]
+    [(Inactive) unit]
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
@@ -281,7 +277,7 @@
 
 (define (package-surface-capture-abort! [message : String]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Inactive) unit]
+    [(Inactive) unit]
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
@@ -289,35 +285,25 @@
 
 (define (package-surface-capture-take) : ResultPackageSurfacePayloads
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Ready payload)
+    [(Ready payload)
       (let
-        [result : ResultPackageSurfacePayloads
-          (ResultPackageSurfacePayloads.Ok payload)]
+        [result : ResultPackageSurfacePayloads (Ok payload)]
         (begin
-          (set!
-            (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Inactive))
+          (set! (array-ref package-surface-capture-state 0) (Inactive))
           result))]
-    [(PackageSurfaceCaptureState.Err message)
+    [(Err message)
       (let
-        [result : ResultPackageSurfacePayloads
-          (ResultPackageSurfacePayloads.Err message)]
+        [result : ResultPackageSurfacePayloads (Err message)]
         (begin
-          (set!
-            (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Inactive))
+          (set! (array-ref package-surface-capture-state 0) (Inactive))
           result))]
-    [(PackageSurfaceCaptureState.Inactive)
-      (ResultPackageSurfacePayloads.Err
-        "package surface: no checked frontend capture was requested")]
+    [(Inactive)
+      (Err "package surface: no checked frontend capture was requested")]
     [_
       (begin
         (surface_facts.surface-typecheck-facts-recording-abort!)
-        (set!
-          (array-ref package-surface-capture-state 0)
-          (PackageSurfaceCaptureState.Inactive))
-        (ResultPackageSurfacePayloads.Err
-          "package surface: checked frontend capture did not complete"))]))
+        (set! (array-ref package-surface-capture-state 0) (Inactive))
+        (Err "package surface: checked frontend capture did not complete"))]))
 
 (define (package-surface-pack
   [payload : PackageSurfacePayloads]
@@ -374,15 +360,14 @@
                   (string.copy "retained diagnostic")))
               (unless
                 (match (package-surface-capture-take)
-                  [(ResultPackageSurfacePayloads.Err message)
-                    (string.eq message "retained diagnostic")]
+                  [(Err message) (string.eq message "retained diagnostic")]
                   [_ false])
                 (io.panic "package capture lost its retired error"))))
           ;; The inactive carrier must also survive its former result arena.
           (package-surface-capture-abort! "inactive abort")
           (unless
             (match (package-surface-capture-take)
-              [(ResultPackageSurfacePayloads.Err message)
+              [(Err message)
                 (string.eq
                   message
                   "package surface: no checked frontend capture was requested")]
@@ -402,19 +387,19 @@
           (tlci.tlci-string->bytes "facts"))]
       [ok : bool
         (match (package-surface-pack payload 42)
-          [(tlci.ResultTlciAuxBytes.Err _) false]
-          [(tlci.ResultTlciAuxBytes.Ok rodata)
+          [(Err _) false]
+          [(Ok rodata)
             (and
               (match (tlci.tlci-aux-find
                 rodata
                 tlci.tlci-aux-kind-package-identity)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (= schema surface_identity.surface-identity-schema-version)
                     (= (array-length bytes) 8))]
                 [_ false])
               (match (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-ast)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (= schema surface_ast.surface-ast-schema-version)
                     (= (array-length bytes) 0))]
@@ -422,7 +407,7 @@
               (match (tlci.tlci-aux-find
                 rodata
                 tlci.tlci-aux-kind-frontend-facts)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (=
                       schema
@@ -430,6 +415,6 @@
                     (= (array-length bytes) 5))]
                 [_ false])
               (match (tlci.tlci-package-source-binding-read rodata)
-                [(tlci.TlciPackageSourceBindingRead.Bound digest) (= digest 42)]
+                [(Bound digest) (= digest 42)]
                 [_ false]))])]
       (unless ok (io.panic "package surface section packing failed")))))

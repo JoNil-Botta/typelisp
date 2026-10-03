@@ -540,11 +540,9 @@
     [(not
         (surface-typecheck-facts-builder-valid?
           (surface-facts-shared-view builder)))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition builder")]
+      (Err "surface facts: invalid composition builder")]
     [(not (surface-typecheck-facts-valid? fragment))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition fragment")]
+      (Err "surface facts: invalid composition fragment")]
     [else
       (let
         [builder-count : i64 (array-length builder.clone-decl-keys)]
@@ -584,8 +582,7 @@
           (>
             base-call-index
             (- surface-typecheck-facts-max-count call-range-size)))
-          (ResultSurfaceTypecheckFactsBuilder.Err
-            "surface facts: composition count limit exceeded")
+          (Err "surface facts: composition count limit exceeded")
           (let
             [combined-count : i64 (+ builder-count fragment-count)]
             [decl-keys : (__tl_dyn-array i64)
@@ -624,7 +621,7 @@
                       base-call-index
                       (array-ref fragment.clone-call-indices index)))
                   (set! index (+ index 1))))
-              (ResultSurfaceTypecheckFactsBuilder.Ok
+              (Ok
                 (SurfaceTypecheckFactsBuilder
                   (+ builder.fragment-count 1)
                   (+
@@ -646,9 +643,8 @@
     (not
       (surface-typecheck-facts-builder-valid?
         (surface-facts-shared-view builder))))
-    (ResultSurfaceTypecheckFacts.Err
-      "surface facts: empty or invalid composition")
-    (ResultSurfaceTypecheckFacts.Ok
+    (Err "surface facts: empty or invalid composition")
+    (Ok
       (SurfaceTypecheckFacts
         builder.macro-prefix-decl-count
         builder.prefix-decl-count
@@ -667,8 +663,7 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
     (if (not (surface-typecheck-facts-valid? facts))
-      (ResultSurfaceTypecheckFactBytes.Err
-        "surface facts: invalid checked-prefix facts")
+      (Err "surface facts: invalid checked-prefix facts")
       (let
         [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
         [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
@@ -708,10 +703,8 @@
                   (byte_le.push-u64! (&mut out) (array-ref call-indices index))
                   (set! index (+ index 1))))))
           (if ok
-            (ResultSurfaceTypecheckFactBytes.Ok
-              (byte_buf_core.byte-buf-builder-finish-array (& out)))
-            (ResultSurfaceTypecheckFactBytes.Err
-              "surface facts: identity is not relocatable")))))))
+            (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))
+            (Err "surface facts: identity is not relocatable")))))))
 
 (define (surface-typecheck-fact-reader-u64!
   [reader : (&mut reader byte_reader.ByteReader)]) : i64
@@ -766,8 +759,7 @@
       (< summary-externs 0)
       (< clone-count 0)
       (> clone-count surface-typecheck-facts-max-clone-observations))
-      (ResultSurfaceTypecheckFacts.Err
-        "surface facts: bad magic, schema, or count")
+      (Err "surface facts: bad magic, schema, or count")
       (let
         [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
         [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
@@ -827,12 +819,9 @@
                 root-keys
                 call-indices)]
             (cond
-              [(not reader.ok?)
-                (ResultSurfaceTypecheckFacts.Err reader.error-message)]
+              [(not reader.ok?) (Err reader.error-message)]
               [(not (= reader.offset reader.end))
-                (ResultSurfaceTypecheckFacts.Err
-                  "surface facts: trailing payload bytes")]
+                (Err "surface facts: trailing payload bytes")]
               [(not (surface-typecheck-facts-valid? facts))
-                (ResultSurfaceTypecheckFacts.Err
-                  "surface facts: invalid checked-prefix facts")]
-              [else (ResultSurfaceTypecheckFacts.Ok facts)])))))))
+                (Err "surface facts: invalid checked-prefix facts")]
+              [else (Ok facts)])))))))

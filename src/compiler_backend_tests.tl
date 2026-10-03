@@ -54,20 +54,17 @@
       (regalloc.compiler-reg-assignment-table-empty)]
     [end : i64 (string.string-length spec)]
     [i : i64 end]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (if (= (string.char-at spec i) ' ')
-            (begin
-              (set!
-                table
-                (reg-homes-insert
-                  table
-                  (string.substring spec (+ i 1) (- (- end i) 1))))
-              (set! end i))
-            unit)))
-      (reg-homes-insert table (string.substring spec 0 end)))))
+    (while (> i 0)
+      (set! i (- i 1))
+      (when
+        (= (string.char-at spec i) ' ')
+        (set!
+          table
+          (reg-homes-insert
+            table
+            (string.substring spec (+ i 1) (- (- end i) 1))))
+        (set! end i)))
+    (reg-homes-insert table (string.substring spec 0 end))))
 
 (define (reg-homes-register [entry : (& entry str)] [spelling : String]) : i64
   (let
@@ -111,36 +108,32 @@
   (let
     [checks : comptime.ExprList (comptime.expr-list-empty)]
     [i : i64 (comptime.expr-list-length needles)]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (set!
-            checks
-            (comptime.expr-list-cons
-              `(backend.compiler-backend-string-contains?
-                ,text
-                ,(comptime.expr-list-nth needles i))
-              checks))))
-      `(and ,@checks))))
+    (while (> i 0)
+      (set! i (- i 1))
+      (set!
+        checks
+        (comptime.expr-list-cons
+          `(backend.compiler-backend-string-contains?
+            ,text
+            ,(comptime.expr-list-nth needles i))
+          checks)))
+    `(and ,@checks)))
 
 (defmacro (asm-lacks? [text : comptime.Expr] [needles : comptime.Expr ...]) : bool
   (let
     [checks : comptime.ExprList (comptime.expr-list-empty)]
     [i : i64 (comptime.expr-list-length needles)]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (set!
-            checks
-            (comptime.expr-list-cons
-              `(not
-                (backend.compiler-backend-string-contains?
-                  ,text
-                  ,(comptime.expr-list-nth needles i)))
-              checks))))
-      `(and ,@checks))))
+    (while (> i 0)
+      (set! i (- i 1))
+      (set!
+        checks
+        (comptime.expr-list-cons
+          `(not
+            (backend.compiler-backend-string-contains?
+              ,text
+              ,(comptime.expr-list-nth needles i)))
+          checks)))
+    `(and ,@checks)))
 
 ;; `(asm-ok? result (has s ...) (lacks s ...) ...)` holds when `result` is Ok
 ;; and its text passes every clause in order: a `has` clause as asm-has?, a
@@ -150,67 +143,64 @@
     [text : String (comptime.syntax-name-fresh "asm")]
     [checks : comptime.ExprList (comptime.expr-list-empty)]
     [i : i64 (comptime.expr-list-length clauses)]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (match (comptime.expr-list-nth clauses i)
-            [(comptime.Expr.Call head needles)
-              (let
-                [lacks : bool
-                  (match head
-                    [(comptime.Expr.Var name)
-                      (if (string-eq name "lacks")
-                        true
-                        (if (string-eq name "has")
-                          false
-                          (comptime.comptime-error
-                            "asm-ok? clauses are (has s ...) or (lacks s ...)")))]
-                    [_
+    (while (> i 0)
+      (set! i (- i 1))
+      (match (comptime.expr-list-nth clauses i)
+        [(comptime.Expr.Call head needles)
+          (let
+            [lacks : bool
+              (match head
+                [(comptime.Expr.Var name)
+                  (if (string-eq name "lacks")
+                    true
+                    (if (string-eq name "has")
+                      false
                       (comptime.comptime-error
-                        "asm-ok? clauses are (has s ...) or (lacks s ...)")])]
-                [j : i64 (comptime.expr-list-length needles)]
-                (while (> j 0)
-                  (begin
-                    (set! j (- j 1))
-                    (let
-                      [check : comptime.Expr
-                        `(backend.compiler-backend-string-contains?
-                          ,(comptime.expr-var text)
-                          ,(comptime.expr-list-nth needles j))]
-                      (set!
-                        checks
-                        (comptime.expr-list-cons
-                          (if lacks
-                            (comptime.expr-not check)
-                            check)
-                          checks))))))]
-            [_
-              (comptime.comptime-error
-                "asm-ok? clauses are (has s ...) or (lacks s ...)")])))
-      (comptime.expr-match
-        result
+                        "asm-ok? clauses are (has s ...) or (lacks s ...)")))]
+                [_
+                  (comptime.comptime-error
+                    "asm-ok? clauses are (has s ...) or (lacks s ...)")])]
+            [j : i64 (comptime.expr-list-length needles)]
+            (while (> j 0)
+              (set! j (- j 1))
+              (let
+                [check : comptime.Expr
+                  `(backend.compiler-backend-string-contains?
+                    ,(comptime.expr-var text)
+                    ,(comptime.expr-list-nth needles j))]
+                (set!
+                  checks
+                  (comptime.expr-list-cons
+                    (if lacks
+                      (comptime.expr-not check)
+                      check)
+                    checks)))))]
+        [_
+          (comptime.comptime-error
+            "asm-ok? clauses are (has s ...) or (lacks s ...)")]))
+    (comptime.expr-match
+      result
+      (comptime.match-arm-list-cons
+        (comptime.match-arm
+          (comptime.pattern-variant
+            "backend.ResultCompilerBackend.Ok"
+            (comptime.pattern-list-cons
+              (comptime.pattern-binding text)
+              (comptime.pattern-list-empty)))
+          (comptime.expr-list-fold-if
+            checks
+            (comptime.expr-bool true)
+            (comptime.expr-bool false)
+            true))
         (comptime.match-arm-list-cons
           (comptime.match-arm
             (comptime.pattern-variant
-              "backend.ResultCompilerBackend.Ok"
+              "backend.ResultCompilerBackend.Err"
               (comptime.pattern-list-cons
-                (comptime.pattern-binding text)
+                (comptime.pattern-wildcard)
                 (comptime.pattern-list-empty)))
-            (comptime.expr-list-fold-if
-              checks
-              (comptime.expr-bool true)
-              (comptime.expr-bool false)
-              true))
-          (comptime.match-arm-list-cons
-            (comptime.match-arm
-              (comptime.pattern-variant
-                "backend.ResultCompilerBackend.Err"
-                (comptime.pattern-list-cons
-                  (comptime.pattern-wildcard)
-                  (comptime.pattern-list-empty)))
-              (comptime.expr-bool false))
-            (comptime.match-arm-list-empty)))))))
+            (comptime.expr-bool false))
+          (comptime.match-arm-list-empty))))))
 
 (define (compiler-backend-resetting-entry-live-session-guard-ok?) : bool
   (let
@@ -303,14 +293,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (ir.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (ir.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 ;; String-returning shim for instruction-sequence emission. Emission appends
 ;; into a caller-owned body buffer and its Ok payload is not the text, so
@@ -352,14 +341,13 @@
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (begin
-      (backend.compiler-backend-emit-load-var-into
-        (&mut line)
-        assignments
-        var-id
-        reg
-        backend-state)
-      (backend.compiler-backend-asm-buf-finish (& line)))))
+    (backend.compiler-backend-emit-load-var-into
+      (&mut line)
+      assignments
+      var-id
+      reg
+      backend-state)
+    (backend.compiler-backend-asm-buf-finish (& line))))
 
 (define (compiler-backend-test-f64-bits [text : String]) : u64
   (match (cfloat.compiler-float-parse-f64-bits text)
@@ -390,25 +378,24 @@
             [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
               live-afters.items]
             [count : i64 instrs.len]
-            (begin
-              (if (> count 0)
-                (regalloc.compiler-reg-extend-set-words
-                  starts
-                  ends
-                  (if (> (array-length after-items) 0)
-                    (owned_view.compiler-owned-array-element-shared-view
-                      after-items
-                      0)
-                    (compiler_liveness.compiler-live-set-empty))
-                  0
-                  point)
-                unit)
-              (compiler-backend-test-scavenge-seed-block-liveins
-                rest
-                liveness
-                (+ point (* 2 count))
+            (if (> count 0)
+              (regalloc.compiler-reg-extend-set-words
                 starts
-                ends)))])]))
+                ends
+                (if (> (array-length after-items) 0)
+                  (owned_view.compiler-owned-array-element-shared-view
+                    after-items
+                    0)
+                  (compiler_liveness.compiler-live-set-empty))
+                0
+                point)
+              unit)
+            (compiler-backend-test-scavenge-seed-block-liveins
+              rest
+              liveness
+              (+ point (* 2 count))
+              starts
+              ends))])]))
 
 ;; The emitter scratch a fixture stages around one emit call and puts back
 ;; afterwards: the scavenge context, the instruction post base and the current
@@ -442,25 +429,24 @@
   [saved : EmitterScratch]) : unit
   (match saved
     [(EmitterScratch
+      starts
+      ends
+      assignments
+      plan-mask
+      occupied-masks
+      vars
+      post-base
+      current-count)
+      (backend.compiler-backend-set-scavenge-ctx-ready!
+        (backend.compiler-backend-state-function-state backend-state)
         starts
         ends
         assignments
         plan-mask
         occupied-masks
-        vars
-        post-base
-        current-count)
-      (begin
-        (backend.compiler-backend-set-scavenge-ctx-ready!
-          (backend.compiler-backend-state-function-state backend-state)
-          starts
-          ends
-          assignments
-          plan-mask
-          occupied-masks
-          vars)
-        (set-state-emit-instr-post-base! backend-state post-base)
-        (set-state-emit-current-count! backend-state current-count))]))
+        vars)
+      (set-state-emit-instr-post-base! backend-state post-base)
+      (set-state-emit-current-count! backend-state current-count)]))
 
 (define (compiler-backend-test-scavenge-install-ctx!
   [name : String]
@@ -470,62 +456,58 @@
   [emit-blocks : ir.CompilerIrBlockList]
   [assignments : regalloc.CompilerRegAssignmentTable]
   [backend-state : backend.CompilerBackendState]) : unit
-  (begin
-    (set-state-emit-instr-post-base! backend-state 0)
-    (if (< slot-vars 1)
-      (compiler-backend-set-scavenge-ctx!
-        (backend.compiler-backend-state-function-state backend-state)
-        (__tl_make-array i64 1)
-        (__tl_make-array i64 1)
+  (set-state-emit-instr-post-base! backend-state 0)
+  (if (< slot-vars 1)
+    (compiler-backend-set-scavenge-ctx!
+      (backend.compiler-backend-state-function-state backend-state)
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      assignments
+      0)
+    (let
+      [func : ir.CompilerIrFunction
+        (Function
+          (ci.intern name)
+          params
+          ret-ty
+          slot-vars
+          (owned_view.compiler-owned-shared-view emit-blocks)
+          Ordinary)]
+      [liveness : compiler_liveness.CompilerFunctionLiveness
+        (compiler_liveness.compiler-live-analyze-function func)]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
+      (match (backend.compiler-backend-scavenge-assignments-build
         assignments
-        0)
-      (let
-        [func : ir.CompilerIrFunction
-          (Function
-            (ci.intern name)
-            params
-            ret-ty
-            slot-vars
+        slot-vars)
+        [(backend.CompilerBackendScavengeAssignments assignment-index plan-mask)
+          (regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
+          (regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
+          (regalloc.compiler-reg-live-intervals-blocks-with-live
             (owned_view.compiler-owned-shared-view emit-blocks)
-            Ordinary)]
-        [liveness : compiler_liveness.CompilerFunctionLiveness
-          (compiler_liveness.compiler-live-analyze-function func)]
-        [starts : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
-        [ends : (__tl_dyn-array i64) (__tl_make-array i64 slot-vars)]
-        (match (backend.compiler-backend-scavenge-assignments-build
-          assignments
-          slot-vars)
-          [(backend.CompilerBackendScavengeAssignments
+            (owned_view.compiler-owned-shared-view liveness)
+            0
+            starts
+            ends)
+          (compiler-backend-test-scavenge-seed-block-liveins
+            (ir.compiler-ir-block-list-view emit-blocks)
+            liveness
+            0
+            starts
+            ends)
+          (backend.compiler-backend-set-scavenge-ctx-ready!
+            (backend.compiler-backend-state-function-state backend-state)
+            (owned_view.compiler-owned-shared-view starts)
+            (owned_view.compiler-owned-shared-view ends)
+            assignment-index
+            plan-mask
+            (backend.compiler-backend-scavenge-occupancy-build
+              starts
+              ends
               assignment-index
-              plan-mask)
-            (begin
-              (regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
-              (regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
-              (regalloc.compiler-reg-live-intervals-blocks-with-live
-                (owned_view.compiler-owned-shared-view emit-blocks)
-                (owned_view.compiler-owned-shared-view liveness)
-                0
-                starts
-                ends)
-              (compiler-backend-test-scavenge-seed-block-liveins
-                (ir.compiler-ir-block-list-view emit-blocks)
-                liveness
-                0
-                starts
-                ends)
-              (backend.compiler-backend-set-scavenge-ctx-ready!
-                (backend.compiler-backend-state-function-state backend-state)
-                (owned_view.compiler-owned-shared-view starts)
-                (owned_view.compiler-owned-shared-view ends)
-                assignment-index
-                plan-mask
-                (backend.compiler-backend-scavenge-occupancy-build
-                  starts
-                  ends
-                  assignment-index
-                  (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
-                  slot-vars)
-                slot-vars))])))))
+              (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
+              slot-vars)
+            slot-vars)]))))
 
 (define (compiler-backend-scavenge-occupied-mask-for-instr
   [starts : (& starts (__tl_dyn-array i64))]
@@ -541,24 +523,22 @@
     [limit : i64 (array-length present)]
     [v : i64 0]
     [mask : i64 0]
-    (begin
-      (while (< v vars)
-        (begin
-          (if (and
-            (< v limit)
-            (not (= (array-ref present v) 0))
-            (>= (array-ref starts v) 0)
-            (<= (array-ref starts v) (+ point 1))
-            (<= point (array-ref ends v)))
-            (set!
-              mask
-              (bit-or
-                mask
-                (backend.compiler-backend-scavenge-location-mask
-                  (ir.compiler-ir-array-shared-view items v))))
-            unit)
-          (set! v (+ v 1))))
-      mask)))
+    (while (< v vars)
+      (if (and
+        (< v limit)
+        (not (= (array-ref present v) 0))
+        (>= (array-ref starts v) 0)
+        (<= (array-ref starts v) (+ point 1))
+        (<= point (array-ref ends v)))
+        (set!
+          mask
+          (bit-or
+            mask
+            (backend.compiler-backend-scavenge-location-mask
+              (ir.compiler-ir-array-shared-view items v))))
+        unit)
+      (set! v (+ v 1)))
+    mask))
 
 (define (compiler-backend-scavenge-pick
   [backend-state : backend.CompilerBackendState]
@@ -612,19 +592,17 @@
     [slots : (__tl_dyn-array backend.BackendFloatEntry) items.slots]
     [count : i64 items.len]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [entry : backend.BackendFloatEntry
-            (ir.compiler-ir-array-shared-view slots index)]
-          (begin
-            (when
-              (and
-                (compiler-backend-test-float-type-eq? entry.ty ty)
-                (= entry.bits bits))
-              (return true))
-            (set! index (+ index 1)))))
-      false)))
+    (while (< index count)
+      (let
+        [entry : backend.BackendFloatEntry
+          (ir.compiler-ir-array-shared-view slots index)]
+        (when
+          (and
+            (compiler-backend-test-float-type-eq? entry.ty ty)
+            (= entry.bits bits))
+          (return true))
+        (set! index (+ index 1))))
+    false))
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -1604,11 +1582,10 @@
       (let
         [builder : ir.CompilerIrGlobalBuilder
           (ir.compiler-ir-global-builder-with-capacity 1)]
-        (begin
-          (ir.compiler-ir-global-builder-push!
-            (&mut builder)
-            (ir.CompilerIrGlobal.Global 1 (I64) (RuntimeGlobal 2)))
-          (ir.compiler-ir-global-builder-to-seq builder)))]
+        (ir.compiler-ir-global-builder-push!
+          (&mut builder)
+          (ir.CompilerIrGlobal.Global 1 (I64) (RuntimeGlobal 2)))
+        (ir.compiler-ir-global-builder-to-seq builder))]
     [runtime-global-program : ir.CompilerIrProgram
       (Program
         runtime-globals
@@ -2186,33 +2163,29 @@
     [index : i64 0]
     [previous-store? : bool false]
     [edges : i64 0]
-    (begin
-      (while (and (>= edges 0) (< index count))
-        (begin
-          (match (cobj.compiler-object-instr-list-ref instrs index)
-            [(Bytes value)
-              (set!
-                previous-store?
-                (compiler-backend-object-rbp-store-chunk? value))]
-            [(Jump symbol)
-              (begin
-                (if (cobj.compiler-object-string-contains? symbol "if_merge" 0)
-                  (if previous-store?
-                    (set! edges (+ edges 1))
-                    (set! edges -1))
-                  unit)
-                (set! previous-store? false))]
-            [(Label symbol)
-              (begin
-                (if (and
-                  previous-store?
-                  (cobj.compiler-object-string-contains? symbol "if_merge" 0))
-                  (set! edges (+ edges 1))
-                  unit)
-                (set! previous-store? false))]
-            [_ (set! previous-store? false)])
-          (set! index (+ index 1))))
-      edges)))
+    (while (and (>= edges 0) (< index count))
+      (match (cobj.compiler-object-instr-list-ref instrs index)
+        [(Bytes value)
+          (set!
+            previous-store?
+            (compiler-backend-object-rbp-store-chunk? value))]
+        [(Jump symbol)
+          (if (cobj.compiler-object-string-contains? symbol "if_merge" 0)
+            (if previous-store?
+              (set! edges (+ edges 1))
+              (set! edges -1))
+            unit)
+          (set! previous-store? false)]
+        [(Label symbol)
+          (if (and
+            previous-store?
+            (cobj.compiler-object-string-contains? symbol "if_merge" 0))
+            (set! edges (+ edges 1))
+            unit)
+          (set! previous-store? false)]
+        [_ (set! previous-store? false)])
+      (set! index (+ index 1)))
+    edges))
 
 (define (compiler-backend-object-phi-edge-copy-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
@@ -2476,46 +2449,42 @@
     [previous-store? : bool false]
     [in-pick? : bool false]
     [ok : bool true]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref instrs index)]
-          (begin
-            (match (owned_view.compiler-owned-shared-view instr)
-              [(Label label)
-                (cond
-                  [(string.eq label "_tl_pick") (set! in-pick? true)]
-                  [(or (string.eq label "main") (string.eq label "_tl_main"))
-                    (set! in-pick? false)]
-                  [else unit])]
-              [_ unit])
-            (if in-pick?
-              (match instr
-                [(Bytes value)
-                  (set!
-                    previous-store?
-                    (compiler-backend-object-rbp-store-chunk? value))]
-                [(Jcc cc _)
-                  (if (and (= cc expected-cc) previous-store?)
-                    (set! jcc-count (+ jcc-count 1))
-                    (set! ok false))]
-                [(Branch _ _) (set! ok false)]
-                [(Jump target)
-                  (if (< (+ index 1) count)
-                    (match (cobj.compiler-object-instr-list-ref
-                      instrs
-                      (+ index 1))
-                      [(Label label)
-                        (if (string.eq label target)
-                          (set! ok false)
-                          unit)]
-                      [_ unit])
-                    unit)]
-                [_ unit])
-              unit)
-            (set! index (+ index 1)))))
-      (and ok (= jcc-count 1)))))
+    (while (and ok (< index count))
+      (let
+        [instr : cobj.CompilerObjectX64Instr
+          (cobj.compiler-object-instr-list-ref instrs index)]
+        (match (owned_view.compiler-owned-shared-view instr)
+          [(Label label)
+            (cond
+              [(string.eq label "_tl_pick") (set! in-pick? true)]
+              [(or (string.eq label "main") (string.eq label "_tl_main"))
+                (set! in-pick? false)]
+              [else unit])]
+          [_ unit])
+        (if in-pick?
+          (match instr
+            [(Bytes value)
+              (set!
+                previous-store?
+                (compiler-backend-object-rbp-store-chunk? value))]
+            [(Jcc cc _)
+              (if (and (= cc expected-cc) previous-store?)
+                (set! jcc-count (+ jcc-count 1))
+                (set! ok false))]
+            [(Branch _ _) (set! ok false)]
+            [(Jump target)
+              (if (< (+ index 1) count)
+                (match (cobj.compiler-object-instr-list-ref instrs (+ index 1))
+                  [(Label label)
+                    (if (string.eq label target)
+                      (set! ok false)
+                      unit)]
+                  [_ unit])
+                unit)]
+            [_ unit])
+          unit)
+        (set! index (+ index 1))))
+    (and ok (= jcc-count 1))))
 
 (define (compiler-backend-object-branch-flags-ok?) : bool
   (let
@@ -2523,29 +2492,27 @@
     [inverse-cc : (__tl_dyn-array i64) (__tl_make-array 5 4 13 15 14 12)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< index 24))
-        (begin
-          (set!
-            ok
-            (match (backend.compiler-backend-emit-source-object-image-for-target
-              (compiler-backend-object-branch-flags-source
-                (string.copy (array-ref ops (% index 6)))
-                (>= (% index 12) 6))
-              (if (< index 12)
-                (backend.CompilerBackendTarget.Linux)
-                (backend.CompilerBackendTarget.Windows)))
-              [(Ok image)
-                (match (cobj.compiler-object-section-list-find
-                  image.sections
-                  (Text))
-                  [(Section _ _ instrs)
-                    (compiler-backend-object-branch-flags-shape-ok?
-                      instrs
-                      (array-ref inverse-cc (% index 6)))])]
-              [(Err _) false]))
-          (set! index (+ index 1))))
-      ok)))
+    (while (and ok (< index 24))
+      (set!
+        ok
+        (match (backend.compiler-backend-emit-source-object-image-for-target
+          (compiler-backend-object-branch-flags-source
+            (string.copy (array-ref ops (% index 6)))
+            (>= (% index 12) 6))
+          (if (< index 12)
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendTarget.Windows)))
+          [(Ok image)
+            (match (cobj.compiler-object-section-list-find
+              image.sections
+              (Text))
+              [(Section _ _ instrs)
+                (compiler-backend-object-branch-flags-shape-ok?
+                  instrs
+                  (array-ref inverse-cc (% index 6)))])]
+          [(Err _) false]))
+      (set! index (+ index 1)))
+    ok))
 
 ;; Flags are scoped to one adjacent integer producer, including when the same
 ;; scratch state is reused at the start of another block.
@@ -2558,81 +2525,67 @@
         (ir.compiler-ir-extern-seq-empty))]
     [case-index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< case-index 3))
-        (let
-          [instrs : ir.CompilerIrInstrSeq
+    (while (and ok (< case-index 3))
+      (let
+        [instrs : ir.CompilerIrInstrSeq
+          (compiler-backend-test-instr-seq-prepend
+            (BinOp
+              7
+              (if (= case-index 2)
+                (Add)
+                (Lt))
+              (Var 0)
+              (Var 1)
+              (if (= case-index 1)
+                (F64)
+                (I64)))
             (compiler-backend-test-instr-seq-prepend
-              (BinOp
-                7
-                (if (= case-index 2)
-                  (Add)
-                  (Lt))
-                (Var 0)
-                (Var 1)
-                (if (= case-index 1)
-                  (F64)
-                  (I64)))
-              (compiler-backend-test-instr-seq-prepend
-                (Mov 8 (I64 0) (I64))
-                (ir.compiler-ir-instr-seq-empty)))]
-          (begin
-            (backend.compiler-backend-object-note-flags!
-              program-index
-              (& instrs)
-              1)
-            (set!
-              ok
-              (and
-                (=
-                  (backend.compiler-backend-object-branch-flags-cc
-                    (Var 7)
-                    program-index)
-                  (if (= case-index 0)
-                    0xc
-                    -1))
-                (=
-                  (backend.compiler-backend-object-branch-flags-cc
-                    (Var 8)
-                    program-index)
-                  -1)
-                (=
-                  (backend.compiler-backend-object-branch-flags-cc
-                    (I64 7)
-                    program-index)
-                  -1)))
-            (backend.compiler-backend-object-note-flags!
-              program-index
-              (& instrs)
-              2)
-            (set!
-              ok
-              (and
-                ok
-                (=
-                  (backend.compiler-backend-object-branch-flags-cc
-                    (Var 7)
-                    program-index)
-                  -1)))
-            (backend.compiler-backend-object-note-flags!
-              program-index
-              (& instrs)
-              1)
-            (backend.compiler-backend-object-note-flags!
-              program-index
-              (& instrs)
-              0)
-            (set!
-              ok
-              (and
-                ok
-                (=
-                  (backend.compiler-backend-object-branch-flags-cc
-                    (Var 7)
-                    program-index)
-                  -1)))
-            (set! case-index (+ case-index 1)))))
-      ok)))
+              (Mov 8 (I64 0) (I64))
+              (ir.compiler-ir-instr-seq-empty)))]
+        (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
+        (set!
+          ok
+          (and
+            (=
+              (backend.compiler-backend-object-branch-flags-cc
+                (Var 7)
+                program-index)
+              (if (= case-index 0)
+                0xc
+                -1))
+            (=
+              (backend.compiler-backend-object-branch-flags-cc
+                (Var 8)
+                program-index)
+              -1)
+            (=
+              (backend.compiler-backend-object-branch-flags-cc
+                (I64 7)
+                program-index)
+              -1)))
+        (backend.compiler-backend-object-note-flags! program-index (& instrs) 2)
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (backend.compiler-backend-object-branch-flags-cc
+                (Var 7)
+                program-index)
+              -1)))
+        (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
+        (backend.compiler-backend-object-note-flags! program-index (& instrs) 0)
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (backend.compiler-backend-object-branch-flags-cc
+                (Var 7)
+                program-index)
+              -1)))
+        (set! case-index (+ case-index 1))))
+    ok))
 
 ;; The absent-next-block sentinel must never erase an invalid target. Include
 ;; a valid backward jump so rejecting every object is not a passing result.
@@ -2706,19 +2659,17 @@
   (let
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< index 16))
-        (begin
-          (set!
-            ok
-            (compiler-backend-object-terminal-label-case-ok?
-              (% index 4)
-              (= (% (/ index 4) 2) 1)
-              (if (< index 8)
-                (backend.CompilerBackendTarget.Linux)
-                (backend.CompilerBackendTarget.Windows))))
-          (set! index (+ index 1))))
-      ok)))
+    (while (and ok (< index 16))
+      (set!
+        ok
+        (compiler-backend-object-terminal-label-case-ok?
+          (% index 4)
+          (= (% (/ index 4) 2) 1)
+          (if (< index 8)
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendTarget.Windows))))
+      (set! index (+ index 1)))
+    ok))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
   [image : (& image cobj.CompilerObjectImage)]) : bool
@@ -3359,61 +3310,60 @@
     [(Ok asm)
       (let
         [ok : bool true]
-        (begin
-          (if (asm-has? asm ".globl tl_string_eq\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "    call tl_string_eq\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".extern tl_string_eq\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".globl tl_string_to_int\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "tl_string_to_int:\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "    call tl_string_to_int\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".extern tl_string_to_int\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".globl tl_int_to_string\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "    call tl_int_to_string\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".extern tl_int_to_string\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".globl tl_substring\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "    call tl_substring\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".extern tl_substring\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".globl tl_string_concat\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm "    call tl_string_concat\n")
-            (set! ok false)
-            unit)
-          (if (asm-has? asm ".extern tl_string_concat\n")
-            (set! ok false)
-            unit)
-          (if (let
-            [needle (compiler-backend-todo-marker)]
-            (asm-has? asm needle))
-            (set! ok false)
-            unit)
-          ok))]
+        (if (asm-has? asm ".globl tl_string_eq\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "    call tl_string_eq\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".extern tl_string_eq\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".globl tl_string_to_int\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "tl_string_to_int:\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "    call tl_string_to_int\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".extern tl_string_to_int\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".globl tl_int_to_string\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "    call tl_int_to_string\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".extern tl_int_to_string\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".globl tl_substring\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "    call tl_substring\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".extern tl_substring\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".globl tl_string_concat\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm "    call tl_string_concat\n")
+          (set! ok false)
+          unit)
+        (if (asm-has? asm ".extern tl_string_concat\n")
+          (set! ok false)
+          unit)
+        (if (let
+          [needle (compiler-backend-todo-marker)]
+          (asm-has? asm needle))
+          (set! ok false)
+          unit)
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-shadowed-string-helpers-source) : String
@@ -4356,10 +4306,9 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot 2)]
-    (begin
-      (set! (array-ref slots 0) (ir.CompilerIrCAbiReturnSlot.Slot (I64) 0))
-      (set! (array-ref slots 1) (ir.CompilerIrCAbiReturnSlot.Slot (I64) 8))
-      (ir.CompilerIrCAbiReturnSlotSeq slots 2))))
+    (set! (array-ref slots 0) (ir.CompilerIrCAbiReturnSlot.Slot (I64) 0))
+    (set! (array-ref slots 1) (ir.CompilerIrCAbiReturnSlot.Slot (I64) 8))
+    (ir.CompilerIrCAbiReturnSlotSeq slots 2)))
 
 (define (compiler-backend-c-abi-return-stores-r11-occupied-ok?) : bool
   (let
@@ -4908,16 +4857,15 @@
         (ir.compiler-debug-info-set-enabled! true)
         (backend.compiler-backend-emit-source
           (compiler-backend-closure-literal-source)))]
-    (begin
-      (ir.compiler-debug-info-set-enabled! previous)
-      (match result
-        [(Ok asm)
-          (and
-            (> (backend.compiler-backend-string-count asm ".cfi_startproc") 1)
-            (=
-              (backend.compiler-backend-string-count asm ".cfi_startproc")
-              (backend.compiler-backend-string-count asm ".cfi_endproc")))]
-        [(Err _) false]))))
+    (ir.compiler-debug-info-set-enabled! previous)
+    (match result
+      [(Ok asm)
+        (and
+          (> (backend.compiler-backend-string-count asm ".cfi_startproc") 1)
+          (=
+            (backend.compiler-backend-string-count asm ".cfi_startproc")
+            (backend.compiler-backend-string-count asm ".cfi_endproc")))]
+      [(Err _) false])))
 
 (define (compiler-backend-closure-emit-shape-ok?) : bool
   (and
@@ -5009,9 +4957,8 @@
   (let
     [builder : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
-    (begin
-      (compiler-backend-test-global-builder-push! (&mut builder) name ty value)
-      (ir.compiler-ir-global-builder-to-seq builder))))
+    (compiler-backend-test-global-builder-push! (&mut builder) name ty value)
+    (ir.compiler-ir-global-builder-to-seq builder)))
 
 (define (compiler-backend-test-two-i64-globals
   [first-name : String]
@@ -5021,164 +4968,161 @@
   (let
     [builder : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 2)]
-    (begin
-      (compiler-backend-test-global-builder-push!
-        (&mut builder)
-        first-name
-        (I64)
-        (I64 first-value))
-      (compiler-backend-test-global-builder-push!
-        (&mut builder)
-        second-name
-        (I64)
-        (I64 second-value))
-      (ir.compiler-ir-global-builder-to-seq builder))))
+    (compiler-backend-test-global-builder-push!
+      (&mut builder)
+      first-name
+      (I64)
+      (I64 first-value))
+    (compiler-backend-test-global-builder-push!
+      (&mut builder)
+      second-name
+      (I64)
+      (I64 second-value))
+    (ir.compiler-ir-global-builder-to-seq builder)))
 
 (define (compiler-backend-call-save-test-globals) : ir.CompilerIrGlobalSeq
   (let
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 9)]
-    (begin
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g0"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g1"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g2"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g3"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g4"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g5"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g6"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g5b"
-        (I64)
-        (I64 0))
-      (compiler-backend-test-global-builder-push!
-        (&mut globals)
-        "g5c"
-        (I64)
-        (I64 0))
-      (ir.compiler-ir-global-builder-to-seq globals))))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g0"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g1"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g2"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g3"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g4"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g5"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g6"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g5b"
+      (I64)
+      (I64 0))
+    (compiler-backend-test-global-builder-push!
+      (&mut globals)
+      "g5c"
+      (I64)
+      (I64 0))
+    (ir.compiler-ir-global-builder-to-seq globals)))
 
 (define (compiler-backend-call-save-main-instrs) : ir.CompilerIrInstrSeq
   (let
     [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
-    (begin
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend (irt.instr "return 0") instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g5c") (Var 5) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g5b") (Var 5) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g6") (Var 6) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g5") (Var 5) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g4") (Var 4) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g3") (Var 3) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g2") (Var 2) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g1") (Var 1) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Store (ci.intern "g0") (Var 0) (I64))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (Call 7 (ci.intern "side_effect") (Nil) (Unit))
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%6 = mov 6 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%5 = mov 5 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%4 = mov 4 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%3 = mov 3 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%2 = mov 2 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%1 = mov 1 : i64")
-          instrs))
-      (set!
-        instrs
-        (compiler-backend-test-instr-seq-prepend
-          (irt.instr "%0 = mov 0 : i64")
-          instrs))
-      instrs)))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend (irt.instr "return 0") instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g5c") (Var 5) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g5b") (Var 5) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g6") (Var 6) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g5") (Var 5) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g4") (Var 4) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g3") (Var 3) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g2") (Var 2) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g1") (Var 1) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Store (ci.intern "g0") (Var 0) (I64))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (Call 7 (ci.intern "side_effect") (Nil) (Unit))
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%6 = mov 6 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%5 = mov 5 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%4 = mov 4 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%3 = mov 3 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%2 = mov 2 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%1 = mov 1 : i64")
+        instrs))
+    (set!
+      instrs
+      (compiler-backend-test-instr-seq-prepend
+        (irt.instr "%0 = mov 0 : i64")
+        instrs))
+    instrs))
 
 (define (compiler-backend-call-save-program) : ir.CompilerIrProgram
   (Program
@@ -5369,16 +5313,15 @@
             [backend-state : backend.CompilerBackendState
               (backend.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active))]
-            (begin
-              (backend.compiler-backend-state-set-scalar-registers-enabled!
-                backend-state
-                true)
-              (compiler-backend-test-emit-program-with-state
-                backend-state
-                target
-                optimized
-                optimized-spans
-                emit-entry)))])]
+            (backend.compiler-backend-state-set-scalar-registers-enabled!
+              backend-state
+              true)
+            (compiler-backend-test-emit-program-with-state
+              backend-state
+              target
+              optimized
+              optimized-spans
+              emit-entry))])]
     [(Err diag) (Err diag)]))
 
 ;; A `stdlib.*` module fixture is library code: its module-qualified `main` is
@@ -5411,16 +5354,15 @@
             [backend-state : backend.CompilerBackendState
               (backend.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active))]
-            (begin
-              (backend.compiler-backend-state-set-scalar-registers-enabled!
-                backend-state
-                false)
-              (compiler-backend-test-emit-program-with-state
-                backend-state
-                target
-                optimized
-                optimized-spans
-                true)))])]
+            (backend.compiler-backend-state-set-scalar-registers-enabled!
+              backend-state
+              false)
+            (compiler-backend-test-emit-program-with-state
+              backend-state
+              target
+              optimized
+              optimized-spans
+              true))])]
     [(Err diag) (Err diag)]))
 
 (define compiler-backend-stack-only-frame-color-source : String
@@ -5980,34 +5922,31 @@
   (let
     [flag : bool (< a b)]
     [t : i64 0]
-    (begin
-      (if flag
-        (set! t (* a 3))
-        (set! t (+ b 7)))
-      (set! compiler-backend-flags-reuse-flag flag)
-      t)))
+    (if flag
+      (set! t (* a 3))
+      (set! t (+ b 7)))
+    (set! compiler-backend-flags-reuse-flag flag)
+    t))
 
 (define (compiler-backend-flags-reuse-neg [a : i64] [b : i64]) : i64
   (let
     [flag : bool (< a b)]
     [t : i64 0]
-    (begin
-      (if (not flag)
-        (set! t (* a 5))
-        (set! t (+ b 11)))
-      (set! compiler-backend-flags-reuse-flag flag)
-      t)))
+    (if (not flag)
+      (set! t (* a 5))
+      (set! t (+ b 11)))
+    (set! compiler-backend-flags-reuse-flag flag)
+    t))
 
 (define (compiler-backend-flags-reuse-guard [a : i64] [b : i64]) : i64
   (let
     [flag : bool (< a b)]
     [t : i64 0]
-    (begin
-      (if flag
-        (set! t (/ 100 a))
-        (set! t 0))
-      (set! compiler-backend-flags-reuse-flag flag)
-      t)))
+    (if flag
+      (set! t (/ 100 a))
+      (set! t 0))
+    (set! compiler-backend-flags-reuse-flag flag)
+    t))
 
 (define (compiler-backend-flags-reuse-runtime-ok?) : bool
   (let
@@ -8320,24 +8259,23 @@
 (define (compiler-backend-branded-arena-abi-ok?) : bool
   (let
     [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
-    (begin
-      (ast.ast-lifetime-list-push
-        (&mut lifetimes)
-        (ci.intern-generated-canonical-name "arena-brand/test#1"))
-      (and
-        (=
-          (let
-            [ty (ast.AstType.Struct cbi.compiler-builtin-id-arena-type)]
-            (backend.compiler-backend-type-size 0 ty))
-          8)
-        (=
-          (let
-            [ty
-              (ast.AstType.StructArgs
-                cbi.compiler-builtin-id-arena-type
-                (box lifetimes))]
-            (backend.compiler-backend-type-size 0 ty))
-          8)))))
+    (ast.ast-lifetime-list-push
+      (&mut lifetimes)
+      (ci.intern-generated-canonical-name "arena-brand/test#1"))
+    (and
+      (=
+        (let
+          [ty (ast.AstType.Struct cbi.compiler-builtin-id-arena-type)]
+          (backend.compiler-backend-type-size 0 ty))
+        8)
+      (=
+        (let
+          [ty
+            (ast.AstType.StructArgs
+              cbi.compiler-builtin-id-arena-type
+              (box lifetimes))]
+          (backend.compiler-backend-type-size 0 ty))
+        8))))
 
 ;; Emitted-source witness for the internal borrowed-slice ABI.  A borrowed
 ;; Slice reference is two integer words (data pointer then signed length), so
@@ -9053,16 +8991,14 @@
   (let
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and (< index (regalloc.compiler-reg-id-seq-count regs)) ok)
-        (begin
-          (if (compiler-backend-reg-part-known-entry-ok?
-            (cabi.compiler-abi-register-spelling
-              (regalloc.compiler-reg-id-seq-ref regs index)))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      ok)))
+    (while (and (< index (regalloc.compiler-reg-id-seq-count regs)) ok)
+      (if (compiler-backend-reg-part-known-entry-ok?
+        (cabi.compiler-abi-register-spelling
+          (regalloc.compiler-reg-id-seq-ref regs index)))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (compiler-backend-reg-part-pools-ok?) : bool
   (and
@@ -9111,7 +9047,70 @@
     [previous-offset : i64
       (scratch-emergency-slot-offset
         (backend.compiler-backend-state-function-state backend-state))]
-    (begin
+    (set-scratch-emergency-pending!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-used!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-pending-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (set-scratch-emergency-used-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (set-scratch-emergency-slot-offset!
+      (backend.compiler-backend-state-function-state backend-state)
+      -64)
+    (backend.compiler-backend-emergency-add!
+      (backend.compiler-backend-state-function-state backend-state)
+      "%r9")
+    (let
+      ;; T1-6 (b), bracket 1: the instruction provably never touches %r9
+      ;; (%r8..%r15 have no implicit uses, and there is no `call`), so the
+      ;; save/restore pair the scavenger enqueued is dropped outright.
+      [rendered : String
+        (text_buf.render
+          (backend.compiler-backend-append-located-instr
+            (text_buf.empty)
+            "    .loc 1 2 3\n"
+            "    shlq %cl, %r10\n"
+            backend-state))]
+      [_second : unit
+        (backend.compiler-backend-emergency-add!
+          (backend.compiler-backend-state-function-state backend-state)
+          "%r9")]
+      ;; Bracket 2: the instruction DOES write %r9, and it is call-free, so
+      ;; the value is parked in a free XMM register -- no frame slot.
+      [rendered-park : String
+        (text_buf.render
+          (backend.compiler-backend-append-located-instr
+            (text_buf.empty)
+            "    .loc 1 2 3\n"
+            "    shlq %cl, %r9\n"
+            backend-state))]
+      [_third : unit
+        (backend.compiler-backend-emergency-add!
+          (backend.compiler-backend-state-function-state backend-state)
+          "%r9")]
+      ;; Bracket 3: a `call` hands every caller-saved XMM register to the
+      ;; callee, so that bracket falls back to the emergency frame slot.
+      [rendered-call : String
+        (text_buf.render
+          (backend.compiler-backend-append-located-instr
+            (text_buf.empty)
+            "    .loc 1 2 3\n"
+            "    call _tl_sink\n"
+            backend-state))]
+      [ok : bool
+        (and
+          (string.eq rendered "    .loc 1 2 3\n    shlq %cl, %r10\n")
+          (string.eq
+            rendered-park
+            "    .loc 1 2 3\n    movq %r9, %xmm4\n    shlq %cl, %r9\n    movq %xmm4, %r9\n")
+          (string.eq
+            rendered-call
+            "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    call _tl_sink\n    movq -64(%rbp), %r9\n"))]
       (set-scratch-emergency-pending!
         (backend.compiler-backend-state-function-state backend-state)
         false)
@@ -9126,73 +9125,8 @@
         0)
       (set-scratch-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
-        -64)
-      (backend.compiler-backend-emergency-add!
-        (backend.compiler-backend-state-function-state backend-state)
-        "%r9")
-      (let
-        ;; T1-6 (b), bracket 1: the instruction provably never touches %r9
-        ;; (%r8..%r15 have no implicit uses, and there is no `call`), so the
-        ;; save/restore pair the scavenger enqueued is dropped outright.
-        [rendered : String
-          (text_buf.render
-            (backend.compiler-backend-append-located-instr
-              (text_buf.empty)
-              "    .loc 1 2 3\n"
-              "    shlq %cl, %r10\n"
-              backend-state))]
-        [_second : unit
-          (backend.compiler-backend-emergency-add!
-            (backend.compiler-backend-state-function-state backend-state)
-            "%r9")]
-        ;; Bracket 2: the instruction DOES write %r9, and it is call-free, so
-        ;; the value is parked in a free XMM register -- no frame slot.
-        [rendered-park : String
-          (text_buf.render
-            (backend.compiler-backend-append-located-instr
-              (text_buf.empty)
-              "    .loc 1 2 3\n"
-              "    shlq %cl, %r9\n"
-              backend-state))]
-        [_third : unit
-          (backend.compiler-backend-emergency-add!
-            (backend.compiler-backend-state-function-state backend-state)
-            "%r9")]
-        ;; Bracket 3: a `call` hands every caller-saved XMM register to the
-        ;; callee, so that bracket falls back to the emergency frame slot.
-        [rendered-call : String
-          (text_buf.render
-            (backend.compiler-backend-append-located-instr
-              (text_buf.empty)
-              "    .loc 1 2 3\n"
-              "    call _tl_sink\n"
-              backend-state))]
-        [ok : bool
-          (and
-            (string.eq rendered "    .loc 1 2 3\n    shlq %cl, %r10\n")
-            (string.eq
-              rendered-park
-              "    .loc 1 2 3\n    movq %r9, %xmm4\n    shlq %cl, %r9\n    movq %xmm4, %r9\n")
-            (string.eq
-              rendered-call
-              "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    call _tl_sink\n    movq -64(%rbp), %r9\n"))]
-        (begin
-          (set-scratch-emergency-pending!
-            (backend.compiler-backend-state-function-state backend-state)
-            false)
-          (set-scratch-emergency-used!
-            (backend.compiler-backend-state-function-state backend-state)
-            false)
-          (set-scratch-emergency-pending-count!
-            (backend.compiler-backend-state-function-state backend-state)
-            0)
-          (set-scratch-emergency-used-count!
-            (backend.compiler-backend-state-function-state backend-state)
-            0)
-          (set-scratch-emergency-slot-offset!
-            (backend.compiler-backend-state-function-state backend-state)
-            previous-offset)
-          ok)))))
+        previous-offset)
+      ok)))
 
 ;; A non-scalar branch condition (notably a Global) is materialized through the
 ;; generic load path. If that path emergency-borrows a live register, restore it
@@ -9241,31 +9175,30 @@
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
-    (begin
-      (backend.compiler-backend-count-instr-uses
-        (owned_view.compiler-owned-shared-view counts)
-        (irt.instr "%0 = call* %1(%2, %3) : i64"))
-      (backend.compiler-backend-count-instr-uses
-        (owned_view.compiler-owned-shared-view counts)
-        (irt.instr "%4 = call_c* %4(%5) : i64"))
-      (backend.compiler-backend-count-instr-uses
-        (owned_view.compiler-owned-shared-view counts)
-        (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
-      (backend.compiler-backend-count-instr-uses
-        (owned_view.compiler-owned-shared-view counts)
-        (irt.instr "tailcall* %8(%9, %10) : i64"))
-      (and
-        (backend.backend-and8
-          (= (array-ref counts 1) 1)
-          (= (array-ref counts 2) 1)
-          (= (array-ref counts 3) 1)
-          (= (array-ref counts 4) 1)
-          (= (array-ref counts 5) 1)
-          (= (array-ref counts 6) 1)
-          (= (array-ref counts 7) 1)
-          (= (array-ref counts 8) 1))
-        (= (array-ref counts 9) 1)
-        (= (array-ref counts 10) 1)))))
+    (backend.compiler-backend-count-instr-uses
+      (owned_view.compiler-owned-shared-view counts)
+      (irt.instr "%0 = call* %1(%2, %3) : i64"))
+    (backend.compiler-backend-count-instr-uses
+      (owned_view.compiler-owned-shared-view counts)
+      (irt.instr "%4 = call_c* %4(%5) : i64"))
+    (backend.compiler-backend-count-instr-uses
+      (owned_view.compiler-owned-shared-view counts)
+      (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
+    (backend.compiler-backend-count-instr-uses
+      (owned_view.compiler-owned-shared-view counts)
+      (irt.instr "tailcall* %8(%9, %10) : i64"))
+    (and
+      (backend.backend-and8
+        (= (array-ref counts 1) 1)
+        (= (array-ref counts 2) 1)
+        (= (array-ref counts 3) 1)
+        (= (array-ref counts 4) 1)
+        (= (array-ref counts 5) 1)
+        (= (array-ref counts 6) 1)
+        (= (array-ref counts 7) 1)
+        (= (array-ref counts 8) 1))
+      (= (array-ref counts 9) 1)
+      (= (array-ref counts 10) 1))))
 
 (define (compiler-backend-ir-walker-collections-ok?) : bool
   (let
@@ -9311,96 +9244,95 @@
   (let
     [call-array : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue 2)]
-    (begin
-      (set!
-        (array-ref call-array 0)
-        (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "8.5")))
-      (set! (array-ref call-array 1) (ir.CompilerIrValue.Bytes "arg-bytes"))
-      (let
-        [instrs : ir.CompilerIrInstrSeq
+    (set!
+      (array-ref call-array 0)
+      (ir.CompilerIrValue.F64 (compiler-backend-test-f64-bits "8.5")))
+    (set! (array-ref call-array 1) (ir.CompilerIrValue.Bytes "arg-bytes"))
+    (let
+      [instrs : ir.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (Call
+            0
+            (ci.intern "direct")
+            (Two (Function (ci.intern "call_fn")) (String "call-string"))
+            (I64))
           (compiler-backend-test-instr-seq-prepend
-            (Call
-              0
-              (ci.intern "direct")
-              (Two (Function (ci.intern "call_fn")) (String "call-string"))
+            (CallIndirect
+              1
+              (Function (ci.intern "indirect_fn"))
+              (Array call-array)
               (I64))
             (compiler-backend-test-instr-seq-prepend
-              (CallIndirect
-                1
-                (Function (ci.intern "indirect_fn"))
-                (Array call-array)
-                (I64))
+              (Phi
+                2
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (String "phi-string")
+                  (ir.compiler-ir-label "entry")
+                  (ir.compiler-ir-phi-input-seq-empty))
+                (String))
               (compiler-backend-test-instr-seq-prepend
-                (Phi
-                  2
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (String "phi-string")
-                    (ir.compiler-ir-label "entry")
-                    (ir.compiler-ir-phi-input-seq-empty))
-                  (String))
-                (compiler-backend-test-instr-seq-prepend
-                  (Return (Some (Bytes "return-bytes")))
-                  (ir.compiler-ir-instr-seq-empty)))))]
-        [blocks : ir.CompilerIrBlockList
-          (ir.compiler-ir-blocks
-            (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
-        [functions : ir.CompilerIrFunctionSeq
-          (ir.compiler-ir-function-seq-prepend
-            (Function
-              (ci.intern "main")
-              (ir.compiler-ir-param-seq-empty)
-              (I64)
-              3
-              blocks
-              Ordinary)
-            (ir.compiler-ir-function-seq-empty))]
-        [globals : ir.CompilerIrGlobalSeq
-          (compiler-backend-test-global-seq-single
-            "global_text"
-            (String)
-            (String "global-string"))]
-        [collections : backend.CompilerBackendProgramCollections
-          (compiler-backend-collect-program-collections
-            (Program globals functions (ir.compiler-ir-extern-seq-empty)))]
-        (and
-          (let
-            [items
-              (backend.compiler-backend-program-collections-functions
-                (owned_view.compiler-owned-shared-view collections))]
-            (backend.compiler-backend-symbol-list-contains-id?
-              items
-              (ci.intern "call_fn")))
-          (let
-            [items
-              (backend.compiler-backend-program-collections-functions
-                (owned_view.compiler-owned-shared-view collections))]
-            (backend.compiler-backend-symbol-list-contains-id?
-              items
-              (ci.intern "indirect_fn")))
-          (compiler-backend-string-list-contains?
-            (backend.compiler-backend-program-collections-strings
-              (owned_view.compiler-owned-shared-view collections))
-            "global-string")
-          (compiler-backend-string-list-contains?
-            (backend.compiler-backend-program-collections-strings
-              (owned_view.compiler-owned-shared-view collections))
-            "call-string")
-          (compiler-backend-string-list-contains?
-            (backend.compiler-backend-program-collections-strings
-              (owned_view.compiler-owned-shared-view collections))
-            "phi-string")
-          (compiler-backend-test-float-seq-contains?
-            (backend.compiler-backend-program-collections-floats
-              (owned_view.compiler-owned-shared-view collections))
-            (F64)
-            (compiler-backend-test-f64-bits "8.5"))
-          (compiler-backend-string-list-contains?
-            (backend.compiler-backend-program-collections-bytes
-              (owned_view.compiler-owned-shared-view collections))
-            "arg-bytes")
-          (compiler-backend-string-list-contains?
-            (backend.compiler-backend-program-collections-bytes collections)
-            "return-bytes"))))))
+                (Return (Some (Bytes "return-bytes")))
+                (ir.compiler-ir-instr-seq-empty)))))]
+      [blocks : ir.CompilerIrBlockList
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))]
+      [functions : ir.CompilerIrFunctionSeq
+        (ir.compiler-ir-function-seq-prepend
+          (Function
+            (ci.intern "main")
+            (ir.compiler-ir-param-seq-empty)
+            (I64)
+            3
+            blocks
+            Ordinary)
+          (ir.compiler-ir-function-seq-empty))]
+      [globals : ir.CompilerIrGlobalSeq
+        (compiler-backend-test-global-seq-single
+          "global_text"
+          (String)
+          (String "global-string"))]
+      [collections : backend.CompilerBackendProgramCollections
+        (compiler-backend-collect-program-collections
+          (Program globals functions (ir.compiler-ir-extern-seq-empty)))]
+      (and
+        (let
+          [items
+            (backend.compiler-backend-program-collections-functions
+              (owned_view.compiler-owned-shared-view collections))]
+          (backend.compiler-backend-symbol-list-contains-id?
+            items
+            (ci.intern "call_fn")))
+        (let
+          [items
+            (backend.compiler-backend-program-collections-functions
+              (owned_view.compiler-owned-shared-view collections))]
+          (backend.compiler-backend-symbol-list-contains-id?
+            items
+            (ci.intern "indirect_fn")))
+        (compiler-backend-string-list-contains?
+          (backend.compiler-backend-program-collections-strings
+            (owned_view.compiler-owned-shared-view collections))
+          "global-string")
+        (compiler-backend-string-list-contains?
+          (backend.compiler-backend-program-collections-strings
+            (owned_view.compiler-owned-shared-view collections))
+          "call-string")
+        (compiler-backend-string-list-contains?
+          (backend.compiler-backend-program-collections-strings
+            (owned_view.compiler-owned-shared-view collections))
+          "phi-string")
+        (compiler-backend-test-float-seq-contains?
+          (backend.compiler-backend-program-collections-floats
+            (owned_view.compiler-owned-shared-view collections))
+          (F64)
+          (compiler-backend-test-f64-bits "8.5"))
+        (compiler-backend-string-list-contains?
+          (backend.compiler-backend-program-collections-bytes
+            (owned_view.compiler-owned-shared-view collections))
+          "arg-bytes")
+        (compiler-backend-string-list-contains?
+          (backend.compiler-backend-program-collections-bytes collections)
+          "return-bytes")))))
 
 (define (compiler-backend-ir-walker-group-metadata-array-ok?) : bool
   (let
@@ -9847,11 +9779,10 @@
 
 (define (compiler-backend-peephole-test-session-reset!
   [session : CompilerBackendPeepholeTestSession]) : unit
-  (begin
-    (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
-      session.backend-state
-      session.stream)
-    (backend.compiler-backend-sweep-reset! session.backend-state session.stream)))
+  (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+    session.backend-state
+    session.stream)
+  (backend.compiler-backend-sweep-reset! session.backend-state session.stream))
 
 (define (compiler-backend-peephole-test-session-asm
   [session : CompilerBackendPeepholeTestSession]
@@ -9892,17 +9823,16 @@
   (let
     [session : CompilerBackendPeepholeTestSession
       (compiler-backend-peephole-test-session-new)]
-    (begin
-      (compiler-backend-peephole-test-session-reset! session)
-      (compiler-backend-peephole-test-session-win64!
-        session
-        symbol
-        frame
-        slot-vars
-        em-slot-offset
-        em-used-count
-        outgoing)
-      (compiler-backend-peephole-test-session-asm session asm))))
+    (compiler-backend-peephole-test-session-reset! session)
+    (compiler-backend-peephole-test-session-win64!
+      session
+      symbol
+      frame
+      slot-vars
+      em-slot-offset
+      em-used-count
+      outgoing)
+    (compiler-backend-peephole-test-session-asm session asm)))
 
 (define (compiler-backend-peephole-test-fpo-asm
   [symbol : String]
@@ -9916,19 +9846,18 @@
   (let
     [session : CompilerBackendPeepholeTestSession
       (compiler-backend-peephole-test-session-new)]
-    (begin
-      (compiler-backend-peephole-test-session-reset! session)
-      (backend.compiler-backend-sweep-record-fpo!
-        session.stream
-        symbol
-        frame
-        push-count
-        slot-vars
-        em-slot-offset
-        em-used-count
-        outgoing
-        session.backend-state)
-      (compiler-backend-peephole-test-session-asm session asm))))
+    (compiler-backend-peephole-test-session-reset! session)
+    (backend.compiler-backend-sweep-record-fpo!
+      session.stream
+      symbol
+      frame
+      push-count
+      slot-vars
+      em-slot-offset
+      em-used-count
+      outgoing
+      session.backend-state)
+    (compiler-backend-peephole-test-session-asm session asm)))
 
 ;; then the reload with it, so the clobbered value is consumed by
 ;; `movq %rax, -104(%rbp)` -- the owner-invalidation coverage is unchanged and
@@ -10518,69 +10447,67 @@
     [input-buf : text_buf.TextBuf (text_buf.empty)]
     [want-buf : text_buf.TextBuf (text_buf.empty)]
     [k : i64 0]
-    (begin
-      (set!
+    (set!
+      input-buf
+      (text_buf.append
         input-buf
-        (text_buf.append
-          input-buf
-          "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
-      (set!
+        "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
+    (set!
+      want-buf
+      (text_buf.append
         want-buf
-        (text_buf.append
-          want-buf
-          "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
-      (while (< k 50)
-        (let
-          [a : i64 (+ 8 (* 16 k))]
-          [b : i64 (+ 16 (* 16 k))]
-          [reg : String
-            (if (= (% k 3) 0)
-              "%r10"
-              (if (= (% k 3) 1)
-                "%r11"
-                "%rax"))]
-          (begin
-            (set!
-              input-buf
-              (text_buf.append
-                input-buf
-                (str_cat.str-cat
-                  "    movq $"
-                  (string.int->string k)
-                  ", "
-                  (string.int->string a)
-                  "(%rsp)\n    movq $"
-                  (string.int->string k)
-                  ", "
-                  (string.int->string b)
-                  "(%rsp)\n    movq "
-                  (string.int->string a)
-                  "(%rsp), "
-                  reg
-                  "\n")))
-            (set!
-              want-buf
-              (text_buf.append
-                want-buf
-                (str_cat.str-cat
-                  "    movq $"
-                  (string.int->string k)
-                  ", "
-                  (string.int->string a)
-                  "(%rsp)\n    movq "
-                  (string.int->string a)
-                  "(%rsp), "
-                  reg
-                  "\n")))
-            (set! k (+ k 1)))))
+        "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
+    (while (< k 50)
       (let
-        [input : String
-          (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
-        [want : String
-          (text_buf.render (text_buf.append want-buf "    leave\n    ret\n"))]
-        [got : String
-          (compiler-backend-peephole-test-win64-asm "main" 808 100 0 0 0 input)]
-        (string.eq got want)))))
+        [a : i64 (+ 8 (* 16 k))]
+        [b : i64 (+ 16 (* 16 k))]
+        [reg : String
+          (if (= (% k 3) 0)
+            "%r10"
+            (if (= (% k 3) 1)
+              "%r11"
+              "%rax"))]
+        (set!
+          input-buf
+          (text_buf.append
+            input-buf
+            (str_cat.str-cat
+              "    movq $"
+              (string.int->string k)
+              ", "
+              (string.int->string a)
+              "(%rsp)\n    movq $"
+              (string.int->string k)
+              ", "
+              (string.int->string b)
+              "(%rsp)\n    movq "
+              (string.int->string a)
+              "(%rsp), "
+              reg
+              "\n")))
+        (set!
+          want-buf
+          (text_buf.append
+            want-buf
+            (str_cat.str-cat
+              "    movq $"
+              (string.int->string k)
+              ", "
+              (string.int->string a)
+              "(%rsp)\n    movq "
+              (string.int->string a)
+              "(%rsp), "
+              reg
+              "\n")))
+        (set! k (+ k 1))))
+    (let
+      [input : String
+        (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
+      [want : String
+        (text_buf.render (text_buf.append want-buf "    leave\n    ret\n"))]
+      [got : String
+        (compiler-backend-peephole-test-win64-asm "main" 808 100 0 0 0 input)]
+      (string.eq got want))))
 
 ;; Byte-granular coverage: unaligned and wide reads overlap exactly by byte
 ;; range, not by slot.
@@ -11230,23 +11157,21 @@
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
     [i : i64 0]
-    (begin
-      (while (< i 65)
-        (begin
-          (set!
-            buf
-            (text_buf.append
-              buf
-              (str_cat.str-cat
-                "(define (f"
-                (string.int->string i)
-                ") : i64 "
-                (string.int->string i)
-                ")\n")))
-          (set! i (+ i 1))))
-      (compiler-backend-streamed-final-output-equivalent-source?
-        (text_buf.render
-          (text_buf.append buf "(define (main) : i64 (+ (f0) (f64)))\n"))))))
+    (while (< i 65)
+      (set!
+        buf
+        (text_buf.append
+          buf
+          (str_cat.str-cat
+            "(define (f"
+            (string.int->string i)
+            ") : i64 "
+            (string.int->string i)
+            ")\n")))
+      (set! i (+ i 1)))
+    (compiler-backend-streamed-final-output-equivalent-source?
+      (text_buf.render
+        (text_buf.append buf "(define (main) : i64 (+ (f0) (f64)))\n")))))
 
 (define (compiler-backend-rax-forward-chain-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs
@@ -11481,17 +11406,15 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr total)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref slots index)
-            (ir.CompilerIrInstr.Mov index (I64 index) (I64)))
-          (set! index (+ index 1))))
+    (while (< index count)
       (set!
-        (array-ref slots count)
-        (ir.CompilerIrInstr.Return (Some (Var (- count 1)))))
-      (ir.CompilerIrInstrSeq slots total))))
+        (array-ref slots index)
+        (ir.CompilerIrInstr.Mov index (I64 index) (I64)))
+      (set! index (+ index 1)))
+    (set!
+      (array-ref slots count)
+      (ir.CompilerIrInstr.Return (Some (Var (- count 1)))))
+    (ir.CompilerIrInstrSeq slots total)))
 
 (define (compiler-backend-long-normal-block-ok?) : bool
   (let
@@ -13778,24 +13701,23 @@ f:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
-    (begin
-      (backend.compiler-backend-set-current-mode!
-        (backend.compiler-backend-state-function-state backend-state)
-        mode)
-      (set-scratch-emergency-slot-offset!
-        (backend.compiler-backend-state-function-state backend-state)
-        -128)
-      (set-scratch-cycle-temp-base-offset!
-        (backend.compiler-backend-state-function-state backend-state)
-        -512)
-      (backend.compiler-backend-emit-phi-edge-copies
-        (ast.ast-node-pool-reader-type-segment-bases)
-        assignments
-        blocks
-        (ir.compiler-ir-label "join")
-        (ir.compiler-ir-label "entry")
-        program-index
-        vars))))
+    (backend.compiler-backend-set-current-mode!
+      (backend.compiler-backend-state-function-state backend-state)
+      mode)
+    (set-scratch-emergency-slot-offset!
+      (backend.compiler-backend-state-function-state backend-state)
+      -128)
+    (set-scratch-cycle-temp-base-offset!
+      (backend.compiler-backend-state-function-state backend-state)
+      -512)
+    (backend.compiler-backend-emit-phi-edge-copies
+      (ast.ast-node-pool-reader-type-segment-bases)
+      assignments
+      blocks
+      (ir.compiler-ir-label "join")
+      (ir.compiler-ir-label "entry")
+      program-index
+      vars)))
 
 (define (compiler-backend-phi-xmm-stage-bracket-shape?
   [asm : String]
@@ -13895,26 +13817,25 @@ f:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
-    (begin
-      (set-scratch-emergency-slot-offset!
-        (backend.compiler-backend-state-function-state backend-state)
-        -128)
-      (asm-ok?
-        (backend.compiler-backend-emit-mov-phi-copy-edge
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-xmm-stage-fused-assignments)
-          blocks
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "entry")
-          2
-          (Var 4)
-          program-index
-          5)
-        (has
-          "    movdqu %xmm2, -128(%rbp)\n"
-          "    movsd -32(%rbp), %xmm2\n"
-          "    movsd %xmm2, -16(%rbp)\n"
-          "    movdqu -128(%rbp), %xmm2\n")))))
+    (set-scratch-emergency-slot-offset!
+      (backend.compiler-backend-state-function-state backend-state)
+      -128)
+    (asm-ok?
+      (backend.compiler-backend-emit-mov-phi-copy-edge
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (compiler-backend-phi-xmm-stage-fused-assignments)
+        blocks
+        (ir.compiler-ir-label "join")
+        (ir.compiler-ir-label "entry")
+        2
+        (Var 4)
+        program-index
+        5)
+      (has
+        "    movdqu %xmm2, -128(%rbp)\n"
+        "    movsd -32(%rbp), %xmm2\n"
+        "    movsd %xmm2, -16(%rbp)\n"
+        "    movdqu -128(%rbp), %xmm2\n"))))
 
 (define (compiler-backend-phi-group-cycle-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12/%r13 %1=%r14/%r15"))
@@ -14891,25 +14812,24 @@ f:
             [backend-state : backend.CompilerBackendState
               (backend.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active))]
-            (begin
-              (backend.compiler-backend-state-set-scalar-registers-enabled!
-                backend-state
-                true)
-              (match (compiler-backend-test-emit-program-with-state
-                backend-state
-                (backend.CompilerBackendTarget.Windows)
-                program
-                spans
-                true)
-                [(Ok asm)
-                  (let
-                    [body : String
-                      (compiler-backend-asm-function-body asm "_tl_heavy")]
-                    (and
-                      (not (string.eq body ""))
-                      (asm-has? body ".seh_stackalloc " ".seh_endprologue\n")
-                      (asm-lacks? body ".seh_setframe" "movq %rsp, %rbp")))]
-                [(Err _) false])))]
+            (backend.compiler-backend-state-set-scalar-registers-enabled!
+              backend-state
+              true)
+            (match (compiler-backend-test-emit-program-with-state
+              backend-state
+              (backend.CompilerBackendTarget.Windows)
+              program
+              spans
+              true)
+              [(Ok asm)
+                (let
+                  [body : String
+                    (compiler-backend-asm-function-body asm "_tl_heavy")]
+                  (and
+                    (not (string.eq body ""))
+                    (asm-has? body ".seh_stackalloc " ".seh_endprologue\n")
+                    (asm-lacks? body ".seh_setframe" "movq %rsp, %rbp")))]
+              [(Err _) false]))]
         [(Err _) false])]
     ok))
 
@@ -15589,9 +15509,8 @@ f:
 (define (compiler-backend-explicit-state-install!
   [intern-state : (& intern-state ci.InternCompatState)]
   [builtin-state : (& builtin-state cbi.CompilerBuiltinIdsState)]) : unit
-  (begin
-    (ci.intern-compat-state-install! intern-state)
-    (cbi.state-install! builtin-state)))
+  (ci.intern-compat-state-install! intern-state)
+  (cbi.state-install! builtin-state))
 
 ;; Every explicit route must use the intern capability carried by its backend
 ;; state, even when the process-global compatibility table is the other job's
@@ -15922,10 +15841,9 @@ f:
         (string.eq
           (compiler-backend-explicit-state-pic-result-text pic-b1)
           (compiler-backend-explicit-state-pic-result-text pic-b2)))]
-    (begin
-      (ci.intern-compat-state-install! active-before)
-      (cbi.state-install! builtin-before)
-      ok)))
+    (ci.intern-compat-state-install! active-before)
+    (cbi.state-install! builtin-before)
+    ok))
 
 (define (compiler-backend-explicit-state-target-pic-policy-ok?) : bool
   (let
@@ -16010,12 +15928,11 @@ f:
     [interleave-ok : bool (and (= a1 8) (= b1 12) (= a2 9))]
     [failure-ok : bool
       (compiler-backend-abort-counter-duplicate-failure-reset-ok?)]
-    (begin
-      (ci.intern-compat-state-install! active-before)
-      (and
-        interleave-ok
-        failure-ok
-        (= (backend.compiler-backend-state-abort-site-counter counter-b) 12)))))
+    (ci.intern-compat-state-install! active-before)
+    (and
+      interleave-ok
+      failure-ok
+      (= (backend.compiler-backend-state-abort-site-counter counter-b) 12))))
 
 (define (compiler-backend-abort-counter-duplicate-failure-reset-ok?) : bool
   (let
@@ -16091,17 +16008,14 @@ f:
             [text (text_buf.render buf)]
             (asm-has? text "_tl_dup_abort"))]
         [(Err _) false])]
-    (begin
-      (ci.intern-compat-state-install! active-before)
-      (cbi.state-install! builtin-before)
-      (and
-        duplicate-failed
-        duplicate-stream-retired
-        (= (backend.compiler-backend-state-abort-site-counter failure-state) 0)
-        (=
-          (backend.compiler-backend-state-abort-site-counter untouched-state)
-          11)
-        valid-ok))))
+    (ci.intern-compat-state-install! active-before)
+    (cbi.state-install! builtin-before)
+    (and
+      duplicate-failed
+      duplicate-stream-retired
+      (= (backend.compiler-backend-state-abort-site-counter failure-state) 0)
+      (= (backend.compiler-backend-state-abort-site-counter untouched-state) 11)
+      valid-ok)))
 
 (define (compiler-backend-instr-diagnostic-case-ok?
   [instr : ir.CompilerIrInstr]
@@ -16179,26 +16093,25 @@ f:
   (let
     [builder : ir.CompilerIrSwitchCaseBuilder
       (ir.compiler-ir-switch-case-builder-with-capacity 6)]
-    (begin
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "zero")))
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "one")))
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 2 (ir.compiler-ir-label "two")))
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 3 (ir.compiler-ir-label "three")))
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 4 (ir.compiler-ir-label "four")))
-      (ir.compiler-ir-switch-case-builder-push!
-        (&mut builder)
-        (ir.CompilerIrSwitchCase.Case 5 (ir.compiler-ir-label "five")))
-      (ir.compiler-ir-switch-case-builder-to-seq builder))))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "zero")))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "one")))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 2 (ir.compiler-ir-label "two")))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 3 (ir.compiler-ir-label "three")))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 4 (ir.compiler-ir-label "four")))
+    (ir.compiler-ir-switch-case-builder-push!
+      (&mut builder)
+      (ir.CompilerIrSwitchCase.Case 5 (ir.compiler-ir-label "five")))
+    (ir.compiler-ir-switch-case-builder-to-seq builder)))
 
 (define (compiler-backend-total-switch-return-block
   [label : i64]
@@ -19427,11 +19340,10 @@ f:
           backend-state)
         (has "    vpcmpq $0, %zmm7, %zmm6, %k7\n" "    kmovw %k7, -24(%rbp)\n")
         (lacks "%ymm" "%k0"))]
-    (begin
-      (backend.compiler-backend-set-current-mode!
-        (backend.compiler-backend-state-function-state backend-state)
-        (Scalar))
-      ok)))
+    (backend.compiler-backend-set-current-mode!
+      (backend.compiler-backend-state-function-state backend-state)
+      (Scalar))
+    ok))
 
 (define (compiler-backend-avx512-mask-spill-binop-emits-ok?) : bool
   (asm-ok?
@@ -19767,29 +19679,27 @@ f:
   (let
     [body : String ""]
     [i : i64 1]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            body
-            (str_cat.str-cat
-              body
-              "  %"
-              (string.int->string i)
-              " = mov %"
-              (string.int->string (+ i 1))
-              " : i64\n"))
-          (set! i (+ i 1))))
-      (str_cat.str-cat
-        "first:\n"
+    (while (< i n)
+      (set!
         body
-        "  %"
-        (string.int->string n)
-        " = mov 0 : i64\n  jump second\nsecond:\n"
-        body
-        "  %"
-        (string.int->string n)
-        " = mov 0 : i64\n  return 0\n"))))
+        (str_cat.str-cat
+          body
+          "  %"
+          (string.int->string i)
+          " = mov %"
+          (string.int->string (+ i 1))
+          " : i64\n"))
+      (set! i (+ i 1)))
+    (str_cat.str-cat
+      "first:\n"
+      body
+      "  %"
+      (string.int->string n)
+      " = mov 0 : i64\n  jump second\nsecond:\n"
+      body
+      "  %"
+      (string.int->string n)
+      " = mov 0 : i64\n  return 0\n")))
 
 (define (compiler-backend-simd-copy-shape-ok?) : bool
   (and
@@ -19886,62 +19796,59 @@ f:
         (text_buf.empty)
         "function @colored_vector_extent() -> f64 vars 10 {\nentry:\n")]
     [index : i64 0]
-    (begin
-      ;; Nine independent full-width values remain live across an ordinary
-      ;; call. Their final homes exceed the raw ten-variable ID domain.
-      (while (< index 9)
-        (begin
-          (set!
-            body
-            (text_buf.append
-              body
-              (str_cat.str-cat
-                "%"
-                (string.int->string index)
-                " = vector_load 0, "
-                (string.int->string index)
-                " lanes "
-                (string.int->string lanes)
-                " : i64\n")))
-          (set! index (+ index 1))))
-      (set! body (text_buf.append body "%9 = call side_effect() : f64\n"))
-      (set! index 0)
-      (while (< index 9)
-        (begin
-          (set!
-            body
-            (text_buf.append
-              body
-              (str_cat.str-cat
-                "vector_store 0, "
-                (string.int->string index)
-                ", %"
-                (string.int->string index)
-                " lanes "
-                (string.int->string lanes)
-                " : i64\n")))
-          (set! index (+ index 1))))
-      (set! body (text_buf.append body "return %9\n}"))
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        (compiler-backend-vector-home-program (irt.func (text_buf.render body)))
-        target
-        (if (= lanes 4)
-          (Avx2)
-          (Avx512))
-        (ir.compiler-source-spans-empty)
-        false)
-        [(Ok asm)
-          (and
-            (asm-has? asm "    call _tl_side_effect\n")
-            (>=
-              (backend.compiler-backend-string-count
-                asm
-                (if (= lanes 4)
-                  "vmovdqu "
-                  "vmovdqu64 "))
-              18)
-            (asm-lacks? asm "register home unavailable"))]
-        [(Err _) false]))))
+    ;; Nine independent full-width values remain live across an ordinary
+    ;; call. Their final homes exceed the raw ten-variable ID domain.
+    (while (< index 9)
+      (set!
+        body
+        (text_buf.append
+          body
+          (str_cat.str-cat
+            "%"
+            (string.int->string index)
+            " = vector_load 0, "
+            (string.int->string index)
+            " lanes "
+            (string.int->string lanes)
+            " : i64\n")))
+      (set! index (+ index 1)))
+    (set! body (text_buf.append body "%9 = call side_effect() : f64\n"))
+    (set! index 0)
+    (while (< index 9)
+      (set!
+        body
+        (text_buf.append
+          body
+          (str_cat.str-cat
+            "vector_store 0, "
+            (string.int->string index)
+            ", %"
+            (string.int->string index)
+            " lanes "
+            (string.int->string lanes)
+            " : i64\n")))
+      (set! index (+ index 1)))
+    (set! body (text_buf.append body "return %9\n}"))
+    (match (backend.compiler-backend-emit-program-target-with-mode
+      (compiler-backend-vector-home-program (irt.func (text_buf.render body)))
+      target
+      (if (= lanes 4)
+        (Avx2)
+        (Avx512))
+      (ir.compiler-source-spans-empty)
+      false)
+      [(Ok asm)
+        (and
+          (asm-has? asm "    call _tl_side_effect\n")
+          (>=
+            (backend.compiler-backend-string-count
+              asm
+              (if (= lanes 4)
+                "vmovdqu "
+                "vmovdqu64 "))
+            18)
+          (asm-lacks? asm "register home unavailable"))]
+      [(Err _) false])))
 
 (define (compiler-backend-colored-vector-extent-ok?) : bool
   (and
@@ -20059,12 +19966,11 @@ f:
     [state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (begin
-      (backend.compiler-backend-simd-scratch-plan!
-        (backend.compiler-backend-state-function-state state)
-        bytes
-        192)
-      state)))
+    (backend.compiler-backend-simd-scratch-plan!
+      (backend.compiler-backend-state-function-state state)
+      bytes
+      192)
+    state))
 
 ;; Byte OFFSET of that region, as the emitters spell it.
 (define (compiler-backend-simd-staging-address [bytes : i64] [offset : i64]) : String
@@ -20985,17 +20891,16 @@ f:
     [k1 : i64 (compiler-backend-test-mask-reg 1)]
     [k2 : i64 (compiler-backend-test-mask-reg 2)]
     [k4 : i64 (compiler-backend-test-mask-reg 4)]
-    (begin
-      (if reverse?
-        (begin
-          (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
-          (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2))
-        (begin
-          (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
-          (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)))
-      (compiler-backend-test-mask-entry-moves-eq?
-        moves
-        "    kmovq %k2, %k4\n    kmovq %k1, %k2\n"))))
+    (if reverse?
+      (begin
+        (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
+        (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2))
+      (begin
+        (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+        (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)))
+    (compiler-backend-test-mask-entry-moves-eq?
+      moves
+      "    kmovq %k2, %k4\n    kmovq %k1, %k2\n")))
 
 (define (compiler-backend-spmd-mask-entry-identity-subset-ok?) : bool
   (let
@@ -21003,10 +20908,9 @@ f:
       (compiler-backend-test-mask-entry-moves-empty 2)]
     [k2 : i64 (compiler-backend-test-mask-reg 2)]
     [k4 : i64 (compiler-backend-test-mask-reg 4)]
-    (begin
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
-      (compiler-backend-test-mask-entry-moves-eq? moves "    kmovq %k2, %k4\n"))))
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
+    (compiler-backend-test-mask-entry-moves-eq? moves "    kmovq %k2, %k4\n")))
 
 (define (compiler-backend-spmd-mask-entry-two-cycle-ok?) : bool
   (let
@@ -21014,12 +20918,11 @@ f:
       (compiler-backend-test-mask-entry-moves-empty 2)]
     [k1 : i64 (compiler-backend-test-mask-reg 1)]
     [k2 : i64 (compiler-backend-test-mask-reg 2)]
-    (begin
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k1)
-      (compiler-backend-test-mask-entry-moves-eq?
-        moves
-        "    kmovq %k1, %k7\n    kmovq %k2, %k1\n    kmovq %k7, %k2\n"))))
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k1)
+    (compiler-backend-test-mask-entry-moves-eq?
+      moves
+      "    kmovq %k1, %k7\n    kmovq %k2, %k1\n    kmovq %k7, %k2\n")))
 
 (define (compiler-backend-spmd-mask-entry-three-cycle-ok?) : bool
   (let
@@ -21028,13 +20931,12 @@ f:
     [k1 : i64 (compiler-backend-test-mask-reg 1)]
     [k2 : i64 (compiler-backend-test-mask-reg 2)]
     [k3 : i64 (compiler-backend-test-mask-reg 3)]
-    (begin
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k1)
-      (compiler-backend-test-mask-entry-moves-eq?
-        moves
-        "    kmovq %k1, %k7\n    kmovq %k3, %k1\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n"))))
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k1)
+    (compiler-backend-test-mask-entry-moves-eq?
+      moves
+      "    kmovq %k1, %k7\n    kmovq %k3, %k1\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n")))
 
 (define (compiler-backend-spmd-mask-entry-six-cycle-ok?) : bool
   (let
@@ -21046,16 +20948,15 @@ f:
     [k4 : i64 (compiler-backend-test-mask-reg 4)]
     [k5 : i64 (compiler-backend-test-mask-reg 5)]
     [k6 : i64 (compiler-backend-test-mask-reg 6)]
-    (begin
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k4)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k4 k5)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k5 k6)
-      (compiler-backend-test-mask-entry-move-push! (&mut moves) k6 k1)
-      (compiler-backend-test-mask-entry-moves-eq?
-        moves
-        "    kmovq %k1, %k7\n    kmovq %k6, %k1\n    kmovq %k5, %k6\n    kmovq %k4, %k5\n    kmovq %k3, %k4\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n"))))
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k4)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k4 k5)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k5 k6)
+    (compiler-backend-test-mask-entry-move-push! (&mut moves) k6 k1)
+    (compiler-backend-test-mask-entry-moves-eq?
+      moves
+      "    kmovq %k1, %k7\n    kmovq %k6, %k1\n    kmovq %k5, %k6\n    kmovq %k4, %k5\n    kmovq %k3, %k4\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n")))
 
 (define (compiler-backend-spmd-mask-entry-validation-ok?) : bool
   (let
@@ -21067,13 +20968,12 @@ f:
     [k2 : i64 (compiler-backend-test-mask-reg 2)]
     [k3 : i64 (compiler-backend-test-mask-reg 3)]
     [k7 : i64 (compiler-backend-test-mask-reg 7)]
-    (begin
-      (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k1 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k3 k2)
-      (compiler-backend-test-mask-entry-move-push! (&mut reserved) k1 k7)
-      (and
-        (compiler-backend-test-mask-entry-moves-error? duplicate)
-        (compiler-backend-test-mask-entry-moves-error? reserved)))))
+    (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k1 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k3 k2)
+    (compiler-backend-test-mask-entry-move-push! (&mut reserved) k1 k7)
+    (and
+      (compiler-backend-test-mask-entry-moves-error? duplicate)
+      (compiler-backend-test-mask-entry-moves-error? reserved))))
 
 (define (compiler-backend-spmd-mask-entry-spill-first-ok?) : bool
   (let
@@ -21214,9 +21114,8 @@ f:
                   (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) 55)
                   (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) 13))]
               [(Ok _) false])]))]
-    (begin
-      (ir.compiler-debug-info-set-enabled! previous-debug)
-      ok)))
+    (ir.compiler-debug-info-set-enabled! previous-debug)
+    ok))
 
 (define (compiler-backend-test-runtime-plan-for-instr
   [_instr : (& _instr ir.CompilerIrInstr)]
@@ -22040,65 +21939,60 @@ f:
     (not (compiler-backend-test-plan-provides? plan ".L_tl_fs_mkdir_status"))))
 
 (define (compiler-backend-runtime-helper-owner-id-ok?) : bool
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (let
-      [core-id : i64 (compiler-backend-test-runtime-name-id "tl_alloc")]
-      [aligned-core-id : i64
-        (compiler-backend-test-runtime-name-id "tl_alloc_aligned")]
-      [profile-id : i64
-        (compiler-backend-test-runtime-name-id "tl_profile_alloc_total")]
-      [stdlib-id : i64
-        (compiler-backend-test-runtime-name-id "tl_string_concat")]
-      [atomic-id : i64
-        (compiler-backend-test-runtime-name-id "tl_atomic_i64_cas_ptr")]
-      [retired-env-id : i64
-        (compiler-backend-test-runtime-name-id "path-separator")]
-      [retired-id : i64 (compiler-backend-test-runtime-name-id "tl_oob_abort")]
-      (and
-        (backend.backend-and4
-          (backend.compiler-backend-runtime-helper-core-id? core-id)
-          (backend.compiler-backend-runtime-helper-stdlib-ffi-id? profile-id)
-          (backend.compiler-backend-runtime-helper-stdlib-type-lisp-id?
-            stdlib-id)
-          (not
-            (backend.compiler-backend-runtime-helper-known-id? retired-env-id)))
-        (backend.compiler-backend-runtime-helper-stdlib-type-lisp-id? atomic-id)
-        (backend.compiler-backend-runtime-helper-core-id? aligned-core-id)
-        (not (backend.compiler-backend-runtime-helper-known-id? retired-id))
-        (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
-        (cbi.compiler-builtin-backend-runtime-profile-id? profile-id)))))
+  (cbi.compiler-builtin-refresh!)
+  (let
+    [core-id : i64 (compiler-backend-test-runtime-name-id "tl_alloc")]
+    [aligned-core-id : i64
+      (compiler-backend-test-runtime-name-id "tl_alloc_aligned")]
+    [profile-id : i64
+      (compiler-backend-test-runtime-name-id "tl_profile_alloc_total")]
+    [stdlib-id : i64 (compiler-backend-test-runtime-name-id "tl_string_concat")]
+    [atomic-id : i64
+      (compiler-backend-test-runtime-name-id "tl_atomic_i64_cas_ptr")]
+    [retired-env-id : i64
+      (compiler-backend-test-runtime-name-id "path-separator")]
+    [retired-id : i64 (compiler-backend-test-runtime-name-id "tl_oob_abort")]
+    (and
+      (backend.backend-and4
+        (backend.compiler-backend-runtime-helper-core-id? core-id)
+        (backend.compiler-backend-runtime-helper-stdlib-ffi-id? profile-id)
+        (backend.compiler-backend-runtime-helper-stdlib-type-lisp-id? stdlib-id)
+        (not (backend.compiler-backend-runtime-helper-known-id? retired-env-id)))
+      (backend.compiler-backend-runtime-helper-stdlib-type-lisp-id? atomic-id)
+      (backend.compiler-backend-runtime-helper-core-id? aligned-core-id)
+      (not (backend.compiler-backend-runtime-helper-known-id? retired-id))
+      (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
+      (cbi.compiler-builtin-backend-runtime-profile-id? profile-id))))
 
 (define (compiler-backend-runtime-plan-id-lookup-only-ok?) : bool
   (let
     [plan : backend.CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
-    (begin
-      (cbi.compiler-builtin-refresh!)
-      (let
-        [generation : i64 (ci.intern-generation)]
-        [unknown-id : i64
-          (ci.intern-generated-name "tl_issue_2464_unknown_runtime_probe")]
-        (and
+    (cbi.compiler-builtin-refresh!)
+    (let
+      [generation : i64 (ci.intern-generation)]
+      [unknown-id : i64
+        (ci.intern-generated-name "tl_issue_2464_unknown_runtime_probe")]
+      (and
+        (backend.compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-alloc)
+        (backend.compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-alloc-aligned)
+        (backend.compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-profile-alloc-total)
+        (not
           (backend.compiler-backend-plan-provides-id?
             plan
-            cbi.compiler-builtin-id-tl-alloc)
-          (backend.compiler-backend-plan-provides-id?
-            plan
-            cbi.compiler-builtin-id-tl-alloc-aligned)
-          (backend.compiler-backend-plan-provides-id?
-            plan
-            cbi.compiler-builtin-id-tl-profile-alloc-total)
-          (not
-            (backend.compiler-backend-plan-provides-id?
-              plan
-              cbi.compiler-builtin-id-env-path-separator))
-          (not (backend.compiler-backend-runtime-helper-known-id? unknown-id))
-          (match (backend.compiler-backend-runtime-helper-owner-id unknown-id)
-            [(Unknown) true]
-            [_ false])
-          (not (backend.compiler-backend-plan-provides-id? plan unknown-id))
-          (= (ci.intern-generation) generation))))))
+            cbi.compiler-builtin-id-env-path-separator))
+        (not (backend.compiler-backend-runtime-helper-known-id? unknown-id))
+        (match (backend.compiler-backend-runtime-helper-owner-id unknown-id)
+          [(Unknown) true]
+          [_ false])
+        (not (backend.compiler-backend-plan-provides-id? plan unknown-id))
+        (= (ci.intern-generation) generation)))))
 
 (define (compiler-backend-aligned-alloc-runtime-plan-ok?) : bool
   (let
@@ -23893,44 +23787,42 @@ f:
         (ci.intern-compat-state-capture-active))]
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state backend-state)]
-    (begin
-      (backend.compiler-backend-function-scratch-set-bool!
-        function-state
-        backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
-        false)
-      (backend.compiler-backend-function-scratch-set-bool!
-        function-state
-        backend.compiler-backend-scratch-bool-pair-emission
-        false)
-      (backend.backend-and4
-        ;; a lone load/gep/store outside any pair: narrow
-        (backend.compiler-backend-scavenge-narrow-window? function-state)
-        ;; inside a sibling-reordering family: wide
-        (begin
-          (backend.compiler-backend-function-scratch-set-bool!
-            function-state
-            backend.compiler-backend-scratch-bool-pair-emission
-            true)
-          (not
-            (backend.compiler-backend-scavenge-narrow-window? function-state)))
-        ;; R4-B's scalar admission still opens it there
-        (begin
-          (backend.compiler-backend-function-scratch-set-bool!
-            function-state
-            backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
-            true)
-          (backend.compiler-backend-scavenge-narrow-window? function-state))
-        ;; and the flag cleared again restores the lone-instruction answer
-        (begin
-          (backend.compiler-backend-function-scratch-set-bool!
-            function-state
-            backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
-            false)
-          (backend.compiler-backend-function-scratch-set-bool!
-            function-state
-            backend.compiler-backend-scratch-bool-pair-emission
-            false)
-          (backend.compiler-backend-scavenge-narrow-window? function-state))))))
+    (backend.compiler-backend-function-scratch-set-bool!
+      function-state
+      backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+      false)
+    (backend.compiler-backend-function-scratch-set-bool!
+      function-state
+      backend.compiler-backend-scratch-bool-pair-emission
+      false)
+    (backend.backend-and4
+      ;; a lone load/gep/store outside any pair: narrow
+      (backend.compiler-backend-scavenge-narrow-window? function-state)
+      ;; inside a sibling-reordering family: wide
+      (begin
+        (backend.compiler-backend-function-scratch-set-bool!
+          function-state
+          backend.compiler-backend-scratch-bool-pair-emission
+          true)
+        (not (backend.compiler-backend-scavenge-narrow-window? function-state)))
+      ;; R4-B's scalar admission still opens it there
+      (begin
+        (backend.compiler-backend-function-scratch-set-bool!
+          function-state
+          backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+          true)
+        (backend.compiler-backend-scavenge-narrow-window? function-state))
+      ;; and the flag cleared again restores the lone-instruction answer
+      (begin
+        (backend.compiler-backend-function-scratch-set-bool!
+          function-state
+          backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+          false)
+        (backend.compiler-backend-function-scratch-set-bool!
+          function-state
+          backend.compiler-backend-scratch-bool-pair-emission
+          false)
+        (backend.compiler-backend-scavenge-narrow-window? function-state)))))
 
 (define (compiler-backend-gep-fold-sub-shape-ok?) : bool
   (compiler-backend-gep-fold-disp-shape-with-ok?
@@ -23982,10 +23874,9 @@ f:
                 (backend.compiler-backend-gep-fold-drift?
                   (backend.compiler-backend-state-function-state backend-state))))]
           [(Err _) false]))]
-    (begin
-      (backend.compiler-backend-gep-fold-disable!
-        (backend.compiler-backend-state-function-state backend-state))
-      result)))
+    (backend.compiler-backend-gep-fold-disable!
+      (backend.compiler-backend-state-function-state backend-state))
+    result))
 
 ;; A second (non-gep) use of the offset var keeps the add and the plain
 ;; zero-displacement addressing.
@@ -24012,10 +23903,9 @@ f:
             backend-state)
           (has "(%r12,")
           (lacks "8(%r12,")))]
-    (begin
-      (backend.compiler-backend-gep-fold-disable!
-        (backend.compiler-backend-state-function-state backend-state))
-      result)))
+    (backend.compiler-backend-gep-fold-disable!
+      (backend.compiler-backend-state-function-state backend-state))
+    result))
 
 ;; The disp-aware address builders.
 (define (compiler-backend-gep-fold-builders-ok?) : bool
@@ -24065,10 +23955,9 @@ f:
               elem-ty))
           (backend.compiler-backend-gep-fold-drift?
             (backend.compiler-backend-state-function-state backend-state))))]
-    (begin
-      (backend.compiler-backend-gep-fold-disable!
-        (backend.compiler-backend-state-function-state backend-state))
-      result)))
+    (backend.compiler-backend-gep-fold-disable!
+      (backend.compiler-backend-state-function-state backend-state))
+    result))
 
 ;; A narrow (u8) load must NOT fold: the memory operand width would not match
 ;; the 64-bit ALU op. The fused movzbq load stays.
@@ -29606,14 +29495,12 @@ f:
   (let
     [out : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
     [i : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (ast.ast-type-list-push
-            (&mut out)
-            (ast.ast-node-pool-reader-type-push (I64)))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i 8)
+      (ast.ast-type-list-push
+        (&mut out)
+        (ast.ast-node-pool-reader-type-push (I64)))
+      (set! i (+ i 1)))
+    out))
 
 (define (compiler-backend-i64-immediate-call-args8) : ir.CompilerIrCallArgs
   (ir.compiler-ir-call-args-from-seq
@@ -29832,12 +29719,10 @@ f:
           (ast.ast-type-cons (I64) (ast.ast-type-list-new))
           (ast.ast-type-list-new)))]
     [i : i64 5]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! types (ast.ast-type-cons (I64) types))
-          (set! i (- i 1))))
-      types)))
+    (while (> i 0)
+      (set! types (ast.ast-type-cons (I64) types))
+      (set! i (- i 1)))
+    types))
 
 (define (compiler-backend-linux-atomic-pressure-args [tail? : bool]) : ir.CompilerIrCallArgs
   (let
@@ -29850,12 +29735,10 @@ f:
             (ir.compiler-ir-value-seq-empty))
           (ir.compiler-ir-value-seq-empty)))]
     [i : i64 5]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! values (ir.compiler-ir-value-seq-prepend (I64 (+ i 10)) values))
-          (set! i (- i 1))))
-      (ir.compiler-ir-call-args-from-seq values))))
+    (while (> i 0)
+      (set! values (ir.compiler-ir-value-seq-prepend (I64 (+ i 10)) values))
+      (set! i (- i 1)))
+    (ir.compiler-ir-call-args-from-seq values)))
 
 (define (compiler-backend-linux-atomic-pressure-params [group : ast.AstType]) : ir.CompilerIrParamSeq
   (let
@@ -29864,16 +29747,14 @@ f:
         (Param "group" group 0)
         (irt.params "tail=%6:i64"))]
     [i : i64 5]
-    (begin
-      (while (> i 0)
-        (begin
-          (set!
-            params
-            (ir.compiler-ir-param-seq-prepend
-              (Param (str_cat.str-cat "scalar" (string.int->string i)) (I64) i)
-              params))
-          (set! i (- i 1))))
-      params)))
+    (while (> i 0)
+      (set!
+        params
+        (ir.compiler-ir-param-seq-prepend
+          (Param (str_cat.str-cat "scalar" (string.int->string i)) (I64) i)
+          params))
+      (set! i (- i 1)))
+    params))
 
 (define (compiler-backend-linux-atomic-pressure-memory-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-8 %1=%rdi %2=%rsi %3=%rdx %4=%rcx %5=%r8 %6=%r15"))
@@ -30239,57 +30120,46 @@ f:
     [slots : (__tl_dyn-array String) (__tl_make-array String 16)]
     [index : i64 0]
     [mask : i64 0]
-    (begin
-      (while (< index 8)
-        (begin
-          (set!
-            groups
-            (compiler_liveness.compiler-live-set-insert groups index))
-          (set! index (+ index 1))))
-      (while (< mask 256)
-        (let
-          [addressable : compiler_liveness.CompilerLiveI64Set
-            (compiler_liveness.compiler-live-set-empty)]
-          (begin
-            (set! index 0)
-            (while (< index 8)
-              (begin
-                (when
-                  (not (= (bit-and mask (shl 1 index)) 0))
-                  (set!
-                    addressable
-                    (compiler_liveness.compiler-live-set-insert
-                      addressable
-                      index)))
-                (set! index (+ index 1))))
-            (backend.compiler-backend-group-vars-enable!
-              state
-              (owned_view.compiler-owned-shared-view groups)
-              addressable)
-            (set! index 0)
-            (while (< index 16)
-              (begin
-                (match (backend.compiler-backend-group-word-operand-with-backend-state
-                  (regalloc.compiler-reg-assignment-table-empty)
-                  (/ index 2)
-                  (% index 2)
-                  8
-                  state)
-                  [(Ok operand)
-                    (let
-                      [previous : i64 0]
-                      (begin
-                        (while (< previous index)
-                          (begin
-                            (when
-                              (string.eq operand (array-ref slots previous))
-                              (return false))
-                            (set! previous (+ previous 1))))
-                        (set! (array-ref slots index) operand)))]
-                  [(Err _) (return false)])
-                (set! index (+ index 1))))
-            (set! mask (+ mask 1)))))
-      true)))
+    (while (< index 8)
+      (set! groups (compiler_liveness.compiler-live-set-insert groups index))
+      (set! index (+ index 1)))
+    (while (< mask 256)
+      (let
+        [addressable : compiler_liveness.CompilerLiveI64Set
+          (compiler_liveness.compiler-live-set-empty)]
+        (set! index 0)
+        (while (< index 8)
+          (when
+            (not (= (bit-and mask (shl 1 index)) 0))
+            (set!
+              addressable
+              (compiler_liveness.compiler-live-set-insert addressable index)))
+          (set! index (+ index 1)))
+        (backend.compiler-backend-group-vars-enable!
+          state
+          (owned_view.compiler-owned-shared-view groups)
+          addressable)
+        (set! index 0)
+        (while (< index 16)
+          (match (backend.compiler-backend-group-word-operand-with-backend-state
+            (regalloc.compiler-reg-assignment-table-empty)
+            (/ index 2)
+            (% index 2)
+            8
+            state)
+            [(Ok operand)
+              (let
+                [previous : i64 0]
+                (while (< previous index)
+                  (when
+                    (string.eq operand (array-ref slots previous))
+                    (return false))
+                  (set! previous (+ previous 1)))
+                (set! (array-ref slots index) operand))]
+            [(Err _) (return false)])
+          (set! index (+ index 1)))
+        (set! mask (+ mask 1))))
+    true))
 
 (define (compiler-backend-stack-args-ok?) : bool
   (and
@@ -31644,21 +31514,20 @@ f:
       (__tl_make-array
         i64
         compiler-backend-inline-fast-alloc-emergency-live-count)]
-    (begin
-      (set! (array-ref regs 0) cabi.compiler-reg-id-r9)
-      (set! (array-ref regs 1) cabi.compiler-reg-id-rcx)
-      (set! (array-ref regs 2) cabi.compiler-reg-id-rdx)
-      (set! (array-ref regs 3) cabi.compiler-reg-id-r10)
-      (set! (array-ref regs 4) cabi.compiler-reg-id-r11)
-      (set! (array-ref regs 5) cabi.compiler-reg-id-r8)
-      (set! (array-ref regs 6) cabi.compiler-reg-id-r12)
-      (set! (array-ref regs 7) cabi.compiler-reg-id-r13)
-      (set! (array-ref regs 8) cabi.compiler-reg-id-r14)
-      (set! (array-ref regs 9) cabi.compiler-reg-id-r15)
-      (set! (array-ref regs 10) cabi.compiler-reg-id-rbx)
-      (set! (array-ref regs 11) cabi.compiler-reg-id-rsi)
-      (set! (array-ref regs 12) cabi.compiler-reg-id-rdi)
-      regs)))
+    (set! (array-ref regs 0) cabi.compiler-reg-id-r9)
+    (set! (array-ref regs 1) cabi.compiler-reg-id-rcx)
+    (set! (array-ref regs 2) cabi.compiler-reg-id-rdx)
+    (set! (array-ref regs 3) cabi.compiler-reg-id-r10)
+    (set! (array-ref regs 4) cabi.compiler-reg-id-r11)
+    (set! (array-ref regs 5) cabi.compiler-reg-id-r8)
+    (set! (array-ref regs 6) cabi.compiler-reg-id-r12)
+    (set! (array-ref regs 7) cabi.compiler-reg-id-r13)
+    (set! (array-ref regs 8) cabi.compiler-reg-id-r14)
+    (set! (array-ref regs 9) cabi.compiler-reg-id-r15)
+    (set! (array-ref regs 10) cabi.compiler-reg-id-rbx)
+    (set! (array-ref regs 11) cabi.compiler-reg-id-rsi)
+    (set! (array-ref regs 12) cabi.compiler-reg-id-rdi)
+    regs))
 
 (define (compiler-backend-inline-fast-alloc-emergency-assignments-from
   [regs : (__tl_dyn-array i64)]
@@ -31680,18 +31549,16 @@ f:
   (let
     [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
     [v : i64 (- compiler-backend-inline-fast-alloc-emergency-live-count 1)]
-    (begin
-      (while (>= v 0)
-        (begin
-          (set!
-            instrs
-            (compiler-backend-test-instr-seq-prepend
-              (Mov (+ 30 v) (Var v) (I64))
-              instrs))
-          (set! v (- v 1))))
-      (compiler-backend-test-instr-seq-prepend
-        (Call 20 (ci.intern "tl_alloc") (One (I64 8)) (U64))
-        instrs))))
+    (while (>= v 0)
+      (set!
+        instrs
+        (compiler-backend-test-instr-seq-prepend
+          (Mov (+ 30 v) (Var v) (I64))
+          instrs))
+      (set! v (- v 1)))
+    (compiler-backend-test-instr-seq-prepend
+      (Call 20 (ci.intern "tl_alloc") (One (I64 8)) (U64))
+      instrs)))
 
 (define (compiler-backend-inline-fast-alloc-emergency-asm) : backend.ResultCompilerBackend
   (let
@@ -32543,54 +32410,53 @@ f:
       (= bytes-first 512))))
 
 (define (compiler-backend-user-symbol-cache-ok?) : bool
-  (begin
-    (ci.intern-reset!)
-    (let
-      [path-name : String "pkg/nested/module.tl::some-value"]
-      [path-id : i64 (ci.intern path-name)]
-      [backend-state : backend.CompilerBackendState
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active))]
-      [backend-intern : ci.InternCompatState
-        (backend.compiler-backend-state-intern backend-state)]
-      [_capture-path : unit
-        (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
-      [_reset : unit
-        (backend.compiler-backend-state-user-symbol-cache-reset! backend-state)]
-      [path-symbol-first : String
-        (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
-      [count-after-path-first : i64
-        (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
-      [path-symbol-second : String
-        (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
-      [count-after-path-second : i64
-        (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
-      [main-id : i64 (ci.intern "main")]
-      [_capture-main : unit
-        (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
-      [main-symbol-first : String
-        (backend.compiler-backend-state-user-symbol-id backend-state main-id)]
-      [count-after-main-first : i64
-        (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
-      [main-symbol-second : String
-        (backend.compiler-backend-state-user-symbol-id backend-state main-id)]
-      [count-after-main-second : i64
-        (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
-      [third-symbol : String
-        (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
-      [count-after-third : i64
-        (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
-      (backend.backend-and8
-        (string.eq path-symbol-first "_tl_pkg_nested_module_some_value")
-        (string.eq path-symbol-second path-symbol-first)
-        (= count-after-path-first 1)
-        (= count-after-path-second count-after-path-first)
-        (string.eq main-symbol-first "main")
-        (string.eq main-symbol-second "main")
-        (= count-after-main-second count-after-main-first)
-        (and
-          (string.eq third-symbol path-symbol-first)
-          (= count-after-third count-after-main-second))))))
+  (ci.intern-reset!)
+  (let
+    [path-name : String "pkg/nested/module.tl::some-value"]
+    [path-id : i64 (ci.intern path-name)]
+    [backend-state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [backend-intern : ci.InternCompatState
+      (backend.compiler-backend-state-intern backend-state)]
+    [_capture-path : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
+    [_reset : unit
+      (backend.compiler-backend-state-user-symbol-cache-reset! backend-state)]
+    [path-symbol-first : String
+      (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
+    [count-after-path-first : i64
+      (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
+    [path-symbol-second : String
+      (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
+    [count-after-path-second : i64
+      (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
+    [main-id : i64 (ci.intern "main")]
+    [_capture-main : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut backend-intern))]
+    [main-symbol-first : String
+      (backend.compiler-backend-state-user-symbol-id backend-state main-id)]
+    [count-after-main-first : i64
+      (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
+    [main-symbol-second : String
+      (backend.compiler-backend-state-user-symbol-id backend-state main-id)]
+    [count-after-main-second : i64
+      (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
+    [third-symbol : String
+      (backend.compiler-backend-state-user-symbol-id backend-state path-id)]
+    [count-after-third : i64
+      (backend.compiler-backend-state-user-symbol-cache-count backend-state)]
+    (backend.backend-and8
+      (string.eq path-symbol-first "_tl_pkg_nested_module_some_value")
+      (string.eq path-symbol-second path-symbol-first)
+      (= count-after-path-first 1)
+      (= count-after-path-second count-after-path-first)
+      (string.eq main-symbol-first "main")
+      (string.eq main-symbol-second "main")
+      (= count-after-main-second count-after-main-first)
+      (and
+        (string.eq third-symbol path-symbol-first)
+        (= count-after-third count-after-main-second)))))
 
 (define (compiler-backend-user-symbol-cache-compat-state-ok?) : bool
   (let
@@ -32753,88 +32619,83 @@ f:
           referenced-link)))))
 
 (define (compiler-backend-program-index-explicit-extern-ids-ok?) : bool
-  (begin
-    (ci.intern-reset!)
-    (let
-      [fn-name : String "late_backend_index_fn"]
-      [fn-id : i64 (ci.intern fn-name)]
-      [extern-name : String "late_backend_index_ext"]
-      [extern-id : i64
-        (ci.intern-generated-name
-          (owned_view.compiler-owned-shared-view extern-name))]
-      [same-name-id : i64
-        (ci.intern-generated-name
-          (owned_view.compiler-owned-shared-view extern-name))]
-      [extern-link : String "late_backend_index_link"]
-      [extern-link-id : i64 (ci.intern-generated-name extern-link)]
-      [same-name-link : String "late_backend_index_link_2"]
-      [same-name-link-id : i64 (ci.intern-generated-name same-name-link)]
-      [source-count-before : i64 (ci.intern-pool-len)]
-      [index : backend.CompilerBackendProgramIndex
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-prepend
-            (Function
-              fn-id
-              (ir.compiler-ir-param-seq-empty)
-              (Unit)
-              0
-              (ir.compiler-ir-block-list-empty)
-              Ordinary)
-            (ir.compiler-ir-function-seq-empty))
-          (ir.compiler-ir-extern-seq2
-            (Extern
-              extern-id
-              extern-id
-              (owned_view.compiler-owned-shared-view extern-name)
-              (ast.ast-ty-func (ast.ast-type-list-new) (I64))
-              (C)
-              extern-link-id
-              (ast.ast-extern-link-input-list-new)
-              false)
-            (Extern
-              same-name-id
-              same-name-id
-              (owned_view.compiler-owned-shared-view extern-name)
-              (ast.ast-ty-func
-                (ast.ast-type-cons (I64) (ast.ast-type-list-new))
-                (I64))
-              (C)
-              same-name-link-id
-              (ast.ast-extern-link-input-list-new)
-              false)))]
-      (and
-        (= source-count-before (ci.intern-pool-len))
-        (backend.backend-and8
-          (compiler-backend-index-function-defines-id? index fn-id)
-          (backend.compiler-backend-index-function-defines? index fn-id)
-          (compiler-backend-signature-unit-to-i64?
-            (compiler-backend-index-extern-signature-id index extern-id))
-          (compiler-backend-signature-i64-to-i64?
-            (compiler-backend-index-extern-signature-id index same-name-id))
-          (compiler-backend-index-extern-references-id? index extern-id)
-          (compiler-backend-index-extern-references-id? index same-name-id)
-          (=
-            (backend.compiler-backend-index-extern-link-symbol-id
-              index
-              extern-id)
-            extern-link-id)
-          (=
-            (backend.compiler-backend-index-extern-link-symbol-id
-              index
-              same-name-id)
-            same-name-link-id))
-        (backend.backend-and4
-          (backend.compiler-backend-index-extern-references?
+  (ci.intern-reset!)
+  (let
+    [fn-name : String "late_backend_index_fn"]
+    [fn-id : i64 (ci.intern fn-name)]
+    [extern-name : String "late_backend_index_ext"]
+    [extern-id : i64
+      (ci.intern-generated-name
+        (owned_view.compiler-owned-shared-view extern-name))]
+    [same-name-id : i64
+      (ci.intern-generated-name
+        (owned_view.compiler-owned-shared-view extern-name))]
+    [extern-link : String "late_backend_index_link"]
+    [extern-link-id : i64 (ci.intern-generated-name extern-link)]
+    [same-name-link : String "late_backend_index_link_2"]
+    [same-name-link-id : i64 (ci.intern-generated-name same-name-link)]
+    [source-count-before : i64 (ci.intern-pool-len)]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-prepend
+          (Function
+            fn-id
+            (ir.compiler-ir-param-seq-empty)
+            (Unit)
+            0
+            (ir.compiler-ir-block-list-empty)
+            Ordinary)
+          (ir.compiler-ir-function-seq-empty))
+        (ir.compiler-ir-extern-seq2
+          (Extern
+            extern-id
+            extern-id
+            (owned_view.compiler-owned-shared-view extern-name)
+            (ast.ast-ty-func (ast.ast-type-list-new) (I64))
+            (C)
+            extern-link-id
+            (ast.ast-extern-link-input-list-new)
+            false)
+          (Extern
+            same-name-id
+            same-name-id
+            (owned_view.compiler-owned-shared-view extern-name)
+            (ast.ast-ty-func
+              (ast.ast-type-cons (I64) (ast.ast-type-list-new))
+              (I64))
+            (C)
+            same-name-link-id
+            (ast.ast-extern-link-input-list-new)
+            false)))]
+    (and
+      (= source-count-before (ci.intern-pool-len))
+      (backend.backend-and8
+        (compiler-backend-index-function-defines-id? index fn-id)
+        (backend.compiler-backend-index-function-defines? index fn-id)
+        (compiler-backend-signature-unit-to-i64?
+          (compiler-backend-index-extern-signature-id index extern-id))
+        (compiler-backend-signature-i64-to-i64?
+          (compiler-backend-index-extern-signature-id index same-name-id))
+        (compiler-backend-index-extern-references-id? index extern-id)
+        (compiler-backend-index-extern-references-id? index same-name-id)
+        (=
+          (backend.compiler-backend-index-extern-link-symbol-id index extern-id)
+          extern-link-id)
+        (=
+          (backend.compiler-backend-index-extern-link-symbol-id
             index
-            extern-link-id)
-          (backend.compiler-backend-index-extern-references?
-            index
-            same-name-link-id)
-          (match (ci.intern-lookup extern-name)
-            [(InternLookupFound _) false]
-            [(InternLookupMissing) true])
-          (not (= extern-id same-name-id)))))))
+            same-name-id)
+          same-name-link-id))
+      (backend.backend-and4
+        (backend.compiler-backend-index-extern-references? index extern-link-id)
+        (backend.compiler-backend-index-extern-references?
+          index
+          same-name-link-id)
+        (match (ci.intern-lookup extern-name)
+          [(InternLookupFound _) false]
+          [(InternLookupMissing) true])
+        (not (= extern-id same-name-id))))))
 
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
@@ -32924,46 +32785,41 @@ f:
       (reg-homes "%0=%r9 %1=%rcx %2=%rdx %4=%r8")]
     [r11-free : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r9 %1=%rcx %2=%rdx %3=%r10 %4=%r8")]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref starts 2) 0)
-      (set! (array-ref starts 3) 0)
-      (set! (array-ref starts 4) 0)
-      (set! (array-ref ends 0) 10)
-      (set! (array-ref ends 1) 10)
-      (set! (array-ref ends 2) 10)
-      (set! (array-ref ends 3) 10)
-      (set! (array-ref ends 4) 10)
-      (and
-        (string.eq
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              r10-free
-              5)
-            5
-            5
-            (backend.compiler-backend-binop-scavenge-exclude-build)
-            5
-            "%r8")
-          "%r10")
-        (string.eq
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              r11-free
-              5)
-            5
-            5
-            (backend.compiler-backend-binop-scavenge-exclude-build)
-            5
-            "%r8")
-          "%r11")))))
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref starts 2) 0)
+    (set! (array-ref starts 3) 0)
+    (set! (array-ref starts 4) 0)
+    (set! (array-ref ends 0) 10)
+    (set! (array-ref ends 1) 10)
+    (set! (array-ref ends 2) 10)
+    (set! (array-ref ends 3) 10)
+    (set! (array-ref ends 4) 10)
+    (and
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity r10-free 5)
+          5
+          5
+          (backend.compiler-backend-binop-scavenge-exclude-build)
+          5
+          "%r8")
+        "%r10")
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity r11-free 5)
+          5
+          5
+          (backend.compiler-backend-binop-scavenge-exclude-build)
+          5
+          "%r8")
+        "%r11"))))
 
 (define (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?) : bool
   (let
@@ -32976,46 +32832,41 @@ f:
       (reg-homes "%0=%r9 %1=%rcx %2=%rdx %4=%r8")]
     [r11-free : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r9 %1=%rcx %2=%rdx %3=%r10 %4=%r8")]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref starts 2) 0)
-      (set! (array-ref starts 3) 0)
-      (set! (array-ref starts 4) 0)
-      (set! (array-ref ends 0) 10)
-      (set! (array-ref ends 1) 10)
-      (set! (array-ref ends 2) 10)
-      (set! (array-ref ends 3) 10)
-      (set! (array-ref ends 4) 10)
-      (and
-        (string.eq
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              r10-free
-              5)
-            5
-            5
-            (backend.compiler-backend-scavenge-exclude-with "%r13")
-            6
-            "%r8")
-          "%r10")
-        (string.eq
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              r11-free
-              5)
-            5
-            5
-            (backend.compiler-backend-scavenge-exclude-with "%r13")
-            6
-            "%r8")
-          "%r11")))))
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref starts 2) 0)
+    (set! (array-ref starts 3) 0)
+    (set! (array-ref starts 4) 0)
+    (set! (array-ref ends 0) 10)
+    (set! (array-ref ends 1) 10)
+    (set! (array-ref ends 2) 10)
+    (set! (array-ref ends 3) 10)
+    (set! (array-ref ends 4) 10)
+    (and
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity r10-free 5)
+          5
+          5
+          (backend.compiler-backend-scavenge-exclude-with "%r13")
+          6
+          "%r8")
+        "%r10")
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity r11-free 5)
+          5
+          5
+          (backend.compiler-backend-scavenge-exclude-with "%r13")
+          6
+          "%r8")
+        "%r11"))))
 
 (define (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?) : bool
   (let
@@ -33026,54 +32877,53 @@ f:
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 7)]
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r9 %1=%rcx %2=%rdx %3=%r8 %5=%r13 %6=%r14")]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref starts 2) 0)
-      (set! (array-ref starts 3) 0)
-      (set! (array-ref starts 4) 0)
-      (set! (array-ref starts 5) 0)
-      (set! (array-ref starts 6) 0)
-      (set! (array-ref ends 0) 10)
-      (set! (array-ref ends 1) 10)
-      (set! (array-ref ends 2) 10)
-      (set! (array-ref ends 3) 10)
-      (set! (array-ref ends 4) 10)
-      (set! (array-ref ends 5) 10)
-      (set! (array-ref ends 6) 10)
-      (and
-        (string.eq
-          (compiler-backend-scavenge-pick
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref starts 2) 0)
+    (set! (array-ref starts 3) 0)
+    (set! (array-ref starts 4) 0)
+    (set! (array-ref starts 5) 0)
+    (set! (array-ref starts 6) 0)
+    (set! (array-ref ends 0) 10)
+    (set! (array-ref ends 1) 10)
+    (set! (array-ref ends 2) 10)
+    (set! (array-ref ends 3) 10)
+    (set! (array-ref ends 4) 10)
+    (set! (array-ref ends 5) 10)
+    (set! (array-ref ends 6) 10)
+    (and
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity
+            assignments
+            7)
+          7
+          5
+          (backend.compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
+          7
+          "%r8")
+        "%r10")
+      (string.eq
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity
+            assignments
+            7)
+          7
+          5
+          (backend.compiler-backend-scavenge-exclude-ops2
             backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              assignments
-              7)
-            7
-            5
-            (backend.compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
-            7
-            "%r8")
-          "%r10")
-        (string.eq
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              assignments
-              7)
-            7
-            5
-            (backend.compiler-backend-scavenge-exclude-ops2
-              backend-state
-              assignments
-              (Var 5)
-              (Var 6))
-            7
-            "%r8")
-          "%r10")))))
+            assignments
+            (Var 5)
+            (Var 6))
+          7
+          "%r8")
+        "%r10"))))
 
 (define (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?) : bool
   (let
@@ -33129,13 +32979,11 @@ f:
   [end : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! (array-ref starts i) start)
-          (set! (array-ref ends i) end)
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i count)
+      (set! (array-ref starts i) start)
+      (set! (array-ref ends i) end)
+      (set! i (+ i 1)))
+    unit))
 
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
@@ -33270,69 +33118,66 @@ f:
       (regalloc.compiler-reg-assignment-table-empty)]
     [picked : String ""]
     [ok : bool false]
-    (begin
-      (set! (array-ref regs 0) cabi.compiler-reg-id-r9)
-      (set! (array-ref regs 1) cabi.compiler-reg-id-rcx)
-      (set! (array-ref regs 2) cabi.compiler-reg-id-rdx)
-      (set! (array-ref regs 3) cabi.compiler-reg-id-r10)
-      (set! (array-ref regs 4) cabi.compiler-reg-id-r11)
-      (set! (array-ref regs 5) cabi.compiler-reg-id-r8)
-      (set! (array-ref regs 6) cabi.compiler-reg-id-r12)
-      (set! (array-ref regs 7) cabi.compiler-reg-id-r13)
-      (set! (array-ref regs 8) cabi.compiler-reg-id-r14)
-      (set! (array-ref regs 9) cabi.compiler-reg-id-r15)
-      (set! (array-ref regs 10) cabi.compiler-reg-id-rbx)
-      (set! (array-ref regs 11) cabi.compiler-reg-id-rdi)
-      (set! (array-ref regs 12) cabi.compiler-reg-id-rax)
-      (compiler-backend-test-fill-live-range! (&mut starts) (&mut ends) 13 0 10)
-      (set!
-        assignments
-        (compiler-backend-test-reg-assignment-table-from regs 0))
-      (set-scratch-emergency-pending!
-        (backend.compiler-backend-state-function-state backend-state)
-        false)
-      (set-scratch-emergency-used!
-        (backend.compiler-backend-state-function-state backend-state)
-        false)
-      (set-scratch-emergency-pending-count!
-        (backend.compiler-backend-state-function-state backend-state)
-        0)
-      (set-scratch-emergency-used-count!
-        (backend.compiler-backend-state-function-state backend-state)
-        0)
-      (set!
-        picked
-        (compiler-backend-scavenge-pick
-          backend-state
-          starts
-          ends
-          (regalloc.compiler-reg-assignment-table-with-min-capacity
-            assignments
-            13)
-          13
-          4
-          (__tl_make-array String 0)
-          0
-          "%r8"))
-      (set!
-        ok
-        (and
-          (string.eq picked "%rsi")
-          (not
-            (scratch-emergency-pending
-              (backend.compiler-backend-state-function-state backend-state)))
-          (not
-            (scratch-emergency-used
-              (backend.compiler-backend-state-function-state backend-state)))
-          (=
-            (scratch-emergency-pending-count
-              (backend.compiler-backend-state-function-state backend-state))
-            0)
-          (=
-            (scratch-emergency-used-count
-              (backend.compiler-backend-state-function-state backend-state))
-            0)))
-      ok)))
+    (set! (array-ref regs 0) cabi.compiler-reg-id-r9)
+    (set! (array-ref regs 1) cabi.compiler-reg-id-rcx)
+    (set! (array-ref regs 2) cabi.compiler-reg-id-rdx)
+    (set! (array-ref regs 3) cabi.compiler-reg-id-r10)
+    (set! (array-ref regs 4) cabi.compiler-reg-id-r11)
+    (set! (array-ref regs 5) cabi.compiler-reg-id-r8)
+    (set! (array-ref regs 6) cabi.compiler-reg-id-r12)
+    (set! (array-ref regs 7) cabi.compiler-reg-id-r13)
+    (set! (array-ref regs 8) cabi.compiler-reg-id-r14)
+    (set! (array-ref regs 9) cabi.compiler-reg-id-r15)
+    (set! (array-ref regs 10) cabi.compiler-reg-id-rbx)
+    (set! (array-ref regs 11) cabi.compiler-reg-id-rdi)
+    (set! (array-ref regs 12) cabi.compiler-reg-id-rax)
+    (compiler-backend-test-fill-live-range! (&mut starts) (&mut ends) 13 0 10)
+    (set! assignments (compiler-backend-test-reg-assignment-table-from regs 0))
+    (set-scratch-emergency-pending!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-used!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-pending-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (set-scratch-emergency-used-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (set!
+      picked
+      (compiler-backend-scavenge-pick
+        backend-state
+        starts
+        ends
+        (regalloc.compiler-reg-assignment-table-with-min-capacity
+          assignments
+          13)
+        13
+        4
+        (__tl_make-array String 0)
+        0
+        "%r8"))
+    (set!
+      ok
+      (and
+        (string.eq picked "%rsi")
+        (not
+          (scratch-emergency-pending
+            (backend.compiler-backend-state-function-state backend-state)))
+        (not
+          (scratch-emergency-used
+            (backend.compiler-backend-state-function-state backend-state)))
+        (=
+          (scratch-emergency-pending-count
+            (backend.compiler-backend-state-function-state backend-state))
+          0)
+        (=
+          (scratch-emergency-used-count
+            (backend.compiler-backend-state-function-state backend-state))
+          0)))
+    ok))
 
 (define (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?) : bool
   (let
@@ -33344,52 +33189,51 @@ f:
     [win64-bit : i64 backend.compiler-backend-scavenge-plan-win64-bit]
     [linux-ok : bool false]
     [win64-ok : bool false]
-    (begin
-      (set!
-        linux-ok
-        (and
+    (set!
+      linux-ok
+      (and
+        (backend.compiler-backend-scavenge-candidate-ok?
+          (backend.compiler-backend-state-function-state backend-state)
+          0
+          0
+          0
+          cabi.compiler-reg-id-rsi)
+        (backend.compiler-backend-scavenge-candidate-ok?
+          (backend.compiler-backend-state-function-state backend-state)
+          0
+          0
+          0
+          cabi.compiler-reg-id-rdi)))
+    (set!
+      win64-ok
+      (and
+        (not
           (backend.compiler-backend-scavenge-candidate-ok?
             (backend.compiler-backend-state-function-state backend-state)
             0
             0
-            0
-            cabi.compiler-reg-id-rsi)
+            win64-bit
+            cabi.compiler-reg-id-rsi))
+        (not
           (backend.compiler-backend-scavenge-candidate-ok?
             (backend.compiler-backend-state-function-state backend-state)
             0
             0
-            0
-            cabi.compiler-reg-id-rdi)))
-      (set!
-        win64-ok
-        (and
-          (not
-            (backend.compiler-backend-scavenge-candidate-ok?
-              (backend.compiler-backend-state-function-state backend-state)
-              0
-              0
-              win64-bit
-              cabi.compiler-reg-id-rsi))
-          (not
-            (backend.compiler-backend-scavenge-candidate-ok?
-              (backend.compiler-backend-state-function-state backend-state)
-              0
-              0
-              win64-bit
-              cabi.compiler-reg-id-rdi))
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            (bit-or win64-bit rsi-bit)
-            cabi.compiler-reg-id-rsi)
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            (bit-or win64-bit rdi-bit)
-            cabi.compiler-reg-id-rdi)))
-      (and linux-ok win64-ok))))
+            win64-bit
+            cabi.compiler-reg-id-rdi))
+        (backend.compiler-backend-scavenge-candidate-ok?
+          (backend.compiler-backend-state-function-state backend-state)
+          0
+          0
+          (bit-or win64-bit rsi-bit)
+          cabi.compiler-reg-id-rsi)
+        (backend.compiler-backend-scavenge-candidate-ok?
+          (backend.compiler-backend-state-function-state backend-state)
+          0
+          0
+          (bit-or win64-bit rdi-bit)
+          cabi.compiler-reg-id-rdi)))
+    (and linux-ok win64-ok)))
 
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : regalloc.CompilerRegVarTypes
   (if (>= var vars)
@@ -33409,9 +33253,70 @@ f:
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12")]
     [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 10)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 10)
+    (set-scratch-emergency-pending!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-used!
+      (backend.compiler-backend-state-function-state backend-state)
+      false)
+    (set-scratch-emergency-pending-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (set-scratch-emergency-used-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      0)
+    (let
+      [reg : String
+        (compiler-backend-scavenge-pick
+          backend-state
+          starts
+          ends
+          (regalloc.compiler-reg-assignment-table-with-min-capacity
+            assignments
+            1)
+          1
+          5
+          exclude
+          9
+          "%r8")]
+      [ok : bool
+        (and
+          (string.eq reg "%r12")
+          (scratch-emergency-pending
+            (backend.compiler-backend-state-function-state backend-state))
+          (=
+            (scratch-emergency-reg
+              (backend.compiler-backend-state-function-state backend-state))
+            cabi.compiler-reg-id-r12)
+          (=
+            (scratch-emergency-pending-count
+              (backend.compiler-backend-state-function-state backend-state))
+            1)
+          ;; T1-6 (b): the pick only ENQUEUES the borrowed register; where
+          ;; it is saved (a free XMM register or a frame slot) is decided
+          ;; when the bracketed text is known, so nothing is charged to the
+          ;; frame yet.
+          (=
+            (scratch-emergency-used-count
+              (backend.compiler-backend-state-function-state backend-state))
+            0)
+          (not
+            (scratch-emergency-used
+              (backend.compiler-backend-state-function-state backend-state)))
+          ;; Forcing the slot form (what every inline-restore path does)
+          ;; charges exactly one emergency slot.
+          (begin
+            (backend.compiler-backend-emergency-commit-slot-form!
+              (backend.compiler-backend-state-function-state backend-state))
+            (and
+              (scratch-emergency-used
+                (backend.compiler-backend-state-function-state backend-state))
+              (=
+                (scratch-emergency-used-count
+                  (backend.compiler-backend-state-function-state backend-state))
+                1))))]
       (set-scratch-emergency-pending!
         (backend.compiler-backend-state-function-state backend-state)
         false)
@@ -33424,71 +33329,7 @@ f:
       (set-scratch-emergency-used-count!
         (backend.compiler-backend-state-function-state backend-state)
         0)
-      (let
-        [reg : String
-          (compiler-backend-scavenge-pick
-            backend-state
-            starts
-            ends
-            (regalloc.compiler-reg-assignment-table-with-min-capacity
-              assignments
-              1)
-            1
-            5
-            exclude
-            9
-            "%r8")]
-        [ok : bool
-          (and
-            (string.eq reg "%r12")
-            (scratch-emergency-pending
-              (backend.compiler-backend-state-function-state backend-state))
-            (=
-              (scratch-emergency-reg
-                (backend.compiler-backend-state-function-state backend-state))
-              cabi.compiler-reg-id-r12)
-            (=
-              (scratch-emergency-pending-count
-                (backend.compiler-backend-state-function-state backend-state))
-              1)
-            ;; T1-6 (b): the pick only ENQUEUES the borrowed register; where
-            ;; it is saved (a free XMM register or a frame slot) is decided
-            ;; when the bracketed text is known, so nothing is charged to the
-            ;; frame yet.
-            (=
-              (scratch-emergency-used-count
-                (backend.compiler-backend-state-function-state backend-state))
-              0)
-            (not
-              (scratch-emergency-used
-                (backend.compiler-backend-state-function-state backend-state)))
-            ;; Forcing the slot form (what every inline-restore path does)
-            ;; charges exactly one emergency slot.
-            (begin
-              (backend.compiler-backend-emergency-commit-slot-form!
-                (backend.compiler-backend-state-function-state backend-state))
-              (and
-                (scratch-emergency-used
-                  (backend.compiler-backend-state-function-state backend-state))
-                (=
-                  (scratch-emergency-used-count
-                    (backend.compiler-backend-state-function-state
-                      backend-state))
-                  1))))]
-        (begin
-          (set-scratch-emergency-pending!
-            (backend.compiler-backend-state-function-state backend-state)
-            false)
-          (set-scratch-emergency-used!
-            (backend.compiler-backend-state-function-state backend-state)
-            false)
-          (set-scratch-emergency-pending-count!
-            (backend.compiler-backend-state-function-state backend-state)
-            0)
-          (set-scratch-emergency-used-count!
-            (backend.compiler-backend-state-function-state backend-state)
-            0)
-          ok)))))
+      ok)))
 
 (define (compiler-backend-scavenge-occupancy-cache-point-ok?
   [masks : (& masks (__tl_dyn-array i64))]
@@ -33722,91 +33563,89 @@ f:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [stale-regs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set-scratch-const-hoist-site-count!
-        (backend.compiler-backend-state-function-state backend-state)
-        1)
-      (set-scratch-const-hoist-site-regs!
-        (backend.compiler-backend-state-function-state backend-state)
-        stale-regs)
-      (set-scratch-const-hoist-inject-count!
-        (backend.compiler-backend-state-function-state backend-state)
-        1)
-      (set-scratch-const-hoist-frame-rbx!
-        (backend.compiler-backend-state-function-state backend-state)
-        true)
-      (set-scratch-const-hoist-frame-count!
-        (backend.compiler-backend-state-function-state backend-state)
-        1)
-      (let
-        [dirty-rejected? : bool
-          (not
-            (backend.compiler-backend-shrinkwrap-admission-state-clean?
-              (backend.compiler-backend-state-function-state backend-state)))]
-        [prepared? : bool
-          (backend.compiler-backend-prepare-shrinkwrap-admission!
-            (backend.compiler-backend-state-function-state backend-state))]
-        [rewritten : ir.CompilerIrFunction
-          (regalloc.compiler-reg-early-exit-shrinkwrap-function
-            (compiler-backend-shrinkwrap-param-phi-fixture))]
-        (and
-          dirty-rejected?
-          prepared?
+    (set-scratch-const-hoist-site-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      1)
+    (set-scratch-const-hoist-site-regs!
+      (backend.compiler-backend-state-function-state backend-state)
+      stale-regs)
+    (set-scratch-const-hoist-inject-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      1)
+    (set-scratch-const-hoist-frame-rbx!
+      (backend.compiler-backend-state-function-state backend-state)
+      true)
+    (set-scratch-const-hoist-frame-count!
+      (backend.compiler-backend-state-function-state backend-state)
+      1)
+    (let
+      [dirty-rejected? : bool
+        (not
           (backend.compiler-backend-shrinkwrap-admission-state-clean?
-            (backend.compiler-backend-state-function-state backend-state))
-          (not
-            (backend.compiler-backend-callee-needs-save?
-              backend-state
-              (regalloc.compiler-reg-assignment-table-empty)
-              cabi.compiler-reg-id-rbx))
-          (= regalloc.compiler-reg-early-exit-prefix-count 2)
-          (match rewritten
-            [(Function _ _ _ _ blocks _)
-              (let
-                [seq : ir.CompilerIrBlockSeq
-                  (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
-                (and
-                  (= (ir.compiler-ir-block-seq-count seq) 6)
-                  (match (ir.compiler-ir-block-seq-ref seq 0)
-                    [(Block _ instrs)
-                      (match (ir.compiler-ir-instr-seq-ref instrs 1)
-                        [(Branch _ yes no)
-                          (and
-                            (=
-                              yes
-                              (ir.compiler-ir-label "entry__shrinkwrap_save"))
-                            (=
-                              no
-                              (ir.compiler-ir-label "entry__shrinkwrap_bare0")))]
-                        [_ false])])
-                  (match (ir.compiler-ir-block-seq-ref seq 4)
-                    [(Block label instrs)
-                      (and
-                        (= label (ir.compiler-ir-label "loop"))
-                        (match (ir.compiler-ir-instr-seq-ref instrs 0)
-                          [(Phi _ inputs _)
-                            (let
-                              [phi-inputs-at-49077-29 : ir.CompilerIrPhiInputSeq
-                                inputs]
-                              (if (<= phi-inputs-at-49077-29.len 0)
-                                false
-                                (let
-                                  [phi-input-at-49077-29 : ir.CompilerIrPhiInput
-                                    (ir.compiler-ir-phi-input-seq-ref
-                                      phi-inputs-at-49077-29
-                                      0)]
-                                  [value : ir.CompilerIrValue
-                                    phi-input-at-49077-29.value]
-                                  [input-label : i64
-                                    phi-input-at-49077-29.label]
-                                  (and
-                                    (=
-                                      input-label
-                                      (ir.compiler-ir-label "preheader"))
-                                    (match value
-                                      [(Var id) (= id 0)]
-                                      [_ false])))))]
-                          [_ false]))])))]))))))
+            (backend.compiler-backend-state-function-state backend-state)))]
+      [prepared? : bool
+        (backend.compiler-backend-prepare-shrinkwrap-admission!
+          (backend.compiler-backend-state-function-state backend-state))]
+      [rewritten : ir.CompilerIrFunction
+        (regalloc.compiler-reg-early-exit-shrinkwrap-function
+          (compiler-backend-shrinkwrap-param-phi-fixture))]
+      (and
+        dirty-rejected?
+        prepared?
+        (backend.compiler-backend-shrinkwrap-admission-state-clean?
+          (backend.compiler-backend-state-function-state backend-state))
+        (not
+          (backend.compiler-backend-callee-needs-save?
+            backend-state
+            (regalloc.compiler-reg-assignment-table-empty)
+            cabi.compiler-reg-id-rbx))
+        (= regalloc.compiler-reg-early-exit-prefix-count 2)
+        (match rewritten
+          [(Function _ _ _ _ blocks _)
+            (let
+              [seq : ir.CompilerIrBlockSeq
+                (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+              (and
+                (= (ir.compiler-ir-block-seq-count seq) 6)
+                (match (ir.compiler-ir-block-seq-ref seq 0)
+                  [(Block _ instrs)
+                    (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                      [(Branch _ yes no)
+                        (and
+                          (=
+                            yes
+                            (ir.compiler-ir-label "entry__shrinkwrap_save"))
+                          (=
+                            no
+                            (ir.compiler-ir-label "entry__shrinkwrap_bare0")))]
+                      [_ false])])
+                (match (ir.compiler-ir-block-seq-ref seq 4)
+                  [(Block label instrs)
+                    (and
+                      (= label (ir.compiler-ir-label "loop"))
+                      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                        [(Phi _ inputs _)
+                          (let
+                            [phi-inputs-at-49077-29 : ir.CompilerIrPhiInputSeq
+                              inputs]
+                            (if (<= phi-inputs-at-49077-29.len 0)
+                              false
+                              (let
+                                [phi-input-at-49077-29 : ir.CompilerIrPhiInput
+                                  (ir.compiler-ir-phi-input-seq-ref
+                                    phi-inputs-at-49077-29
+                                    0)]
+                                [value : ir.CompilerIrValue
+                                  phi-input-at-49077-29.value]
+                                [input-label : i64 phi-input-at-49077-29.label]
+                                (and
+                                  (=
+                                    input-label
+                                    (ir.compiler-ir-label "preheader"))
+                                  (match value
+                                    [(Var id) (= id 0)]
+                                    [_ false])))))]
+                        [_ false]))])))])))))
 
 ;; Win64 passes the third integer argument in %r8. A non-imm32 guard that
 ;; scavenged %r8 before the prologue would return that clobbered register on
@@ -33862,17 +33701,16 @@ f:
     [i : i64 0]
     [seen : i64 0]
     [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [at : i64
-            (backend.compiler-backend-string-find-from body "    ret\n" i)]
-          (if (or (< at 0) (>= at limit))
-            (set! done true)
-            (begin
-              (set! seen (+ seen 1))
-              (set! i (+ at 1))))))
-      seen)))
+    (while (not done)
+      (let
+        [at : i64
+          (backend.compiler-backend-string-find-from body "    ret\n" i)]
+        (if (or (< at 0) (>= at limit))
+          (set! done true)
+          (begin
+            (set! seen (+ seen 1))
+            (set! i (+ at 1))))))
+    seen))
 
 ;; The prologue sank: the body opens with a block label (not the prologue) and
 ;; at least one `ret` is reached before the first prologue instruction.
@@ -34263,18 +34101,16 @@ f:
   (let
     [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
     [i : i64 (array-length labels)]
-    (begin
-      (while (> i 0)
-        (begin
-          (set! i (- i 1))
-          (set!
-            out
-            (ir.compiler-ir-blocks-with-tail
-              out
-              (ir.CompilerIrBlock.Block
-                (array-ref labels i)
-                (ir.compiler-ir-instr-seq-empty))))))
-      out)))
+    (while (> i 0)
+      (set! i (- i 1))
+      (set!
+        out
+        (ir.compiler-ir-blocks-with-tail
+          out
+          (ir.CompilerIrBlock.Block
+            (array-ref labels i)
+            (ir.compiler-ir-instr-seq-empty)))))
+    out))
 
 ;; The four-label variant-(ii) shape and the five-label variant-(i) shape share
 ;; this driver: build the IR block list whose labels are the text's, in text
@@ -34504,78 +34340,77 @@ f:
       (reg-homes "%0=%r9 %1=%r10 %2=%r11/%xmm2 %3=spill:0 %4=%r9")]
     [assignment-index : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignment-table-with-min-capacity assignments 5)]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 2)
-      (set! (array-ref starts 1) 3)
-      (set! (array-ref ends 1) 5)
-      (set! (array-ref starts 2) 4)
-      (set! (array-ref ends 2) 7)
-      (set! (array-ref starts 3) 0)
-      (set! (array-ref ends 3) 8)
-      (set! (array-ref starts 4) 2)
-      (set! (array-ref ends 4) 6)
-      (let
-        [masks : (__tl_dyn-array i64)
-          (backend.compiler-backend-scavenge-occupancy-build
-            starts
-            ends
-            assignment-index
-            (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
-            5)]
-        (and
-          (= (array-length masks) 5)
-          (compiler-backend-scavenge-occupancy-cache-point-ok?
-            masks
-            starts
-            ends
-            assignment-index
-            5
-            0)
-          (compiler-backend-scavenge-occupancy-cache-point-ok?
-            masks
-            starts
-            ends
-            assignment-index
-            5
-            2)
-          (compiler-backend-scavenge-occupancy-cache-point-ok?
-            masks
-            starts
-            ends
-            assignment-index
-            5
-            4)
-          (compiler-backend-scavenge-occupancy-cache-point-ok?
-            masks
-            starts
-            ends
-            assignment-index
-            5
-            6)
-          (compiler-backend-scavenge-occupancy-cache-point-ok?
-            masks
-            starts
-            ends
-            assignment-index
-            5
-            8)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 2)
+    (set! (array-ref starts 1) 3)
+    (set! (array-ref ends 1) 5)
+    (set! (array-ref starts 2) 4)
+    (set! (array-ref ends 2) 7)
+    (set! (array-ref starts 3) 0)
+    (set! (array-ref ends 3) 8)
+    (set! (array-ref starts 4) 2)
+    (set! (array-ref ends 4) 6)
+    (let
+      [masks : (__tl_dyn-array i64)
+        (backend.compiler-backend-scavenge-occupancy-build
+          starts
+          ends
+          assignment-index
+          (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
+          5)]
+      (and
+        (= (array-length masks) 5)
+        (compiler-backend-scavenge-occupancy-cache-point-ok?
+          masks
+          starts
+          ends
+          assignment-index
+          5
+          0)
+        (compiler-backend-scavenge-occupancy-cache-point-ok?
+          masks
+          starts
+          ends
+          assignment-index
+          5
+          2)
+        (compiler-backend-scavenge-occupancy-cache-point-ok?
+          masks
+          starts
+          ends
+          assignment-index
+          5
+          4)
+        (compiler-backend-scavenge-occupancy-cache-point-ok?
+          masks
+          starts
+          ends
+          assignment-index
+          5
+          6)
+        (compiler-backend-scavenge-occupancy-cache-point-ok?
+          masks
+          starts
+          ends
+          assignment-index
+          5
+          8)
+        (=
+          (array-ref masks 0)
+          (backend.compiler-backend-scavenge-reg-bit "%r9"))
+        (not
           (=
-            (array-ref masks 0)
-            (backend.compiler-backend-scavenge-reg-bit "%r9"))
-          (not
-            (=
-              (bit-and
-                (array-ref masks 2)
-                (backend.compiler-backend-scavenge-reg-bit "%r9"))
-              0))
-          (=
-            (array-ref masks 3)
+            (bit-and
+              (array-ref masks 2)
+              (backend.compiler-backend-scavenge-reg-bit "%r9"))
+            0))
+        (=
+          (array-ref masks 3)
+          (bit-or
+            (backend.compiler-backend-scavenge-reg-bit "%r9")
             (bit-or
-              (backend.compiler-backend-scavenge-reg-bit "%r9")
-              (bit-or
-                (backend.compiler-backend-scavenge-reg-bit "%r11")
-                (backend.compiler-backend-scavenge-reg-bit "%xmm2")))))))))
+              (backend.compiler-backend-scavenge-reg-bit "%r11")
+              (backend.compiler-backend-scavenge-reg-bit "%xmm2"))))))))
 
 ;; --- P3d: the occupancy table honours liveness HOLES ------------------------
 ;; Two values legitimately share one register when their SEGMENTS are disjoint
@@ -34602,26 +34437,25 @@ f:
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [segments : (__tl_dyn-array regalloc.CompilerRegIntervalSeq)
       (__tl_make-array regalloc.CompilerRegIntervalSeq rows)]
-    (begin
-      (set! (array-ref starts 0) 0)
-      (set! (array-ref ends 0) 16)
-      (set! (array-ref starts 1) 0)
-      (set! (array-ref ends 1) 16)
-      (if (> rows 0)
-        (set!
-          (array-ref segments 0)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref ends 0) 16)
+    (set! (array-ref starts 1) 0)
+    (set! (array-ref ends 1) 16)
+    (if (> rows 0)
+      (set!
+        (array-ref segments 0)
+        (regalloc.compiler-reg-interval-seq-prepend
+          (regalloc.CompilerRegInterval 0 0 4)
           (regalloc.compiler-reg-interval-seq-prepend
-            (regalloc.CompilerRegInterval 0 0 4)
-            (regalloc.compiler-reg-interval-seq-prepend
-              (regalloc.CompilerRegInterval 0 12 16)
-              (regalloc.compiler-reg-interval-seq-empty))))
-        unit)
-      (backend.compiler-backend-scavenge-occupancy-build
-        starts
-        ends
-        (compiler-backend-scavenge-segment-assignments)
-        segments
-        2))))
+            (regalloc.CompilerRegInterval 0 12 16)
+            (regalloc.compiler-reg-interval-seq-empty))))
+      unit)
+    (backend.compiler-backend-scavenge-occupancy-build
+      starts
+      ends
+      (compiler-backend-scavenge-segment-assignments)
+      segments
+      2)))
 
 (define (compiler-backend-scavenge-segment-subset-ok?
   [hull : (__tl_dyn-array i64)]
@@ -34809,47 +34643,45 @@ f:
     [blocks : ir.CompilerIrBlockList
       (compiler-backend-scavenge-loop-live-through-blocks)]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r8")]
-    (begin
-      (compiler-backend-test-scavenge-install-ctx!
-        "scavenge_loop_live_through"
-        (ir.compiler-ir-param-seq-empty)
-        (I64)
-        7
-        blocks
-        assignments
-        backend-state)
-      (let
-        [mask : i64
-          (backend.compiler-backend-scavenge-occupied-mask-at-point
-            (backend.compiler-backend-state-function-state backend-state)
-            12)]
-        [ok : bool
-          (and
-            (not
-              (=
-                (bit-and mask (backend.compiler-backend-scavenge-reg-bit "%r8"))
-                0))
-            (not
-              (string.eq
-                (backend.compiler-backend-scavenge-pick-with-mask
-                  (backend.compiler-backend-state-function-state backend-state)
-                  true
-                  mask
-                  mask
-                  (backend.compiler-backend-one-exclude "%rax")
-                  1
-                  "%r8")
-                "%r8")))]
-        (begin
-          (backend.compiler-backend-set-scavenge-ctx-ready!
-            (backend.compiler-backend-state-function-state backend-state)
-            prev-starts
-            prev-ends
-            prev-assignment-index
-            prev-plan-mask
-            prev-occupied-masks
-            prev-vars)
-          ok)))))
+    (compiler-backend-test-scavenge-install-ctx!
+      "scavenge_loop_live_through"
+      (ir.compiler-ir-param-seq-empty)
+      (I64)
+      7
+      blocks
+      assignments
+      backend-state)
+    (let
+      [mask : i64
+        (backend.compiler-backend-scavenge-occupied-mask-at-point
+          (backend.compiler-backend-state-function-state backend-state)
+          12)]
+      [ok : bool
+        (and
+          (not
+            (=
+              (bit-and mask (backend.compiler-backend-scavenge-reg-bit "%r8"))
+              0))
+          (not
+            (string.eq
+              (backend.compiler-backend-scavenge-pick-with-mask
+                (backend.compiler-backend-state-function-state backend-state)
+                true
+                mask
+                mask
+                (backend.compiler-backend-one-exclude "%rax")
+                1
+                "%r8")
+              "%r8")))]
+      (backend.compiler-backend-set-scavenge-ctx-ready!
+        (backend.compiler-backend-state-function-state backend-state)
+        prev-starts
+        prev-ends
+        prev-assignment-index
+        prev-plan-mask
+        prev-occupied-masks
+        prev-vars)
+      ok)))
 
 ;; #phi-staged-copy under a ROTATED loop. The blocks below are already in the
 ;; order a block layout pass emits when it rotates: the preheader jumps forward
@@ -34907,84 +34739,82 @@ f:
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [edge-point : i64 8]
     [target-point : i64 26]
-    (begin
-      (regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
-      (regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
-      (set! (array-ref starts 2) target-point)
-      (set! (array-ref ends 2) target-point)
-      (match (backend.compiler-backend-scavenge-assignments-build assignments 3)
-        [(backend.CompilerBackendScavengeAssignments assignment-index plan-mask)
-          (backend.compiler-backend-set-scavenge-ctx-ready!
-            (backend.compiler-backend-state-function-state backend-state)
-            (owned_view.compiler-owned-shared-view starts)
-            (owned_view.compiler-owned-shared-view ends)
+    (regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
+    (regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
+    (set! (array-ref starts 2) target-point)
+    (set! (array-ref ends 2) target-point)
+    (match (backend.compiler-backend-scavenge-assignments-build assignments 3)
+      [(backend.CompilerBackendScavengeAssignments assignment-index plan-mask)
+        (backend.compiler-backend-set-scavenge-ctx-ready!
+          (backend.compiler-backend-state-function-state backend-state)
+          (owned_view.compiler-owned-shared-view starts)
+          (owned_view.compiler-owned-shared-view ends)
+          assignment-index
+          plan-mask
+          (backend.compiler-backend-scavenge-occupancy-build
+            starts
+            ends
             assignment-index
-            plan-mask
-            (backend.compiler-backend-scavenge-occupancy-build
-              starts
-              ends
-              assignment-index
-              (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
-              3)
-            3)])
-      (set-state-emit-instr-post-base! backend-state 4)
-      (backend.compiler-backend-function-state-set-current-phi-target-point!
-        backend-state
-        target-point)
-      (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
-        backend-state
-        0)
-      (set-scratch-emergency-slot-offset!
-        (backend.compiler-backend-state-function-state backend-state)
-        -128)
-      (match (backend.compiler-backend-emit-phi-source-load-store
-        (ast.ast-node-pool-reader-type-segment-bases)
-        assignments
-        0
-        (Var 1)
-        (F64)
-        program-index
-        backend-state)
-        [(Ok back-edge)
-          (let
-            [back-edge-proven? : bool
-              (backend.compiler-backend-phi-staged-copy-proven?
-                backend-state
-                "%xmm2")]
-            (begin
-              (backend.compiler-backend-function-state-set-current-phi-target-point!
-                backend-state
-                -1)
-              (match (backend.compiler-backend-emit-phi-source-load-store
-                (ast.ast-node-pool-reader-type-segment-bases)
-                assignments
-                0
-                (Var 1)
-                (F64)
-                program-index
-                backend-state)
-                [(Ok unknown-edge)
-                  (and
-                    (=
-                      (backend.compiler-backend-function-state-emission-point
-                        (backend.compiler-backend-state-function-state
-                          backend-state))
-                      edge-point)
-                    (not back-edge-proven?)
-                    (not
-                      (backend.compiler-backend-phi-staged-copy-proven?
-                        backend-state
-                        "%xmm2"))
-                    (compiler-backend-phi-xmm-stage-bracket-shape?
-                      back-edge
-                      "    movdqu %xmm2, -128(%rbp)\n"
-                      "    movdqu -128(%rbp), %xmm2\n")
-                    (compiler-backend-phi-xmm-stage-bracket-shape?
-                      unknown-edge
-                      "    movdqu %xmm2, -128(%rbp)\n"
-                      "    movdqu -128(%rbp), %xmm2\n"))]
-                [(Err _) false])))]
-        [(Err _) false]))))
+            (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
+            3)
+          3)])
+    (set-state-emit-instr-post-base! backend-state 4)
+    (backend.compiler-backend-function-state-set-current-phi-target-point!
+      backend-state
+      target-point)
+    (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+      backend-state
+      0)
+    (set-scratch-emergency-slot-offset!
+      (backend.compiler-backend-state-function-state backend-state)
+      -128)
+    (match (backend.compiler-backend-emit-phi-source-load-store
+      (ast.ast-node-pool-reader-type-segment-bases)
+      assignments
+      0
+      (Var 1)
+      (F64)
+      program-index
+      backend-state)
+      [(Ok back-edge)
+        (let
+          [back-edge-proven? : bool
+            (backend.compiler-backend-phi-staged-copy-proven?
+              backend-state
+              "%xmm2")]
+          (backend.compiler-backend-function-state-set-current-phi-target-point!
+            backend-state
+            -1)
+          (match (backend.compiler-backend-emit-phi-source-load-store
+            (ast.ast-node-pool-reader-type-segment-bases)
+            assignments
+            0
+            (Var 1)
+            (F64)
+            program-index
+            backend-state)
+            [(Ok unknown-edge)
+              (and
+                (=
+                  (backend.compiler-backend-function-state-emission-point
+                    (backend.compiler-backend-state-function-state
+                      backend-state))
+                  edge-point)
+                (not back-edge-proven?)
+                (not
+                  (backend.compiler-backend-phi-staged-copy-proven?
+                    backend-state
+                    "%xmm2"))
+                (compiler-backend-phi-xmm-stage-bracket-shape?
+                  back-edge
+                  "    movdqu %xmm2, -128(%rbp)\n"
+                  "    movdqu -128(%rbp), %xmm2\n")
+                (compiler-backend-phi-xmm-stage-bracket-shape?
+                  unknown-edge
+                  "    movdqu %xmm2, -128(%rbp)\n"
+                  "    movdqu -128(%rbp), %xmm2\n"))]
+            [(Err _) false]))]
+      [(Err _) false])))
 
 (define (compiler-backend-phi-rotated-back-edge-ok?) : bool
   (let
@@ -35017,82 +34847,78 @@ f:
     ;; what leaves the point-local query alone with the question.
     [edge-point : i64 8]
     [target-point : i64 26]
-    (begin
-      (compiler-backend-test-scavenge-install-ctx!
-        "phi_rotated_back_edge"
-        (ir.compiler-ir-param-seq-empty)
-        (I64)
-        12
-        (compiler-backend-phi-rotated-back-edge-blocks)
-        assignments
-        backend-state)
-      (set-state-emit-instr-post-base! backend-state 4)
-      (backend.compiler-backend-function-state-set-current-phi-target-point!
-        backend-state
-        target-point)
-      (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
-        backend-state
-        0)
-      (let
-        [function-state : backend.CompilerBackendFunctionState
-          (backend.compiler-backend-state-function-state backend-state)]
-        [r8 : i64 (backend.compiler-backend-scavenge-reg-bit "%r8")]
-        [r10 : i64 (backend.compiler-backend-scavenge-reg-bit "%r10")]
-        [ok : bool
-          (and
-            ;; the fixture really is the hazard shape ...
-            (=
-              (backend.compiler-backend-function-state-emission-point
-                function-state)
-              edge-point)
-            (> target-point edge-point)
-            (=
-              (bit-and
-                (backend.compiler-backend-scavenge-occupied-mask-over-range
-                  function-state
-                  edge-point
-                  (+
-                    edge-point
-                    backend.compiler-backend-scavenge-staging-window))
-                r8)
-              0)
-            (not
-              (=
-                (bit-and
-                  (backend.compiler-backend-scavenge-occupied-mask-at-point
-                    function-state
-                    target-point)
-                  r8)
-                0))
-            ;; ... and the bracket is KEPT on it, because the target-entry
-            ;; obligation is asked on every edge and not just on the ones the
-            ;; emitted order happens to run backwards.
-            (not
-              (backend.compiler-backend-phi-staged-copy-proven?
-                backend-state
-                "%r8"))
-            ;; A register free at both ends still un-brackets, so this is a
-            ;; sharper test than "the predicate says no".
+    (compiler-backend-test-scavenge-install-ctx!
+      "phi_rotated_back_edge"
+      (ir.compiler-ir-param-seq-empty)
+      (I64)
+      12
+      (compiler-backend-phi-rotated-back-edge-blocks)
+      assignments
+      backend-state)
+    (set-state-emit-instr-post-base! backend-state 4)
+    (backend.compiler-backend-function-state-set-current-phi-target-point!
+      backend-state
+      target-point)
+    (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+      backend-state
+      0)
+    (let
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state backend-state)]
+      [r8 : i64 (backend.compiler-backend-scavenge-reg-bit "%r8")]
+      [r10 : i64 (backend.compiler-backend-scavenge-reg-bit "%r10")]
+      [ok : bool
+        (and
+          ;; the fixture really is the hazard shape ...
+          (=
+            (backend.compiler-backend-function-state-emission-point
+              function-state)
+            edge-point)
+          (> target-point edge-point)
+          (=
+            (bit-and
+              (backend.compiler-backend-scavenge-occupied-mask-over-range
+                function-state
+                edge-point
+                (+ edge-point backend.compiler-backend-scavenge-staging-window))
+              r8)
+            0)
+          (not
             (=
               (bit-and
                 (backend.compiler-backend-scavenge-occupied-mask-at-point
                   function-state
                   target-point)
-                r10)
-              0)
+                r8)
+              0))
+          ;; ... and the bracket is KEPT on it, because the target-entry
+          ;; obligation is asked on every edge and not just on the ones the
+          ;; emitted order happens to run backwards.
+          (not
             (backend.compiler-backend-phi-staged-copy-proven?
               backend-state
-              "%r10"))]
-        (begin
-          (backend.compiler-backend-set-scavenge-ctx-ready!
-            function-state
-            prev-starts
-            prev-ends
-            prev-assignment-index
-            prev-plan-mask
-            prev-occupied-masks
-            prev-vars)
-          ok)))))
+              "%r8"))
+          ;; A register free at both ends still un-brackets, so this is a
+          ;; sharper test than "the predicate says no".
+          (=
+            (bit-and
+              (backend.compiler-backend-scavenge-occupied-mask-at-point
+                function-state
+                target-point)
+              r10)
+            0)
+          (backend.compiler-backend-phi-staged-copy-proven?
+            backend-state
+            "%r10"))]
+      (backend.compiler-backend-set-scavenge-ctx-ready!
+        function-state
+        prev-starts
+        prev-ends
+        prev-assignment-index
+        prev-plan-mask
+        prev-occupied-masks
+        prev-vars)
+      ok)))
 
 ;; #5982. The constant-remainder expansion ends `subq product, SRC`, so electing
 ;; the dividend's own home as SRC needs the REGISTER free afterwards, not just
@@ -35119,26 +34945,25 @@ f:
                 cabi.compiler-reg-id-r13
                 cabi.compiler-reg-id-r14)))
           (reg-homes "%2=%r13")))]
-    (begin
-      ;; var 0: the dividend definition -- dead after point 10
-      (set! (array-ref starts 0) 9)
-      (set! (array-ref ends 0) 10)
-      ;; var 1: the loop-carried home (phi-shared) -- spans the whole region
-      (set! (array-ref starts 1) 2)
-      (set! (array-ref ends 1) 30)
-      ;; var 2: this instruction's own result -- opens on the def half-step
-      (set! (array-ref starts 2) 11)
-      (set! (array-ref ends 2) 20)
-      (backend.compiler-backend-set-scavenge-ctx-index!
-        (backend.compiler-backend-state-function-state backend-state)
-        starts
-        ends
-        (regalloc.compiler-reg-assignment-table-with-min-capacity
-          assignments
-          vars)
-        (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
-        0
-        vars))))
+    ;; var 0: the dividend definition -- dead after point 10
+    (set! (array-ref starts 0) 9)
+    (set! (array-ref ends 0) 10)
+    ;; var 1: the loop-carried home (phi-shared) -- spans the whole region
+    (set! (array-ref starts 1) 2)
+    (set! (array-ref ends 1) 30)
+    ;; var 2: this instruction's own result -- opens on the def half-step
+    (set! (array-ref starts 2) 11)
+    (set! (array-ref ends 2) 20)
+    (backend.compiler-backend-set-scavenge-ctx-index!
+      (backend.compiler-backend-state-function-state backend-state)
+      starts
+      ends
+      (regalloc.compiler-reg-assignment-table-with-min-capacity
+        assignments
+        vars)
+      (__tl_make-array regalloc.CompilerRegIntervalSeq 0)
+      0
+      vars)))
 
 (define (compiler-backend-divmod-live-dividend-src-ok?) : bool
   (let
@@ -35227,25 +35052,24 @@ f:
           true
           "%r13"
           ""))]
-    (begin
-      (backend.compiler-backend-set-scavenge-ctx-ready!
-        (backend.compiler-backend-state-function-state backend-state)
-        prev-starts
-        prev-ends
-        prev-assignment-index
-        prev-plan-mask
-        prev-occupied-masks
-        prev-vars)
-      (set-state-emit-instr-post-base! backend-state prev-post-base)
-      (set-state-emit-current-count! backend-state prev-count)
-      (and
-        carried
-        value-dead
-        remainder-refused
-        quotient-allowed
-        dst-home-allowed
-        free-reg
-        own-output-ok))))
+    (backend.compiler-backend-set-scavenge-ctx-ready!
+      (backend.compiler-backend-state-function-state backend-state)
+      prev-starts
+      prev-ends
+      prev-assignment-index
+      prev-plan-mask
+      prev-occupied-masks
+      prev-vars)
+    (set-state-emit-instr-post-base! backend-state prev-post-base)
+    (set-state-emit-current-count! backend-state prev-count)
+    (and
+      carried
+      value-dead
+      remainder-refused
+      quotient-allowed
+      dst-home-allowed
+      free-reg
+      own-output-ok)))
 
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
@@ -35310,14 +35134,13 @@ f:
         (arena.eq? (arena.current) scratch)
         (string.eq (text_buf.render copied) "xy")
         (arena.eq? carried-home home-before-copy))]
-    (begin
-      (unsafe
-        (arena.set! caller))
-      (unsafe
-        (arena.destroy scratch))
-      (unsafe
-        (arena.destroy carried-home))
-      ok)))
+    (unsafe
+      (arena.set! caller))
+    (unsafe
+      (arena.destroy scratch))
+    (unsafe
+      (arena.destroy carried-home))
+    ok))
 
 (define (compiler-backend-stream-state-interleaving-ok?) : bool
   (let
@@ -35428,29 +35251,28 @@ f:
         (string.eq got-b want-b)
         (not (backend.compiler-backend-assembly-stream-active? stream-a))
         (not (backend.compiler-backend-assembly-stream-active? stream-b)))]
-    (begin
-      (backend.compiler-backend-assembly-stream-abort! stream-a)
-      (backend.compiler-backend-assembly-stream-abort! stream-b)
-      (unsafe
-        (arena.set! caller))
-      ;; Flushing deliberately clears the backend's legacy function scratch
-      ;; sentinels while the raw arena is active. Retire those scratch-backed
-      ;; handles in the caller arena before reclaiming either raw stream.
-      (backend.compiler-backend-clear-scratch-escaped-emit-state! backend-a)
-      (backend.compiler-backend-clear-scratch-escaped-emit-state! backend-b)
-      (unsafe
-        (arena.destroy raw-a))
-      (unsafe
-        (arena.destroy peephole-a))
-      (unsafe
-        (arena.destroy home-a))
-      (unsafe
-        (arena.destroy raw-b))
-      (unsafe
-        (arena.destroy peephole-b))
-      (unsafe
-        (arena.destroy home-b))
-      ok)))
+    (backend.compiler-backend-assembly-stream-abort! stream-a)
+    (backend.compiler-backend-assembly-stream-abort! stream-b)
+    (unsafe
+      (arena.set! caller))
+    ;; Flushing deliberately clears the backend's legacy function scratch
+    ;; sentinels while the raw arena is active. Retire those scratch-backed
+    ;; handles in the caller arena before reclaiming either raw stream.
+    (backend.compiler-backend-clear-scratch-escaped-emit-state! backend-a)
+    (backend.compiler-backend-clear-scratch-escaped-emit-state! backend-b)
+    (unsafe
+      (arena.destroy raw-a))
+    (unsafe
+      (arena.destroy peephole-a))
+    (unsafe
+      (arena.destroy home-a))
+    (unsafe
+      (arena.destroy raw-b))
+    (unsafe
+      (arena.destroy peephole-b))
+    (unsafe
+      (arena.destroy home-b))
+    ok))
 
 ;; Manual assembly-stream fixture.  Its process operation mirrors production:
 ;; raw storage is active while a function chunk is appended, then the caller
@@ -35516,16 +35338,15 @@ f:
 (define (compiler-backend-assembly-stream-test-session-process!
   [session : CompilerBackendAssemblyStreamTestSession]
   [chunk : String]) : unit
-  (begin
-    (backend.compiler-backend-assembly-stream-begin-raw!
-      session.backend-state
-      session.stream)
-    (backend.compiler-backend-assembly-stream-process-string!
-      chunk
-      session.backend-state
-      session.stream)
-    (unsafe
-      (arena.set! session.caller))))
+  (backend.compiler-backend-assembly-stream-begin-raw!
+    session.backend-state
+    session.stream)
+  (backend.compiler-backend-assembly-stream-process-string!
+    chunk
+    session.backend-state
+    session.stream)
+  (unsafe
+    (arena.set! session.caller)))
 
 (define (compiler-backend-assembly-stream-test-session-finish-copy
   [session : CompilerBackendAssemblyStreamTestSession]) : String
@@ -35539,57 +35360,54 @@ f:
 
 (define (compiler-backend-assembly-stream-test-session-destroy!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
-  (begin
-    (backend.compiler-backend-assembly-stream-abort! session.stream)
-    (unsafe
-      (arena.set! session.caller))
-    (backend.compiler-backend-clear-scratch-escaped-emit-state!
-      session.backend-state)
-    (unsafe
-      (arena.destroy session.raw))
-    (unsafe
-      (arena.destroy session.peephole))
-    (unsafe
-      (arena.destroy session.home))))
+  (backend.compiler-backend-assembly-stream-abort! session.stream)
+  (unsafe
+    (arena.set! session.caller))
+  (backend.compiler-backend-clear-scratch-escaped-emit-state!
+    session.backend-state)
+  (unsafe
+    (arena.destroy session.raw))
+  (unsafe
+    (arena.destroy session.peephole))
+  (unsafe
+    (arena.destroy session.home)))
 
 (define (compiler-backend-assembly-stream-test-seed-a!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
-  (begin
-    ;; Model a Linux scalar job and give only A the safe continuation label.
-    (backend.compiler-backend-state-set-scalar-registers-enabled!
-      session.backend-state
-      true)
-    (backend.compiler-backend-state-set-absolute-switch-ok!
-      session.backend-state
-      true)
-    (backend.compiler-backend-peephole-carry-safe-insert!
-      session.backend-state
-      session.stream
-      ".Lshared_carry")
-    ;; The first A group is an audited Linux FPO function.  Its dead slot store
-    ;; is swept; B deliberately has the same shape without sweep metadata.
-    (backend.compiler-backend-sweep-record-fpo!
-      session.stream
-      "a_sweep"
-      48
-      0
-      5
-      0
-      0
-      0
-      session.backend-state)))
+  ;; Model a Linux scalar job and give only A the safe continuation label.
+  (backend.compiler-backend-state-set-scalar-registers-enabled!
+    session.backend-state
+    true)
+  (backend.compiler-backend-state-set-absolute-switch-ok!
+    session.backend-state
+    true)
+  (backend.compiler-backend-peephole-carry-safe-insert!
+    session.backend-state
+    session.stream
+    ".Lshared_carry")
+  ;; The first A group is an audited Linux FPO function.  Its dead slot store
+  ;; is swept; B deliberately has the same shape without sweep metadata.
+  (backend.compiler-backend-sweep-record-fpo!
+    session.stream
+    "a_sweep"
+    48
+    0
+    5
+    0
+    0
+    0
+    session.backend-state))
 
 (define (compiler-backend-assembly-stream-test-seed-b!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
-  (begin
-    ;; Model a Windows vector job.  These job-local policy bits must survive
-    ;; alternating calls through A's differently configured backend state.
-    (backend.compiler-backend-state-set-scalar-registers-enabled!
-      session.backend-state
-      false)
-    (backend.compiler-backend-state-set-absolute-switch-ok!
-      session.backend-state
-      false)))
+  ;; Model a Windows vector job.  These job-local policy bits must survive
+  ;; alternating calls through A's differently configured backend state.
+  (backend.compiler-backend-state-set-scalar-registers-enabled!
+    session.backend-state
+    false)
+  (backend.compiler-backend-state-set-absolute-switch-ok!
+    session.backend-state
+    false))
 
 (define (compiler-backend-assembly-stream-test-chunks [a? : bool]) : (__tl_dyn-array
     String)
@@ -35628,25 +35446,23 @@ b_keep:
     ret
 ")]
     [i : i64 1]
-    (begin
-      (set! (array-ref chunks 0) first)
-      (while (< i 65)
-        (let
-          [suffix : String (string.int->string i)]
-          [symbol : String (str_cat.str-cat prefix suffix)]
-          (begin
-            (set!
-              (array-ref chunks i)
-              (str_cat.str-cat
-                ".globl "
-                symbol
-                "\n"
-                symbol
-                ":\n    movq $"
-                suffix
-                ", %rax\n    ret\n"))
-            (set! i (+ i 1)))))
-      chunks)))
+    (set! (array-ref chunks 0) first)
+    (while (< i 65)
+      (let
+        [suffix : String (string.int->string i)]
+        [symbol : String (str_cat.str-cat prefix suffix)]
+        (set!
+          (array-ref chunks i)
+          (str_cat.str-cat
+            ".globl "
+            symbol
+            "\n"
+            symbol
+            ":\n    movq $"
+            suffix
+            ", %rax\n    ret\n"))
+        (set! i (+ i 1))))
+    chunks))
 
 (define (compiler-backend-assembly-stream-test-run-serial
   [chunks : (__tl_dyn-array String)]
@@ -35655,22 +35471,19 @@ b_keep:
     [session : CompilerBackendAssemblyStreamTestSession
       (compiler-backend-assembly-stream-test-session-new)]
     [i : i64 0]
-    (begin
-      (if a?
-        (compiler-backend-assembly-stream-test-seed-a! session)
-        (compiler-backend-assembly-stream-test-seed-b! session))
-      (while (< i (array-length chunks))
-        (begin
-          (compiler-backend-assembly-stream-test-session-process!
-            session
-            (ir.compiler-ir-array-shared-view chunks i))
-          (set! i (+ i 1))))
-      (let
-        [out : String
-          (compiler-backend-assembly-stream-test-session-finish-copy session)]
-        (begin
-          (compiler-backend-assembly-stream-test-session-destroy! session)
-          out)))))
+    (if a?
+      (compiler-backend-assembly-stream-test-seed-a! session)
+      (compiler-backend-assembly-stream-test-seed-b! session))
+    (while (< i (array-length chunks))
+      (compiler-backend-assembly-stream-test-session-process!
+        session
+        (ir.compiler-ir-array-shared-view chunks i))
+      (set! i (+ i 1)))
+    (let
+      [out : String
+        (compiler-backend-assembly-stream-test-session-finish-copy session)]
+      (compiler-backend-assembly-stream-test-session-destroy! session)
+      out)))
 
 ;; Cross the production 64-function batch boundary while A and B alternate.
 ;; Abort B after seven pending chunks, keep A live, and replay B in a new stream.
@@ -35699,70 +35512,61 @@ b_keep:
     [_seed-failed-b : unit
       (compiler-backend-assembly-stream-test-seed-b! failed-b)]
     [i : i64 0]
-    (begin
-      (while (< i 7)
-        (begin
-          (compiler-backend-assembly-stream-test-session-process!
-            session-a
-            (ir.compiler-ir-array-shared-view chunks-a i))
-          (compiler-backend-assembly-stream-test-session-process!
-            failed-b
-            (ir.compiler-ir-array-shared-view chunks-b i))
-          (set! i (+ i 1))))
-      (compiler-backend-assembly-stream-test-session-destroy! failed-b)
+    (while (< i 7)
+      (compiler-backend-assembly-stream-test-session-process!
+        session-a
+        (ir.compiler-ir-array-shared-view chunks-a i))
+      (compiler-backend-assembly-stream-test-session-process!
+        failed-b
+        (ir.compiler-ir-array-shared-view chunks-b i))
+      (set! i (+ i 1)))
+    (compiler-backend-assembly-stream-test-session-destroy! failed-b)
+    (let
+      [session-b : CompilerBackendAssemblyStreamTestSession
+        (compiler-backend-assembly-stream-test-session-new)]
+      [_seed-b : unit (compiler-backend-assembly-stream-test-seed-b! session-b)]
+      [replay : i64 0]
+      (while (< replay 7)
+        (compiler-backend-assembly-stream-test-session-process!
+          session-b
+          (ir.compiler-ir-array-shared-view chunks-b replay))
+        (set! replay (+ replay 1)))
+      (while (< i 65)
+        (compiler-backend-assembly-stream-test-session-process!
+          session-a
+          (ir.compiler-ir-array-shared-view chunks-a i))
+        (compiler-backend-assembly-stream-test-session-process!
+          session-b
+          (ir.compiler-ir-array-shared-view chunks-b i))
+        (set! i (+ i 1)))
       (let
-        [session-b : CompilerBackendAssemblyStreamTestSession
-          (compiler-backend-assembly-stream-test-session-new)]
-        [_seed-b : unit
-          (compiler-backend-assembly-stream-test-seed-b! session-b)]
-        [replay : i64 0]
-        (begin
-          (while (< replay 7)
-            (begin
-              (compiler-backend-assembly-stream-test-session-process!
-                session-b
-                (ir.compiler-ir-array-shared-view chunks-b replay))
-              (set! replay (+ replay 1))))
-          (while (< i 65)
-            (begin
-              (compiler-backend-assembly-stream-test-session-process!
-                session-a
-                (ir.compiler-ir-array-shared-view chunks-a i))
-              (compiler-backend-assembly-stream-test-session-process!
-                session-b
-                (ir.compiler-ir-array-shared-view chunks-b i))
-              (set! i (+ i 1))))
-          (let
-            [out-a : String
-              (compiler-backend-assembly-stream-test-session-finish-copy
-                session-a)]
-            [out-b : String
-              (compiler-backend-assembly-stream-test-session-finish-copy
-                session-b)]
-            [ok : bool
-              (and
-                (string.eq out-a serial-a)
-                (string.eq out-b serial-b)
-                (asm-lacks? out-a "    movq $1, 40(%rsp)\n")
-                (asm-has? out-b "    movq $1, 40(%rsp)\n")
-                (asm-lacks? out-a "    movq %r11, 72(%rsp)\n")
-                (asm-has? out-b "    movq %r11, 72(%rsp)\n")
-                (asm-has? out-a "    movq %r9, %r10\n")
-                (asm-has? out-b "    movq %r9, %r10\n")
-                (backend.compiler-backend-state-scalar-registers-enabled?
-                  session-a.backend-state)
-                (not
-                  (backend.compiler-backend-state-scalar-registers-enabled?
-                    session-b.backend-state))
-                (backend.compiler-backend-state-absolute-switch-ok?
-                  session-a.backend-state)
-                (not
-                  (backend.compiler-backend-state-absolute-switch-ok?
-                    session-b.backend-state)))]
-            (begin
-              (compiler-backend-assembly-stream-test-session-destroy! session-a)
-              (compiler-backend-assembly-stream-test-session-destroy! session-b)
-              ok)))))))
+        [out-a : String
+          (compiler-backend-assembly-stream-test-session-finish-copy session-a)]
+        [out-b : String
+          (compiler-backend-assembly-stream-test-session-finish-copy session-b)]
+        [ok : bool
+          (and
+            (string.eq out-a serial-a)
+            (string.eq out-b serial-b)
+            (asm-lacks? out-a "    movq $1, 40(%rsp)\n")
+            (asm-has? out-b "    movq $1, 40(%rsp)\n")
+            (asm-lacks? out-a "    movq %r11, 72(%rsp)\n")
+            (asm-has? out-b "    movq %r11, 72(%rsp)\n")
+            (asm-has? out-a "    movq %r9, %r10\n")
+            (asm-has? out-b "    movq %r9, %r10\n")
+            (backend.compiler-backend-state-scalar-registers-enabled?
+              session-a.backend-state)
+            (not
+              (backend.compiler-backend-state-scalar-registers-enabled?
+                session-b.backend-state))
+            (backend.compiler-backend-state-absolute-switch-ok?
+              session-a.backend-state)
+            (not
+              (backend.compiler-backend-state-absolute-switch-ok?
+                session-b.backend-state)))]
+        (compiler-backend-assembly-stream-test-session-destroy! session-a)
+        (compiler-backend-assembly-stream-test-session-destroy! session-b)
+        ok))))
 
 ;; A nested batch flush may grow peephole-owned storage.  The assembly stream
 ;; must preserve the nested pass's newly published handles/counts when it then
@@ -35777,38 +35581,32 @@ b_keep:
         (text_buf.empty)
         ".globl stream_growth\nstream_growth:\n")]
     [i : i64 0]
-    (begin
-      (while (< i 128)
-        (begin
-          (set!
-            body
-            (text_buf.append
-              body
-              (str_cat.str-cat
-                "    movq very_long_stream_owner_global_symbol_"
-                (string.int->string i)
-                "(%rip), %rax\n")))
-          (set! i (+ i 1))))
-      (set! body (text_buf.append body "    ret\n"))
-      (compiler-backend-assembly-stream-test-session-process!
-        session
-        (text_buf.render body))
-      (let
-        [out : String
-          (compiler-backend-assembly-stream-test-session-finish-copy session)]
-        [ok : bool
-          (and
-            (>=
-              (compiler-backend-stream-state-owner-capacity session.stream)
-              128)
-            (>=
-              (compiler-backend-stream-state-owner-bytes-capacity
-                session.stream)
-              4096)
-            (asm-has? out "very_long_stream_owner_global_symbol_127(%rip)"))]
-        (begin
-          (compiler-backend-assembly-stream-test-session-destroy! session)
-          ok)))))
+    (while (< i 128)
+      (set!
+        body
+        (text_buf.append
+          body
+          (str_cat.str-cat
+            "    movq very_long_stream_owner_global_symbol_"
+            (string.int->string i)
+            "(%rip), %rax\n")))
+      (set! i (+ i 1)))
+    (set! body (text_buf.append body "    ret\n"))
+    (compiler-backend-assembly-stream-test-session-process!
+      session
+      (text_buf.render body))
+    (let
+      [out : String
+        (compiler-backend-assembly-stream-test-session-finish-copy session)]
+      [ok : bool
+        (and
+          (>= (compiler-backend-stream-state-owner-capacity session.stream) 128)
+          (>=
+            (compiler-backend-stream-state-owner-bytes-capacity session.stream)
+            4096)
+          (asm-has? out "very_long_stream_owner_global_symbol_127(%rip)"))]
+      (compiler-backend-assembly-stream-test-session-destroy! session)
+      ok)))
 
 (define (compiler-backend-stream-state-growth-ok?) : bool
   (let
@@ -35820,107 +35618,94 @@ b_keep:
       (= (compiler-backend-stream-state-retained-table-bytes stream) 0)]
     [_reset : unit (compiler-backend-peephole-test-session-reset! session)]
     [i : i64 0]
-    (begin
-      (while (< i 600)
-        (begin
-          (backend.compiler-backend-peephole-carry-safe-insert!
+    (while (< i 600)
+      (backend.compiler-backend-peephole-carry-safe-insert!
+        backend-state
+        stream
+        (str_cat.str-cat ".Lcarry_growth_" (string.int->string i)))
+      (set! i (+ i 1)))
+    (let
+      [last : String ".Lcarry_growth_599"]
+      [carry-grew? : bool
+        (and
+          (>= (compiler-backend-stream-state-carry-capacity stream) 1024)
+          (>= (compiler-backend-stream-state-carry-bytes-capacity stream) 16384)
+          (compiler-backend-peephole-carry-safe-contains-bytes?
+            stream
+            (unsafe
+              (string-data last))
+            0
+            (string.string-length last)
+            (ci.intern-hash last)))]
+      [owner-input : text_buf.TextBuf (text_buf.empty)]
+      (set! i 0)
+      (while (< i 128)
+        (set!
+          owner-input
+          (text_buf.append
+            owner-input
+            (str_cat.str-cat
+              "    movq very_long_owner_global_symbol_"
+              (string.int->string i)
+              "(%rip), %rax\n")))
+        (set! i (+ i 1)))
+      (let
+        [_owner-output : String
+          (compiler-backend-peephole-test-session-asm
+            session
+            (text_buf.render owner-input))]
+        [owner-grew? : bool
+          (and
+            (>= (compiler-backend-stream-state-owner-capacity stream) 128)
+            (>=
+              (compiler-backend-stream-state-owner-bytes-capacity stream)
+              4096))]
+        (backend.compiler-backend-sweep-reset! backend-state stream)
+        (set! i 0)
+        (while (< i 200)
+          (backend.compiler-backend-sweep-record-win64!
             backend-state
             stream
-            (str_cat.str-cat ".Lcarry_growth_" (string.int->string i)))
-          (set! i (+ i 1))))
-      (let
-        [last : String ".Lcarry_growth_599"]
-        [carry-grew? : bool
-          (and
-            (>= (compiler-backend-stream-state-carry-capacity stream) 1024)
-            (>=
-              (compiler-backend-stream-state-carry-bytes-capacity stream)
-              16384)
-            (compiler-backend-peephole-carry-safe-contains-bytes?
-              stream
-              (unsafe
-                (string-data last))
+            (str_cat.str-cat
+              "very_long_sweep_function_symbol_"
+              (string.int->string i))
+            48
+            1
+            0
+            0
+            0)
+          (set! i (+ i 1)))
+        (let
+          [sweep-grew? : bool
+            (and
+              (>= (compiler-backend-stream-state-sweep-capacity stream) 256)
+              (>=
+                (compiler-backend-stream-state-sweep-bytes-capacity stream)
+                8192))]
+          [_coverage-reset : unit
+            (backend.compiler-backend-sweep-reset! backend-state stream)]
+          [_coverage-record : unit
+            (compiler-backend-peephole-test-session-win64!
+              session
+              "coverage"
+              8192
+              1024
               0
-              (string.string-length last)
-              (ci.intern-hash last)))]
-        [owner-input : text_buf.TextBuf (text_buf.empty)]
-        (begin
-          (set! i 0)
-          (while (< i 128)
-            (begin
-              (set!
-                owner-input
-                (text_buf.append
-                  owner-input
-                  (str_cat.str-cat
-                    "    movq very_long_owner_global_symbol_"
-                    (string.int->string i)
-                    "(%rip), %rax\n")))
-              (set! i (+ i 1))))
-          (let
-            [_owner-output : String
-              (compiler-backend-peephole-test-session-asm
-                session
-                (text_buf.render owner-input))]
-            [owner-grew? : bool
-              (and
-                (>= (compiler-backend-stream-state-owner-capacity stream) 128)
-                (>=
-                  (compiler-backend-stream-state-owner-bytes-capacity stream)
-                  4096))]
-            (begin
-              (backend.compiler-backend-sweep-reset! backend-state stream)
-              (set! i 0)
-              (while (< i 200)
-                (begin
-                  (backend.compiler-backend-sweep-record-win64!
-                    backend-state
-                    stream
-                    (str_cat.str-cat
-                      "very_long_sweep_function_symbol_"
-                      (string.int->string i))
-                    48
-                    1
-                    0
-                    0
-                    0)
-                  (set! i (+ i 1))))
-              (let
-                [sweep-grew? : bool
-                  (and
-                    (>=
-                      (compiler-backend-stream-state-sweep-capacity stream)
-                      256)
-                    (>=
-                      (compiler-backend-stream-state-sweep-bytes-capacity
-                        stream)
-                      8192))]
-                [_coverage-reset : unit
-                  (backend.compiler-backend-sweep-reset! backend-state stream)]
-                [_coverage-record : unit
-                  (compiler-backend-peephole-test-session-win64!
-                    session
-                    "coverage"
-                    8192
-                    1024
-                    0
-                    0
-                    0)]
-                [_coverage-output : String
-                  (compiler-backend-peephole-test-session-asm
-                    session
-                    "coverage:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $8192, %rsp\n    movq $1, 8184(%rsp)\n    leave\n    ret\n")]
-                [coverage-grew? : bool
-                  (>=
-                    (compiler-backend-stream-state-coverage-capacity stream)
-                    128)]
-                (and
-                  idle?
-                  carry-grew?
-                  owner-grew?
-                  sweep-grew?
-                  coverage-grew?
-                  (= (compiler-backend-stream-state-record-capacity stream) 0))))))))))
+              0
+              0)]
+          [_coverage-output : String
+            (compiler-backend-peephole-test-session-asm
+              session
+              "coverage:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $8192, %rsp\n    movq $1, 8184(%rsp)\n    leave\n    ret\n")]
+          [coverage-grew? : bool
+            (>= (compiler-backend-stream-state-coverage-capacity stream) 128)]
+          (and
+            idle?
+            carry-grew?
+            owner-grew?
+            sweep-grew?
+            coverage-grew?
+            (= (compiler-backend-stream-state-record-capacity stream) 0)))))))
 
 ;; The byte-derived record estimate deliberately targets normal generated
 ;; assembly. Blank lines force the geometric fallback several times; their
@@ -35932,20 +35717,18 @@ b_keep:
       (compiler-backend-peephole-test-session-new)]
     [input : text_buf.TextBuf (text_buf.empty)]
     [i : i64 0]
-    (begin
-      (while (< i 128)
-        (begin
-          (set! input (text_buf.append input "\n"))
-          (set! i (+ i 1))))
-      (let
-        [expected : String (text_buf.render input)]
-        [actual : String
-          (compiler-backend-peephole-test-session-asm
-            session
-            (owned_view.compiler-owned-shared-view expected))]
-        [retired? : bool
-          (= (compiler-backend-stream-state-record-capacity session.stream) 0)]
-        (and retired? (string.eq actual expected))))))
+    (while (< i 128)
+      (set! input (text_buf.append input "\n"))
+      (set! i (+ i 1)))
+    (let
+      [expected : String (text_buf.render input)]
+      [actual : String
+        (compiler-backend-peephole-test-session-asm
+          session
+          (owned_view.compiler-owned-shared-view expected))]
+      [retired? : bool
+        (= (compiler-backend-stream-state-record-capacity session.stream) 0)]
+      (and retired? (string.eq actual expected)))))
 
 ;; A reusable backend owner may be retargeted between emissions, while two
 ;; independently prepared owners retain isolated ABI and mode decisions.
@@ -36206,17 +35989,14 @@ b_keep:
   (let
     [index : i64 0]
     [mask : i64 0]
-    (begin
-      (while (< index (array-length regs))
-        (begin
-          (set!
-            mask
-            (bit-or
-              mask
-              (backend.compiler-backend-scavenge-reg-id-bit
-                (array-ref regs index))))
-          (set! index (+ index 1))))
-      mask)))
+    (while (< index (array-length regs))
+      (set!
+        mask
+        (bit-or
+          mask
+          (backend.compiler-backend-scavenge-reg-id-bit (array-ref regs index))))
+      (set! index (+ index 1)))
+    mask))
 
 ;; Function-local traversal state must follow the backend job, even when two
 ;; jobs reuse the same numeric ids and are interleaved. Resetting a failed job
@@ -36660,14 +36440,12 @@ b_keep:
     [n : i64 (array-length expected)]
     [i : i64 0]
     [same : bool (= (array-length order) n)]
-    (begin
-      (while (and same (< i n))
-        (begin
-          (if (= (array-ref order i) (array-ref expected i))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
+    (while (and same (< i n))
+      (if (= (array-ref order i) (array-ref expected i))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
 
 (define (compiler-backend-placement-test-expected
   [a : i64]
@@ -36945,16 +36723,15 @@ b_keep:
 ;; before it left active -- the same install the smoke driver performs before
 ;; the suite, and the one `compiler-builtin-refresh!` fails closed on.
 (define (compiler-backend-placement-seh-program) : ir.CompilerIrProgram
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (Program
-      (ir.compiler-ir-global-seq-empty)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (compiler-backend-placement-seh-function)
       (ir.compiler-ir-function-seq-prepend
-        (compiler-backend-placement-seh-function)
-        (ir.compiler-ir-function-seq-prepend
-          (compiler-backend-placement-seh-main)
-          (ir.compiler-ir-function-seq-empty)))
-      (ir.compiler-ir-extern-seq-empty))))
+        (compiler-backend-placement-seh-main)
+        (ir.compiler-ir-function-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-placement-test-last-before
   [text : (& text str)]
@@ -36964,18 +36741,14 @@ b_keep:
     [pos : i64 -1]
     [scan : i64 0]
     [next : i64 0]
-    (begin
-      (while (>= scan 0)
+    (while (>= scan 0)
+      (set! next (backend.compiler-backend-string-find-from text needle scan))
+      (if (and (>= next 0) (< next limit))
         (begin
-          (set!
-            next
-            (backend.compiler-backend-string-find-from text needle scan))
-          (if (and (>= next 0) (< next limit))
-            (begin
-              (set! pos next)
-              (set! scan (+ next 1)))
-            (set! scan -1))))
-      pos)))
+          (set! pos next)
+          (set! scan (+ next 1)))
+        (set! scan -1)))
+    pos))
 
 ;; Rotation moves whole blocks, and on Windows the unwind description is
 ;; positional: `.seh_` notes describe the prologue and nothing else may sit
@@ -37803,12 +37576,10 @@ b_keep:
   (let
     [i : i64 0]
     [n : i64 items.len]
-    (begin
-      (while (< i n)
-        (begin
-          (when (string.eq (array-ref items.slots i) needle) (return true))
-          (set! i (+ i 1))))
-      false)))
+    (while (< i n)
+      (when (string.eq (array-ref items.slots i) needle) (return true))
+      (set! i (+ i 1)))
+    false))
 
 (define (compiler-backend-program-collections-new) : backend.CompilerBackendProgramCollections
   (backend.compiler-backend-program-collections-new-with-iag
@@ -37883,43 +37654,42 @@ b_keep:
     [right : i64 (ir.compiler-ir-test-symbol "right")]
     [ids : backend_i64_i64_map.Map (backend_i64_i64_map.with-capacity 16)]
     [values : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType 3)]
-    (begin
-      (set! (array-ref values 0) (ast.AstType.I64))
-      (backend_i64_i64_map.insert-ref!
-        (&mut ids)
-        (ir.compiler-ir-symbol-id left)
-        0)
-      (set! (array-ref values 1) (ast.AstType.Bool))
-      (backend_i64_i64_map.insert-ref!
-        (&mut ids)
-        (ir.compiler-ir-symbol-id right)
-        1)
-      ;; Dense production fill preserves the cache's historical last-insert
-      ;; shadow behavior for duplicate global identities.
-      (set! (array-ref values 2) (ast.AstType.U8))
-      (backend_i64_i64_map.insert-ref!
-        (&mut ids)
-        (ir.compiler-ir-symbol-id left)
-        2)
-      (let
-        [types : backend.CompilerBackendGlobalTypeTable
-          (backend.CompilerBackendGlobalTypeTable.Dense ids values)]
-        (and
-          (match (backend.compiler-backend-global-type-lookup
-            (backend.compiler-backend-global-shared-view types)
-            left)
-            [(Some (U8)) true]
-            [_ false])
-          (match (backend.compiler-backend-global-type-lookup
-            (backend.compiler-backend-global-shared-view types)
-            right)
-            [(Some (Bool)) true]
-            [_ false])
-          (match (backend.compiler-backend-global-type-lookup
-            types
-            (ir.compiler-ir-test-symbol "missing"))
-            [(No) true]
-            [_ false]))))))
+    (set! (array-ref values 0) (ast.AstType.I64))
+    (backend_i64_i64_map.insert-ref!
+      (&mut ids)
+      (ir.compiler-ir-symbol-id left)
+      0)
+    (set! (array-ref values 1) (ast.AstType.Bool))
+    (backend_i64_i64_map.insert-ref!
+      (&mut ids)
+      (ir.compiler-ir-symbol-id right)
+      1)
+    ;; Dense production fill preserves the cache's historical last-insert
+    ;; shadow behavior for duplicate global identities.
+    (set! (array-ref values 2) (ast.AstType.U8))
+    (backend_i64_i64_map.insert-ref!
+      (&mut ids)
+      (ir.compiler-ir-symbol-id left)
+      2)
+    (let
+      [types : backend.CompilerBackendGlobalTypeTable
+        (backend.CompilerBackendGlobalTypeTable.Dense ids values)]
+      (and
+        (match (backend.compiler-backend-global-type-lookup
+          (backend.compiler-backend-global-shared-view types)
+          left)
+          [(Some (U8)) true]
+          [_ false])
+        (match (backend.compiler-backend-global-type-lookup
+          (backend.compiler-backend-global-shared-view types)
+          right)
+          [(Some (Bool)) true]
+          [_ false])
+        (match (backend.compiler-backend-global-type-lookup
+          types
+          (ir.compiler-ir-test-symbol "missing"))
+          [(No) true]
+          [_ false])))))
 
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
@@ -38084,18 +37854,17 @@ b_keep:
     [i : i64 start]
     [found : i64 -1]
     [done : bool false]
-    (begin
-      (while (not done)
-        (if (< (+ i 1) n)
-          (if (and
-            (= (string.string-ref line i) ',')
-            (= (string.string-ref line (+ i 1)) ' '))
-            (begin
-              (set! found i)
-              (set! done true))
-            (set! i (+ i 1)))
-          (set! done true)))
-      found)))
+    (while (not done)
+      (if (< (+ i 1) n)
+        (if (and
+          (= (string.string-ref line i) ',')
+          (= (string.string-ref line (+ i 1)) ' '))
+          (begin
+            (set! found i)
+            (set! done true))
+          (set! i (+ i 1)))
+        (set! done true)))
+    found))
 
 (define (compiler-backend-peephole-movq [line : (& line str)]) : CompilerBackendPeepholeMove
   (let
@@ -38240,46 +38009,44 @@ b_keep:
     [i : i64 start]
     [k : i64 0]
     [result : i64 -1]
-    (begin
-      (while (and
-        (< i n)
-        (< result 0)
-        (< k backend.compiler-backend-peephole-r10-dead-scan-line-cap))
-        (let
-          ;; The line ends at its newline, or at the chunk end.
-          [end : i64
-            (backend.compiler-backend-peephole-scan-byte-range asm-data i n 10)]
-          (begin
-            (if (compiler-backend-peephole-range-mentions-r10? asm i end)
-              (if (compiler-backend-peephole-line-clean-writes-r10?
-                asm
-                asm-data
-                i
-                end)
-                (set! result 1)
-                (set! result 0))
-              (if (backend.compiler-backend-peephole-movq-prefix-at-range?
-                asm-data
-                i
-                end)
-                unit
-                (set! result 0)))
-            (set!
-              i
-              (if (< end n)
-                (+ end 1)
-                end))
-            (set! k (+ k 1)))))
-      (if (and (< result 0) (< i n))
-        (cfg
-          test
-          (backend.compiler-backend-metric-add!
-            _backend-state
-            backend.compiler-backend-peephole-r10-dead-scan-cap-hits-metric
-            1)
-          unit)
+    (while (and
+      (< i n)
+      (< result 0)
+      (< k backend.compiler-backend-peephole-r10-dead-scan-line-cap))
+      (let
+        ;; The line ends at its newline, or at the chunk end.
+        [end : i64
+          (backend.compiler-backend-peephole-scan-byte-range asm-data i n 10)]
+        (if (compiler-backend-peephole-range-mentions-r10? asm i end)
+          (if (compiler-backend-peephole-line-clean-writes-r10?
+            asm
+            asm-data
+            i
+            end)
+            (set! result 1)
+            (set! result 0))
+          (if (backend.compiler-backend-peephole-movq-prefix-at-range?
+            asm-data
+            i
+            end)
+            unit
+            (set! result 0)))
+        (set!
+          i
+          (if (< end n)
+            (+ end 1)
+            end))
+        (set! k (+ k 1))))
+    (if (and (< result 0) (< i n))
+      (cfg
+        test
+        (backend.compiler-backend-metric-add!
+          _backend-state
+          backend.compiler-backend-peephole-r10-dead-scan-cap-hits-metric
+          1)
         unit)
-      (= result 1))))
+      unit)
+    (= result 1)))
 
 ;; Optimize only the accumulated function group.  The group's chunks are parsed
 ;; in place; the complete peephole result is allocated in the caller arena
@@ -38293,35 +38060,33 @@ b_keep:
     (let
       [output-arena : arena.Arena (arena.current)]
       [peepholed-asm : String ""]
-      (begin
-        (with-scratch
-          (let
-            [chunks : backend.CompilerBackendPeepholeChunkArray
-              (backend.compiler-backend-peephole-chunk-array state.group)]
-            [records : backend.CompilerBackendPeepholeLineVec
-              (backend.compiler-backend-peephole-asm-once-records-chunks
-                backend-state
-                stream
-                chunks
-                false)]
-            ;; RMW-2 folds the recognized triples on the FINAL record stream of
-            ;; the group -- see the PLACEMENT note on the pass.
-            [_folded : unit
-              (backend.compiler-backend-peephole-rmw-fold-candidates!
-                backend-state
-                stream
-                (backend.compiler-backend-global-shared-view records))]
-            [rendered : String
-              (in-arena
-                output-arena
-                (backend.compiler-backend-peephole-records-render records))]
-            (begin
-              (backend.compiler-backend-peephole-records-retire! stream)
-              (set! peepholed-asm rendered)
-              unit)))
-        (CompilerBackendPeepholeChunkState
-          (text_buf.append state.out peepholed-asm)
-          (text_buf.empty))))))
+      (with-scratch
+        (let
+          [chunks : backend.CompilerBackendPeepholeChunkArray
+            (backend.compiler-backend-peephole-chunk-array state.group)]
+          [records : backend.CompilerBackendPeepholeLineVec
+            (backend.compiler-backend-peephole-asm-once-records-chunks
+              backend-state
+              stream
+              chunks
+              false)]
+          ;; RMW-2 folds the recognized triples on the FINAL record stream of
+          ;; the group -- see the PLACEMENT note on the pass.
+          [_folded : unit
+            (backend.compiler-backend-peephole-rmw-fold-candidates!
+              backend-state
+              stream
+              (backend.compiler-backend-global-shared-view records))]
+          [rendered : String
+            (in-arena
+              output-arena
+              (backend.compiler-backend-peephole-records-render records))]
+          (backend.compiler-backend-peephole-records-retire! stream)
+          (set! peepholed-asm rendered)
+          unit))
+      (CompilerBackendPeepholeChunkState
+        (text_buf.append state.out peepholed-asm)
+        (text_buf.empty)))))
 
 (define (compiler-backend-peephole-text-buf-once-in-arena
   [backend-state : backend.CompilerBackendState]
@@ -38337,41 +38102,34 @@ b_keep:
     [items : (__tl_dyn-array String) (__tl_make-array String chunk-count)]
     [initial : CompilerBackendPeepholeChunkState
       (CompilerBackendPeepholeChunkState (text_buf.empty) (text_buf.empty))]
-    (begin
-      (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
-      (let
-        [state : CompilerBackendPeepholeChunkState initial]
-        [i : i64 0]
-        (begin
-          (while (< i chunk-count)
-            (let
-              [chunk : String
-                (backend.compiler-backend-global-array-element-shared-view
-                  items
-                  i)]
-              [at-boundary : CompilerBackendPeepholeChunkState
-                (if (and
-                  (backend.compiler-backend-peephole-chunk-starts-global? chunk)
-                  (not (text_buf.empty? (& state.group))))
-                  (compiler-backend-peephole-chunk-state-flush
-                    backend-state
-                    stream
-                    (backend.compiler-backend-global-shared-view state))
-                  (owned_view.compiler-owned-shared-view state))]
-              [group : text_buf.TextBuf
-                (in-arena group-arena (text_buf.append at-boundary.group chunk))]
-              (begin
-                (set!
-                  state
-                  (CompilerBackendPeepholeChunkState at-boundary.out group))
-                (set! i (+ i 1)))))
-          (let
-            [flushed : CompilerBackendPeepholeChunkState
+    (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
+    (let
+      [state : CompilerBackendPeepholeChunkState initial]
+      [i : i64 0]
+      (while (< i chunk-count)
+        (let
+          [chunk : String
+            (backend.compiler-backend-global-array-element-shared-view items i)]
+          [at-boundary : CompilerBackendPeepholeChunkState
+            (if (and
+              (backend.compiler-backend-peephole-chunk-starts-global? chunk)
+              (not (text_buf.empty? (& state.group))))
               (compiler-backend-peephole-chunk-state-flush
                 backend-state
                 stream
-                state)]
-            flushed.out))))))
+                (backend.compiler-backend-global-shared-view state))
+              (owned_view.compiler-owned-shared-view state))]
+          [group : text_buf.TextBuf
+            (in-arena group-arena (text_buf.append at-boundary.group chunk))]
+          (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))
+          (set! i (+ i 1))))
+      (let
+        [flushed : CompilerBackendPeepholeChunkState
+          (compiler-backend-peephole-chunk-state-flush
+            backend-state
+            stream
+            state)]
+        flushed.out))))
 
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
@@ -38402,65 +38160,59 @@ b_keep:
         (string-data asm))]
     [total : i64 0]
     [k : i64 0]
-    (begin
-      (while (< k len)
-        (let
-          [line : i64 (array-ref plan k)]
-          (begin
-            (set!
-              total
-              (+
-                total
-                (- (array-ref starts (+ line 1)) (array-ref starts line))))
-            (set! k (+ k 1)))))
-      (if (= total 0)
-        ""
-        (let
-          [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
-          [dst : (MutPtr u8)
-            (unsafe
-              (__tl_array-data out))]
-          [pos : i64 0]
-          [run-start : i64 0]
-          [run-end : i64 0]
-          [active : bool false]
-          [j : i64 0]
-          (begin
-            (while (< j len)
-              (let
-                [line : i64 (array-ref plan j)]
-                [s : i64 (array-ref starts line)]
-                [e : i64 (array-ref starts (+ line 1))]
-                (begin
-                  (if (and active (= s run-end))
-                    (set! run-end e)
-                    (begin
-                      (when
-                        active
-                        (begin
-                          (text_buf_borrowed.copy-byte-range-into
-                            data
-                            run-start
-                            (- run-end run-start)
-                            dst
-                            pos)
-                          (set! pos (+ pos (- run-end run-start)))))
-                      (set! active true)
-                      (set! run-start s)
-                      (set! run-end e)))
-                  (set! j (+ j 1)))))
-            (when
-              active
+    (while (< k len)
+      (let
+        [line : i64 (array-ref plan k)]
+        (set!
+          total
+          (+ total (- (array-ref starts (+ line 1)) (array-ref starts line))))
+        (set! k (+ k 1))))
+    (if (= total 0)
+      ""
+      (let
+        [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (__tl_array-data out))]
+        [pos : i64 0]
+        [run-start : i64 0]
+        [run-end : i64 0]
+        [active : bool false]
+        [j : i64 0]
+        (while (< j len)
+          (let
+            [line : i64 (array-ref plan j)]
+            [s : i64 (array-ref starts line)]
+            [e : i64 (array-ref starts (+ line 1))]
+            (if (and active (= s run-end))
+              (set! run-end e)
               (begin
-                (text_buf_borrowed.copy-byte-range-into
-                  data
-                  run-start
-                  (- run-end run-start)
-                  dst
-                  pos)
-                (set! pos (+ pos (- run-end run-start)))))
-            (unsafe
-              (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))))
+                (when
+                  active
+                  (begin
+                    (text_buf_borrowed.copy-byte-range-into
+                      data
+                      run-start
+                      (- run-end run-start)
+                      dst
+                      pos)
+                    (set! pos (+ pos (- run-end run-start)))))
+                (set! active true)
+                (set! run-start s)
+                (set! run-end e)))
+            (set! j (+ j 1))))
+        (when
+          active
+          (begin
+            (text_buf_borrowed.copy-byte-range-into
+              data
+              run-start
+              (- run-end run-start)
+              dst
+              pos)
+            (set! pos (+ pos (- run-end run-start)))))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
 ;; #block-layout entry: rewrite one emitted assembly text under `mode`
 ;; (bit 1 tail duplication, bit 2 cold-arm out-of-lining). The unit tests and
@@ -38489,14 +38241,12 @@ b_keep:
   (let
     [home : arena.Arena (arena.current)]
     [out : String ""]
-    (begin
-      (with-scratch
-        (let
-          [rendered : String (compiler-backend-layout-run asm mode home)]
-          (begin
-            (set! out rendered)
-            unit)))
-      out)))
+    (with-scratch
+      (let
+        [rendered : String (compiler-backend-layout-run asm mode home)]
+        (set! out rendered)
+        unit))
+    out))
 
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let
@@ -38522,9 +38272,8 @@ b_keep:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm))]
-    (begin
-      (backend.compiler-backend-peephole-records-retire! stream)
-      result)))
+    (backend.compiler-backend-peephole-records-retire! stream)
+    result))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (backend.compiler-backend-peephole-asm-buffer asm false)))
@@ -38832,37 +38581,36 @@ b_keep:
       (compiler-backend-test-symbol "required_foreign_symbol")]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
-    (begin
-      (ir.compiler-ir-global-builder-push!
-        (&mut globals)
-        (ir.CompilerIrGlobal.Global
-          (compiler-backend-test-symbol "fixture.tl::foreign-value")
+    (ir.compiler-ir-global-builder-push!
+      (&mut globals)
+      (ir.CompilerIrGlobal.Global
+        (compiler-backend-test-symbol "fixture.tl::foreign-value")
+        (I64)
+        (Function source-name-id)))
+    (Program
+      (ir.compiler-ir-global-builder-to-seq globals)
+      (ir.compiler-ir-function-seq-prepend
+        (Function
+          cbi.compiler-builtin-id-fix-main
+          (ir.compiler-ir-param-seq-empty)
           (I64)
-          (Function source-name-id)))
-      (Program
-        (ir.compiler-ir-global-builder-to-seq globals)
-        (ir.compiler-ir-function-seq-prepend
-          (Function
-            cbi.compiler-builtin-id-fix-main
-            (ir.compiler-ir-param-seq-empty)
-            (I64)
-            0
-            (ir.compiler-ir-blocks
-              (ir.CompilerIrBlock.Block
-                (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-instr-seq1 (Return (Some (I64 42))))))
-            Ordinary)
-          (ir.compiler-ir-function-seq-empty))
-        (ir.compiler-ir-extern-seq1
-          (Extern
-            name-id
-            source-name-id
-            "fixture.tl::foreign"
-            (I64)
-            (C)
-            link-symbol-id
-            (ast.ast-extern-link-input-list-new)
-            false))))))
+          0
+          (ir.compiler-ir-blocks
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (ir.compiler-ir-instr-seq1 (Return (Some (I64 42))))))
+          Ordinary)
+        (ir.compiler-ir-function-seq-empty))
+      (ir.compiler-ir-extern-seq1
+        (Extern
+          name-id
+          source-name-id
+          "fixture.tl::foreign"
+          (I64)
+          (C)
+          link-symbol-id
+          (ast.ast-extern-link-input-list-new)
+          false)))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
   (asm-ok?
@@ -39277,16 +39025,15 @@ b_keep:
                 assignments-b
                 0)
               cabi.compiler-reg-id-rax)]
-          (begin
-            (backend.compiler-backend-function-state-set-bool!
-              function-b
-              backend.compiler-backend-function-bool-emit-assignment-index-active
-              true)
-            (backend.compiler-backend-function-state-set-i64!
-              function-b
-              backend.compiler-backend-function-i64-rax-override-var
-              -1)
-            ok)))]
+          (backend.compiler-backend-function-state-set-bool!
+            function-b
+            backend.compiler-backend-function-bool-emit-assignment-index-active
+            true)
+          (backend.compiler-backend-function-state-set-i64!
+            function-b
+            backend.compiler-backend-function-i64-rax-override-var
+            -1)
+          ok))]
     [a-drift-result : i64
       (let
         [offset (ir.CompilerIrValue.I64 0)]
@@ -40228,127 +39975,125 @@ b_keep:
           (backend.compiler-backend-state-operand-cache-retained-bytes
             backend-state)
           655360))]
-    (begin
-      (unsafe
-        (arena.set! caller))
-      (arena.destroy-safe! scratch)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
-          0)
-        17)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
-          0)
-        3)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
-          0)
-        29)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
-          0)
-        31)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
-          0)
-        47)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
-          0)
-        53)
-      (set!
-        (array-ref
-          (unsafe
-            (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
-          0)
-        59)
-      (let
-        [survived? : bool
-          (and
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
-                0)
-              17)
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
-                0)
-              3)
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
-                0)
-              29)
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
-                0)
-              31)
-            (string.eq slot-render "-8(%rbp)")
-            (string.eq frame-render "-16(%rbp)")
-            (string.eq immediate-render "$17")
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
-                0)
-              47)
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
-                0)
-              53)
-            (=
-              (array-ref
-                (unsafe
-                  (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
-                0)
-              59))]
-        (begin
-          (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
-            backend-state
-            stream)
-          (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
-            backend-state
-            stream)
-          (and
-            initially-lazy?
-            carry-restored-caller?
-            carry-table-grew?
-            carry-bytes-grew?
-            carry-growth-restored-caller?
-            owner-restored-caller?
-            owner-table-grew?
-            owner-bytes-grew?
-            owner-growth-restored-caller?
-            sweep-table-grew?
-            sweep-bytes-grew?
-            sweep-coverage-grew?
-            sweep-restored-caller?
-            slot-restored-caller?
-            frame-restored-caller?
-            immediate-restored-caller?
-            lazy-root-stable?
-            grown-capacities?
-            survived?))))))
+    (unsafe
+      (arena.set! caller))
+    (arena.destroy-safe! scratch)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
+        0)
+      17)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
+        0)
+      3)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
+        0)
+      29)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
+        0)
+      31)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
+        0)
+      47)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
+        0)
+      53)
+    (set!
+      (array-ref
+        (unsafe
+          (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
+        0)
+      59)
+    (let
+      [survived? : bool
+        (and
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
+              0)
+            17)
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
+              0)
+            3)
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
+              0)
+            29)
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
+              0)
+            31)
+          (string.eq slot-render "-8(%rbp)")
+          (string.eq frame-render "-16(%rbp)")
+          (string.eq immediate-render "$17")
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
+              0)
+            47)
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
+              0)
+            53)
+          (=
+            (array-ref
+              (unsafe
+                (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
+              0)
+            59))]
+      (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+        backend-state
+        stream)
+      (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
+        backend-state
+        stream)
+      (and
+        initially-lazy?
+        carry-restored-caller?
+        carry-table-grew?
+        carry-bytes-grew?
+        carry-growth-restored-caller?
+        owner-restored-caller?
+        owner-table-grew?
+        owner-bytes-grew?
+        owner-growth-restored-caller?
+        sweep-table-grew?
+        sweep-bytes-grew?
+        sweep-coverage-grew?
+        sweep-restored-caller?
+        slot-restored-caller?
+        frame-restored-caller?
+        immediate-restored-caller?
+        lazy-root-stable?
+        grown-capacities?
+        survived?))))
 
 (define (compiler-backend-forwarded-addr-of-register-home-refused-ok?) : bool
   (let
@@ -40464,10 +40209,9 @@ b_keep:
   (let
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (pmove.compiler-parallel-move-edge-seq-with-capacity 2)]
-    (begin
-      (pmove.compiler-parallel-move-edge-push! (&mut edges) first)
-      (pmove.compiler-parallel-move-edge-push! (&mut edges) second)
-      edges)))
+    (pmove.compiler-parallel-move-edge-push! (&mut edges) first)
+    (pmove.compiler-parallel-move-edge-push! (&mut edges) second)
+    edges))
 
 (define (compiler-parallel-move-self-test?) : bool
   (let
@@ -40538,15 +40282,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(String value)
-            (if (string.eq value text)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(String value)
+          (if (string.eq value text)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-data-record-list-contains-f64?
   [records : cobj.CompilerObjectDataRecordList]
@@ -40555,15 +40298,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(F64 value)
-            (if (= value bits)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(F64 value)
+          (if (= value bits)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-data-record-list-contains-f32?
   [records : cobj.CompilerObjectDataRecordList]
@@ -40572,15 +40314,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(F32 value)
-            (if (= value bits)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(F32 value)
+          (if (= value bits)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-data-record-list-contains-align?
   [records : cobj.CompilerObjectDataRecordList]
@@ -40589,15 +40330,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(Align value)
-            (if (= value align)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(Align value)
+          (if (= value align)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-data-record-list-contains-i64?
   [records : cobj.CompilerObjectDataRecordList]
@@ -40606,15 +40346,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(I64 found-value)
-            (if (= found-value value)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(I64 found-value)
+          (if (= found-value value)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-data-record-list-label-has-i64-pair?
   [records : cobj.CompilerObjectDataRecordList]
@@ -40625,29 +40364,28 @@ b_keep:
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-data-record-list-ref records index)
-          [(Label value)
-            (if (and (string.eq value label) (< (+ index 2) count))
-              (match (cobj.compiler-object-data-record-list-ref
-                records
-                (+ index 1))
-                [(I64 first-found)
-                  (if (= first-found first)
-                    (match (cobj.compiler-object-data-record-list-ref
-                      records
-                      (+ index 2))
-                      [(I64 second-found)
-                        (if (= second-found second)
-                          (set! found true)
-                          (set! index (+ index 1)))]
-                      [_ (set! index (+ index 1))])
-                    (set! index (+ index 1)))]
-                [_ (set! index (+ index 1))])
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(Label value)
+          (if (and (string.eq value label) (< (+ index 2) count))
+            (match (cobj.compiler-object-data-record-list-ref
+              records
+              (+ index 1))
+              [(I64 first-found)
+                (if (= first-found first)
+                  (match (cobj.compiler-object-data-record-list-ref
+                    records
+                    (+ index 2))
+                    [(I64 second-found)
+                      (if (= second-found second)
+                        (set! found true)
+                        (set! index (+ index 1)))]
+                    [_ (set! index (+ index 1))])
+                  (set! index (+ index 1)))]
+              [_ (set! index (+ index 1))])
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-section-contains-string?
   [sections : (& sections cobj.CompilerObjectSectionList)]
@@ -40710,15 +40448,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-instr-list-ref instrs index)
-          [(Call value)
-            (if (string.eq value target)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-instr-list-ref instrs index)
+        [(Call value)
+          (if (string.eq value target)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-section-contains-call?
   [sections : (& sections cobj.CompilerObjectSectionList)]
@@ -40734,15 +40471,14 @@ b_keep:
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (cobj.compiler-object-instr-list-ref instrs index)
-          [(XorpdRip value)
-            (if (string.eq value target)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (cobj.compiler-object-instr-list-ref instrs index)
+        [(XorpdRip value)
+          (if (string.eq value target)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-section-contains-xorpd-rip?
   [sections : cobj.CompilerObjectSectionList]

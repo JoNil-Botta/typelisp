@@ -5080,7 +5080,7 @@
     [folded : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt.compiler-opt-global-shared-view instrs))]
     [dce : ir.CompilerIrInstrSeq
       (let
@@ -5092,7 +5092,7 @@
     [bounds : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt.compiler-opt-global-shared-view instrs))]
     [vector-cse : ir.CompilerIrInstrSeq
@@ -5108,7 +5108,7 @@
     [vector-stale : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-vector-reduce-stale-instrs))]
     [vector-copy : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-vector-copy-instrs))]
@@ -5125,7 +5125,7 @@
         (opt.opt-copy-env-empty)
         (opt-test-fold-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
-          (opt.opt-const-env-empty)
+          (Nil)
           (opt-mask-idempotent-copy-instrs)))]
     [mask-idempotent-dce : ir.CompilerIrInstrSeq
       (let
@@ -5333,7 +5333,7 @@
     [optimized : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt.compiler-opt-global-shared-view instrs))]
     [fold-fire-result : opt.OptBlockListPassResult
       (opt.optimize-block-list-for-function-pass
@@ -5383,7 +5383,7 @@
       [stale-optimized : ir.CompilerIrInstrSeq
         (opt-test-fold-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
-          (opt.opt-const-env-empty)
+          (Nil)
           stale-instrs)]
       (compiler-optimize-self-test-require-i64!
         "stale load invalidates constant fact"
@@ -5556,22 +5556,22 @@
     [pos : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-float-fold-instrs))]
     [neg : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-float-fold-invalid-instrs))]
     [finite-casts : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-finite-cast-fold-instrs))]
     [deferred-casts : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-finite-cast-no-fold-instrs))]
     (and
       (= (opt-count-arith-instr-seq pos) 0)
@@ -5826,12 +5826,12 @@
     [once : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-cc-instrs))]
     [twice : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (ir.compiler-ir-global-shared-view once))]
     (unless (= (opt-cc-check once) 0) (return (opt-cc-check once)))
     ;; idempotence: the canonical form is a fixpoint of the same pass
@@ -5843,12 +5843,12 @@
     [pos : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-typed-fold-instrs))]
     [neg : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-const-env-empty)
+        (Nil)
         (opt-typed-fold-invalid-instrs))]
     (unless (= (opt-count-arith-instr-seq pos) 0) (return 1))
     (unless (= (opt-count-cast-instr-seq pos) 0) (return 3))
@@ -5928,13 +5928,9 @@
 (define (compiler-optimize-strength-self-test) : i64
   (let
     [pos : ir.CompilerIrInstrSeq
-      (opt-test-strength-instrs
-        (opt.opt-const-env-empty)
-        (opt-strength-self-test-instrs))]
+      (opt-test-strength-instrs (Nil) (opt-strength-self-test-instrs))]
     [neg : ir.CompilerIrInstrSeq
-      (opt-test-strength-instrs
-        (opt.opt-const-env-empty)
-        (opt-strength-negative-instrs))]
+      (opt-test-strength-instrs (Nil) (opt-strength-negative-instrs))]
     (cond
       [(not (= (opt-count-arith-instr-seq pos) 0)) 1]
       [(not (= (opt-sum-mov-var-src pos) 49)) 2]
@@ -10851,9 +10847,7 @@
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]
   [value : bool]) : opt.OptDomCmpFacts
-  (opt.opt-dom-cmp-facts-cons
-    (Fact op lhs rhs ty value 0)
-    (opt.opt-dom-cmp-facts-empty)))
+  (opt.opt-dom-cmp-facts-cons (Fact op lhs rhs ty value 0) (Nil)))
 
 (define (opt-rule-a-probe
   [fact-op : ir.CompilerIrBinOp]
@@ -11212,7 +11206,7 @@
 (define (opt-rule-a-chain-tail-facts [mid-op : ir.CompilerIrBinOp]) : opt.OptDomCmpFacts
   (opt.opt-dom-cmp-facts-cons
     (Fact mid-op (opt-rule-a-other) (Var 3) (opt-rule-a-i64) true 0)
-    (opt.opt-dom-cmp-facts-empty)))
+    (Nil)))
 
 ;; `i < n` chained through `n <mid-op> len`, queried as `i <op> len`.
 (define (opt-rule-a-chain-probe
@@ -11771,37 +11765,37 @@
     [duplicate : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-duplicate-instrs))]
     [different : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-different-instrs))]
     [redef : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-redef-instrs))]
     [call : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-call-instrs))]
     [branch : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-branch-instrs))]
     [copy : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-bounds-copy-instrs)))]
     [dce : ir.CompilerIrInstrSeq
@@ -11822,13 +11816,13 @@
     [index-cast : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : ir.CompilerIrInstrSeq
       (opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-bounds-facts-empty)
+        (Nil)
         (Empty)
         (opt-bounds-index-cast-redef-instrs))]
     (cond
@@ -25859,8 +25853,13 @@
   (let
     [key : opt.OptExprKey (BinKey (Add) (Var 1) (Var 2) (I64))]
     [other-key : opt.OptExprKey (BinKey (Sub) (Var 1) (Var 2) (I64))]
+    [buckets : (__tl_dyn-array opt.OptGvnBucket)
+      (__tl_make-array opt.OptGvnBucket 1)]
     [table : opt.OptGvnMap
-      (opt.opt-gvn-map-with-buckets 1 (opt.opt-gvn-affine-defs-empty))]
+      (opt.OptGvnMap
+        (opt.compiler-opt-global-shared-view buckets)
+        (opt.opt-gvn-affine-defs-empty))]
+    (set! (array-ref buckets 0) (opt.OptGvnBucket.Nil))
     (opt-gvn-table-insert!
       (ast.ast-node-pool-reader-type-segment-bases)
       table
@@ -40037,14 +40036,14 @@
 
 (define (opt-pcd-join-test-table [start : i64] [count : i64]) : opt.OptPureCallTable
   (let
-    [table : opt.OptPureCallTable (opt.opt-pure-call-table-empty)]
+    [table : opt.OptPureCallTable (Nil)]
     [i : i64 0]
     (while (< i count)
       (set!
         table
-        (opt.opt-pure-call-table-push
-          table
-          (opt.OptPureCallEntry (opt-pcd-test-pure) (One (Var 0)) (+ start i))))
+        (Cons
+          (opt.OptPureCallEntry (opt-pcd-test-pure) (One (Var 0)) (+ start i))
+          (box table)))
       (set! i (+ i 1)))
     table))
 
@@ -40058,20 +40057,15 @@
     [expected : i64 69]
     [done : bool false]
     (while (not done)
-      (if (opt.opt-pure-call-table-empty? table)
-        (set! done true)
-        (let
-          [entry (opt.opt-pure-call-table-last table)]
-          [rest
-            (opt.opt-pure-call-table-prefix
-              table
-              (- (opt.opt-pure-call-table-len table) 1))]
+      (match table
+        [(Nil) (set! done true)]
+        [(Cons entry rest)
           (test.assert-i64-eq
             entry.dst
             expected
             "the bounded intersection preserves available-result order")
           (set! expected (- expected 1))
-          (set! table rest))))
+          (set! table (deref rest))]))
     (test.assert-i64-eq expected 5 "only the most recent 64 entries survive")
     (test.assert-true
       (let
@@ -52206,7 +52200,7 @@
     [seq : ir.CompilerIrInstrSeq instrs]
     [words : opt.OptExprTable (opt.opt-expr-table-new)]
     [copies : opt.OptCopyEnv (opt.opt-copy-env-empty)]
-    [loads : opt.OptLoadTable (opt.opt-load-table-empty)]
+    [loads : opt.OptLoadTable (Nil)]
     (opt.opt-load-copy-instr-seq-rewrite!
       type-segment-bases
       hs
@@ -52219,7 +52213,6 @@
           (ir.compiler-ir-instr-seq-count seq))
         (opt.opt-alias-seed-params type-segment-bases params))
       (&mut words)
-      (&mut copies)
       (&mut loads)
       (opt.compiler-opt-global-shared-view seq))
     seq))
@@ -53069,7 +53062,7 @@
       (opt.opt-load-table-bind
         (opt.compiler-opt-global-shared-view profile-state)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-load-table-empty)
+        (Nil)
         1
         (opt.compiler-opt-global-shared-view key0)
         (Var 10)
@@ -59747,7 +59740,7 @@
       copies
       (opt.opt-dom-cmp-facts-cons
         (Fact (Lt) (Var 0) (Var 2) (I64) true 0)
-        (opt.opt-dom-cmp-facts-empty))
+        (Nil))
       0
       (Var 0)
       (Var 6))))
@@ -63327,8 +63320,6 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables.exprs)
-      (&mut tables.fold)
-      (&mut tables.strength)
       (opt.compiler-opt-global-shared-view no-exprs))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -63337,8 +63328,6 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables.exprs)
-      (&mut tables.fold)
-      (&mut tables.strength)
       (opt.compiler-opt-global-shared-view first))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -63347,8 +63336,6 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables.exprs)
-      (&mut tables.fold)
-      (&mut tables.strength)
       (opt.compiler-opt-global-shared-view second))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -74196,7 +74183,11 @@
   (opt_dense_i64_vec.len (& changes.buckets)))
 
 (define (opt-gvn-map-empty [record-count : i64]) : opt.OptGvnMap
-  (opt.opt-gvn-map-with-affine record-count (opt.opt-gvn-affine-defs-empty)))
+  (opt.OptGvnMap
+    (__tl_make-array
+      opt.OptGvnBucket
+      (opt.opt-gvn-bucket-capacity record-count))
+    (opt.opt-gvn-affine-defs-empty)))
 
 (define (opt-gvn-table-insert!
   [type-segment-bases : i64]

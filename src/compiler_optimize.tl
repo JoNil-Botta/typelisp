@@ -34,7 +34,7 @@
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 (import compiler_owned_view as owned_view)
-(import compiler_scoped_stack as scoped_stack)
+(import stdlib.runtime)
 
 ;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
 ;; allocation plan per candidate to price the caller's prologue and spill
@@ -1124,89 +1124,41 @@
   (SomeConst ir.CompilerIrValue ast.AstType))
 
 ;; The const env is threaded linearly through a single block's fold/strength
-;; passes (each block starts from an empty env); it is never forked or
+;; passes (each block starts fresh at `OptConstEnv.Nil`); it is never forked or
 ;; reused across blocks. So bind/unbind only ever extend the most recent env.
 ;; We exploit that: the newest entry for a var always shadows older ones, so
-;; `bind` and `unbind` just PUSH (O(1)) instead of rebuilding the whole stack
+;; `bind` and `unbind` just PREPEND (O(1)) instead of rebuilding the whole list
 ;; to remove the prior entry, which would make folding a single large block
 ;; O(n^2) in both time and allocation (a function that is one giant `str-cat`
 ;; lowers to a long `string-append` call chain, and each call unbinds its dst).
-;; `OptConstEntry.Shadow` records "this var is no longer a known constant" so
-;; lookup stops at it. Each entry's `consts` mask (a bit per var, its id mod 64)
-;; says which vars a Const at or below it can bind: an unbind of a var no Const
-;; binds would change no lookup, so it pushes nothing, and a lookup stops where
-;; the mask lacks its var.
-(defenum OptConstEntry
-  (Const i64 ir.CompilerIrValue ast.AstType i64)
-  (Shadow i64 i64))
-
-(defstruct OptConstEnv
-  (slots (__tl_dyn-array OptConstEntry))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptConstEntry
-  OptConstEnv
-  opt-const-env
-  empty
-  push
-  truncate)
-
-(define (opt-const-var-bit [var : i64]) : i64
-  (shl 1 (bit-and var 63)))
-
-(define (opt-const-env-consts [env : (& env OptConstEnv)]) : i64
-  (if (= env.len 0)
-    0
-    (match (& (array-ref env.slots (- env.len 1)))
-      [(Const _ _ _ consts) (deref consts)]
-      [(Shadow _ consts) (deref consts)])))
+;; `OptConstEnv.Shadow` records "this var is no longer a known constant" so
+;; lookup stops at it.
+(defenum OptConstEnv
+  (Nil)
+  (Cons i64 ir.CompilerIrValue ast.AstType (Box OptConstEnv))
+  (Shadow i64 (Box OptConstEnv)))
 
 (define (opt-const-unbind [env : (& env OptConstEnv)] [var : i64]) : OptConstEnv
-  (let
-    ;; every def unbinds its dst: read the newest mask in place
-    [count : i64 env.len]
-    [consts : i64
-      (if (= count 0)
-        0
-        (match (& (array-ref env.slots (- count 1)))
-          [(Const _ _ _ consts) (deref consts)]
-          [(Shadow _ consts) (deref consts)]))]
-    (if (= (bit-and consts (opt-const-var-bit var)) 0)
-      (owned_view.compiler-owned-reference-shared-view env)
-      (opt-const-env-push
-        (owned_view.compiler-owned-reference-shared-view env)
-        (Shadow var consts)))))
+  (Shadow var (box env)))
 
 (define (opt-const-bind
   [env : (& env OptConstEnv)]
   [var : i64]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptConstEnv
-  (opt-const-env-push
-    (owned_view.compiler-owned-reference-shared-view env)
-    (OptConstEntry.Const
-      var
-      value
-      ty
-      (bit-or (opt-const-env-consts env) (opt-const-var-bit var)))))
+  (Cons var value ty (box env)))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
-  (let
-    [bit : i64 (opt-const-var-bit var)]
-    [index : i64 (- env.len 1)]
-    (while (>= index 0)
-      (match (compiler-opt-global-array-element-shared-view env.slots index)
-        [(Const id value ty consts)
-          (cond
-            [(= (bit-and consts bit) 0) (return (NoConst))]
-            [(= id var) (return (SomeConst value ty))]
-            [else unit])]
-        [(Shadow id consts)
-          (when (or (= (bit-and consts bit) 0) (= id var)) (return (NoConst)))])
-      (set! index (- index 1)))
-    (NoConst)))
+  (match env
+    [(Nil) (NoConst)]
+    [(Cons id value ty rest)
+      (if (= id var)
+        (SomeConst value ty)
+        (opt-const-lookup (deref rest) var))]
+    [(Shadow id rest)
+      (if (= id var)
+        (NoConst)
+        (opt-const-lookup (deref rest) var))]))
 
 (define (opt-integer-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -2803,9 +2755,9 @@
       (Result
         (opt-const-unbind env dst)
         (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(StorePtr _ _ _) (Result (opt-const-env-truncate env 0) instr)]
-    [(StoreOwned _ _ _) (Result (opt-const-env-truncate env 0) instr)]
-    [(CopyBytes _ _ _) (Result (opt-const-env-truncate env 0) instr)]
+    [(StorePtr _ _ _) (Result Nil instr)]
+    [(StoreOwned _ _ _) (Result Nil instr)]
+    [(CopyBytes _ _ _) (Result Nil instr)]
     [(Pack _ _ _) (Result env instr)]
     [(Word _ _ _ _) (Result env instr)]
     [_
@@ -2856,24 +2808,9 @@
       (Result
         (opt-const-unbind env dst)
         (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(StorePtr _ _ _)
-      (Result
-        (opt-const-env-truncate
-          (owned_view.compiler-owned-reference-shared-view env)
-          0)
-        instr)]
-    [(StoreOwned _ _ _)
-      (Result
-        (opt-const-env-truncate
-          (owned_view.compiler-owned-reference-shared-view env)
-          0)
-        instr)]
-    [(CopyBytes _ _ _)
-      (Result
-        (opt-const-env-truncate
-          (owned_view.compiler-owned-reference-shared-view env)
-          0)
-        instr)]
+    [(StorePtr _ _ _) (Result Nil instr)]
+    [(StoreOwned _ _ _) (Result Nil instr)]
+    [(CopyBytes _ _ _) (Result Nil instr)]
     [(Pack _ _ _)
       (Result (owned_view.compiler-owned-reference-shared-view env) instr)]
     [(Word _ _ _ _)
@@ -6738,23 +6675,10 @@
 ;; `opt-expr-table-keep!`.
 (defstruct OptBlockExprTables
   (exprs OptExprTable)
-  (words OptExprTable)
-  ;; scratch stacks for the per-block fold, strength, copy and bounds walks
-  (fold OptConstEnv)
-  (strength OptConstEnv)
-  (copies OptCopyEnv)
-  (bounds OptBoundsFacts)
-  (loads OptLoadTable))
+  (words OptExprTable))
 
 (define (opt-block-expr-tables-new) : OptBlockExprTables
-  (OptBlockExprTables
-    (opt-expr-table-new)
-    (opt-expr-table-new)
-    (opt-const-env-empty)
-    (opt-const-env-empty)
-    (opt-copy-env-empty)
-    (opt-bounds-facts-empty)
-    (opt-load-table-empty)))
+  (OptBlockExprTables (opt-expr-table-new) (opt-expr-table-new)))
 
 ;; A stamp makes ordinary clears independent of the largest earlier block.
 ;; Bucket counts are powers of two; only entries from the current generation
@@ -8744,20 +8668,108 @@
   (Copy i64 ir.CompilerIrValue)
   (PackWord i64 i64 ir.CompilerIrValue))
 
+;; Snapshots keep slots[0..len) immutable. A lineage's arena-allocated top
+;; cell is live whenever capacity is nonzero; zeroed empty snapshots never
+;; read it. Push appends only at that top, otherwise it copies the live prefix.
+;; Entry values belong to compiler arenas and have no cleanup, so growth may
+;; shallow-copy their inline storage into a fresh typed array.
 (defstruct OptCopyEnv
   (slots (__tl_dyn-array OptCopyEntry))
   (len i64)
-  (top (__tl_dyn-array i64)))
+  (top (MutPtr i64)))
 
-(scoped_stack.compiler-scoped-stack-operations
-  OptCopyEntry
-  OptCopyEnv
-  opt-copy-env
-  empty
-  with-capacity
-  empty?
-  push
-  truncate)
+(define opt-copy-env-empty-slots : (__tl_dyn-array OptCopyEntry)
+  (__tl_make-array OptCopyEntry 0))
+(define opt-copy-env-empty-top : (MutPtr i64)
+  (unsafe
+    (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64))))
+
+(define (opt-copy-env-empty) : OptCopyEnv
+  (OptCopyEnv
+    (unsafe
+      (ptr-read (ptr-addr-of opt-copy-env-empty-slots)))
+    0
+    opt-copy-env-empty-top))
+
+(define (opt-copy-env-with-capacity [capacity : i64]) : OptCopyEnv
+  (let
+    [top : (MutPtr i64)
+      (unsafe
+        (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64)))]
+    (unsafe
+      (ptr-write! top 0))
+    (OptCopyEnv
+      (__tl_make-array
+        OptCopyEntry
+        (if (< capacity 1)
+          1
+          capacity))
+      0
+      top)))
+
+(define (opt-copy-env-empty? [s : (& s OptCopyEnv)]) : bool
+  (= s.len 0))
+
+(define (opt-copy-env-push [s : OptCopyEnv] [value : OptCopyEntry]) : OptCopyEnv
+  (let
+    [n : i64 s.len]
+    [slots : (__tl_dyn-array OptCopyEntry) s.slots]
+    [top : (MutPtr i64) s.top]
+    (if (and
+      (< n (array-length slots))
+      (=
+        (unsafe
+          (ptr-read top))
+        n))
+      (begin
+        (set! (array-ref slots n) value)
+        (unsafe
+          (ptr-write! top (+ n 1)))
+        (OptCopyEnv slots (+ n 1) top))
+      (opt-copy-env-push-copy slots n value))))
+
+(define (opt-copy-env-push-copy
+  [slots : (__tl_dyn-array OptCopyEntry)]
+  [n : i64]
+  [value : OptCopyEntry]) : OptCopyEnv
+  (let
+    [fresh : (__tl_dyn-array OptCopyEntry)
+      (__tl_make-array
+        OptCopyEntry
+        (if (< n 2)
+          4
+          (* 2 n)))]
+    [fresh-top : (MutPtr i64)
+      (unsafe
+        (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64)))]
+    (unsafe
+      (runtime.runtime-copy-bytes!
+        (ptr-cast (__tl_array-data fresh) : (MutPtr u8))
+        (ptr-cast (__tl_array-data slots) : (Ptr u8))
+        (* n (comptime (size-of (type OptCopyEntry))))))
+    (set! (array-ref fresh n) value)
+    (unsafe
+      (ptr-write! fresh-top (+ n 1)))
+    (OptCopyEnv fresh (+ n 1) fresh-top)))
+
+;; Truncation declares every longer snapshot of this lineage dead. Callers
+;; clear only a consumed block-local environment; retained GVN/phi snapshots
+;; use ordinary pushes and invalidation, which preserve their live prefixes.
+(define (opt-copy-env-truncate [s : OptCopyEnv] [mark : i64]) : OptCopyEnv
+  (let
+    [n : i64
+      (if (< mark 0)
+        0
+        (if (> mark s.len)
+          s.len
+          mark))]
+    [slots : (__tl_dyn-array OptCopyEntry) s.slots]
+    [top : (MutPtr i64) s.top]
+    (if (> (array-length slots) 0)
+      (unsafe
+        (ptr-write! top n))
+      unit)
+    (OptCopyEnv slots n top)))
 
 (define (opt-copy-lookup [env : (& env OptCopyEnv)] [var : i64]) : ir.CompilerIrMaybeValue
   (let
@@ -9341,21 +9353,9 @@
 (defenum OptBoundsFact
   (Fact ir.CompilerIrValue ir.CompilerIrValue))
 
-(defstruct OptBoundsFacts
-  (slots (__tl_dyn-array OptBoundsFact))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptBoundsFact
-  OptBoundsFacts
-  opt-bounds-facts
-  empty
-  with-capacity
-  empty?
-  push
-  mark
-  truncate)
+(defenum OptBoundsFacts
+  (Nil)
+  (Cons OptBoundsFact (Box OptBoundsFacts)))
 
 (defenum OptObjectLengthFact
   (None)
@@ -9407,17 +9407,14 @@
   [facts : (& facts OptBoundsFacts)]
   [index : (& index ir.CompilerIrValue)]
   [length : (& length ir.CompilerIrValue)]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (when
-        (opt-bounds-fact-eq
-          (compiler-opt-global-array-element-shared-view facts.slots at)
-          index
-          length)
-        (return true))
-      (set! at (- at 1)))
-    false))
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact rest)
+      (let
+        [rest : OptBoundsFacts (deref rest)]
+        (if (opt-bounds-fact-eq fact index length)
+          true
+          (opt-bounds-contains rest index length)))]))
 
 (define (opt-bounds-add
   [facts : OptBoundsFacts]
@@ -9425,7 +9422,7 @@
   [length : ir.CompilerIrValue]) : OptBoundsFacts
   (if (opt-bounds-contains facts index length)
     facts
-    (opt-bounds-facts-push facts (OptBoundsFact.Fact index length))))
+    (Cons (Fact index length) (box facts))))
 
 ;; Has this index passed a check against ANY length? `bounds_check` is an
 ;; unsigned `index < length` whose length operand is a runtime container
@@ -9438,16 +9435,14 @@
 (define (opt-bounds-index-checked?
   [facts : (& facts OptBoundsFacts)]
   [index : ir.CompilerIrValue]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots at)
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact rest)
+      (match fact
         [(Fact fact-index _)
-          (when
-            (opt-value-eq fact-index (compiler-opt-global-shared-view index))
-            (return true))])
-      (set! at (- at 1)))
-    false))
+          (if (opt-value-eq fact-index (compiler-opt-global-shared-view index))
+            true
+            (opt-bounds-index-checked? (deref rest) index))])]))
 
 (define (opt-bounds-fact-uses-var? [fact : (& fact OptBoundsFact)] [var : i64]) : bool
   (match fact
@@ -9457,30 +9452,14 @@
         (opt-bounds-length-uses-var? length var))]))
 
 (define (opt-bounds-invalidate-var [facts : OptBoundsFacts] [var : i64]) : OptBoundsFacts
-  (let
-    [count : i64 facts.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (not (opt-bounds-fact-uses-var? (& (array-ref facts.slots first)) var)))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      facts
+  (match facts
+    [(Nil) (Nil)]
+    [(Cons fact rest)
       (let
-        [kept : OptBoundsFacts (opt-bounds-facts-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
-          (if (opt-bounds-fact-uses-var? (& (array-ref facts.slots index)) var)
-            unit
-            (set!
-              kept
-              (opt-bounds-facts-push
-                kept
-                (compiler-opt-global-array-element-shared-view
-                  facts.slots
-                  index))))
-          (set! index (+ index 1)))
-        kept))))
+        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var (deref rest) var)]
+        (if (opt-bounds-fact-uses-var? fact var)
+          rest2
+          (Cons fact (box rest2))))]))
 
 ;; Index canonicalization: an array index is lowered to a fresh
 ;; `Cast(idx, I64->U64)` per access (see `lower-array-element-addr`), so two
@@ -9662,21 +9641,21 @@
   (match instr
     ;; These defs clear every fact, like the stores, calls and control flow
     ;; that define nothing.
-    [(CpuId _ _ _ _) (opt-bounds-facts-truncate facts 0)]
-    [(Xgetbv _ _) (opt-bounds-facts-truncate facts 0)]
-    [(Syscall _ _) (opt-bounds-facts-truncate facts 0)]
-    [(Call _ _ _ _) (opt-bounds-facts-truncate facts 0)]
-    [(CallIndirect _ _ _ _) (opt-bounds-facts-truncate facts 0)]
-    [(CallIndirectC _ _ _ _) (opt-bounds-facts-truncate facts 0)]
-    [(SpmdCall _) (opt-bounds-facts-truncate facts 0)]
-    [(VectorShuffle _) (opt-bounds-facts-truncate facts 0)]
-    [(Phi _ _ _) (opt-bounds-facts-truncate facts 0)]
+    [(CpuId _ _ _ _) (Nil)]
+    [(Xgetbv _ _) (Nil)]
+    [(Syscall _ _) (Nil)]
+    [(Call _ _ _ _) (Nil)]
+    [(CallIndirect _ _ _ _) (Nil)]
+    [(CallIndirectC _ _ _ _) (Nil)]
+    [(SpmdCall _) (Nil)]
+    [(VectorShuffle _) (Nil)]
+    [(Phi _ _ _) (Nil)]
     [(BoundsCheck _ _ _) facts]
     [_
       (match (opt-instr-def-var
         (owned_view.compiler-owned-reference-shared-view instr))
         [(Some dst) (opt-bounds-invalidate-var facts dst)]
-        [(None) (opt-bounds-facts-truncate facts 0)])]))
+        [(None) (Nil)])]))
 
 (defenum OptBoundsSeqState
   (Plain OptBoundsFacts OptBoundsCastEnv)
@@ -9838,50 +9817,43 @@
       (match ptr
         [(Var ptr-var)
           (match (opt-object-length-lookup ptrs ptr-var)
-            [(Some _)
-              (Step (Plain (opt-bounds-facts-truncate facts 0) casts) true)]
+            [(Some _) (Step (Plain (Nil) casts) true)]
             [(None) (Step (Object facts lengths ptrs casts) true)])]
-        [_ (Step (Plain (opt-bounds-facts-truncate facts 0) casts) true)])]
+        [_ (Step (Plain (Nil) casts) true)])]
     [(StoreOwned ptr _ _)
       (match ptr
         [(Var ptr-var)
           (match (opt-object-length-lookup ptrs ptr-var)
-            [(Some _)
-              (Step (Plain (opt-bounds-facts-truncate facts 0) casts) true)]
+            [(Some _) (Step (Plain (Nil) casts) true)]
             [(None) (Step (Object facts lengths ptrs casts) true)])]
-        [_ (Step (Plain (opt-bounds-facts-truncate facts 0) casts) true)])]
+        [_ (Step (Plain (Nil) casts) true)])]
     [_
       (let
         [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
         [next-casts : OptBoundsCastEnv (opt-bounds-casts-after casts instr)]
-        (if (opt-bounds-facts-empty? next-facts)
-          (Step (Plain next-facts next-casts) true)
-          (match (opt-instr-def-var
-            (owned_view.compiler-owned-reference-shared-view instr))
-            [(Some dst)
-              (Step
-                (Object
-                  next-facts
-                  (opt-object-length-invalidate-var lengths dst)
-                  (opt-object-length-invalidate-var ptrs dst)
-                  next-casts)
-                true)]
-            [(None) (Step (Object next-facts lengths ptrs next-casts) true)])))]))
+        (match (compiler-opt-global-shared-view next-facts)
+          [(Nil) (Step (Plain next-facts next-casts) true)]
+          [_
+            (match (opt-instr-def-var
+              (owned_view.compiler-owned-reference-shared-view instr))
+              [(Some dst)
+                (Step
+                  (Object
+                    next-facts
+                    (opt-object-length-invalidate-var lengths dst)
+                    (opt-object-length-invalidate-var ptrs dst)
+                    next-casts)
+                  true)]
+              [(None) (Step (Object next-facts lengths ptrs next-casts) true)])]))]))
 
 (define (opt-bounds-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [scratch : (&mut scratch OptBoundsFacts)]
   [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : unit
   (let
     [read : i64 0]
     [write : i64 0]
     [count : i64 instrs.len]
-    [state : OptBoundsSeqState
-      (Plain
-        (opt-bounds-facts-truncate
-          (owned_view.compiler-owned-reference-shared-view scratch)
-          0)
-        (Empty))]
+    [state : OptBoundsSeqState (Plain (Nil) (Empty))]
     (while (< read count)
       (let
         [instr : ir.CompilerIrInstr (clone (array-ref instrs.slots read))]
@@ -9907,11 +9879,6 @@
               (set! write (+ write 1)))
             (set! state next-state)
             (set! read (+ read 1))])))
-    (set!
-      (deref scratch)
-      (match state
-        [(Plain facts _) facts]
-        [(Object facts _ _ _) facts]))
     (set! instrs.len write)))
 
 ;; --- conservative CFG simplification ----------------------------------------
@@ -17736,12 +17703,11 @@
     (while (>= edge start)
       (let
         [header-id : i64 (array-ref index.succs.edges edge)]
-        (when
-          (and
-            (>= header-id 0)
-            (< header-id (array-length index.reachable))
-            (array-ref index.reachable header-id)
-            (opt-dom-info-dominates-id? doms header-id source-id))
+        (if (and
+          (>= header-id 0)
+          (< header-id (array-length index.reachable))
+          (array-ref index.reachable header-id)
+          (opt-dom-info-dominates-id? doms header-id source-id))
           (opt_natural_loop_vec.push-ref!
             out
             (opt-natural-loop-build
@@ -17749,7 +17715,8 @@
               (compiler-opt-global-shared-view pred-map)
               reachable
               (array-ref index.labels header-id)
-              source)))
+              source))
+          unit)
         (set! edge (- edge 1))))))
 
 (define (opt-cfg-natural-loops-with-context
@@ -17767,8 +17734,7 @@
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
     (while (< pos count)
-      (when
-        (< pos (array-length index.reachable))
+      (if (< pos (array-length index.reachable))
         (match (array-ref seq pos)
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
@@ -17781,7 +17747,8 @@
               label
               (array-ref index.succs.offsets pos)
               (array-ref index.succs.offsets (+ pos 1))
-              (&mut out))]))
+              (&mut out))])
+        unit)
       (set! pos (+ pos 1)))
     out))
 
@@ -23737,11 +23704,11 @@
           (owned_view.compiler-owned-reference-shared-view
             (& (array-ref loops index)))]
         [inner-header : i64 (opt-natural-loop-header inner)]
-        (when
-          (and
-            (not (= inner-header header))
-            (opt-label-contains body inner-header))
-          (opt_natural_loop_vec.push-ref! (&mut out) inner))
+        (if (and
+          (not (= inner-header header))
+          (opt-label-contains body inner-header))
+          (opt_natural_loop_vec.push-ref! (&mut out) inner)
+          unit)
         (set! index (+ index 1))))
     out))
 
@@ -42387,18 +42354,6 @@
                   var-count
                   (+ literal-count 1))])])))))
 
-(scoped_stack.compiler-scoped-stack-operations
-  OptThreadViaStep
-  OptThreadVia
-  opt-thread-via
-  empty
-  len
-  empty?
-  last
-  last-ref
-  prefix
-  push)
-
 ;; The merge block's predecessor list, rewritten. The variable edge keeps its
 ;; place and now carries the moved compare's result; a literal edge that
 ;; threaded leaves the phi entirely, and one that could not keeps its decided
@@ -42449,7 +42404,7 @@
                   index
                   uses
                   label
-                  (opt-thread-via-empty)
+                  (Nil)
                   merge-label
                   (if known
                     true-label
@@ -43148,11 +43103,10 @@
                             index
                             uses
                             label
-                            (opt-thread-via-push
-                              (opt-thread-via-empty)
-                              (OptThreadViaStep.Step
-                                merge-label
-                                (compiler-opt-global-shared-view merge-instrs)))
+                            (Cons
+                              merge-label
+                              (compiler-opt-global-shared-view merge-instrs)
+                              (box (OptThreadVia.Nil)))
                             from-label
                             exit-label
                             from-instrs
@@ -43789,15 +43743,10 @@
 
 ;; The `[phi; jump]` forwarding blocks between the merge and the predecessor
 ;; being redirected, merge-first: `C1` is the block the merge's own phi input
-;; names, `Ck` is the block the origin jumps into; `C1` is the newest entry. An
-;; empty chain is a direct edge.
-(defenum OptThreadViaStep
-  (Step i64 ir.CompilerIrInstrSeq))
-
-(defstruct OptThreadVia
-  (slots (__tl_dyn-array OptThreadViaStep))
-  (len i64)
-  (top (__tl_dyn-array i64)))
+;; names, `Ck` is the block the origin jumps into. `Nil` is a direct edge.
+(defenum OptThreadVia
+  (Nil)
+  (Cons i64 ir.CompilerIrInstrSeq (Box OptThreadVia)))
 
 (defenum OptThreadForward
   (No)
@@ -44503,47 +44452,37 @@
   [chain : (& chain OptThreadVia)]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]) : OptThreadVia
-  (if (opt-thread-via-empty? chain)
-    (opt-thread-via-push
-      (opt-thread-via-empty)
-      (OptThreadViaStep.Step label instrs))
-    (let
-      [rest (opt-thread-via-prefix chain (- (opt-thread-via-len chain) 1))]
-      (match (opt-thread-via-last chain)
-        [(Step head head-instrs)
-          (opt-thread-via-push
-            (opt-thread-chain-append rest label instrs)
-            (OptThreadViaStep.Step head head-instrs))]))))
+  (match (owned_view.compiler-owned-reference-shared-view chain)
+    [(Nil) (Cons label instrs (box (OptThreadVia.Nil)))]
+    [(Cons head head-instrs rest)
+      (Cons
+        head
+        head-instrs
+        (box (opt-thread-chain-append (deref rest) label instrs)))]))
 
 ;; The block the redirected origin actually jumps into: the last forwarding
 ;; block of the chain, or the merge itself for a direct edge.
 (define (opt-thread-chain-last-label
   [merge-label : i64]
   [chain : (& chain OptThreadVia)]) : i64
-  (if (opt-thread-via-empty? chain)
-    merge-label
-    (let
-      [rest (opt-thread-via-prefix chain (- (opt-thread-via-len chain) 1))]
-      (match (opt-thread-via-last-ref chain)
-        [(Step label _) (opt-thread-chain-last-label (deref label) rest)]))))
+  (match chain
+    [(Nil) merge-label]
+    [(Cons label _ rest)
+      (opt-thread-chain-last-label (deref label) (deref (deref rest)))]))
 
 (define (opt-thread-chain-last-instrs
   [merge-instrs : ir.CompilerIrInstrSeq]
   [chain : (& chain OptThreadVia)]) : ir.CompilerIrInstrSeq
-  (if (opt-thread-via-empty? chain)
-    merge-instrs
-    (let
-      [rest (opt-thread-via-prefix chain (- (opt-thread-via-len chain) 1))]
-      (match (opt-thread-via-last chain)
-        [(Step _ instrs) (opt-thread-chain-last-instrs instrs rest)]))))
+  (match (owned_view.compiler-owned-reference-shared-view chain)
+    [(Nil) merge-instrs]
+    [(Cons _ instrs rest) (opt-thread-chain-last-instrs instrs (deref rest))]))
 
 ;; A direct edge drops the origin from every phi of the merge; a chained one
 ;; drops it from the single phi of the last forwarding block.
 (define (opt-thread-chain-drop-slot [chain : (& chain OptThreadVia)]) : i64
-  (if (opt-thread-via-empty? chain)
-    (opt-thread-drop-all-phi-inputs)
-    (match (opt-thread-via-last-ref chain)
-      [(Step _ _) 0])))
+  (match chain
+    [(Nil) (opt-thread-drop-all-phi-inputs)]
+    [(Cons _ _ _) 0]))
 
 ;; The threaded edge skips the merge, and every forwarding block on the chain
 ;; between them, so a value has to be resolved through all of them in order.
@@ -44554,37 +44493,34 @@
   [chain : (& chain OptThreadVia)]
   [origin-label : i64]
   [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
-  (if (opt-thread-via-empty? chain)
-    (opt-thread-translate-through-defs
-      instrs
-      phi-count
-      mov-limit
-      value
-      origin-label
-      (opt-thread-translate-fuel instrs))
-    (let
-      [rest (opt-thread-via-prefix chain (- (opt-thread-via-len chain) 1))]
-      (match (opt-thread-via-last chain)
-        [(Step label next-instrs)
-          (match (opt-thread-translate-through-defs
-            instrs
-            phi-count
-            mov-limit
-            value
-            label
-            (opt-thread-translate-fuel instrs))
-            [(No) (No)]
-            [(Some carried)
-              (let
-                [next-phi-count : i64
-                  (opt-thread-phi-prefix-count next-instrs 0)]
-                (opt-thread-translate-chain-value
-                  next-instrs
-                  next-phi-count
-                  next-phi-count
-                  rest
-                  origin-label
-                  carried))])]))))
+  (match (owned_view.compiler-owned-reference-shared-view chain)
+    [(Nil)
+      (opt-thread-translate-through-defs
+        instrs
+        phi-count
+        mov-limit
+        value
+        origin-label
+        (opt-thread-translate-fuel instrs))]
+    [(Cons label next-instrs rest)
+      (match (opt-thread-translate-through-defs
+        instrs
+        phi-count
+        mov-limit
+        value
+        label
+        (opt-thread-translate-fuel instrs))
+        [(No) (No)]
+        [(Some carried)
+          (let
+            [next-phi-count : i64 (opt-thread-phi-prefix-count next-instrs 0)]
+            (opt-thread-translate-chain-value
+              next-instrs
+              next-phi-count
+              next-phi-count
+              (deref rest)
+              origin-label
+              carried))])]))
 
 (define (opt-thread-value-literal-int [value : ir.CompilerIrValue]) : option_i64.Option
   (match value
@@ -45118,7 +45054,7 @@
                             index
                             uses
                             pred-label
-                            (opt-thread-via-empty)
+                            (Nil)
                             merge-label
                             target
                             (compiler-opt-global-shared-view merge-instrs)
@@ -45186,7 +45122,7 @@
                         index
                         uses
                         pred-label
-                        (opt-thread-via-empty)
+                        (Nil)
                         merge-label
                         target
                         (compiler-opt-global-shared-view merge-instrs)
@@ -45339,7 +45275,7 @@
                                       index
                                       uses
                                       origin
-                                      (opt-thread-via-empty)
+                                      (Nil)
                                       merge-label
                                       target
                                       (compiler-opt-global-shared-view instrs)
@@ -45433,7 +45369,7 @@
                   blocked-label
                   true-label
                   false-label
-                  (opt-thread-via-empty)
+                  (Nil)
                   inputs
                   (opt-thread-chain-depth)
                   false)]
@@ -46786,12 +46722,11 @@
                                           index
                                           uses
                                           origin
-                                          (opt-thread-via-push
-                                            (opt-thread-via-empty)
-                                            (OptThreadViaStep.Step
-                                              merge-label
-                                              (compiler-opt-global-shared-view
-                                                instrs)))
+                                          (Cons
+                                            merge-label
+                                            (compiler-opt-global-shared-view
+                                              instrs)
+                                            (box (OptThreadVia.Nil)))
                                           from-label
                                           exit-label
                                           from-instrs
@@ -47029,7 +46964,7 @@
                 ;; identity and leave the plain "take over the edge" case.
                 (if (not
                   (let
-                    [chain (opt-thread-via-empty)]
+                    [chain (OptThreadVia.Nil)]
                     (opt-thread-target-phis-repairable?
                       target-instrs
                       0
@@ -47048,7 +46983,7 @@
                       target-instrs
                       0
                       0
-                      (opt-thread-via-empty)
+                      (Nil)
                       via
                       pred-label)
                     (opt-cfg-straighten-mark! flag)
@@ -50531,12 +50466,9 @@
 (defenum OptGvnEntry
   (Entry OptExprKey i64 i64))
 
-(defstruct OptGvnNode
-  (entry OptGvnEntry)
-  ;; the bucket's next older node, as a link (index + 1; 0 ends the chain)
-  (next i64))
-
-(import (vector.vector OptGvnNode core) as opt_gvn_node_vec)
+(defenum OptGvnBucket
+  (Nil)
+  (Cons OptGvnEntry (Box OptGvnBucket)))
 
 ;; --- GVN-RA: `a + (v + k)` reads as `(a + v) + k` when `a + v` is available --
 ;;
@@ -50620,13 +50552,8 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptGvnAffineDefs
   (opt-blocks-fold blocks defs opt-gvn-affine-defs-instr sources))
 
-;; `heads` holds each bucket's newest node as a link (index + 1, 0 for an empty
-;; bucket) into the one node stack in the `nodes` cell. A push appends a node;
-;; a scope's restore relinks its buckets in reverse and drops each node that is
-;; still the newest, so on the way up the stack shrinks back with the scopes.
 (defstruct OptGvnMap
-  (heads (__tl_dyn-array i64))
-  (nodes (__tl_dyn-array opt_gvn_node_vec.Vec))
+  (buckets (__tl_dyn-array OptGvnBucket))
   (affine OptGvnAffineDefs))
 
 (defstruct OptGvnScopeChanges
@@ -50773,18 +50700,12 @@
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
 
-(define (opt-gvn-map-with-buckets
-  [bucket-count : i64]
-  [affine : OptGvnAffineDefs]) : OptGvnMap
-  (OptGvnMap
-    (__tl_make-array i64 bucket-count)
-    (__tl_make-array (opt_gvn_node_vec.new))
-    affine))
-
 (define (opt-gvn-map-with-affine
   [record-count : i64]
   [affine : OptGvnAffineDefs]) : OptGvnMap
-  (opt-gvn-map-with-buckets (opt-gvn-bucket-capacity record-count) affine))
+  (OptGvnMap
+    (__tl_make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))
+    affine))
 
 ;; One side of GVN-RA: `other + sum` where `sum = v + k` and `other + v` is an
 ;; available value `sib` (either operand order): `dst = sib + k`.
@@ -50852,11 +50773,11 @@
 
 (define (opt-gvn-bucket-index
   [type-segment-bases : i64]
-  [heads : (& heads (__tl_dyn-array i64))]
+  [buckets : (& buckets (__tl_dyn-array OptGvnBucket))]
   [key : (& key OptExprKey)]) : i64
   (bit-and
     (opt-expr-key-hash type-segment-bases key)
-    (- (array-length heads) 1)))
+    (- (array-length buckets) 1)))
 
 (define (opt-gvn-table-push!
   [type-segment-bases : i64]
@@ -50866,25 +50787,21 @@
   (match (compiler-opt-global-shared-view entry)
     [(Entry key _ _)
       (let
-        [heads : (__tl_dyn-array i64) table.heads]
-        [cell : (__tl_dyn-array opt_gvn_node_vec.Vec) table.nodes]
-        [bucket : i64 (opt-gvn-bucket-index type-segment-bases heads key)]
-        [nodes : opt_gvn_node_vec.Vec
-          (compiler-opt-global-array-element-shared-view cell 0)]
+        [buckets : (__tl_dyn-array OptGvnBucket) table.buckets]
+        [bucket : i64 (opt-gvn-bucket-index type-segment-bases buckets key)]
+        [old-head : OptGvnBucket
+          (compiler-opt-global-array-element-shared-view buckets bucket)]
         [result : OptGvnScopeChanges
           (opt-gvn-scope-changes-push changes bucket)]
-        (opt_gvn_node_vec.push-ref!
-          (&mut nodes)
-          (OptGvnNode entry (array-ref heads bucket)))
-        (set! (array-ref heads bucket) nodes.len)
-        (set! (array-ref cell 0) nodes)
+        (set!
+          (array-ref buckets bucket)
+          (OptGvnBucket.Cons entry (box old-head)))
         result)]))
 
 ;; Every logged push prepends exactly one bucket entry. Child scopes restore
 ;; before their parent, so replaying bucket ids in reverse insertion order can
-;; peel those heads directly; retaining a copy of every old head is redundant.
-;; A peeled node that is the stack's newest is dropped, so the stack shrinks
-;; back with the scopes.
+;; peel those heads directly; retaining a boxed copy of every old head is
+;; redundant and made the rollback log itself a cons chain.
 (define (opt-gvn-table-restore!
   [table : (& table OptGvnMap)]
   [changes : OptGvnScopeChanges]) : unit
@@ -50892,25 +50809,15 @@
     [logged : opt_dense_i64_vec.Vec changes.buckets]
     [slots : (& logged (__tl_dyn-array i64))
       (opt_dense_i64_vec.slots (& logged))]
-    [heads : (__tl_dyn-array i64) table.heads]
-    [cell : (__tl_dyn-array opt_gvn_node_vec.Vec) table.nodes]
-    [nodes : opt_gvn_node_vec.Vec
-      (compiler-opt-global-array-element-shared-view cell 0)]
+    [buckets : (__tl_dyn-array OptGvnBucket) table.buckets]
     [index : i64 (- (opt_dense_i64_vec.len (& logged)) 1)]
     (while (>= index 0)
       (let
         [bucket : i64 (array-ref slots index)]
-        [link : i64 (array-ref heads bucket)]
-        (when
-          (> link 0)
-          (set!
-            (array-ref heads bucket)
-            (let
-              [node (& (array-ref nodes.slots (- link 1)))]
-              node.next))
-          (when (= link nodes.len) (set! nodes.len (- link 1))))
-        (set! index (- index 1))))
-    (set! (array-ref cell 0) nodes)))
+        (match (array-ref buckets bucket)
+          [(Nil) unit]
+          [(Cons _ rest) (set! (array-ref buckets bucket) (deref rest))])
+        (set! index (- index 1))))))
 
 ;; Record a `BinOp`/`UnOp`/CPU probe whose result and operands are all
 ;; single-source as an available value keyed by its expression and tagged with
@@ -50965,35 +50872,30 @@
 ;; handles hash collisions and older same-key ancestors.
 (define (opt-gvn-lookup-bucket
   [type-segment-bases : i64]
-  [nodes : (& nodes opt_gvn_node_vec.Vec)]
-  [link : i64]
+  [bucket : OptGvnBucket]
   [key : OptExprKey]) : i64
-  (if (<= link 0)
-    (- 0 1)
-    (let
-      [node : OptGvnNode
-        (compiler-opt-global-array-element-shared-view nodes.slots (- link 1))]
-      (match node.entry
+  (match bucket
+    [(Nil) (- 0 1)]
+    [(Cons entry rest)
+      (match entry
         [(Entry ekey evar def-block-id)
           (if (and
             (>= def-block-id 0)
             (opt-expr-key-eq type-segment-bases ekey key))
             evar
-            (opt-gvn-lookup-bucket type-segment-bases nodes node.next key))]))))
+            (opt-gvn-lookup-bucket type-segment-bases (deref rest) key))])]))
 
 (define (opt-gvn-lookup
   [type-segment-bases : i64]
   [table : (& table OptGvnMap)]
   [key : OptExprKey]) : i64
   (let
-    [heads : (__tl_dyn-array i64) table.heads]
-    [cell : (__tl_dyn-array opt_gvn_node_vec.Vec) table.nodes]
-    [nodes : opt_gvn_node_vec.Vec
-      (compiler-opt-global-array-element-shared-view cell 0)]
+    [buckets : (__tl_dyn-array OptGvnBucket) table.buckets]
     (opt-gvn-lookup-bucket
       type-segment-bases
-      (& nodes)
-      (array-ref heads (opt-gvn-bucket-index type-segment-bases heads key))
+      (compiler-opt-global-array-element-shared-view
+        buckets
+        (opt-gvn-bucket-index type-segment-bases buckets key))
       key)))
 
 ;; Rewriting an instruction allocates only when the rewrite fires: scanning a
@@ -51320,9 +51222,7 @@
 ;; redefinition, so "one def instruction" does not imply "one value" there.
 ;; Runs right after GVN/load-GVN so identical index casts and length loads
 ;; have been unified into shared vars first. Facts flow down the dominator
-;; tree as scoped-stack snapshots: no snapshot's entries ever change, and the
-;; walk truncates a child's facts away before the next sibling's, so sibling
-;; subtrees are isolated by construction.
+;; tree as an immutable list, so sibling subtrees are isolated by construction.
 (defenum OptBoundsDomWalk
   (Walk ir.CompilerIrInstrSeq OptBoundsFacts OptDomCmpFacts))
 
@@ -51566,30 +51466,9 @@
 ;; So a scan for a var can pass by a fact whose operands lack the var's bit and
 ;; stop at a cell whose `vars` lacks it. Build cells with
 ;; `opt-dom-cmp-facts-cons`, which keeps `vars` exact.
-;; One fact in scope and `vars`, its bits OR every older fact's.
-(defenum OptDomCmpCell
-  (Cell OptDomCmpFact i64))
-
-(defstruct OptDomCmpFacts
-  (slots (__tl_dyn-array OptDomCmpCell))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptDomCmpCell
-  OptDomCmpFacts
-  opt-dom-cmp-facts
-  empty
-  with-capacity
-  len
-  empty?
-  last
-  last-ref
-  prefix
-  push
-  mark
-  truncate
-  release)
+(defenum OptDomCmpFacts
+  (Nil)
+  (Cons OptDomCmpFact i64 (Box OptDomCmpFacts)))
 
 (define (opt-dom-cmp-value-bit [value : (& value ir.CompilerIrValue)]) : i64
   (match value
@@ -51602,16 +51481,15 @@
       (bit-or (opt-dom-cmp-value-bit lhs) (opt-dom-cmp-value-bit rhs))]))
 
 (define (opt-dom-cmp-facts-vars [facts : (& facts OptDomCmpFacts)]) : i64
-  (if (opt-dom-cmp-facts-empty? facts)
-    0
-    (match (opt-dom-cmp-facts-last-ref facts)
-      [(Cell _ vars) (deref vars)])))
+  (match facts
+    [(Nil) 0]
+    [(Cons _ vars _) (deref vars)]))
 
 (define (opt-dom-cmp-facts-cons [fact : OptDomCmpFact] [rest : OptDomCmpFacts]) : OptDomCmpFacts
   (let
     [vars : i64
       (bit-or (opt-dom-cmp-fact-vars fact) (opt-dom-cmp-facts-vars rest))]
-    (opt-dom-cmp-facts-push rest (OptDomCmpCell.Cell fact vars))))
+    (Cons fact vars (box rest))))
 
 (defenum OptDomCmpLookup
   (No)
@@ -51891,18 +51769,19 @@
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
   (let
-    [index : i64 (- facts.len 1)]
+    [cur : OptDomCmpFacts facts]
     ;; With a var operand, only a fact naming one of the query's vars can
     ;; decide it; with none, every fact is tried.
     [want : i64
       (bit-or (opt-dom-cmp-value-bit lhs) (opt-dom-cmp-value-bit rhs))]
-    (while (>= index 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots index)
-        [(Cell fact vars)
+    (while true
+      (match cur
+        [(Nil) (return (No))]
+        [(Cons fact vars rest)
           (cond
             [(and (!= want 0) (= (bit-and vars want) 0)) (return (No))]
             [(and (!= want 0) (= (bit-and (opt-dom-cmp-fact-vars fact) want) 0))
-              unit]
+              (set! cur (deref rest))]
             [else
               (match (opt-dom-cmp-fact-verdict
                 type-segment-bases
@@ -51913,8 +51792,7 @@
                 query-var-lit
                 (compiler-opt-global-shared-view ty))
                 [(Some decided) (return (Some decided))]
-                [(No) unit])])])
-      (set! index (- index 1)))
+                [(No) (set! cur (deref rest))])])]))
     (No)))
 
 (define (opt-dom-cmp-lookup
@@ -51996,27 +51874,40 @@
   [mid : ir.CompilerIrValue]
   [c : ir.CompilerIrValue]
   [ty : (& ty ast.AstType)]) : OptDomCmpBelow
-  (let
-    [want : i64 (opt-dom-cmp-value-bit mid)]
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (& (array-ref facts.slots at))
-        [(Cell fact vars)
-          (cond
-            [(and (!= want 0) (= (bit-and (deref vars) want) 0)) (return (No))]
-            [(and (!= want 0) (= (bit-and (opt-dom-cmp-fact-vars fact) want) 0))
-              unit]
-            [else
-              (match (opt-dom-cmp-fact-below type-segment-bases fact mid ty)
-                [(Some upper strict?)
-                  (when
-                    (opt-value-eq
-                      (compiler-opt-global-shared-view upper)
-                      (compiler-opt-global-shared-view c))
-                    (return (Some upper strict?)))]
-                [(No) unit])])])
-      (set! at (- at 1)))
-    (No)))
+  (match facts
+    [(Nil) (No)]
+    [(Cons fact vars rest)
+      (let
+        [want : i64 (opt-dom-cmp-value-bit mid)]
+        (cond
+          [(and (!= want 0) (= (bit-and (deref vars) want) 0)) (No)]
+          [(and (!= want 0) (= (bit-and (opt-dom-cmp-fact-vars fact) want) 0))
+            (opt-dom-cmp-chain-tail
+              type-segment-bases
+              (deref (deref rest))
+              mid
+              c
+              ty)]
+          [else
+            (match (opt-dom-cmp-fact-below type-segment-bases fact mid ty)
+              [(Some upper strict?)
+                (if (opt-value-eq
+                  (compiler-opt-global-shared-view upper)
+                  (compiler-opt-global-shared-view c))
+                  (Some upper strict?)
+                  (opt-dom-cmp-chain-tail
+                    type-segment-bases
+                    (deref (deref rest))
+                    mid
+                    c
+                    ty))]
+              [(No)
+                (opt-dom-cmp-chain-tail
+                  type-segment-bases
+                  (deref (deref rest))
+                  mid
+                  c
+                  ty)])]))]))
 
 (define (opt-dom-cmp-chain-scan
   [type-segment-bases : i64]
@@ -52026,57 +51917,70 @@
   [a : ir.CompilerIrValue]
   [c : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (let
-    [a-bit : i64 (opt-dom-cmp-value-bit a)]
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (& (array-ref facts.slots at))
-        [(Cell fact vars)
-          (if (and (!= a-bit 0) (= (bit-and (deref vars) a-bit) 0))
-            ;; No fact from here on names `a`, so none is a head step.
-            (return (No))
-            (match (opt-dom-cmp-chain-scan-cell
-              type-segment-bases
-              all-facts
-              fact
-              query
-              (compiler-opt-global-shared-view a)
-              (compiler-opt-global-shared-view c)
-              (compiler-opt-global-shared-view ty))
-              [(Some decided) (return (Some decided))]
-              [(No) unit]))])
-      (set! at (- at 1)))
-    (No)))
+  (match facts
+    [(Nil) (No)]
+    [(Cons _ vars _)
+      (if (and
+        (!= (opt-dom-cmp-value-bit a) 0)
+        (= (bit-and (deref vars) (opt-dom-cmp-value-bit a)) 0))
+        ;; No fact from here on names `a`, so none is a head step.
+        (No)
+        (opt-dom-cmp-chain-scan-cell
+          type-segment-bases
+          all-facts
+          facts
+          query
+          a
+          c
+          ty))]))
 
 (define (opt-dom-cmp-chain-scan-cell
   [type-segment-bases : i64]
   [all-facts : (& all-facts OptDomCmpFacts)]
-  [fact : (& fact OptDomCmpFact)]
+  [facts : (& facts OptDomCmpFacts)]
   [query : i64]
   [a : ir.CompilerIrValue]
   [c : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (match (opt-dom-cmp-fact-below type-segment-bases fact a ty)
-    [(No) (No)]
-    [(Some mid head-strict?)
-      ;; A step onto `a` or straight onto `c` is not a chain: the direct
-      ;; lookup already saw the latter and the former proves nothing.
-      (if (or
-        (opt-value-eq
-          (compiler-opt-global-shared-view mid)
-          (compiler-opt-global-shared-view a))
-        (opt-value-eq
-          (compiler-opt-global-shared-view mid)
-          (compiler-opt-global-shared-view c)))
-        (No)
-        (match (opt-dom-cmp-chain-tail type-segment-bases all-facts mid c ty)
-          [(No) (No)]
-          [(Some _ tail-strict?)
-            (opt-dom-cmp-mask-verdict
-              (if (or head-strict? tail-strict?)
-                1
-                3)
-              query)]))]))
+  (match facts
+    [(Nil) (No)]
+    [(Cons fact _ rest)
+      (match (match (opt-dom-cmp-fact-below type-segment-bases fact a ty)
+        [(No) (OptDomCmpLookup.No)]
+        [(Some mid head-strict?)
+          ;; A step onto `a` or straight onto `c` is not a chain: the direct
+          ;; lookup already saw the latter and the former proves nothing.
+          (if (or
+            (opt-value-eq
+              (compiler-opt-global-shared-view mid)
+              (compiler-opt-global-shared-view a))
+            (opt-value-eq
+              (compiler-opt-global-shared-view mid)
+              (compiler-opt-global-shared-view c)))
+            (OptDomCmpLookup.No)
+            (match (opt-dom-cmp-chain-tail
+              type-segment-bases
+              all-facts
+              mid
+              (compiler-opt-global-shared-view c)
+              ty)
+              [(No) (OptDomCmpLookup.No)]
+              [(Some _ tail-strict?)
+                (opt-dom-cmp-mask-verdict
+                  (if (or head-strict? tail-strict?)
+                    1
+                    3)
+                  query)]))])
+        [(Some decided) (Some decided)]
+        [(No)
+          (opt-dom-cmp-chain-scan
+            type-segment-bases
+            all-facts
+            (deref (deref rest))
+            query
+            a
+            c
+            ty)])]))
 
 (define (opt-dom-cmp-lookup-chained
   [type-segment-bases : i64]
@@ -52585,25 +52489,25 @@
   [facts : (& facts OptDomCmpFacts)]
   [self : ir.CompilerIrValue]
   [latch-id : i64]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots at)
-        [(Cell fact _)
-          (match fact
-            [(Fact fact-op fact-lhs _ fact-ty fact-value fact-block)
-              (when
-                (and
-                  ;; Strictly `self < Y`. A `le self Y` is NOT enough: `self <= i64
-                  ;; MAX` still allows the step to wrap.
-                  fact-value
-                  (opt-binop-eq fact-op (Lt))
-                  (opt-value-eq fact-lhs (compiler-opt-global-shared-view self))
-                  (opt-type-eq env.type-segment-bases fact-ty (I64))
-                  (opt-dom-info-dominates-id? env.doms fact-block latch-id))
-                (return true))])])
-      (set! at (- at 1)))
-    false))
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact _ rest)
+      (match fact
+        [(Fact fact-op fact-lhs _ fact-ty fact-value fact-block)
+          (if (and
+            ;; Strictly `self < Y`. A `le self Y` is NOT enough: `self <= i64
+            ;; MAX` still allows the step to wrap.
+            fact-value
+            (opt-binop-eq fact-op (Lt))
+            (opt-value-eq fact-lhs (compiler-opt-global-shared-view self))
+            (opt-type-eq env.type-segment-bases fact-ty (I64))
+            (opt-dom-info-dominates-id? env.doms fact-block latch-id))
+            true
+            (opt-bounds-dom-counter-upper-bounded?
+              env
+              (deref rest)
+              self
+              latch-id))])]))
 
 ;; --- the non-negativity lattice ----------------------------------------------
 ;;
@@ -52716,25 +52620,17 @@
   8)
 
 ;; The phis the current proof has entered, innermost first.
-(defstruct OptNonnegPhis
-  (slots (__tl_dyn-array i64))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  i64
-  OptNonnegPhis
-  opt-nonneg-phis
-  empty
-  push)
+(defenum OptNonnegPhis
+  (Nil)
+  (Cons i64 (Box OptNonnegPhis)))
 
 (define (opt-nonneg-phis-member? [phis : (& phis OptNonnegPhis)] [var : i64]) : bool
-  (let
-    [at : i64 (- phis.len 1)]
-    (while (>= at 0)
-      (when (= (array-ref phis.slots at) var) (return true))
-      (set! at (- at 1)))
-    false))
+  (match phis
+    [(Nil) false]
+    [(Cons head rest)
+      (if (= (deref head) var)
+        true
+        (opt-nonneg-phis-member? (deref (deref rest)) var))]))
 
 ;; A fact answers a question asked at `at-id` only if the block it became valid
 ;; at dominates `at-id`. Facts read at the block the walk is IN all pass this
@@ -52758,12 +52654,14 @@
   [query-var-lit : OptDomCmpVarLit]
   [ty : ast.AstType]) : OptDomCmpLookup
   (let
-    [index : i64 (- facts.len 1)]
+    [cur : OptDomCmpFacts
+      (owned_view.compiler-owned-reference-shared-view facts)]
     [want : i64
       (bit-or (opt-dom-cmp-value-bit lhs) (opt-dom-cmp-value-bit rhs))]
-    (while (>= index 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots index)
-        [(Cell fact vars)
+    (while true
+      (match cur
+        [(Nil) (return (No))]
+        [(Cons fact vars rest)
           (match (if (and (!= want 0) (= (bit-and vars want) 0))
             (return (No))
             (if (and
@@ -52779,8 +52677,7 @@
                 (compiler-opt-global-shared-view ty))
               (OptDomCmpLookup.No)))
             [(Some decided) (return (Some decided))]
-            [(No) unit])])
-      (set! index (- index 1)))
+            [(No) (set! cur (deref rest))])]))
     (No)))
 
 ;; Do the facts that hold at `at-id` decide this i64 comparison TRUE?
@@ -52889,9 +52786,7 @@
             (opt-bounds-dom-nonneg-inputs?
               env
               cmp-facts
-              (opt-nonneg-phis-push
-                (owned_view.compiler-owned-reference-shared-view phis)
-                var)
+              (Cons var (box phis))
               inputs
               fuel))]
         [_ false])]
@@ -53087,7 +52982,7 @@
   [block-id : i64]
   [value : ir.CompilerIrValue]) : bool
   (let
-    [phis (opt-nonneg-phis-empty)]
+    [phis (OptNonnegPhis.Nil)]
     (opt-bounds-dom-nonneg-at?
       env
       cmp-facts
@@ -53585,7 +53480,7 @@
           (- depth 1)))]
     [(No)
       (let
-        [phis (opt-nonneg-phis-empty)]
+        [phis (OptNonnegPhis.Nil)]
         (opt-bounds-dom-nonneg-at?
           env
           cmp-facts
@@ -53643,7 +53538,7 @@
           (or
             nonneg?
             (let
-              [phis (opt-nonneg-phis-empty)]
+              [phis (OptNonnegPhis.Nil)]
               (opt-bounds-dom-nonneg-at?
                 env
                 cmp-facts
@@ -53701,9 +53596,7 @@
             (opt-bounds-dom-induct-inputs?
               env
               cmp-facts
-              (opt-nonneg-phis-push
-                (owned_view.compiler-owned-reference-shared-view phis)
-                var)
+              (Cons var (box phis))
               label
               nonneg?
               below?
@@ -53789,7 +53682,7 @@
                                 2)
                               (and
                                 (let
-                                  [phis (opt-nonneg-phis-empty)]
+                                  [phis (OptNonnegPhis.Nil)]
                                   (opt-bounds-dom-nonneg-at?
                                     env
                                     cmp-facts
@@ -53845,10 +53738,14 @@
                 (compiler-opt-global-shared-view cmp-facts)
                 from-id
                 home-label)]
-            [stable? : bool (opt-gvn-value-stable? env.sources value)]
-            [nonneg-at? : bool
-              (and
-                stable?
+            (and
+              (opt-gvn-value-stable? env.sources value)
+              (opt-bounds-dom-induct-in-range?
+                env
+                cmp-facts
+                phis
+                from-id
+                true
                 (or
                   nonneg?
                   (opt-dom-cmp-decided-at?
@@ -53857,10 +53754,7 @@
                     edge-facts
                     (Ge)
                     value
-                    (I64 0))))]
-            [below-at? : bool
-              (and
-                stable?
+                    (I64 0)))
                 (or
                   below?
                   (opt-bounds-dom-below-fact?
@@ -53870,21 +53764,7 @@
                     strict?
                     value
                     bound
-                    2)))]
-            [_released : unit
-              (opt-dom-cmp-facts-release
-                edge-facts
-                (opt-dom-cmp-facts-len cmp-facts))]
-            (and
-              stable?
-              (opt-bounds-dom-induct-in-range?
-                env
-                cmp-facts
-                phis
-                from-id
-                true
-                nonneg-at?
-                below-at?
+                    2))
                 strict?
                 value
                 bound
@@ -54017,7 +53897,7 @@
                         ;; `0 <= B < base` is the whole of the index's own
                         ;; range; the loop that walks `i` supplies both halves.
                         (let
-                          [phis (opt-nonneg-phis-empty)]
+                          [phis (OptNonnegPhis.Nil)]
                           (opt-bounds-dom-nonneg-at?
                             env
                             cmp-facts
@@ -54033,7 +53913,7 @@
                           subtrahend
                           (compiler-opt-global-shared-view base))
                         (let
-                          [phis (opt-nonneg-phis-empty)]
+                          [phis (OptNonnegPhis.Nil)]
                           (opt-bounds-dom-induct-in-range?
                             env
                             cmp-facts
@@ -54062,7 +53942,7 @@
     (opt-bounds-dom-induct-candidate? env idx)
     (or
       (let
-        [phis (opt-nonneg-phis-empty)]
+        [phis (OptNonnegPhis.Nil)]
         (opt-bounds-dom-induct-in-range?
           env
           (compiler-opt-global-shared-view cmp-facts)
@@ -54662,21 +54542,19 @@
   [len : ir.CompilerIrValue]
   [offset : i64]
   [acc : i64]) : i64
-  (let
-    [mask : i64 acc]
-    [at : i64 (- facts.len 1)]
-    (while (and (!= mask 3) (>= at 0))
-      (set!
-        mask
-        (opt-bounds-dom-bracket-bits
-          env
-          (compiler-opt-global-array-element-shared-view facts.slots at)
-          (compiler-opt-global-shared-view base)
-          (compiler-opt-global-shared-view len)
-          offset
-          mask))
-      (set! at (- at 1)))
-    mask))
+  (cond
+    [(= acc 3) 3]
+    [else
+      (match facts
+        [(Nil) acc]
+        [(Cons fact rest)
+          (opt-bounds-dom-bracket-mask
+            env
+            (deref rest)
+            (compiler-opt-global-shared-view base)
+            (compiler-opt-global-shared-view len)
+            offset
+            (opt-bounds-dom-bracket-bits env fact base len offset acc))])]))
 
 ;; The lower bracket: a passed check at or below this offset, or a nonnegative
 ;; base under a nonnegative offset.
@@ -55541,12 +55419,12 @@
   [facts : (& facts OptBoundsFacts)]
   [index : ir.CompilerIrValue]
   [global : i64]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots at)
-        [(Fact fact-index fact-length)
-          (when
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact rest)
+      (or
+        (match fact
+          [(Fact fact-index fact-length)
             (and
               (opt-value-eq fact-index (compiler-opt-global-shared-view index))
               (opt-len-eq-same-family?
@@ -55556,10 +55434,14 @@
                   type-segment-bases
                   use
                   copies
-                  fact-length)))
-            (return true))])
-      (set! at (- at 1)))
-    false))
+                  fact-length)))])
+        (opt-len-eq-facts-scan?
+          type-segment-bases
+          use
+          copies
+          (deref rest)
+          index
+          global))]))
 
 ;; The `Vec.len` field invariant: a dominating `idx < g.len` decides
 ;; `idx <u array-length g.slots` because every writer of `g` stored a Vec whose
@@ -55598,38 +55480,34 @@
   [facts : OptDomCmpFacts]
   [idx : ir.CompilerIrValue]
   [global : i64]) : bool
-  (if (opt-dom-cmp-facts-empty? facts)
-    false
-    (let
-      [rest
-        (opt-dom-cmp-facts-prefix facts (- (opt-dom-cmp-facts-len facts) 1))]
-      (match (opt-dom-cmp-facts-last facts)
-        [(Cell fact _)
-          (or
-            (match fact
-              [(Fact _ lhs rhs _ _ _)
-                (opt-len-eq-field-bound?
-                  type-segment-bases
-                  use
-                  copies
-                  (compiler-opt-global-shared-view all)
-                  idx
-                  global
-                  (if (opt-value-eq
-                    (compiler-opt-global-shared-view lhs)
-                    (compiler-opt-global-shared-view idx))
-                    rhs
-                    (if (opt-value-eq rhs (compiler-opt-global-shared-view idx))
-                      lhs
-                      (Unit))))])
-            (opt-len-eq-field-scan?
+  (match facts
+    [(Nil) false]
+    [(Cons fact _ rest)
+      (or
+        (match fact
+          [(Fact _ lhs rhs _ _ _)
+            (opt-len-eq-field-bound?
               type-segment-bases
               use
               copies
-              all
-              rest
+              (compiler-opt-global-shared-view all)
               idx
-              global))]))))
+              global
+              (if (opt-value-eq
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view idx))
+                rhs
+                (if (opt-value-eq rhs (compiler-opt-global-shared-view idx))
+                  lhs
+                  (Unit))))])
+        (opt-len-eq-field-scan?
+          type-segment-bases
+          use
+          copies
+          all
+          (deref rest)
+          idx
+          global))]))
 
 (define (opt-len-eq-field-bound?
   [type-segment-bases : i64]
@@ -56046,11 +55924,6 @@
           only
           (- 0 1))))))
 
-;; The one-slot stack the edge rule below reads each edge's fact through: the
-;; rule truncates it for every question and is done with it before it recurses.
-(define opt-bounds-dom-edge-fact-scratch : OptDomCmpFacts
-  (opt-dom-cmp-facts-with-capacity 1))
-
 ;; What the edge `pred-id -> to-label` proves about `op(lhs, rhs)`.
 (define (opt-bounds-dom-edge-cmp-verdict
   [env : (& env OptBoundsDomEnv)]
@@ -56084,10 +55957,7 @@
                       cond
                       (= true-label to-label)
                       pred-id
-                      (opt-dom-cmp-facts-truncate
-                        (compiler-opt-global-shared-view
-                          opt-bounds-dom-edge-fact-scratch)
-                        0))
+                      (Nil))
                     (compiler-opt-global-shared-view op)
                     lhs
                     rhs
@@ -56713,7 +56583,6 @@
               [edges (& children.edges)]
               [edge : i64 (array-ref offsets id)]
               [end : i64 (array-ref offsets (+ id 1))]
-              [mark : i64 (opt-dom-cmp-facts-mark out-facts)]
               (while (< edge end)
                 (let
                   [child-id : i64 (array-ref edges edge)]
@@ -56728,7 +56597,6 @@
                       id
                       child-id)
                     child-id))
-                (set! out-facts (opt-dom-cmp-facts-truncate out-facts mark))
                 (set! edge (+ edge 1))))])])))
 
 (define (opt-bounds-dom-nonneg-prepass!
@@ -56746,7 +56614,7 @@
           env
           children
           var-facts
-          (opt-dom-cmp-facts-empty)
+          (Nil)
           entry-id)
         unit)]))
 
@@ -57061,16 +56929,18 @@
 (define (opt-bounds-length-checked?
   [facts : (& facts OptBoundsFacts)]
   [length : ir.CompilerIrValue]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots at)
-        [(Fact _ fact-length)
-          (when
-            (opt-value-eq fact-length (compiler-opt-global-shared-view length))
-            (return true))])
-      (set! at (- at 1)))
-    false))
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact rest)
+      (let
+        [rest : OptBoundsFacts (deref rest)]
+        (match fact
+          [(Fact _ fact-length)
+            (if (opt-value-eq
+              fact-length
+              (compiler-opt-global-shared-view length))
+              true
+              (opt-bounds-length-checked? rest length))]))]))
 
 ;; Values this function can read as non-negative wherever they are live. Two
 ;; sources, both about the VALUE rather than about a path to it, so unlike the
@@ -57758,8 +57628,6 @@
     [edges (& children.edges)]
     [edge : i64 (array-ref offsets parent-id)]
     [end : i64 (array-ref offsets (+ parent-id 1))]
-    [cmp-mark : i64 (opt-dom-cmp-facts-mark cmp-facts)]
-    [mark : i64 (opt-bounds-facts-mark facts)]
     (while (< edge end)
       (let
         [child-id : i64 (array-ref edges edge)]
@@ -57779,8 +57647,6 @@
           blocks
           out
           child-id))
-      (set! cmp-facts (opt-dom-cmp-facts-truncate cmp-facts cmp-mark))
-      (set! facts (opt-bounds-facts-truncate facts mark))
       (set! edge (+ edge 1)))
     unit))
 
@@ -58341,8 +58207,8 @@
             slice-lengths
             len-eq-blocks
             range
-            (opt-dom-cmp-facts-empty)
-            (opt-bounds-facts-empty)
+            (Nil)
+            (Nil)
             blocks
             (&mut out)
             entry-id)
@@ -58417,17 +58283,9 @@
 (defenum OptDivRemFact
   (Fact i64 ast.AstType OptDivRemFactKind))
 
-(defstruct OptDivRemFacts
-  (slots (__tl_dyn-array OptDivRemFact))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptDivRemFact
-  OptDivRemFacts
-  opt-divrem-facts
-  with-capacity
-  push)
+(defenum OptDivRemFacts
+  (Nil)
+  (Cons OptDivRemFact (Box OptDivRemFacts)))
 
 (defenum OptDivRemCmp
   (NoCmp)
@@ -58466,24 +58324,25 @@
   [var : i64]
   [ty : ast.AstType]
   [kind : OptDivRemFactKind]) : bool
-  (let
-    [at : i64 (- facts.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view facts.slots at)
+  (match (owned_view.compiler-owned-reference-shared-view facts)
+    [(Nil) false]
+    [(Cons fact rest)
+      (match fact
         [(Fact fact-var fact-ty fact-kind)
-          (when
-            (and
-              (= fact-var var)
-              (opt-type-eq
-                type-segment-bases
-                fact-ty
-                (compiler-opt-global-shared-view ty))
-              (opt-divrem-fact-kind-eq?
-                fact-kind
-                (compiler-opt-global-shared-view kind)))
-            (return true))])
-      (set! at (- at 1)))
-    false))
+          (if (and
+            (= fact-var var)
+            (opt-type-eq
+              type-segment-bases
+              fact-ty
+              (compiler-opt-global-shared-view ty))
+            (opt-divrem-fact-kind-eq? fact-kind kind))
+            true
+            (opt-divrem-facts-contains-kind?
+              type-segment-bases
+              (deref rest)
+              var
+              ty
+              kind))])]))
 
 (define (opt-divrem-facts-add-kind
   [type-segment-bases : i64]
@@ -58498,39 +58357,22 @@
     (compiler-opt-global-shared-view ty)
     kind)
     (owned_view.compiler-owned-reference-shared-view facts)
-    (opt-divrem-facts-push
-      (owned_view.compiler-owned-reference-shared-view facts)
-      (OptDivRemFact.Fact var ty kind))))
-
-(define (opt-divrem-fact-var [fact : (& fact OptDivRemFact)]) : i64
-  (match fact
-    [(Fact fact-var _ _) (deref fact-var)]))
+    (Cons
+      (Fact var ty kind)
+      (box (owned_view.compiler-owned-reference-shared-view facts)))))
 
 (define (opt-divrem-facts-remove-var [facts : OptDivRemFacts] [var : i64]) : OptDivRemFacts
-  (let
-    [count : i64 facts.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (!= (opt-divrem-fact-var (& (array-ref facts.slots first))) var))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      facts
-      (let
-        [kept : OptDivRemFacts (opt-divrem-facts-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
-          (if (= (opt-divrem-fact-var (& (array-ref facts.slots index))) var)
-            unit
-            (set!
-              kept
-              (opt-divrem-facts-push
-                kept
-                (compiler-opt-global-array-element-shared-view
-                  facts.slots
-                  index))))
-          (set! index (+ index 1)))
-        kept))))
+  (match facts
+    [(Nil) (Nil)]
+    [(Cons fact rest)
+      (match (compiler-opt-global-shared-view fact)
+        [(Fact fact-var _ _)
+          (let
+            [rest2 : OptDivRemFacts
+              (opt-divrem-facts-remove-var (deref rest) var)]
+            (if (= fact-var var)
+              rest2
+              (Cons fact (box rest2))))])]))
 
 (define (opt-divrem-add-nonzero
   [type-segment-bases : i64]
@@ -59907,42 +59749,22 @@
 ;; head is the only fact a step can have added. Dropping it leaves the var
 ;; unbound: no earlier step left a fact for it below.
 (define (opt-const-forget-addr-taken! [env : (&mut env OptConstEnv)]) : unit
-  (let
-    [count : i64 env.len]
-    [drop? : bool
-      (and
-        (> count 0)
-        (match (compiler-opt-global-array-element-shared-view
-          env.slots
-          (- count 1))
-          [(Const var _ _ _)
-            (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)]
-          [_ false]))]
-    (when
-      drop?
-      (set!
-        (deref env)
-        (opt-const-env-truncate
-          (owned_view.compiler-owned-reference-shared-view env)
-          (- count 1))))))
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(Cons var _ _ rest)
+      (if (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
+        (set! (deref env) (deref rest))
+        unit)]
+    [_ unit]))
 
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
   [exprs : (&mut exprs OptExprTable)]
-  [fold-scratch : (&mut fold-scratch OptConstEnv)]
-  [strength-scratch : (&mut strength-scratch OptConstEnv)]
   [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
-    [fold-state : OptConstEnv
-      (opt-const-env-truncate
-        (owned_view.compiler-owned-reference-shared-view fold-scratch)
-        0)]
-    [strength-state : OptConstEnv
-      (opt-const-env-truncate
-        (owned_view.compiler-owned-reference-shared-view strength-scratch)
-        0)]
+    [fold-state : OptConstEnv (Nil)]
+    [strength-state : OptConstEnv (Nil)]
     [cse-state : OptExprTable (opt-expr-table-clear exprs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
@@ -59984,8 +59806,6 @@
                   (set! cse-state next-cse)
                   (set! index (+ index 1))])])]))
     (opt-expr-table-keep! exprs cse-state)
-    (set! (deref fold-scratch) fold-state)
-    (set! (deref strength-scratch) strength-state)
     store-count))
 
 ;; Native Slice parameters are two-word register groups passed by value. Their
@@ -60073,8 +59893,6 @@
   [hs : (& hs OptLoadHeaderSet)]
   [state : OptLoadCseState]
   [words : (&mut words OptExprTable)]
-  [copy-scratch : (&mut copy-scratch OptCopyEnv)]
-  [load-scratch : (&mut load-scratch OptLoadTable)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
     [index : i64 0]
@@ -60085,10 +59903,7 @@
     ;; renames, and building one per instruction is pure allocation.
     [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [load-state : OptLoadCseState state]
-    [copy-state : OptCopyEnv
-      (opt-copy-env-truncate
-        (owned_view.compiler-owned-reference-shared-view copy-scratch)
-        0)]
+    [copy-state : OptCopyEnv (opt-copy-env-empty)]
     [word-state : OptExprTable (opt-expr-table-clear words)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
@@ -60128,11 +59943,6 @@
                     (set! copy-state next-copy)
                     (set! word-state next-word)
                     (set! index (+ index 1))])]))]))
-    (set! (deref copy-scratch) copy-state)
-    (set!
-      (deref load-scratch)
-      (match load-state
-        [(State _ table _ _ _ _ _) table]))
     (opt-expr-table-keep! words word-state)))
 
 ;; --- fold pre-scan -------------------------------------------------------------
@@ -60871,8 +60681,6 @@
           (opt-fold-strength-cse-instr-seq-rewrite!
             type-segment-bases
             (&mut tables.exprs)
-            (&mut tables.fold)
-            (&mut tables.strength)
             (compiler-opt-global-shared-view work)))
         (set!
           work
@@ -60890,18 +60698,10 @@
             profile-state
             (ir.compiler-ir-instr-seq-count work)
             load-kinds
-            load-facts
-            (opt-load-table-truncate
-              (owned_view.compiler-owned-reference-shared-view (& tables.loads))
-              0))
+            load-facts)
           (&mut tables.words)
-          (&mut tables.copies)
-          (&mut tables.loads)
           (compiler-opt-global-shared-view work))
-        (opt-bounds-instr-seq-rewrite!
-          type-segment-bases
-          (&mut tables.bounds)
-          (&mut work))
+        (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
         (Block label work))]))
 
 (define (optimize-block-hs-with-kinds
@@ -80498,20 +80298,9 @@
 ;; RECOVERS such a handle out of a module global's cell, for the chains a loop
 ;; reloads per iteration (`gep @g, k` / `load`). Both are keyed by
 ;; (kind, key, offset) so a repeated chain is emitted into the guard once.
-(defenum OptBceMbHoist
-  (Hoist i64 i64 i64 i64))
-
-(defstruct OptBceMbHoists
-  (slots (__tl_dyn-array OptBceMbHoist))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptBceMbHoist
-  OptBceMbHoists
-  opt-bce-mb-hoists
-  empty
-  push)
+(defenum OptBceMbHoists
+  (Nil)
+  (Cons i64 i64 i64 i64 (Box OptBceMbHoists)))
 
 (define (opt-bce-mb-hoist-kind-var) : i64
   0)
@@ -80524,16 +80313,15 @@
   [kind : i64]
   [key : i64]
   [offset : i64]) : i64
-  (let
-    [at : i64 (- hoists.len 1)]
-    (while (>= at 0)
-      (match (compiler-opt-global-array-element-shared-view hoists.slots at)
-        [(Hoist item-kind item-key item-offset load-var)
-          (when
-            (and (= item-kind kind) (= item-key key) (= item-offset offset))
-            (return load-var))])
-      (set! at (- at 1)))
-    (- 0 1)))
+  (match hoists
+    [(Nil) (- 0 1)]
+    [(Cons item-kind item-key item-offset load-var rest)
+      (if (and
+        (= (deref item-kind) kind)
+        (= (deref item-key) key)
+        (= (deref item-offset) offset))
+        (deref load-var)
+        (opt-bce-mb-hoists-lookup (deref (deref rest)) kind key offset))]))
 
 ;; Can any instruction of these loop blocks change a DESCRIPTOR word -- a
 ;; descriptor header slot, or the global cell a handle lives in -- that a load
@@ -80751,9 +80539,12 @@
             [load-var : i64 (opt-bce-version-alloc-var cell)]
             (Some
               load-var
-              (opt-bce-mb-hoists-push
-                hoists
-                (Hoist (opt-bce-mb-hoist-kind-root) sym-id off load-var))
+              (Cons
+                (opt-bce-mb-hoist-kind-root)
+                sym-id
+                off
+                load-var
+                (box hoists))
               (Some
                 (opt-bce-version-builder-push
                   (opt-bce-version-builder-push
@@ -80906,9 +80697,12 @@
           [(I64 off)
             (Some
               (Var load-var)
-              (opt-bce-mb-hoists-push
-                hoists
-                (Hoist (opt-bce-mb-hoist-kind-var) base-id off load-var))
+              (Cons
+                (opt-bce-mb-hoist-kind-var)
+                base-id
+                off
+                load-var
+                (box hoists))
               (Some
                 (opt-bce-version-builder-push
                   (opt-bce-version-builder-push
@@ -83241,12 +83035,7 @@
         cell
         (compiler-opt-global-shared-view fan)
         shape.uncovered
-        (OptBceMbDerive
-          seeded
-          (Nil)
-          0
-          (opt-bce-mb-hoists-empty)
-          (opt-bce-mb-fused-new)))]
+        (OptBceMbDerive seeded (Nil) 0 (Nil) (opt-bce-mb-fused-new)))]
     [counter-seen : bool (opt-bce-version-guard-counter-seen? (& dr.guard))]
     [_trace : unit
       (opt-bce-trace-derivation! dr.derived (opt-bce-mb-keep-count dr.keep))]
@@ -127373,20 +127162,9 @@
 (defenum OptLoadEntry
   (Entry OptLoadKey ir.CompilerIrValue i64))
 
-(defstruct OptLoadTable
-  (slots (__tl_dyn-array OptLoadEntry))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptLoadEntry
-  OptLoadTable
-  opt-load-table
-  empty
-  with-capacity
-  len
-  push
-  truncate)
+(defenum OptLoadTable
+  (Nil)
+  (Cons OptLoadEntry (Box OptLoadTable)))
 
 ;; Resolved global-based addresses: var -> (global symbol, byte offset,
 ;; value-base?), in a bounded dense table. Block-local CSE mutates one table
@@ -127859,96 +127637,70 @@
   [type-segment-bases : i64]
   [table : (& table OptLoadTable)]
   [key : (& key OptLoadKey)]) : ir.CompilerIrMaybeValue
-  (let
-    [index : i64 (- table.len 1)]
-    (while (>= index 0)
-      (let
-        [entry : OptLoadEntry
-          (compiler-opt-global-array-element-shared-view table.slots index)]
-        (when
-          (opt-load-key-eq
-            type-segment-bases
-            (opt-load-entry-key (compiler-opt-global-shared-view entry))
-            (owned_view.compiler-owned-reference-shared-view key))
-          (return (Some (opt-load-entry-value entry))))
-        (set! index (- index 1))))
-    (No)))
+  (match table
+    [(Nil) (No)]
+    [(Cons entry rest)
+      (if (opt-load-key-eq
+        type-segment-bases
+        (opt-load-entry-key
+          (owned_view.compiler-owned-reference-shared-view entry))
+        (owned_view.compiler-owned-reference-shared-view key))
+        (Some
+          (opt-load-entry-value
+            (owned_view.compiler-owned-reference-shared-view entry)))
+        (opt-load-table-lookup type-segment-bases (deref (deref rest)) key))]))
 
 (define (opt-load-table-has-value-with-type?
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : bool
-  (let
-    [at : i64 (- table.len 1)]
-    (while (>= at 0)
-      (let
-        [entry : OptLoadEntry
-          (compiler-opt-global-array-element-shared-view table.slots at)]
-        (when
-          (and
-            (opt-value-eq
-              (opt-load-entry-value (compiler-opt-global-shared-view entry))
-              (compiler-opt-global-shared-view value))
+  (match table
+    [(Nil) false]
+    [(Cons entry rest)
+      (if (and
+        (opt-value-eq
+          (opt-load-entry-value (compiler-opt-global-shared-view entry))
+          (compiler-opt-global-shared-view value))
+        (let
+          [a
             (let
-              [a
-                (let
-                  [key (opt-load-entry-key entry)]
-                  (opt-load-key-type key))]
-              (opt-type-eq
-                type-segment-bases
-                a
-                (compiler-opt-global-shared-view ty))))
-          (return true))
-        (set! at (- at 1))))
-    false))
+              [key (opt-load-entry-key entry)]
+              (opt-load-key-type key))]
+          (opt-type-eq
+            type-segment-bases
+            a
+            (compiler-opt-global-shared-view ty))))
+        true
+        (opt-load-table-has-value-with-type?
+          type-segment-bases
+          (deref rest)
+          value
+          ty))]))
 
 (define (opt-load-table-remove-key-scan
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [key : (& key OptLoadKey)]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (not
-        (opt-load-key-eq
-          type-segment-bases
-          (opt-load-entry-key
-            (owned_view.compiler-owned-reference-shared-view
-              (& (array-ref table.slots first))))
-          (owned_view.compiler-owned-reference-shared-view key))))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (not
-              (opt-load-key-eq
-                type-segment-bases
-                (opt-load-entry-key
-                  (owned_view.compiler-owned-reference-shared-view
-                    (& (array-ref table.slots at))))
-                (owned_view.compiler-owned-reference-shared-view key)))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-remove-key-scan type-segment-bases (deref rest) key)]
+        (if (opt-load-key-eq
+          type-segment-bases
+          (opt-load-entry-key (compiler-opt-global-shared-view entry))
+          (owned_view.compiler-owned-reference-shared-view key))
+          tail
+          (Cons entry (box tail))))]))
+
+;; Removal of an absent key returns the table unchanged instead of re-boxing
+;; the whole spine (see opt-alias-remove-var).
+(define (opt-load-table-len [table : (& table OptLoadTable)]) : i64
+  (match table
+    [(Nil) 0]
+    [(Cons _ rest) (+ 1 (opt-load-table-len (deref (deref rest))))]))
 
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
@@ -127962,12 +127714,9 @@
   [epoch : i64]) : OptLoadTable
   (match (opt-load-table-lookup type-segment-bases table key)
     [(Some _)
-      (let
-        [pushed
-          (OptLoadEntry.Entry (compiler-opt-global-shared-view key) value epoch)]
-        (opt-load-table-push
-          (opt-load-table-remove-key-scan type-segment-bases table key)
-          pushed))]
+      (Cons
+        (Entry (compiler-opt-global-shared-view key) value epoch)
+        (box (opt-load-table-remove-key-scan type-segment-bases table key)))]
     [(No)
       (let
         [current-len : i64 (opt-load-table-len table)]
@@ -127990,7 +127739,7 @@
                 (compiler-opt-load-cse-profile-note-table-size
                   _profile-state
                   (+ current-len 1)))
-              (opt-load-table-push table (OptLoadEntry.Entry key value epoch))))))]))
+              (Cons (Entry key value epoch) (box table))))))]))
 
 (define (opt-load-copy-entry-within?
   [type-segment-bases : i64]
@@ -128075,18 +127824,19 @@
   [size : i64]
   [dst-header? : bool]
   [epoch : i64]) : OptLoadTable
-  (let
-    [acc : OptLoadTable out]
-    [at : i64 (- source.len 1)]
-    (while (>= at 0)
-      (set!
-        acc
+  (match source
+    [(Nil) out]
+    [(Cons entry rest)
+      (opt-load-table-transfer-copy-fields
+        (compiler-opt-global-shared-view profile-state)
+        type-segment-bases
+        (deref rest)
         (opt-load-copy-transfer-entry
-          (compiler-opt-global-shared-view profile-state)
+          profile-state
           type-segment-bases
-          acc
+          out
           cap
-          (compiler-opt-global-array-element-shared-view source.slots at)
+          entry
           gated?
           sources
           src-base
@@ -128095,9 +127845,17 @@
           dst-off
           size
           dst-header?
-          epoch))
-      (set! at (- at 1)))
-    acc))
+          epoch)
+        cap
+        gated?
+        sources
+        src-base
+        src-off
+        dst-base
+        dst-off
+        size
+        dst-header?
+        epoch)]))
 
 (define (opt-load-entry-mentions-var?
   [entry : (& entry OptLoadEntry)]
@@ -128117,47 +127875,23 @@
 (define (opt-load-table-mentions-var?
   [table : (& table OptLoadTable)]
   [var : i64]) : bool
-  (let
-    [index : i64 (- table.len 1)]
-    (while (>= index 0)
-      (when
-        (opt-load-entry-mentions-var? (& (array-ref table.slots index)) var)
-        (return true))
-      (set! index (- index 1)))
-    false))
+  (match table
+    [(Nil) false]
+    [(Cons entry rest)
+      (if (opt-load-entry-mentions-var? entry var)
+        true
+        (opt-load-table-mentions-var? (deref (deref rest)) var))]))
 
 (define (opt-load-table-invalidate-var-scan [table : OptLoadTable] [var : i64]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (not (opt-load-entry-mentions-var? (& (array-ref table.slots first)) var)))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (not
-              (opt-load-entry-mentions-var? (& (array-ref table.slots at)) var))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [rest2 : OptLoadTable
+          (opt-load-table-invalidate-var-scan (deref rest) var)]
+        (if (opt-load-entry-mentions-var? entry var)
+          rest2
+          (Cons entry (box rest2))))]))
 
 ;; Drop entries whose key references `var` (raw address value or canonical
 ;; base var), or whose cached value is `var`. The IR is not globally SSA, so
@@ -128344,40 +128078,15 @@
 (define (opt-load-table-filter-global-cell-store
   [table : OptLoadTable]
   [global : i64]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (opt-load-entry-survives-global-cell-store?
-        global
-        (& (array-ref table.slots first))))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (opt-load-entry-survives-global-cell-store?
-              global
-              (& (array-ref table.slots at)))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-global-cell-store (deref rest) global)]
+        (if (opt-load-entry-survives-global-cell-store? global entry)
+          (Cons entry (box tail))
+          tail))]))
 
 (define (opt-load-table-filter-store
   [type-segment-bases : i64]
@@ -128385,46 +128094,25 @@
   [facts : (& facts OptAliasFacts)]
   [store-root : OptAliasRoot]
   [class : OptLoadStoreClass]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (opt-load-entry-survives-store?
-        type-segment-bases
-        facts
-        (compiler-opt-global-shared-view store-root)
-        (compiler-opt-global-shared-view class)
-        (& (array-ref table.slots first))))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      (owned_view.compiler-owned-reference-shared-view table)
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (opt-load-entry-survives-store?
-              type-segment-bases
-              facts
-              (compiler-opt-global-shared-view store-root)
-              (compiler-opt-global-shared-view class)
-              (& (array-ref table.slots at)))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-store
+            type-segment-bases
+            (deref rest)
+            facts
+            store-root
+            (compiler-opt-global-shared-view class))]
+        (if (opt-load-entry-survives-store?
+          type-segment-bases
+          facts
+          store-root
+          class
+          entry)
+          (Cons entry (box tail))
+          tail))]))
 
 ;; Classify a store's target from the pointer kinds; `width` is the byte size
 ;; actually written (StorePtr type width / CopyBytes size) and `ty` is the
@@ -128877,7 +128565,7 @@
             kinds
             instr
             next-epoch)
-          (opt-load-table-empty)
+          (Nil)
           (opt-load-kinds-step
             (compiler-opt-global-shared-view profile-state)
             type-segment-bases
@@ -129034,7 +128722,7 @@
         skip-globals?
         (+ index 1))
       (match (opt-call-memory-arg-at args index)
-        [(No) (opt-load-table-empty)]
+        [(No) (Nil)]
         [(Some value)
           (opt-load-table-filter-call-writes
             type-segment-bases
@@ -129168,83 +128856,29 @@
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [table : OptLoadTable]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (opt-load-entry-survives-obj-writes?
-        index
-        row
-        (& (array-ref table.slots first))))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (opt-load-entry-survives-obj-writes?
-              index
-              row
-              (& (array-ref table.slots at)))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-obj-writes index row (deref rest))]
+        (if (opt-load-entry-survives-obj-writes? index row entry)
+          (Cons entry (box tail))
+          tail))]))
 
 (define (opt-load-table-filter-cell-writes
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [table : OptLoadTable]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (opt-load-entry-survives-cell-writes?
-        index
-        row
-        (& (array-ref table.slots first))))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (opt-load-entry-survives-cell-writes?
-              index
-              row
-              (& (array-ref table.slots at)))
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-cell-writes index row (deref rest))]
+        (if (opt-load-entry-survives-cell-writes? index row entry)
+          (Cons entry (box tail))
+          tail))]))
 
 ;; MF-4 (i), the base-map half. A binding says "var v addresses [g]+off": with
 ;; `value-base?` it is based at the pointer STORED in g, so it stays true
@@ -129418,7 +129052,7 @@
                 (and
                   (opt-call-memory-summary-global? summary)
                   (not cells-known?)))
-                (opt-load-table-empty)
+                (Nil)
                 (opt-load-table-filter-call-writes
                   type-segment-bases
                   (opt-load-table-filter-call-rows
@@ -129446,7 +129080,7 @@
                 ;; opt-call-memory-candidate-instr already gives ControlFlow
                 ;; this verdict for the non-call instruction forms.
                 [(ControlFlow) table]
-                [_ (opt-load-table-empty)])])]
+                [_ (Nil)])])]
         [next-epoch : i64
           (opt-load-cse-epoch-step
             epoch
@@ -129983,22 +129617,9 @@
   (args ir.CompilerIrCallArgs)
   (dst i64))
 
-(defstruct OptPureCallTable
-  (slots (__tl_dyn-array OptPureCallEntry))
-  (len i64)
-  (top (__tl_dyn-array i64)))
-
-(scoped_stack.compiler-scoped-stack-operations
-  OptPureCallEntry
-  OptPureCallTable
-  opt-pure-call-table
-  empty
-  with-capacity
-  len
-  empty?
-  last
-  prefix
-  push)
+(defenum OptPureCallTable
+  (Nil)
+  (Cons OptPureCallEntry (Box OptPureCallTable)))
 
 (defenum OptPureCallBlockOut
   (Out ir.CompilerIrInstrSeq OptPureCallTable))
@@ -130046,8 +129667,8 @@
       (opt-pure-call-sites-collect
         opt-pure-call-inline-memory
         (ir.compiler-ir-block-list-view walked-blocks)
-        (opt-pure-call-table-empty)))
-    (opt-pure-call-table-empty)))
+        (Nil)))
+    (Nil)))
 
 (define (opt-pure-call-inline-finish-spans
   [sites : OptPureCallTable]
@@ -130084,7 +129705,7 @@
             (if (and
               (opt-pure-call-callee-pure? call-memory name)
               (opt-pure-call-scalar-type? ty))
-              (opt-pure-call-table-push acc (OptPureCallEntry name args dst))
+              (Cons (OptPureCallEntry name args dst) (box acc))
               acc)]
           [_ acc])]
       (opt-pure-call-sites-collect-instrs call-memory instrs (+ index 1) next))))
@@ -130108,20 +129729,12 @@
   [sites : OptPureCallTable]
   [dst : i64]
   [cur : OptPureCallTable]) : OptPureCallTable
-  (let
-    [at : i64 (- sites.len 1)]
-    (while (>= at 0)
-      (let
-        [entry : OptPureCallEntry
-          (compiler-opt-global-array-element-shared-view sites.slots at)]
-        (when
-          (= entry.dst dst)
-          (return
-            (opt-pure-call-table-push
-              cur
-              (OptPureCallEntry entry.name entry.args entry.dst)))))
-      (set! at (- at 1)))
-    cur))
+  (match sites
+    [(Nil) cur]
+    [(Cons entry rest)
+      (if (= entry.dst dst)
+        (Cons (OptPureCallEntry entry.name entry.args entry.dst) (box cur))
+        (opt-pure-call-sites-seed (deref rest) dst cur))]))
 
 ;; Summary 0 is "writes nothing"; a callee without a row (an extern, a runtime
 ;; helper, an unresolved cycle) is not known to.
@@ -130263,21 +129876,17 @@
   [env : (& env opt_i64_i64_map.Map)]
   [name : i64]
   [args : ir.CompilerIrCallArgs]) : i64
-  (let
-    [at : i64 (- table.len 1)]
-    (while (>= at 0)
-      (let
-        [entry (& (array-ref table.slots at))]
-        (when
-          (and
-            (ir.compiler-ir-symbol-eq? entry.name name)
-            (opt-pure-call-args-eq?
-              env
-              entry.args
-              (compiler-opt-global-shared-view args)))
-          (return entry.dst)))
-      (set! at (- at 1)))
-    (- 0 1)))
+  (match table
+    [(Nil) (- 0 1)]
+    [(Cons entry rest)
+      (if (and
+        (ir.compiler-ir-symbol-eq? entry.name name)
+        (opt-pure-call-args-eq?
+          env
+          entry.args
+          (compiler-opt-global-shared-view args)))
+        entry.dst
+        (opt-pure-call-table-find (deref (deref rest)) env name args))]))
 
 ;; Any two direct calls to summarized write-free callees at all? The rebuild
 ;; below is skipped for the many functions that have none.
@@ -130314,55 +129923,36 @@
   [table : OptPureCallTable]
   [dst : i64]
   [remaining : i64]) : bool
-  (let
-    [at : i64 (- table.len 1)]
-    [stop : i64
-      (if (< remaining table.len)
-        (- table.len remaining)
-        0)]
-    (while (>= at stop)
-      (when
-        (=
-          (let
-            [entry (& (array-ref table.slots at))]
-            entry.dst)
-          dst)
-        (return true))
-      (set! at (- at 1)))
-    false))
+  (if (<= remaining 0)
+    false
+    (match table
+      [(Nil) false]
+      [(Cons entry rest)
+        (or
+          (= entry.dst dst)
+          (opt-pure-call-table-has-result? (deref rest) dst (- remaining 1)))])))
 
 (define (opt-pure-call-table-intersect-bounded
   [table : OptPureCallTable]
   [other : (& other OptPureCallTable)]
   [remaining : i64]) : OptPureCallTable
-  (let
-    [start : i64
-      (if (< remaining table.len)
-        (if (< remaining 0)
-          table.len
-          (- table.len remaining))
-        0)]
-    [count : i64 (- table.len start)]
-    [out : OptPureCallTable
-      (if (<= count 0)
-        (opt-pure-call-table-empty)
-        (opt-pure-call-table-with-capacity count))]
-    [at : i64 start]
-    (while (< at table.len)
-      (when
-        (opt-pure-call-table-has-result?
-          (owned_view.compiler-owned-reference-shared-view other)
-          (let
-            [entry (& (array-ref table.slots at))]
-            entry.dst)
-          opt-pure-call-join-limit)
-        (set!
-          out
-          (opt-pure-call-table-push
-            out
-            (compiler-opt-global-array-element-shared-view table.slots at))))
-      (set! at (+ at 1)))
-    out))
+  (if (<= remaining 0)
+    (Nil)
+    (match table
+      [(Nil) (Nil)]
+      [(Cons entry rest)
+        (let
+          [tail : OptPureCallTable
+            (opt-pure-call-table-intersect-bounded
+              (deref rest)
+              other
+              (- remaining 1))]
+          (if (opt-pure-call-table-has-result?
+            (owned_view.compiler-owned-reference-shared-view other)
+            entry.dst
+            opt-pure-call-join-limit)
+            (Cons entry (box tail))
+            tail))])))
 
 (define (opt-pure-call-table-intersect
   [table : OptPureCallTable]
@@ -130384,7 +129974,7 @@
     [start : i64 (array-ref offsets id)]
     [end : i64 (array-ref offsets (+ id 1))]
     (if (or (= start end) (>= (array-ref edges start) id))
-      (opt-pure-call-table-empty)
+      (Nil)
       (let
         [table : OptPureCallTable
           (compiler-opt-global-array-element-shared-view
@@ -130397,7 +129987,7 @@
             (set!
               table
               (if (>= pred id)
-                (opt-pure-call-table-empty)
+                (Nil)
                 (opt-pure-call-table-intersect
                   table
                   (compiler-opt-global-array-element-shared-view exits pred))))
@@ -130478,21 +130068,19 @@
                     (begin
                       (set!
                         cur
-                        (opt-pure-call-table-push
-                          cur
-                          (OptPureCallEntry name args dst)))
+                        (Cons (OptPureCallEntry name args dst) (box cur)))
                       (ir.compiler-ir-instr-builder-push! (&mut builder) instr))))
                 ;; write-free, but its result or an argument is not one
                 ;; value along the chain: neither read nor recorded
                 (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
               ;; a call that may write: every entry is stale
               (begin
-                (set! cur (opt-pure-call-table-empty))
+                (set! cur (Nil))
                 (ir.compiler-ir-instr-builder-push! (&mut builder) instr)))]
           [_
             (if (opt-alias-instr-clears-all?
               (compiler-opt-global-shared-view instr))
-              (set! cur (opt-pure-call-table-empty))
+              (set! cur (Nil))
               unit)
             (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
         (set! index (+ index 1))))
@@ -131498,13 +131086,12 @@
 (define (opt-pure-call-dedupe-function
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt-pure-call-dedupe-function-sites
-    call-memory
-    (opt-pure-call-table-empty)
-    func))
+  (opt-pure-call-dedupe-function-sites call-memory (Nil) func))
 
 (define (opt-pure-call-sites-empty? [sites : (& sites OptPureCallTable)]) : bool
-  (opt-pure-call-table-empty? sites))
+  (match sites
+    [(Nil) true]
+    [_ false]))
 
 (define (opt-pure-call-dedupe-function-sites
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
@@ -131540,7 +131127,7 @@
             (ir.compiler-ir-block-builder-with-capacity count)]
           [id : i64 0]
           (while (< id count)
-            (set! (array-ref exits id) (opt-pure-call-table-empty))
+            (set! (array-ref exits id) (OptPureCallTable.Nil))
             (set! id (+ id 1)))
           (set! id 0)
           (while (< id count)
@@ -131608,7 +131195,7 @@
   [facts : OptAliasFacts]) : OptLoadCseState
   (State
     facts
-    (opt-load-table-empty)
+    (Nil)
     (opt-load-kinds-empty-with-cap
       (compiler-opt-global-shared-view profile-state)
       kinds-cap)
@@ -131621,13 +131208,12 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [instr-count : i64]
   [kinds : OptLoadPtrKinds]
-  [facts : OptAliasFacts]
-  [table : OptLoadTable]) : OptLoadCseState
+  [facts : OptAliasFacts]) : OptLoadCseState
   (let
     [table-cap : i64 (opt-load-cse-table-cap-for-size instr-count)]
     (State
       facts
-      table
+      (Nil)
       (opt-load-kinds-set-cap
         kinds
         (opt-load-cse-kinds-cap-for-size instr-count))
@@ -131661,20 +131247,15 @@
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [key : (& key OptLoadKey)]) : OptMaybeLoadEntry
-  (let
-    [at : i64 (- table.len 1)]
-    (while (>= at 0)
-      (let
-        [entry : OptLoadEntry
-          (compiler-opt-global-array-element-shared-view table.slots at)]
-        (when
-          (opt-load-key-eq
-            type-segment-bases
-            (opt-load-entry-key (compiler-opt-global-shared-view entry))
-            (owned_view.compiler-owned-reference-shared-view key))
-          (return (Some entry)))
-        (set! at (- at 1))))
-    (No)))
+  (match table
+    [(Nil) (No)]
+    [(Cons entry rest)
+      (if (opt-load-key-eq
+        type-segment-bases
+        (opt-load-entry-key (compiler-opt-global-shared-view entry))
+        (owned_view.compiler-owned-reference-shared-view key))
+        (Some entry)
+        (opt-load-table-find-entry type-segment-bases (deref rest) key))]))
 
 ;; A joined entry must be older than every allocation both edges agree on, so it
 ;; keeps the LATER (larger) of the two creation epochs -- the conservative side
@@ -131706,22 +131287,18 @@
   [type-segment-bases : i64]
   [a : OptLoadTable]
   [b : (& b OptLoadTable)]) : OptLoadTable
-  (let
-    [count : i64 a.len]
-    [out : OptLoadTable
-      (if (= count 0)
-        (opt-load-table-empty)
-        (opt-load-table-with-capacity count))]
-    [at : i64 0]
-    (while (< at count)
-      (match (opt-load-table-intersect-entry
-        type-segment-bases
-        (compiler-opt-global-array-element-shared-view a.slots at)
-        (owned_view.compiler-owned-reference-shared-view b))
-        [(Some merged) (set! out (opt-load-table-push out merged))]
-        [(No) unit])
-      (set! at (+ at 1)))
-    out))
+  (match a
+    [(Nil) (Nil)]
+    [(Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-intersect type-segment-bases (deref rest) b)]
+        (match (opt-load-table-intersect-entry
+          type-segment-bases
+          entry
+          (owned_view.compiler-owned-reference-shared-view b))
+          [(Some merged) (Cons merged (box tail))]
+          [(No) tail]))]))
 
 (define (opt-load-cse-state-intersect
   [type-segment-bases : i64]
@@ -131762,66 +131339,28 @@
 (define (opt-load-table-filter-descriptor-stable
   [table : OptLoadTable]
   [sources : (& sources OptValueSources)]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (match (opt-load-entry-key
-        (owned_view.compiler-owned-reference-shared-view
-          (& (array-ref table.slots first))))
-        [(Field base _ _ header?)
-          (and header? (opt-gvn-stable-var? sources base))]
-        ;; A named cell word is NOT carried, even though a loop-safe body (no
-        ;; call, no clear-all, no `Store G`, element stores only) provably
-        ;; leaves every cell alone, so the key would still name the same
-        ;; location holding the same value. Carrying it is a
-        ;; register-pressure loss, because the carried handle drags the
-        ;; descriptor words derived from it into the same loop-spanning live
-        ;; range: a cell's data pointer and length stop being re-derived per
-        ;; scan and start being spilled and reloaded around the loop instead.
-        ;; Same shape as the call-arm carry refusal above: the copy was never
-        ;; the cost, the live range is.
-        [_ false]))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (match (opt-load-entry-key
-              (owned_view.compiler-owned-reference-shared-view
-                (& (array-ref table.slots at))))
-              [(Field base _ _ header?)
-                (and header? (opt-gvn-stable-var? sources base))]
-              ;; A named cell word is NOT carried, even though a loop-safe body (no
-              ;; call, no clear-all, no `Store G`, element stores only) provably
-              ;; leaves every cell alone, so the key would still name the same
-              ;; location holding the same value. Carrying it is a
-              ;; register-pressure loss, because the carried handle drags the
-              ;; descriptor words derived from it into the same loop-spanning live
-              ;; range: a cell's data pointer and length stop being re-derived per
-              ;; scan and start being spilled and reloaded around the loop instead.
-              ;; Same shape as the call-arm carry refusal above: the copy was never
-              ;; the cost, the live range is.
-              [_ false])
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-descriptor-stable (deref rest) sources)]
+        (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
+          [(Field base _ _ header?)
+            (if (and header? (opt-gvn-stable-var? sources base))
+              (Cons entry (box tail))
+              tail)]
+          ;; A named cell word is NOT carried, even though a loop-safe body (no
+          ;; call, no clear-all, no `Store G`, element stores only) provably
+          ;; leaves every cell alone, so the key would still name the same
+          ;; location holding the same value. Carrying it is a
+          ;; register-pressure loss, because the carried handle drags the
+          ;; descriptor words derived from it into the same loop-spanning live
+          ;; range: a cell's data pointer and length stop being re-derived per
+          ;; scan and start being spilled and reloaded around the loop instead.
+          ;; Same shape as the call-arm carry refusal above: the copy was never
+          ;; the cost, the live range is.
+          [_ tail]))]))
 
 ;; Is `var` provably an element (data-buffer) address? A gep of an element
 ;; base stays in the buffer; a load of a header descriptor's first word is the
@@ -132139,85 +131678,50 @@
 ;; is a literal or a var the loop body reads; a global-based key is dropped.
 ;; With `descriptor?` (the loop is also loop-safe) the descriptor-field
 ;; entries the loop-safe carry keeps stay as well, whatever their value.
-(define (opt-load-entry-live-value?
-  [entry : (& entry OptLoadEntry)]
-  [sources : (& sources OptValueSources)]
-  [uses : (& uses opt_i64_i64_map.Map)]
-  [descriptor? : bool]) : bool
-  (let
-    [descriptor-entry? : bool
-      (and
-        descriptor?
-        (match (opt-load-entry-key
-          (owned_view.compiler-owned-reference-shared-view entry))
-          [(Field base _ _ header?)
-            (and header? (opt-gvn-stable-var? sources base))]
-          [_ false]))]
-    [key-stable? : bool
-      (match (opt-load-entry-key
-        (owned_view.compiler-owned-reference-shared-view entry))
-        [(Raw value _ _)
-          (match value
-            [(Var v) (opt-gvn-stable-var? sources v)]
-            [_ false])]
-        [(Field base _ _ _) (opt-gvn-stable-var? sources base)]
-        [(ScaledField base index _ _)
-          (and
-            (opt-gvn-stable-var? sources base)
-            (opt-gvn-stable-var? sources index))]
-        [(GlobalField _ _ _ _) false])]
-    [value-free? : bool
-      (match (owned_view.compiler-owned-reference-shared-view entry)
-        [(Entry _ value _)
-          (match value
-            [(Var v) (opt-used-contains uses v)]
-            [(I64 _) true]
-            [_ false])])]
-    (or descriptor-entry? (and key-stable? value-free?))))
-
 (define (opt-load-table-filter-live-values
   [table : OptLoadTable]
   [sources : (& sources OptValueSources)]
   [uses : (& uses opt_i64_i64_map.Map)]
   [descriptor? : bool]) : OptLoadTable
-  (let
-    [count : i64 table.len]
-    [first : i64 0]
-    (while (and
-      (< first count)
-      (opt-load-entry-live-value?
-        (& (array-ref table.slots first))
-        sources
-        uses
-        descriptor?))
-      (set! first (+ first 1)))
-    (if (>= first count)
-      table
+  (match table
+    [(Nil) (Nil)]
+    [(Cons entry rest)
       (let
-        [kept : OptLoadTable (opt-load-table-with-capacity count)]
-        [at : i64 0]
-        (while (< at first)
-          (set!
-            kept
-            (opt-load-table-push
-              kept
-              (compiler-opt-global-array-element-shared-view table.slots at)))
-          (set! at (+ at 1)))
-        (set! at (+ first 1))
-        (while (< at count)
-          (when
-            (opt-load-entry-live-value?
-              (& (array-ref table.slots at))
-              sources
-              uses
-              descriptor?)
-            (set!
-              kept
-              (opt-load-table-push
-                kept
-                (compiler-opt-global-array-element-shared-view table.slots at))))
-          (set! at (+ at 1)))
-        kept))))
+        [tail : OptLoadTable
+          (opt-load-table-filter-live-values
+            (deref rest)
+            sources
+            uses
+            descriptor?)]
+        [descriptor-entry? : bool
+          (and
+            descriptor?
+            (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
+              [(Field base _ _ header?)
+                (and header? (opt-gvn-stable-var? sources base))]
+              [_ false]))]
+        [key-stable? : bool
+          (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
+            [(Raw value _ _)
+              (match value
+                [(Var v) (opt-gvn-stable-var? sources v)]
+                [_ false])]
+            [(Field base _ _ _) (opt-gvn-stable-var? sources base)]
+            [(ScaledField base index _ _)
+              (and
+                (opt-gvn-stable-var? sources base)
+                (opt-gvn-stable-var? sources index))]
+            [(GlobalField _ _ _ _) false])]
+        [value-free? : bool
+          (match (compiler-opt-global-shared-view entry)
+            [(Entry _ value _)
+              (match value
+                [(Var v) (opt-used-contains uses v)]
+                [(I64 _) true]
+                [_ false])])]
+        (if (or descriptor-entry? (and key-stable? value-free?))
+          (Cons entry (box tail))
+          tail))]))
 
 (define (opt-load-gvn-entry-from-preds
   [type-segment-bases : i64]
@@ -133697,20 +133201,16 @@
   [id : i64]
   [table : OptLoadTable]
   [state : OptLoadCseState]) : OptLoadCseState
-  (let
-    [acc : OptLoadCseState state]
-    [at : i64 (- table.len 1)]
-    (while (>= at 0)
+  (match table
+    [(Nil) state]
+    [(Cons entry rest)
       (let
-        [entry : OptLoadEntry
-          (compiler-opt-global-array-element-shared-view table.slots at)]
         [key : OptLoadKey
           (opt-load-entry-key (compiler-opt-global-shared-view entry))]
         [value : ir.CompilerIrValue (opt-load-entry-value entry)]
-        (set!
-          acc
-          (if (>= (opt-load-join-count (& joins)) (opt-load-join-phi-cap))
-            acc
+        [next : OptLoadCseState
+          (if (>= (opt-load-join-count joins) (opt-load-join-phi-cap))
+            state
             (if (not
               (and
                 (opt-load-key-gvn-stable?
@@ -133720,7 +133220,7 @@
                 (match (compiler-opt-global-shared-view value)
                   [(Var _) true]
                   [_ false])
-                (match (compiler-opt-global-shared-view acc)
+                (match (compiler-opt-global-shared-view state)
                   [(State _ joined _ _ _ _ _)
                     (match (opt-load-table-find-entry
                       type-segment-bases
@@ -133736,7 +133236,7 @@
                   count
                   key
                   value)))
-              acc
+              state
               (opt-load-join-mint
                 type-segment-bases
                 index
@@ -133745,9 +133245,17 @@
                 count
                 id
                 key
-                acc))))
-        (set! at (- at 1))))
-    acc))
+                state)))]
+        (opt-load-join-scan-table
+          type-segment-bases
+          index
+          sources
+          exit-states
+          joins
+          count
+          id
+          (deref rest)
+          next))]))
 
 (define (opt-load-join-augment
   [type-segment-bases : i64]

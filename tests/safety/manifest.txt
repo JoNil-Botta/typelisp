@@ -1199,8 +1199,3 @@ variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_ba
 variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
 variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
 variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder
-compiler_scoped_stack_unknown_reject|check-fail|tests/safety/compiler_scoped_stack_unknown_reject.tl|-|compiler-scoped-stack-operations: unknown operation
-compiler_scoped_stack_nonbare_reject|check-fail|tests/safety/compiler_scoped_stack_nonbare_reject.tl|-|compiler-scoped-stack-operations: operation must be a bare name
-compiler_scoped_stack_duplicate_reject|check-fail|tests/safety/compiler_scoped_stack_duplicate_reject.tl|-|compiler-scoped-stack-operations: duplicate operation
-compiler_scoped_stack_empty_reject|check-fail|tests/safety/compiler_scoped_stack_empty_reject.tl|-|compiler-scoped-stack-operations: expected at least one operation
-compiler_scoped_stack_omitted_reject|check-fail|tests/safety/compiler_scoped_stack_omitted_reject.tl|-|unbound name scoped-selection-empty

@@ -99,14 +99,14 @@
 
 (define (compiler-load-try-read-file-text [path : (& source str)]) : io.ResultIoString
   (match (io.try-read-file path)
-    [(io.OkIoBytes contents)
+    [(OkIoBytes contents)
       (begin
         (cfg
           compile-profile
           (compiler-load-profile-note-input-bytes! (byte_buf.len contents))
           unit)
-        (io.OkIoString (byte_buf.to-string contents)))]
-    [(io.ErrIoBytes error) (io.ErrIoString error)]))
+        (OkIoString (byte_buf.to-string contents)))]
+    [(ErrIoBytes error) (ErrIoString error)]))
 
 (define (compiler-load-lex-token-buffer-arena-handle) : i64
   (lexer.spanned-token-buffer-arena-handle-value))
@@ -739,8 +739,8 @@
     (let
       [name : String "TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST"]
       (match (env.get (& name))
-        [(env.EnvSomeString value) (string.eq value "1")]
-        [(env.EnvNoString) false]))))
+        [(EnvSomeString value) (string.eq value "1")]
+        [(EnvNoString) false]))))
 
 ;; What answers a session's source reads during an overlay check (#7455). While
 ;; `active`, an admitted overlay entry answers its canonical path, every other
@@ -1048,13 +1048,11 @@
 (define (compiler-load-dependency-catalog-entry-release-mapping!
   [entry : CompilerLoadDependencyCatalogEntry]) : ResultCompilerLoadDependencyCatalogUnit
   (match entry.status
-    [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+    [(TrustedCode loaded)
       (match (tlci_loader_support.tlci-loader-release loaded)
-        [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
-          ResultCompilerLoadDependencyCatalogUnit.Ok]
-        [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
-          (ResultCompilerLoadDependencyCatalogUnit.Err message)])]
-    [_ ResultCompilerLoadDependencyCatalogUnit.Ok]))
+        [(Ok) Ok]
+        [(Err message) (Err message)])]
+    [_ Ok]))
 
 (define (compiler-load-dependency-catalog-find-root-slot
   [items : CompilerLoadDependencyCatalogList]
@@ -1143,8 +1141,8 @@
           slot
           (begin
             (match (compiler-load-dependency-catalog-entry-release-mapping! old)
-              [(ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
-              [(ResultCompilerLoadDependencyCatalogUnit.Err _) unit])
+              [(Ok) unit]
+              [(Err _) unit])
             (set! (array-ref items.slots slot) entry)
             (set!
               (array-ref registry.generation 0)
@@ -1175,12 +1173,12 @@
     first-error
     (match (compiler-load-dependency-catalog-entry-release-mapping!
       (owned_view.compiler-owned-array-element-shared-view items.slots index))
-      [(ResultCompilerLoadDependencyCatalogUnit.Ok)
+      [(Ok)
         (compiler-load-dependency-catalog-release-from!
           items
           (+ index 1)
           first-error)]
-      [(ResultCompilerLoadDependencyCatalogUnit.Err message)
+      [(Err message)
         (compiler-load-dependency-catalog-release-from!
           items
           (+ index 1)
@@ -1242,8 +1240,8 @@
         (array-ref registry.generation 0)
         (+ (array-ref registry.generation 0) 1))
       (if (= (string.string-length error) 0)
-        ResultCompilerLoadDependencyCatalogUnit.Ok
-        (ResultCompilerLoadDependencyCatalogUnit.Err error)))))
+        Ok
+        (Err error)))))
 
 (define (compiler-load-canonical-path [path : String]) : String
   (let
@@ -1318,16 +1316,14 @@
     [items : CompilerLoadDependencyCatalogList
       (compiler-load-dependency-catalog-handle-items handle)]
     (if (or (< slot 0) (>= slot items.len))
-      CompilerLoadDependencyCatalogLookup.NoCatalog
+      NoCatalog
       (let
         [entry : CompilerLoadDependencyCatalogEntry
           (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
         (match entry.status
-          [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
-            (CompilerLoadDependencyCatalogLookup.Unavailable failure)]
-          [(CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)
-            CompilerLoadDependencyCatalogLookup.MetadataOnly]
-          [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+          [(Unavailable failure) (Unavailable failure)]
+          [(TrustedMetadataOnly) MetadataOnly]
+          [(TrustedCode loaded)
             (let
               [generation : i64
                 (compiler-load-dependency-catalog-handle-generation handle)]
@@ -1345,8 +1341,8 @@
               (match (tlci_loader_support.tlci-loader-resolve-macro-entry
                 (& loaded)
                 identity)
-                [(tlci_loader_support.TlciMacroEntryLookup.Resolved resolved)
-                  (CompilerLoadDependencyCatalogLookup.Resolved
+                [(Resolved resolved)
+                  (Resolved
                     (CompilerLoadDependencyCatalogCapability
                       handle
                       slot
@@ -1356,8 +1352,8 @@
                       package-version-id
                       artifact-path-id
                       resolved))]
-                [(tlci_loader_support.TlciMacroEntryLookup.Shell resolved)
-                  (CompilerLoadDependencyCatalogLookup.Shell
+                [(Shell resolved)
+                  (Shell
                     (CompilerLoadDependencyCatalogCapability
                       handle
                       slot
@@ -1367,12 +1363,8 @@
                       package-version-id
                       artifact-path-id
                       resolved))]
-                [(tlci_loader_support.TlciMacroEntryLookup.Missing)
-                  CompilerLoadDependencyCatalogLookup.Missing]
-                [(tlci_loader_support.TlciMacroEntryLookup.Err message)
-                  (CompilerLoadDependencyCatalogLookup.Unavailable
-                    (CompilerLoadDependencyCatalogFailure.MappingFailure
-                      message))]))])))))
+                [(Missing) Missing]
+                [(Err message) (Unavailable (MappingFailure message))]))])))))
 
 (define (compiler-load-dependency-catalog-capability-error
   [capability : CompilerLoadDependencyCatalogCapability]
@@ -1419,7 +1411,7 @@
   (if (not
     (compiler-load-dependency-catalog-capability-current?
       (compiler-load-global-shared-view capability)))
-    (tlci_loader_support.ResultTlciMacroDispatch.Err
+    (Err
       (compiler-load-dependency-catalog-capability-error
         capability
         identity
@@ -1432,23 +1424,22 @@
           items.slots
           capability.slot)]
       (match entry.status
-        [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+        [(TrustedCode loaded)
           (match (tlci_loader_support.tlci-loader-dispatch-resolved-macro
             (& loaded)
             capability.resolved
             session-cookie
             (__tl_make-array i64 0)
             0)
-            [(tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)
-              (tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)]
-            [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
-              (tlci_loader_support.ResultTlciMacroDispatch.Err
+            [(Ok dispatch) (Ok dispatch)]
+            [(Err message)
+              (Err
                 (compiler-load-dependency-catalog-capability-error
                   capability
                   identity
                   message))])]
         [_
-          (tlci_loader_support.ResultTlciMacroDispatch.Err
+          (Err
             (compiler-load-dependency-catalog-capability-error
               capability
               identity
@@ -1460,7 +1451,7 @@
   (if (not
     (compiler-load-dependency-catalog-capability-current?
       (compiler-load-global-shared-view capability)))
-    (tlci_loader_support.ResultTlciLoaderUnit.Err
+    (Err
       (compiler-load-dependency-catalog-capability-error
         capability
         identity
@@ -1473,20 +1464,19 @@
           items.slots
           capability.slot)]
       (match entry.status
-        [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+        [(TrustedCode loaded)
           (match (tlci_loader_support.tlci-loader-mark-macro-entry-shell!
             (& loaded)
             capability.resolved)
-            [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
-              tlci_loader_support.ResultTlciLoaderUnit.Ok]
-            [(tlci_loader_support.ResultTlciLoaderUnit.Err message)
-              (tlci_loader_support.ResultTlciLoaderUnit.Err
+            [(Ok) Ok]
+            [(Err message)
+              (Err
                 (compiler-load-dependency-catalog-capability-error
                   capability
                   identity
                   message))])]
         [_
-          (tlci_loader_support.ResultTlciLoaderUnit.Err
+          (Err
             (compiler-load-dependency-catalog-capability-error
               capability
               identity
@@ -1501,31 +1491,25 @@
         state.dependency-catalog.entries
         0)]
     (if (or (< slot 0) (>= slot items.len))
-      CompilerLoadDependencyCatalogAdmittedImage.NoCatalog
+      NoCatalog
       (let
         [entry : CompilerLoadDependencyCatalogEntry
           (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
         (match entry.status
-          [(CompilerLoadDependencyCatalogStatus.Unavailable failure)
-            (CompilerLoadDependencyCatalogAdmittedImage.Unavailable failure)]
-          [(CompilerLoadDependencyCatalogStatus.TrustedMetadataOnly)
+          [(Unavailable failure) (Unavailable failure)]
+          [(TrustedMetadataOnly)
             (match entry.image
-              [(CompilerLoadDependencyCatalogImage.Some image)
-                (CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
-                  image)]
-              [(CompilerLoadDependencyCatalogImage.None)
-                (CompilerLoadDependencyCatalogAdmittedImage.Unavailable
-                  (CompilerLoadDependencyCatalogFailure.Malformed
+              [(Some image) (TrustedMetadataOnly image)]
+              [(None)
+                (Unavailable
+                  (Malformed
                     "dependency catalog: trusted metadata entry has no image"))])]
-          [(CompilerLoadDependencyCatalogStatus.TrustedCode loaded)
+          [(TrustedCode loaded)
             (match entry.image
-              [(CompilerLoadDependencyCatalogImage.Some image)
-                (CompilerLoadDependencyCatalogAdmittedImage.TrustedCode
-                  image
-                  loaded)]
-              [(CompilerLoadDependencyCatalogImage.None)
-                (CompilerLoadDependencyCatalogAdmittedImage.Unavailable
-                  (CompilerLoadDependencyCatalogFailure.Malformed
+              [(Some image) (TrustedCode image loaded)]
+              [(None)
+                (Unavailable
+                  (Malformed
                     "dependency catalog: trusted code entry has no image"))])])))))
 
 (define (compiler-load-dependency-surface-configuration
@@ -1547,7 +1531,7 @@
         (match (owned_view.compiler-owned-array-element-shared-view
           surfaces.slots
           index)
-          [(CompilerLoadDependencySurfaceFragment.Ready hydration _)
+          [(Ready hydration _)
             (let
               [pools : ast.AstNodePoolContext hydration.ast.pools]
               [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
@@ -1555,7 +1539,7 @@
                 (ast.ast-node-pool-context-destroy-storage! pools)
                 (unsafe
                   (arena.tl_arena_destroy base-arena))))]
-          [(CompilerLoadDependencySurfaceFragment.Unavailable) unit])
+          [(Unavailable) unit])
         (set! index (+ index 1))))))
 
 (define (compiler-load-dependency-surface-reset-use!
@@ -1571,20 +1555,17 @@
       (if (and
         (surface_facts.surface-typecheck-facts-active?)
         (not (surface_facts.surface-typecheck-facts-composite-active?)))
-        (CompilerLoadDependencySurfaceBaseFacts.Some
-          (surface_facts.surface-typecheck-facts-current))
-        CompilerLoadDependencySurfaceBaseFacts.None)]
+        (Some (surface_facts.surface-typecheck-facts-current))
+        None)]
     [base-builder : surface_facts.SurfaceTypecheckFactsBuilder
       (match (owned_view.compiler-owned-shared-view base-facts)
-        [(CompilerLoadDependencySurfaceBaseFacts.None)
-          (surface_facts.surface-typecheck-facts-builder-empty)]
-        [(CompilerLoadDependencySurfaceBaseFacts.Some facts)
+        [(None) (surface_facts.surface-typecheck-facts-builder-empty)]
+        [(Some facts)
           (match (surface_facts.surface-typecheck-facts-builder-append
             (surface_facts.surface-typecheck-facts-builder-empty)
             facts)
-            [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next) next]
-            [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
-              (surface_facts.surface-typecheck-facts-builder-empty)])])]
+            [(Ok next) next]
+            [(Err _) (surface_facts.surface-typecheck-facts-builder-empty)])])]
     [index : i64 0]
     (begin
       (while (< index fragments.len)
@@ -1616,7 +1597,7 @@
     (match (tlci.tlci-producer-identity-admit
       catalog-key.compiler-identity
       (build_identity.compiler-build-git-hash-shared-view))
-      [(tlci.TlciProducerIdentityAdmission.ExactMatch) true]
+      [(ExactMatch) true]
       [_ false])))
 
 (define (compiler-load-dependency-surface-copy-specializations
@@ -1674,26 +1655,22 @@
   [configuration : (& configuration str)]
   [structural-session : cis.InternStructuralSessionHandle]) : CompilerLoadDependencySurfaceFragment
   (match entry.status
-    [(CompilerLoadDependencyCatalogStatus.Unavailable _)
-      CompilerLoadDependencySurfaceFragment.Unavailable]
+    [(Unavailable _) Unavailable]
     [_
       (match entry.image
-        [(CompilerLoadDependencyCatalogImage.None)
-          CompilerLoadDependencySurfaceFragment.Unavailable]
-        [(CompilerLoadDependencyCatalogImage.Some image)
+        [(None) Unavailable]
+        [(Some image)
           (match (surface_hydrate.compiler-surface-key
             (owned_view.compiler-owned-shared-view image.rodata))
-            [(surface_hydrate.ResultCompilerSurfaceKey.Missing)
-              CompilerLoadDependencySurfaceFragment.Unavailable]
-            [(surface_hydrate.ResultCompilerSurfaceKey.Err _)
-              CompilerLoadDependencySurfaceFragment.Unavailable]
-            [(surface_hydrate.ResultCompilerSurfaceKey.Ok key)
+            [(Missing) Unavailable]
+            [(Err _) Unavailable]
+            [(Ok key)
               (if (not
                 (compiler-load-dependency-surface-key-current?
                   entry.key
                   key
                   configuration))
-                CompilerLoadDependencySurfaceFragment.Unavailable
+                Unavailable
                 (let
                   [pool-arena : i64 (ast.ast-node-pool-arena-make)]
                   [pools : ast.AstNodePoolContext
@@ -1717,11 +1694,7 @@
                         structural-session
                         pools))]
                   (match hydrated
-                    [(surface_hydrate.ResultCompilerSurfaceHydration.Ok
-                        hydration)
-                      (CompilerLoadDependencySurfaceFragment.Ready
-                        hydration
-                        spmd-callables)]
+                    [(Ok hydration) (Ready hydration spmd-callables)]
                     [_
                       (let
                         [base-arena : i64
@@ -1730,7 +1703,7 @@
                           (ast.ast-node-pool-context-destroy-storage! pools)
                           (unsafe
                             (arena.tl_arena_destroy base-arena))
-                          CompilerLoadDependencySurfaceFragment.Unavailable))])))])])]))
+                          Unavailable))])))])])]))
 
 (define (compiler-load-session-state-structural-session
   [state : CompilerLoadSessionState]) : cis.InternStructuralSessionHandle
@@ -1788,7 +1761,7 @@
                     verify-reject-last
                     (> catalog.len 1)
                     (= index (- catalog.len 1)))
-                    CompilerLoadDependencySurfaceFragment.Unavailable
+                    Unavailable
                     (compiler-load-dependency-surface-hydrate-entry
                       owner
                       (owned_view.compiler-owned-array-element-shared-view
@@ -1799,18 +1772,13 @@
                 (begin
                   (set! (array-ref slots index) fragment)
                   (match fragment
-                    [(CompilerLoadDependencySurfaceFragment.Unavailable)
-                      (set! ok false)]
-                    [(CompilerLoadDependencySurfaceFragment.Ready hydration _)
+                    [(Unavailable) (set! ok false)]
+                    [(Ready hydration _)
                       (match (surface_facts.surface-typecheck-facts-builder-append
                         (owned_view.compiler-owned-shared-view preflight-facts)
                         hydration.facts)
-                        [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err
-                            _)
-                          (set! ok false)]
-                        [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok
-                            next)
-                          (set! preflight-facts next)])])
+                        [(Err _) (set! ok false)]
+                        [(Ok next) (set! preflight-facts next)])])
                   (set! index (+ index 1)))))
             (set!
               (array-ref surface-state.fragments 0)
@@ -1883,11 +1851,9 @@
       (while (< index items.len)
         (begin
           (match (compiler-load-dependency-catalog-admitted-image state index)
-            [(CompilerLoadDependencyCatalogAdmittedImage.NoCatalog) unit]
-            [(CompilerLoadDependencyCatalogAdmittedImage.Unavailable _)
-              (set! unavailable (+ unavailable 1))]
-            [(CompilerLoadDependencyCatalogAdmittedImage.TrustedMetadataOnly
-                image)
+            [(NoCatalog) unit]
+            [(Unavailable _) (set! unavailable (+ unavailable 1))]
+            [(TrustedMetadataOnly image)
               (begin
                 (set! metadata-only (+ metadata-only 1))
                 (set! code-bytes (+ code-bytes (array-length image.code)))
@@ -1896,7 +1862,7 @@
                 (set!
                   import-bytes
                   (+ import-bytes (array-length image.imports))))]
-            [(CompilerLoadDependencyCatalogAdmittedImage.TrustedCode image _)
+            [(TrustedCode image _)
               (begin
                 (set! trusted-code (+ trusted-code 1))
                 (set! code-bytes (+ code-bytes (array-length image.code)))
@@ -2072,7 +2038,7 @@
             (begin
               (compiler-load-session-state-source-note!
                 state
-                (source_overlay.CompilerSourceClass.Disk)
+                (Disk)
                 (& canonical)
                 path
                 (& text))
@@ -2080,7 +2046,7 @@
           (begin
             (compiler-load-session-state-source-record!
               state
-              (source_overlay.CompilerSourceClass.Overlay)
+              (Overlay)
               (& canonical)
               path
               (source_overlay.compiler-source-overlay-entry-content
@@ -2105,7 +2071,7 @@
 ;; such as a dependency's TLCI image. An active provider records it from disk.
 (define (compiler-load-session-try-read-input-text [path : (& path str)]) : io.ResultIoString
   (match (compiler-load-try-read-file-text path)
-    [(io.OkIoString text)
+    [(OkIoString text)
       (let
         [state : CompilerLoadSessionState
           (compiler-load-active-session-state-shared-view)]
@@ -2118,13 +2084,13 @@
                 (compiler-load-source-provider-canonical-path (& provider) path)]
               (compiler-load-session-state-source-note!
                 state
-                (source_overlay.CompilerSourceClass.Disk)
+                (Disk)
                 (& canonical)
                 path
                 (& text)))
             unit)
-          (io.OkIoString text)))]
-    [(io.ErrIoString error) (io.ErrIoString error)]))
+          (OkIoString text)))]
+    [(ErrIoString error) (ErrIoString error)]))
 
 ;; Record an embedded stdlib source the session parsed. Embedded sources are no
 ;; file, so their identity is `embedded:` and the stdlib path.
@@ -2137,7 +2103,7 @@
       [canonical : String (str_cat.str-cat "embedded:" (string.copy path))]
       (compiler-load-session-state-source-note!
         state
-        (source_overlay.CompilerSourceClass.Embedded)
+        (Embedded)
         (& canonical)
         path
         text))
@@ -2149,9 +2115,9 @@
   [path : (& path str)]) : unit
   (if (compiler-load-session-state-source-provider-active? (& state))
     (match (compiler-load-embedded-stdlib-source-for-path (string.copy path))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource text)
+      [(CompilerEmbeddedStdlibSomeSource text)
         (compiler-load-session-state-note-embedded-source! state path (& text))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) unit])
+      [(CompilerEmbeddedStdlibNoSource) unit])
     unit))
 
 (define (compiler-load-session-state-standalone-reset-safe?
@@ -2265,14 +2231,14 @@
   [left : (& left sym_i64_env.SymI64Env)]
   [right : (& right sym_i64_env.SymI64Env)]) : bool
   (match (sym_i64_env.sym-i64-view (sym_i64_env.sym-i64-shared-view left))
-    [(sym_i64_env.SymI64ViewNil)
+    [(SymI64ViewNil)
       (match (sym_i64_env.sym-i64-view (sym_i64_env.sym-i64-shared-view right))
-        [(sym_i64_env.SymI64ViewNil) true]
-        [(sym_i64_env.SymI64ViewBind _ _ _) false])]
-    [(sym_i64_env.SymI64ViewBind left-key left-value left-rest)
+        [(SymI64ViewNil) true]
+        [(SymI64ViewBind _ _ _) false])]
+    [(SymI64ViewBind left-key left-value left-rest)
       (match (sym_i64_env.sym-i64-view (sym_i64_env.sym-i64-shared-view right))
-        [(sym_i64_env.SymI64ViewNil) false]
-        [(sym_i64_env.SymI64ViewBind right-key right-value right-rest)
+        [(SymI64ViewNil) false]
+        [(SymI64ViewBind right-key right-value right-rest)
           (and
             (= left-key right-key)
             (= left-value right-value)
@@ -2303,8 +2269,8 @@
 
 (define (compiler-load-cfg-key-copy [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) (sym_i64_env.sym-i64-empty)]
-    [(sym_i64_env.SymI64ViewBind key value rest)
+    [(SymI64ViewNil) (sym_i64_env.sym-i64-empty)]
+    [(SymI64ViewBind key value rest)
       (sym_i64_env.sym-i64-bind-id (compiler-load-cfg-key-copy rest) key value)]))
 
 (define (compiler-load-program-cache-key-copy
@@ -2941,8 +2907,7 @@
       (let
         [outcome : i64
           (match (compiler-load-embedded-stdlib-source (string.copy suffix))
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-                embedded-text)
+            [(CompilerEmbeddedStdlibSomeSource embedded-text)
               (let
                 [disk-text : String (compiler-load-read-file-text disk-path)]
                 (if (and
@@ -2952,8 +2917,7 @@
                   (string.eq disk-text embedded-text))
                   1
                   -1))]
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-              -1])]
+            [(CompilerEmbeddedStdlibNoSource) -1])]
         (begin
           (in-arena
             (arena.Arena
@@ -3039,14 +3003,14 @@
     (if (< paths.head 0)
       path
       (match (ci.intern-lookup (compiler-load-normalize-path (& path)))
-        [(ci.InternLookup.InternLookupFound path-id)
+        [(InternLookupFound path-id)
           (let
             [suffix-id : i64
               (sym_i64_env.sym-i64-lookup-id-or (& paths) path-id -1)]
             (if (< suffix-id 0)
               path
               (str_cat.str-cat "stdlib/" (ci.intern-str suffix-id))))]
-        [(ci.InternLookup.InternLookupMissing) path]))))
+        [(InternLookupMissing) path]))))
 
 (define (compiler-load-note-embedded-equivalent-if-matching!
   [suffix : String]
@@ -3379,8 +3343,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [out : String]) : String
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) out]
-    [(sym_i64_env.SymI64ViewBind key value rest)
+    [(SymI64ViewNil) out]
+    [(SymI64ViewBind key value rest)
       (if (< key 0)
         (compiler-load-cfg-cache-key-from rest out)
         (compiler-load-cfg-cache-key-from
@@ -3514,12 +3478,12 @@
 
 (define (compiler-load-lazy-env-disabled? [name : String]) : bool
   (match (env.get (& name))
-    [(env.EnvSomeString value)
+    [(EnvSomeString value)
       (or
         (string.eq value "0")
         (string.eq value "false")
         (string.eq value "off"))]
-    [(env.EnvNoString) false]))
+    [(EnvNoString) false]))
 
 (define (compiler-load-session-state-lazy-import-mode-enabled?
   [state : CompilerLoadSessionState]) : bool
@@ -3586,8 +3550,8 @@
   (let
     [name : String "TYPELISP_STDLIB_ROOT"]
     (match (env.get (& name))
-      [(env.EnvNoString) roots]
-      [(env.EnvSomeString root)
+      [(EnvNoString) roots]
+      [(EnvSomeString root)
         (if (= (string.string-length root) 0)
           roots
           (compiler-load-string-vec-push-copy roots root))])))
@@ -3684,19 +3648,18 @@
 (define (compiler-load-embedded-stdlib-source [suffix : String]) : ces.CompilerEmbeddedStdlibSource
   (if (compiler-load-safe-relative? suffix)
     (ces.compiler-embedded-stdlib-lookup suffix)
-    (ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)))
+    (CompilerEmbeddedStdlibNoSource)))
 
 (define (compiler-load-embedded-stdlib-path [suffix : String]) : CompilerLoadMaybePath
   (match (compiler-load-embedded-stdlib-source (string.copy suffix))
-    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
+    [(CompilerEmbeddedStdlibSomeSource _)
       (CompilerLoadSomePath (str_cat.str-cat "stdlib/" suffix))]
-    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-      (CompilerLoadNoPath)]))
+    [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoPath)]))
 
 (define (compiler-load-embedded-stdlib-source-for-path [path : String]) : ces.CompilerEmbeddedStdlibSource
   (if (compiler-load-stdlib-import? path)
     (compiler-load-embedded-stdlib-source (compiler-load-stdlib-suffix path))
-    (ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)))
+    (CompilerEmbeddedStdlibNoSource)))
 
 (define (compiler-load-resolve-import-with-roots
   [importer-path : String]
@@ -3706,8 +3669,8 @@
     (string.copy importer-path)
     (string.copy import-path)
     (clone stdlib-roots))
-    [(ResultPkgResolve.Ok resolved) resolved]
-    [(ResultPkgResolve.Err _) import-path]))
+    [(Ok resolved) resolved]
+    [(Err _) import-path]))
 
 (define (compiler-load-resolve-import-result-with-roots
   [importer-path : String]
@@ -3738,7 +3701,7 @@
                       [(CompilerLoadSomePath embedded-path) embedded-path]
                       [(CompilerLoadNoPath) primary]))]))
             primary))]
-      (ResultPkgResolve.Ok (compiler-load-normalize-path resolved)))))
+      (Ok (compiler-load-normalize-path resolved)))))
 
 (define (compiler-load-session-state-dotted-path-cache-clear-ready!
   [state : (& state CompilerLoadSessionState)]
@@ -3878,10 +3841,9 @@
   [module-name : String]
   [expected-module : ast.AstMaybeModuleName]) : String
   (match expected-module
-    [(ast.AstMaybeModuleName.Some module-id)
+    [(Some module-id)
       (compiler-load-dotted-module-path-id module-id module-name)]
-    [(ast.AstMaybeModuleName.No)
-      (compiler-load-dotted-module-path-uncached module-name)]))
+    [(No) (compiler-load-dotted-module-path-uncached module-name)]))
 
 (define (compiler-load-dotted-module-first-len [module-name : String]) : i64
   (let
@@ -3927,9 +3889,8 @@
   (or
     (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
-        true]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) false])))
+      [(CompilerEmbeddedStdlibSomeSource _) true]
+      [(CompilerEmbeddedStdlibNoSource) false])))
 
 (define (compiler-load-import-module-id [module-name : (& module-name str)]) : i64
   (compiler-load-parse-context-name-id module-name))
@@ -3938,9 +3899,8 @@
   [expected-module : ast.AstMaybeModuleName]
   [fallback : String]) : i64
   (match expected-module
-    [(ast.AstMaybeModuleName.Some full-import-id)
-      (ci.intern-dotted-final-id full-import-id)]
-    [(ast.AstMaybeModuleName.No) (compiler-load-import-module-id fallback)]))
+    [(Some full-import-id) (ci.intern-dotted-final-id full-import-id)]
+    [(No) (compiler-load-import-module-id fallback)]))
 
 (define (compiler-load-resolved-import
   [resolved : String]
@@ -3949,12 +3909,12 @@
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
   (let
     [module-id : i64 (compiler-load-import-module-id module-name)]
-    (ResultCompilerLoadResolvedImport.Ok
+    (Ok
       (CompilerLoadResolvedImport
         resolved
         kind
         module-name
-        (ast.AstMaybeModuleName.Some module-id)
+        (Some module-id)
         alias))))
 
 (define (compiler-load-invalid-selected-import-message
@@ -4009,8 +3969,7 @@
   [module-path : String]
   [stdlib-roots : svec.Vec]) : ResultPkgResolve
   (if (compiler-load-stdlib-import? module-path)
-    (ResultPkgResolve.Ok
-      (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
+    (Ok (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
     (let
       [root-primary : String
         (compiler-load-normalize-path
@@ -4019,7 +3978,7 @@
             (string.copy module-path)))]
       (if (compiler-load-nested-import-root? import-root)
         (if (io.file-exists? (string.copy root-primary))
-          (ResultPkgResolve.Ok root-primary)
+          (Ok root-primary)
           (let
             [importer-dir : String (compiler-load-dirname importer-path)]
             [importer-primary : String
@@ -4031,16 +3990,15 @@
               (not (string.eq importer-dir import-root))
               (compiler-load-nested-import-root? importer-dir)
               (io.file-exists? (string.copy importer-primary)))
-              (ResultPkgResolve.Ok importer-primary)
+              (Ok importer-primary)
               (match (compiler-load-resolve-root-module-path
                 module-path
                 stdlib-roots)
-                [(CompilerLoadSomePath root-path)
-                  (ResultPkgResolve.Ok root-path)]
-                [(CompilerLoadNoPath) (ResultPkgResolve.Ok root-primary)]))))
+                [(CompilerLoadSomePath root-path) (Ok root-path)]
+                [(CompilerLoadNoPath) (Ok root-primary)]))))
         (match (compiler-load-resolve-root-module-path module-path stdlib-roots)
-          [(CompilerLoadSomePath root-path) (ResultPkgResolve.Ok root-path)]
-          [(CompilerLoadNoPath) (ResultPkgResolve.Ok root-primary)])))))
+          [(CompilerLoadSomePath root-path) (Ok root-path)]
+          [(CompilerLoadNoPath) (Ok root-primary)])))))
 
 (define (compiler-load-resolve-module-import-with-roots
   [importer-path : String]
@@ -4092,13 +4050,13 @@
           (match (compiler-load-parse-manifest-diagnostic
             (string.copy manifest-path)
             (compiler-load-session-read-source-text manifest-path))
-            [(ResultCompilerPkgManifestDiagnostic.Err _)
+            [(Err _)
               (compiler-load-resolve-module-path-with-roots
                 importer-path
                 import-root
                 module-path
                 stdlib-roots)]
-            [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+            [(Ok manifest)
               (match (compiler-load-pkg-dep-lookup
                 manifest.deps
                 (string.copy first))
@@ -4111,13 +4069,13 @@
                 [(CompilerLoadSomePath dep-path)
                   (if (compiler-load-github-dependency-path?
                     (string.copy dep-path))
-                    (ResultPkgResolve.Err
+                    (Err
                       (str_cat.str-cat
                         "compiler-load: GitHub dependency '"
                         first
                         "' requires fetch support: "
                         import-path))
-                    (ResultPkgResolve.Ok
+                    (Ok
                       (compiler-load-normalize-path
                         (compiler-load-join-root-path
                           (compiler-load-join-root-path
@@ -4141,8 +4099,7 @@
         (string.copy module-name)
         expected-module)]
     (if (compiler-load-stdlib-import? (string.copy module-path))
-      (ResultPkgResolve.Ok
-        (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
+      (Ok (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
       (let
         [rest : String
           (compiler-load-dotted-module-rest (string.copy module-name) first-len)]
@@ -4163,16 +4120,15 @@
           (if (and
             (compiler-load-nested-import-root? importer-dir)
             (io.file-exists? (string.copy primary)))
-            (ResultPkgResolve.Ok primary)
+            (Ok primary)
             (if (io.file-exists? (string.copy fallback))
-              (ResultPkgResolve.Ok fallback)
+              (Ok fallback)
               (match (compiler-load-resolve-root-module-path
                 module-path
                 stdlib-roots)
-                [(CompilerLoadSomePath root-path)
-                  (ResultPkgResolve.Ok root-path)]
+                [(CompilerLoadSomePath root-path) (Ok root-path)]
                 [(CompilerLoadNoPath)
-                  (ResultPkgResolve.Err
+                  (Err
                     (str_cat.str-cat
                       "compiler-load: dotted import missing module segment after package alias: "
                       module-name))])))
@@ -4184,37 +4140,35 @@
                 [(and
                     (compiler-load-nested-import-root? importer-dir)
                     (io.file-exists? (string.copy primary)))
-                  (ResultPkgResolve.Ok primary)]
-                [(io.file-exists? (string.copy fallback))
-                  (ResultPkgResolve.Ok fallback)]
+                  (Ok primary)]
+                [(io.file-exists? (string.copy fallback)) (Ok fallback)]
                 [else
                   (match (compiler-load-resolve-root-module-path
                     (string.copy module-path)
                     stdlib-roots)
-                    [(CompilerLoadSomePath root-path)
-                      (ResultPkgResolve.Ok root-path)]
+                    [(CompilerLoadSomePath root-path) (Ok root-path)]
                     [(CompilerLoadNoPath)
                       (if (= (compiler-pkg-deps-count deps) 0)
                         ;; A dotted alias with no declared dependencies and no
                         ;; local or root module is an unknown package alias;
                         ;; with a deps graph the name may be a vendored local
                         ;; source module.
-                        (ResultPkgResolve.Err
+                        (Err
                           (str_cat.str-cat
                             "compiler-load: unknown package alias '"
                             first
                             "': pkg:"
                             module-path))
-                        (ResultPkgResolve.Ok fallback))])])]
+                        (Ok fallback))])])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? (string.copy dep-path))
-                (ResultPkgResolve.Err
+                (Err
                   (str_cat.str-cat
                     "compiler-load: GitHub dependency '"
                     first
                     "' requires fetch support: "
                     module-name))
-                (ResultPkgResolve.Ok
+                (Ok
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
                       (compiler-load-join-root-path manifest-dir dep-path)
@@ -4233,10 +4187,7 @@
   [importer-path : String]
   [import-root : String]
   [stdlib-roots : svec.Vec]) : CompilerLoadImportResolver
-  (CompilerLoadImportResolver
-    importer-path
-    stdlib-roots
-    (CompilerLoadImportResolverMode.Ordinary import-root)))
+  (CompilerLoadImportResolver importer-path stdlib-roots (Ordinary import-root)))
 
 (define (compiler-load-package-import-resolver
   [importer-path : String]
@@ -4246,7 +4197,7 @@
   (CompilerLoadImportResolver
     importer-path
     stdlib-roots
-    (CompilerLoadImportResolverMode.Package manifest-dir deps)))
+    (Package manifest-dir deps)))
 
 ;; Resolve exactly one candidate module while keeping ordinary-root and
 ;; package/dependency path policy in explicit typed arms. Import grammar and
@@ -4256,14 +4207,14 @@
   [module-name : String]
   [expected-module : ast.AstMaybeModuleName]) : ResultPkgResolve
   (match resolver.mode
-    [(CompilerLoadImportResolverMode.Ordinary import-root)
+    [(Ordinary import-root)
       (compiler-load-resolve-dotted-import-spec-with-roots
         resolver.importer-path
         import-root
         module-name
         expected-module
         resolver.stdlib-roots)]
-    [(CompilerLoadImportResolverMode.Package manifest-dir deps)
+    [(Package manifest-dir deps)
       (compiler-load-resolve-package-module-import
         module-name
         expected-module
@@ -4284,24 +4235,24 @@
     (match (compiler-load-resolve-import-candidate
       (owned_view.compiler-owned-shared-view resolver)
       (owned_view.compiler-owned-shared-view candidate)
-      (ast.AstMaybeModuleName.Some candidate-id))
-      [(ResultPkgResolve.Ok resolved)
+      (Some candidate-id))
+      [(Ok resolved)
         (if (compiler-load-resolved-source-exists?
           (owned_view.compiler-owned-shared-view resolved))
           (if (= remaining-segments 1)
             (compiler-load-resolved-import
               resolved
-              (ast.AstImportKind.ModuleItem selected-item)
+              (ModuleItem selected-item)
               candidate
               alias)
-            (ResultCompilerLoadResolvedImport.Err
+            (Err
               (compiler-load-invalid-selected-import-message
                 original-import-path
                 candidate)))
           (let
             [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
             (if (< dot 0)
-              (ResultCompilerLoadResolvedImport.Err "")
+              (Err "")
               (compiler-load-search-import-prefix
                 resolver
                 original-import-path
@@ -4309,11 +4260,11 @@
                 selected-item
                 (+ remaining-segments 1)
                 alias))))]
-      [(ResultPkgResolve.Err _)
+      [(Err _)
         (let
           [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
           (if (< dot 0)
-            (ResultCompilerLoadResolvedImport.Err "")
+            (Err "")
             (compiler-load-search-import-prefix
               resolver
               original-import-path
@@ -4329,29 +4280,23 @@
   [expected-module : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
   (match kind
-    [(ast.AstImportKind.ModuleAll)
+    [(ModuleAll)
       (match (compiler-load-resolve-import-candidate
         resolver
         (owned_view.compiler-owned-shared-view import-path)
         expected-module)
-        [(ResultPkgResolve.Ok resolved)
-          (compiler-load-resolved-import
-            resolved
-            ast.AstImportKind.ModuleAll
-            import-path
-            alias)]
-        [(ResultPkgResolve.Err message)
-          (ResultCompilerLoadResolvedImport.Err message)])]
-    [(ast.AstImportKind.ModuleItem _)
+        [(Ok resolved)
+          (compiler-load-resolved-import resolved ModuleAll import-path alias)]
+        [(Err message) (Err message)])]
+    [(ModuleItem _)
       (match (compiler-load-resolve-import-candidate
         resolver
         (owned_view.compiler-owned-shared-view import-path)
         expected-module)
-        [(ResultPkgResolve.Ok resolved)
+        [(Ok resolved)
           (compiler-load-resolved-import resolved kind import-path alias)]
-        [(ResultPkgResolve.Err message)
-          (ResultCompilerLoadResolvedImport.Err message)])]
-    [(ast.AstImportKind.Module)
+        [(Err message) (Err message)])]
+    [(Module)
       (let
         [original : ResultPkgResolve
           (compiler-load-resolve-import-candidate
@@ -4359,20 +4304,16 @@
             (owned_view.compiler-owned-shared-view import-path)
             expected-module)]
         (match original
-          [(ResultPkgResolve.Ok resolved)
+          [(Ok resolved)
             (if (compiler-load-resolved-source-exists?
               (owned_view.compiler-owned-shared-view resolved))
-              (compiler-load-resolved-import
-                resolved
-                ast.AstImportKind.Module
-                import-path
-                alias)
+              (compiler-load-resolved-import resolved Module import-path alias)
               (let
                 [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
                 (if (< dot 0)
                   (compiler-load-resolved-import
                     resolved
-                    ast.AstImportKind.Module
+                    Module
                     import-path
                     alias)
                   (let
@@ -4388,21 +4329,20 @@
                       (compiler-load-selected-item-id expected-module item-text)
                       1
                       alias)
-                      [(ResultCompilerLoadResolvedImport.Ok selected)
-                        (ResultCompilerLoadResolvedImport.Ok selected)]
-                      [(ResultCompilerLoadResolvedImport.Err message)
+                      [(Ok selected) (Ok selected)]
+                      [(Err message)
                         (if (= (string.string-length message) 0)
                           (compiler-load-resolved-import
                             resolved
-                            ast.AstImportKind.Module
+                            Module
                             import-path
                             alias)
-                          (ResultCompilerLoadResolvedImport.Err message))])))))]
-          [(ResultPkgResolve.Err original-message)
+                          (Err message))])))))]
+          [(Err original-message)
             (let
               [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
               (if (< dot 0)
-                (ResultCompilerLoadResolvedImport.Err original-message)
+                (Err original-message)
                 (let
                   [item-text : String
                     (string.substring
@@ -4416,17 +4356,16 @@
                     (compiler-load-selected-item-id expected-module item-text)
                     1
                     alias)
-                    [(ResultCompilerLoadResolvedImport.Ok selected)
-                      (ResultCompilerLoadResolvedImport.Ok selected)]
-                    [(ResultCompilerLoadResolvedImport.Err message)
+                    [(Ok selected) (Ok selected)]
+                    [(Err message)
                       (if (= (string.string-length message) 0)
-                        (ResultCompilerLoadResolvedImport.Err original-message)
-                        (ResultCompilerLoadResolvedImport.Err message))]))))]))]
-    [(ast.AstImportKind.Macro _ _)
-      (ResultCompilerLoadResolvedImport.Err
+                        (Err original-message)
+                        (Err message))]))))]))]
+    [(Macro _ _)
+      (Err
         "compiler-load: module macro imports must be expanded before import resolution")]
-    [(ast.AstImportKind.MacroDecls _ _)
-      (ResultCompilerLoadResolvedImport.Err
+    [(MacroDecls _ _)
+      (Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 ;; Semantic consumers that already know whether an import selects a module or
@@ -4440,7 +4379,7 @@
   [expected-module : ast.AstMaybeModuleName]
   [stdlib-roots : svec.Vec]) : ResultPkgResolve
   (if (compiler-load-macro-import-kind? kind)
-    (ResultPkgResolve.Err
+    (Err
       "compiler-load: module macro imports must be expanded before import resolution")
     (compiler-load-resolve-import-candidate
       (compiler-load-ordinary-import-resolver
@@ -4459,7 +4398,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultPkgResolve
   (if (compiler-load-macro-import-kind? kind)
-    (ResultPkgResolve.Err
+    (Err
       "compiler-load: module macro imports must be expanded before import resolution")
     (compiler-load-resolve-import-candidate
       (compiler-load-package-import-resolver
@@ -4514,7 +4453,7 @@
   [expected-module : ast.AstMaybeModuleName]
   [deps : CompilerPkgDeps]) : bool
   (match kind
-    [(ast.AstImportKind.Module)
+    [(Module)
       (let
         [module-path : String
           (compiler-load-dotted-module-path-from-ast
@@ -4535,20 +4474,20 @@
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadSomePath _) true]
             [(CompilerLoadNoPath) false])))]
-    [(ast.AstImportKind.ModuleAll)
+    [(ModuleAll)
       (compiler-load-package-import-externs?
-        ast.AstImportKind.Module
+        Module
         import-path
         expected-module
         deps)]
-    [(ast.AstImportKind.ModuleItem _)
+    [(ModuleItem _)
       (compiler-load-package-import-externs?
-        ast.AstImportKind.Module
+        Module
         import-path
         expected-module
         deps)]
-    [(ast.AstImportKind.Macro _ _) false]
-    [(ast.AstImportKind.MacroDecls _ _) false]))
+    [(Macro _ _) false]
+    [(MacroDecls _ _) false]))
 
 (define (compiler-load-package-source-expected-module
   [kind : ast.AstImportKind]
@@ -4559,16 +4498,16 @@
       ;; A dependency alias selects a package root and source path; it is not
       ;; the dependency source's public module identity. Let an explicit module
       ;; declaration win, while a moduleless source keeps the dotted fallback.
-      [(ast.AstImportKind.Module) ast.AstMaybeModuleName.No]
-      [(ast.AstImportKind.ModuleAll) ast.AstMaybeModuleName.No]
-      [(ast.AstImportKind.ModuleItem _) ast.AstMaybeModuleName.No]
+      [(Module) No]
+      [(ModuleAll) No]
+      [(ModuleItem _) No]
       [_ expected-module])
     expected-module))
 
 (define (compiler-load-macro-import-kind? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(ast.AstImportKind.Macro _ _) true]
-    [(ast.AstImportKind.MacroDecls _ _) true]
+    [(Macro _ _) true]
+    [(MacroDecls _ _) true]
     [_ false]))
 
 (defenum CompilerLoadIncludeKind
@@ -4583,10 +4522,10 @@
   [contents : String]) : ast.AstDecl
   (ast.ast-decl-def-id
     name
-    (ast.AstMaybeType.Some (ast.AstType.String))
+    (Some (String))
     (ast.ast-node-pool-context-expr-push
       pools
-      (ast.AstExpr.Literal (ast.ast-lit-generated-string contents)))))
+      (Literal (ast.ast-lit-generated-string contents)))))
 
 ;; Comptime includes retain their macro declaration and transformer-only bytes.
 (define (compiler-load-include-str-comptime-def-with-pools
@@ -4598,19 +4537,19 @@
     [literal : i64
       (ast.ast-node-pool-context-expr-push
         pools
-        (ast.AstExpr.Literal (ast.ast-lit-generated-string contents)))]
+        (Literal (ast.ast-lit-generated-string contents)))]
     (begin
       (ast.ast-expr-list-push (&mut args) literal)
       (ast.ast-decl-def-macro-id
         name
         (ast.ast-macro-param-list-new)
-        (ast.AstType.String)
+        (String)
         (ast.ast-node-pool-context-expr-push
           pools
-          (ast.AstExpr.Call
+          (Call
             (ast.ast-node-pool-context-expr-push
               pools
-              (ast.AstExpr.Var (cbi.compiler-builtin-ctfe "expr-string")))
+              (Var (cbi.compiler-builtin-ctfe "expr-string")))
             args))))))
 
 (define (compiler-load-include-bin-def-with-pools
@@ -4619,11 +4558,8 @@
   [contents : String]) : ast.AstDecl
   (ast.ast-decl-def-id
     name
-    (ast.AstMaybeType.Some
-      (ast.ast-ty-dyn-array-with-pools pools (ast.AstType.U8)))
-    (ast.ast-node-pool-context-expr-push
-      pools
-      (ast.AstExpr.BinaryData contents))))
+    (Some (ast.ast-ty-dyn-array-with-pools pools (U8)))
+    (ast.ast-node-pool-context-expr-push pools (BinaryData contents))))
 
 (define (compiler-load-include-str-lzss-def-with-pools
   [pools : ast.AstNodePoolContext]
@@ -4640,14 +4576,13 @@
   [name : i64]
   [contents : String]) : ast.AstDecl
   (match kind
-    [(CompilerLoadIncludeKind.RuntimeString)
+    [(RuntimeString)
       (compiler-load-include-str-def-with-pools pools name contents)]
-    [(CompilerLoadIncludeKind.ComptimeString)
+    [(ComptimeString)
       (compiler-load-include-str-comptime-def-with-pools pools name contents)]
-    [(CompilerLoadIncludeKind.LzssString)
+    [(LzssString)
       (compiler-load-include-str-lzss-def-with-pools pools name contents)]
-    [(CompilerLoadIncludeKind.Binary)
-      (compiler-load-include-bin-def-with-pools pools name contents)]))
+    [(Binary) (compiler-load-include-bin-def-with-pools pools name contents)]))
 
 (define (compiler-load-include-read-error
   [kind : CompilerLoadIncludeKind]
@@ -4659,7 +4594,7 @@
     (str_cat.str-cat
       "compiler-load: cannot read "
       (match kind
-        [(CompilerLoadIncludeKind.Binary) "include-bin"]
+        [(Binary) "include-bin"]
         [_ "include-str"])
       " "
       include-path
@@ -4677,7 +4612,7 @@
   [name : i64]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
+    (Ok
       (compiler-load-include-def-with-pools
         kind
         pools
@@ -4685,17 +4620,15 @@
         (compiler-load-session-read-source-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path
       (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
+      [(CompilerEmbeddedStdlibSomeSource source)
         (begin
           (compiler-load-session-state-note-embedded-source!
             (compiler-load-active-session-state-shared-view)
             (& resolved)
             (& source))
-          (ResultCompilerLoadInclude.Ok
-            (compiler-load-include-def-with-pools kind pools name source)))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
+          (Ok (compiler-load-include-def-with-pools kind pools name source)))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (Err
           (box
             (compiler-load-include-read-error
               kind
@@ -4734,7 +4667,7 @@
     (string.copy importer-path)
     (string.copy include-path)
     stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
+    [(Ok resolved)
       (compiler-load-include-from-resolved-with-pools
         kind
         importer-path
@@ -4742,9 +4675,8 @@
         resolved
         name
         pools)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
+    [(Err message)
+      (Err (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-decl-list-prepend-with-origin
   [head : ast.AstDecl]
@@ -4780,12 +4712,11 @@
   [module-id : i64]
   [rest : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
   (match rest
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Ok decls paths modules seen)
+      (Ok
         (match kind
           ;; Preserve the existing LZSS declaration-origin policy.
-          [(CompilerLoadIncludeKind.LzssString)
-            (ast.ast-decl-list-prepend-builder expanded decls)]
+          [(LzssString) (ast.ast-decl-list-prepend-builder expanded decls)]
           [_
             (compiler-load-decl-list-prepend-from-source expanded source decls)])
         (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
@@ -4795,8 +4726,7 @@
           paths)
         (ast.ast-decl-module-list-prepend-builder-id module-id modules)
         seen)]
-    [(ResultCompilerLoadWithPaths.Err diagnostic)
-      (ResultCompilerLoadWithPaths.Err diagnostic)]))
+    [(Err diagnostic) (Err diagnostic)]))
 
 (define (compiler-load-decl-list-prepend-from-source
   [head : ast.AstDecl]
@@ -4831,10 +4761,7 @@
 (define (compiler-load-decl-list-prepend
   [head : ast.AstDecl]
   [rest : ast.AstDeclList]) : ast.AstDeclList
-  (compiler-load-decl-list-prepend-with-origin
-    head
-    (parser.CompilerParseMaybeDeclSpan.None)
-    rest))
+  (compiler-load-decl-list-prepend-with-origin head (None) rest))
 
 (define (compiler-load-decl-list-append
   [left : ast.AstDeclList]
@@ -5069,8 +4996,7 @@
             cfgs))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-              source)
+          [(CompilerEmbeddedStdlibSomeSource source)
             (begin
               (compiler-load-note-embedded-module! (string.copy path))
               (compiler-load-session-note-embedded-stdlib-source!)
@@ -5080,7 +5006,7 @@
                 seen
                 stdlib-roots
                 cfgs))]
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+          [(CompilerEmbeddedStdlibNoSource)
             (compiler-load-file-with-paths-and-roots-cfg
               path
               seen
@@ -5101,7 +5027,7 @@
     source
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     cfgs
     pools))
 
@@ -5138,8 +5064,7 @@
               pools)))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-              source)
+          [(CompilerEmbeddedStdlibSomeSource source)
             (begin
               (compiler-load-session-state-note-embedded-module!
                 load-state
@@ -5154,7 +5079,7 @@
                 stdlib-roots
                 cfgs
                 pools))]
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+          [(CompilerEmbeddedStdlibNoSource)
             (compiler-load-file-with-paths-and-roots-cfg-with-pools
               load-state
               path
@@ -5169,8 +5094,8 @@
 (define (compiler-load-append-root-module-marker
   [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Ok decls paths modules seen)
+      (Ok
         (compiler-load-decl-list-append
           decls
           (ast.ast-decl-cons
@@ -5191,8 +5116,7 @@
             cbi.compiler-builtin-id-fix-empty
             (ast.ast-decl-module-list-new)))
         seen)]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
+    [(Err diag) (Err diag)]))
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
@@ -5222,9 +5146,8 @@
 
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
-    [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
-      (ResultCompilerLoad.Ok decls seen)]
-    [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLoad.Err diag)]))
+    [(Ok decls _ _ seen) (Ok decls seen)]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-load-parse-context-name-id [name : (& name str)]) : i64
   (ci.intern-source-slice name 0 (ci.intern-private-string-length name)))
@@ -5251,17 +5174,15 @@
   [fallback-id : i64]
   [found : CompilerLoadMaybeModuleId]) : ResultCompilerLoadModuleId
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
+    [(Nil)
       (match found
-        [(CompilerLoadNoModuleId)
-          (ResultCompilerLoadModuleId.Ok fallback fallback-id)]
-        [(CompilerLoadSomeModuleId name name-id)
-          (ResultCompilerLoadModuleId.Ok name name-id)])]
-    [(ast.AstDeclListStep.Cons decl rest)
+        [(CompilerLoadNoModuleId) (Ok fallback fallback-id)]
+        [(CompilerLoadSomeModuleId name name-id) (Ok name name-id)])]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
-          [(ast.AstDecl.Module name)
+          [(Module name)
             (match found
               [(CompilerLoadNoModuleId)
                 (compiler-load-decls-module-id-loop
@@ -5271,7 +5192,7 @@
                   fallback-id
                   (CompilerLoadSomeModuleId (ci.intern-str name) name))]
               [(CompilerLoadSomeModuleId _ _)
-                (ResultCompilerLoadModuleId.Err
+                (Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       path
@@ -5316,17 +5237,16 @@
   [actual : String]
   [actual-id : i64]) : ResultCompilerLoadModuleId
   (match expected
-    [(ast.AstMaybeModuleName.No)
-      (ResultCompilerLoadModuleId.Ok actual actual-id)]
-    [(ast.AstMaybeModuleName.Some want)
+    [(No) (Ok actual actual-id)]
+    [(Some want)
       (let
         [checked-actual-id : i64
           (if (>= actual-id 0)
             actual-id
             (compiler-load-parse-context-name-id (string.copy actual)))]
         (if (= want checked-actual-id)
-          (ResultCompilerLoadModuleId.Ok actual checked-actual-id)
-          (ResultCompilerLoadModuleId.Err
+          (Ok actual checked-actual-id)
+          (Err
             (box
               (cdiag.compiler-diagnostic-at-start
                 (string.copy path)
@@ -5338,8 +5258,8 @@
 
 (define (compiler-load-no-expected-module? [expected : ast.AstMaybeModuleName]) : bool
   (match expected
-    [(ast.AstMaybeModuleName.No) true]
-    [(ast.AstMaybeModuleName.Some _) false]))
+    [(No) true]
+    [(Some _) false]))
 
 (define (compiler-load-module-fallback-id-for-parse
   [fallback : String]
@@ -5347,11 +5267,11 @@
   (let
     [fallback-id : i64 (compiler-load-parse-context-name-id fallback)]
     (match expected
-      [(ast.AstMaybeModuleName.Some module-id)
+      [(Some module-id)
         (if (= module-id fallback-id)
           module-id
           fallback-id)]
-      [(ast.AstMaybeModuleName.No) fallback-id])))
+      [(No) fallback-id])))
 
 (define (compiler-load-parse-identity
   [path : String]
@@ -5419,9 +5339,9 @@
   [resolved-path : String]
   [_ : String]) : String
   (match kind
-    [(ast.AstImportKind.Module) import-path]
-    [(ast.AstImportKind.ModuleAll) import-path]
-    [(ast.AstImportKind.ModuleItem _) import-path]
+    [(Module) import-path]
+    [(ModuleAll) import-path]
+    [(ModuleItem _) import-path]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
@@ -5467,34 +5387,34 @@
 
 (define (compiler-load-decls-source-module [decls : ast.AstDeclList]) : String
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) ""]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) ""]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
-          [(ast.AstDecl.Module name) (ci.intern-str name)]
+          [(Module name) (ci.intern-str name)]
           [_ (compiler-load-decls-source-module rest)]))]))
 
 (define (compiler-load-decls-source-module-id [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) cbi.compiler-builtin-id-fix-empty]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) cbi.compiler-builtin-id-fix-empty]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(ast.AstDecl.Module name) name]
+          [(Module name) name]
           [_ (compiler-load-decls-source-module-id rest)]))]))
 
 (define (compiler-load-decls-source-module-or
   [decls : ast.AstDeclList]
   [fallback : String]) : String
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) fallback]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) fallback]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(ast.AstDecl.Module name) (ci.intern-str name)]
+          [(Module name) (ci.intern-str name)]
           [_ (compiler-load-decls-source-module-or rest fallback)]))]))
 
 ;; Tag-only predicate: an index cursor reads the tag word through a borrow
@@ -5509,7 +5429,7 @@
       (while (and (not found) (< index count))
         (begin
           (match (ast.ast-decl-list-ref-borrowed (& decls) index)
-            [(ast.AstDecl.Module _) (set! found true)]
+            [(Module _) (set! found true)]
             [_ unit])
           (set! index (+ index 1))))
       found)))
@@ -5527,8 +5447,8 @@
             (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
           (begin
             (match decl
-              [(ast.AstDecl.Module name) (when (= name want) (return true))]
-              [(ast.AstDecl.ModuleBody name body-box)
+              [(Module name) (when (= name want) (return true))]
+              [(ModuleBody name body-box)
                 (when
                   (or
                     (= name want)
@@ -5560,7 +5480,7 @@
   [decls : ast.AstDeclList]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
-    (ResultCompilerLoadWithPaths.Ok
+    (Ok
       (ast.ast-decl-cons
         (ast.ast-decl-module-id module-name-id)
         (ast.ast-decl-list-new))
@@ -5572,7 +5492,7 @@
         module-name-id
         (ast.ast-decl-module-list-new))
       seen)
-    (ResultCompilerLoadWithPaths.Ok
+    (Ok
       (ast.ast-decl-list-new)
       (ast.ast-decl-path-list-new)
       (ast.ast-decl-module-list-new)
@@ -5586,38 +5506,35 @@
   [_ : ast.AstMaybeImportAlias]
   [imported-decls : ast.AstDeclList]) : ast.AstMaybeModuleName
   (match kind
-    [(ast.AstImportKind.Module)
+    [(Module)
       (match (compiler-load-session-state-surface-summary-find-source
         state
         source-path-id)
         [(CompilerLoadSomeSurfaceSummary summary)
-          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
+          (Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
           (if (compiler-load-decl-list-has-module? imported-decls)
-            (ast.AstMaybeModuleName.Some
-              (compiler-load-decls-source-module-id imported-decls))
+            (Some (compiler-load-decls-source-module-id imported-decls))
             expected)])]
-    [(ast.AstImportKind.ModuleAll)
+    [(ModuleAll)
       (match (compiler-load-session-state-surface-summary-find-source
         state
         source-path-id)
         [(CompilerLoadSomeSurfaceSummary summary)
-          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
+          (Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
           (if (compiler-load-decl-list-has-module? imported-decls)
-            (ast.AstMaybeModuleName.Some
-              (compiler-load-decls-source-module-id imported-decls))
+            (Some (compiler-load-decls-source-module-id imported-decls))
             expected)])]
-    [(ast.AstImportKind.ModuleItem _)
+    [(ModuleItem _)
       (match (compiler-load-session-state-surface-summary-find-source
         state
         source-path-id)
         [(CompilerLoadSomeSurfaceSummary summary)
-          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
+          (Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
           (if (compiler-load-decl-list-has-module? imported-decls)
-            (ast.AstMaybeModuleName.Some
-              (compiler-load-decls-source-module-id imported-decls))
+            (Some (compiler-load-decls-source-module-id imported-decls))
             expected)])]
     [_ expected]))
 
@@ -5641,7 +5558,7 @@
   [alias : i64]
   [first-module : i64]
   [second-module : i64]) : ResultCompilerLoadAliasCheck
-  (ResultCompilerLoadAliasCheck.Err
+  (Err
     (box
       (cdiag.compiler-diagnostic-from-ast-span
         path
@@ -5680,15 +5597,8 @@
             (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
             (match decl
-              [(ast.AstDecl.Module name) (set! current-module name)]
-              [(ast.AstDecl.Import
-                  _
-                  (ast.AstImportSpec.Spec
-                    (ast.AstImportKind.Module)
-                    import-name
-                    expected
-                    (ast.AstMaybeImportAlias.Some alias)
-                    span))
+              [(Module name) (set! current-module name)]
+              [(Import _ (Spec (Module) import-name expected (Some alias) span))
                 ;; An empty generated-module marker means unqualified import,
                 ;; not a user-visible dotted alias. Its names have their own
                 ;; collision policy; distinct unqualified modules are valid.
@@ -5701,10 +5611,10 @@
                         alias)]
                     [source-module : i64
                       (match expected
-                        [(ast.AstMaybeModuleName.Some name) name]
-                        [(ast.AstMaybeModuleName.No) (ci.intern import-name)])]
+                        [(Some name) name]
+                        [(No) (ci.intern import-name)])]
                     (match (load_i64_i64_map.get (& seen) key)
-                      [(load_i64_i64_map.LookupFound prior)
+                      [(LookupFound prior)
                         ;; Re-importing one module under the same alias is
                         ;; idempotent, including replayed generated imports.
                         (unless
@@ -5719,14 +5629,14 @@
                               alias
                               prior
                               source-module)))]
-                      [(load_i64_i64_map.LookupMissing)
+                      [(LookupMissing)
                         (load_i64_i64_map.insert-ref!
                           (&mut seen)
                           key
                           source-module)])))]
               [_ unit])
             (set! index (+ index 1)))))
-      (ResultCompilerLoadAliasCheck.Ok))))
+      (Ok))))
 
 (define (compiler-load-check-dotted-import-aliases
   [path : String]
@@ -5749,28 +5659,27 @@
     [key : i64 (ci.intern-composite-pair-id importer-module local-name)]
     [source-id : i64 (ci.intern-composite-pair-id source-module source-item)]
     (match (load_i64_i64_map.get (& state.source-ids) key)
-      [(load_i64_i64_map.LookupFound prior-source-id)
+      [(LookupFound prior-source-id)
         (if (= prior-source-id source-id)
-          (CompilerLoadUnqualifiedImportStep.Ok)
-          (CompilerLoadUnqualifiedImportStep.Collision
+          (Ok)
+          (Collision
             (CompilerLoadUnqualifiedImportCollision
               (ci.intern-str local-name)
               (ci.intern-str
                 (match (load_i64_i64_map.get (& state.source-modules) key)
-                  [(load_i64_i64_map.LookupFound prior-module) prior-module]
-                  [(load_i64_i64_map.LookupMissing)
-                    cbi.compiler-builtin-id-fix-empty]))
+                  [(LookupFound prior-module) prior-module]
+                  [(LookupMissing) cbi.compiler-builtin-id-fix-empty]))
               (ci.intern-str source-module)
               path
               span)))]
-      [(load_i64_i64_map.LookupMissing)
+      [(LookupMissing)
         (begin
           (load_i64_i64_map.insert-ref! (&mut state.source-ids) key source-id)
           (load_i64_i64_map.insert-ref!
             (&mut state.source-modules)
             key
             source-module)
-          (CompilerLoadUnqualifiedImportStep.Ok))])))
+          (Ok))])))
 
 (define (compiler-load-unqualified-import-note-variants
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
@@ -5781,12 +5690,12 @@
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (if (>= index (ast.ast-variant-def-list-len variants))
-    (CompilerLoadUnqualifiedImportStep.Ok)
+    (Ok)
     (match (ast.ast-variant-def-list-get
       variants
       index
       (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def name _ _)
+      [(Def name _ _)
         (match (compiler-load-unqualified-import-note
           state
           importer-module
@@ -5795,7 +5704,7 @@
           name
           (owned_view.compiler-owned-shared-view path)
           span)
-          [(CompilerLoadUnqualifiedImportStep.Ok)
+          [(Ok)
             (compiler-load-unqualified-import-note-variants
               state
               importer-module
@@ -5804,8 +5713,7 @@
               (+ index 1)
               path
               span)]
-          [(CompilerLoadUnqualifiedImportStep.Collision collision)
-            (CompilerLoadUnqualifiedImportStep.Collision collision)])])))
+          [(Collision collision) (Collision collision)])])))
 
 (define (compiler-load-unqualified-import-note-decl
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
@@ -5815,7 +5723,7 @@
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (match (ast.ast-decl-unwrapped decl)
-    [(ast.AstDecl.Def _ name _ _)
+    [(Def _ name _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5824,7 +5732,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefFn _ name _ _ _ _)
+    [(DefFn _ name _ _ _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5833,7 +5741,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefMacro _ name _ _ _)
+    [(DefMacro _ name _ _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5842,7 +5750,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefDispatch _ name _)
+    [(DefDispatch _ name _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5851,7 +5759,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.Extern _ name _ _ _)
+    [(Extern _ name _ _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5860,7 +5768,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefStruct _ name _ _ _)
+    [(DefStruct _ name _ _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5869,7 +5777,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
+    [(DefStructLifetimes _ name _ _ _ _)
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5878,7 +5786,7 @@
         name
         path
         span)]
-    [(ast.AstDecl.DefEnum _ name _ variants)
+    [(DefEnum _ name _ variants)
       (match (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5887,7 +5795,7 @@
         name
         (owned_view.compiler-owned-shared-view path)
         span)
-        [(CompilerLoadUnqualifiedImportStep.Ok)
+        [(Ok)
           (compiler-load-unqualified-import-note-variants
             state
             importer-module
@@ -5896,9 +5804,8 @@
             0
             path
             span)]
-        [(CompilerLoadUnqualifiedImportStep.Collision collision)
-          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
-    [(ast.AstDecl.DefEnumLifetimes _ name _ _ variants)
+        [(Collision collision) (Collision collision)])]
+    [(DefEnumLifetimes _ name _ _ variants)
       (match (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5907,7 +5814,7 @@
         name
         (owned_view.compiler-owned-shared-view path)
         span)
-        [(CompilerLoadUnqualifiedImportStep.Ok)
+        [(Ok)
           (compiler-load-unqualified-import-note-variants
             state
             importer-module
@@ -5916,9 +5823,8 @@
             0
             path
             span)]
-        [(CompilerLoadUnqualifiedImportStep.Collision collision)
-          (CompilerLoadUnqualifiedImportStep.Collision collision)])]
-    [_ (CompilerLoadUnqualifiedImportStep.Ok)]))
+        [(Collision collision) (Collision collision)])]
+    [_ (Ok)]))
 
 (define (compiler-load-unqualified-import-note-wildcard
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
@@ -5938,7 +5844,7 @@
             (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
             (match (ast.ast-place-shared-view decl)
-              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [(Module next-module) (set! cur-module next-module)]
               [_
                 (when
                   (= cur-module source-module)
@@ -5949,12 +5855,10 @@
                     decl
                     (owned_view.compiler-owned-shared-view path)
                     span)
-                    [(CompilerLoadUnqualifiedImportStep.Ok) unit]
-                    [(CompilerLoadUnqualifiedImportStep.Collision collision)
-                      (return
-                        (CompilerLoadUnqualifiedImportStep.Collision collision))]))])
+                    [(Ok) unit]
+                    [(Collision collision) (return (Collision collision))]))])
             (set! index (+ index 1)))))
-      (CompilerLoadUnqualifiedImportStep.Ok))))
+      (Ok))))
 
 (define (compiler-load-unqualified-import-collision-message
   [collision : CompilerLoadUnqualifiedImportCollision]) : String
@@ -5978,7 +5882,7 @@
     [message : String
       (compiler-load-unqualified-import-collision-message
         (owned_view.compiler-owned-shared-view collision))]
-    (ResultCompilerLoadAliasCheck.Err
+    (Err
       (box
         (cdiag.compiler-diagnostic-from-ast-span
           collision.path
@@ -6010,15 +5914,8 @@
               (owned_view.compiler-owned-shared-view fallback-path))]
           (begin
             (match decl
-              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
-              [(ast.AstDecl.Import
-                  _
-                  (ast.AstImportSpec.Spec
-                    (ast.AstImportKind.ModuleAll)
-                    _
-                    (ast.AstMaybeModuleName.Some source-module)
-                    _
-                    span))
+              [(Module next-module) (set! cur-module next-module)]
+              [(Import _ (Spec (ModuleAll) _ (Some source-module) _ span))
                 (match (compiler-load-unqualified-import-note-wildcard
                   (&mut state)
                   (ast.ast-place-shared-view decls)
@@ -6026,18 +5923,18 @@
                   source-module
                   path
                   (__tl-box-place span))
-                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
-                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                  [(Ok) unit]
+                  [(Collision collision)
                     (return
                       (compiler-load-unqualified-import-collision-result
                         collision))])]
-              [(ast.AstDecl.Import
+              [(Import
                   _
-                  (ast.AstImportSpec.Spec
-                    (ast.AstImportKind.ModuleItem source-item)
+                  (Spec
+                    (ModuleItem source-item)
                     _
-                    (ast.AstMaybeModuleName.Some source-module)
-                    (ast.AstMaybeImportAlias.Some alias)
+                    (Some source-module)
+                    (Some alias)
                     span))
                 (begin
                   (when
@@ -6045,18 +5942,18 @@
                       require-selected-items
                       (not
                         (compiler-load-selected-item-present?
-                          (ast.AstImportKind.ModuleItem source-item)
-                          (ast.AstMaybeModuleName.Some source-module)
+                          (ModuleItem source-item)
+                          (Some source-module)
                           (ast.ast-place-shared-view decls))))
                     (return
-                      (ResultCompilerLoadAliasCheck.Err
+                      (Err
                         (box
                           (cdiag.compiler-diagnostic-from-ast-span
                             path
                             (__tl-box-place span)
                             (compiler-load-missing-selected-item-message
                               (ci.intern-str source-module)
-                              (ast.AstImportKind.ModuleItem source-item)))))))
+                              (ModuleItem source-item)))))))
                   (match (compiler-load-unqualified-import-note
                     (&mut state)
                     cur-module
@@ -6065,14 +5962,14 @@
                     source-item
                     path
                     (__tl-box-place span))
-                    [(CompilerLoadUnqualifiedImportStep.Ok) unit]
-                    [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                    [(Ok) unit]
+                    [(Collision collision)
                       (return
                         (compiler-load-unqualified-import-collision-result
                           collision))]))]
               [_ unit])
             (set! index (+ index 1)))))
-      (ResultCompilerLoadAliasCheck.Ok))))
+      (Ok))))
 
 ;; Loading checks namespace collisions while declarations may still contain
 ;; generators. Only the completed expansion can require every selected item to
@@ -6325,13 +6222,13 @@
     [(CompilerLoadSomeSurfaceSummary summary)
       (and
         (match expected-module
-          [(ast.AstMaybeModuleName.Some _)
+          [(Some _)
             ;; A qualified alias requires a concrete declaration module.
             (not
               (=
                 summary.declaration-module-id
                 cbi.compiler-builtin-id-fix-empty))]
-          [(ast.AstMaybeModuleName.No) summary.qualified-load])
+          [(No) summary.qualified-load])
         (compiler-load-seen-module-contains? seen "" summary.module-id))]))
 
 (define (compiler-load-surface-summary-seen-expected-module?
@@ -6356,7 +6253,7 @@
     state
     source-path-id)
     [(CompilerLoadNoSurfaceSummary)
-      (ResultCompilerLoadWithPaths.Ok
+      (Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new)
         (ast.ast-decl-module-list-new)
@@ -6365,11 +6262,11 @@
       (let
         [module-id : i64 summary.module-id]
         (match expected-module
-          [(ast.AstMaybeModuleName.Some expected-id)
+          [(Some expected-id)
             (when
               (and summary.explicit-module (not (= module-id expected-id)))
               (return
-                (ResultCompilerLoadWithPaths.Err
+                (Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       (string.copy path)
@@ -6380,11 +6277,11 @@
                         (ci.intern-syntax-name-text-or
                           module-id
                           "<structural-module>")))))))]
-          [(ast.AstMaybeModuleName.No) unit])
+          [(No) unit])
         (if (match expected-module
-          [(ast.AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
-          [(ast.AstMaybeModuleName.No) false])
-          (ResultCompilerLoadWithPaths.Ok
+          [(Some expected-id) (= module-id expected-id)]
+          [(No) false])
+          (Ok
             (ast.ast-decl-cons
               (ast.ast-decl-module-id module-id)
               (ast.ast-decl-list-new))
@@ -6396,7 +6293,7 @@
               module-id
               (ast.ast-decl-module-list-new))
             seen)
-          (ResultCompilerLoadWithPaths.Ok
+          (Ok
             (ast.ast-decl-list-new)
             (ast.ast-decl-path-list-new)
             (ast.ast-decl-module-list-new)
@@ -6407,8 +6304,8 @@
   [resolved : String]
   [expected-module : ast.AstMaybeModuleName]) : i64
   (match expected-module
-    [(ast.AstMaybeModuleName.No) (ci.intern-generated-canonical-name resolved)]
-    [(ast.AstMaybeModuleName.Some module-id)
+    [(No) (ci.intern-generated-canonical-name resolved)]
+    [(Some module-id)
       (match (compiler-load-session-state-surface-summary-find-module
         state
         module-id)
@@ -6505,8 +6402,7 @@
         parse-cfgs
         pools)
       (match (compiler-load-embedded-stdlib-source-for-path (string.copy path))
-        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-            source)
+        [(CompilerEmbeddedStdlibSomeSource source)
           (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
             (owned_view.compiler-owned-shared-view load-state)
             (string.copy path)
@@ -6514,7 +6410,7 @@
             source
             parse-cfgs
             pools)]
-        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        [(CompilerEmbeddedStdlibNoSource)
           (parser.ResultAstProgramDiagnostic.Err
             (box
               (cdiag.compiler-diagnostic-at-start
@@ -6522,7 +6418,7 @@
                 (str_cat.str-cat
                   "compiler-load: cannot read import "
                   (string.copy path)))))]))
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (match (compiler-load-surface-summary-build
           (string.copy path)
           source-path-id
@@ -6530,12 +6426,12 @@
           program
           fallback-id
           (not (compiler-load-no-expected-module? expected-module)))
-          [(ResultCompilerLoadSurfaceSummary.Ok summary)
+          [(Ok summary)
             (compiler-load-session-state-record-surface-summary!
               load-state
               summary)]
-          [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
-      [(parser.ResultAstProgramDiagnostic.Err _) unit])))
+          [(Err _) unit])]
+      [(Err _) unit])))
 
 (define (compiler-load-surface-summary-ensure-with-pools
   [load-state : CompilerLoadSessionState]
@@ -6667,8 +6563,8 @@
   [members : sym_i64_env.SymI64Env]
   [additions : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view additions)
-    [(sym_i64_env.SymI64ViewNil) members]
-    [(sym_i64_env.SymI64ViewBind member-id _ rest)
+    [(SymI64ViewNil) members]
+    [(SymI64ViewBind member-id _ rest)
       (compiler-load-structural-member-set-add-id
         (compiler-load-structural-member-set-union-from members rest)
         member-id)]))
@@ -6677,10 +6573,10 @@
   [left : sym_i64_env.SymI64Env]
   [right : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view left)
-    [(sym_i64_env.SymI64ViewNil) right]
+    [(SymI64ViewNil) right]
     [_
       (match (sym_i64_env.sym-i64-view right)
-        [(sym_i64_env.SymI64ViewNil) left]
+        [(SymI64ViewNil) left]
         [_ (compiler-load-structural-member-set-union-from left right)])]))
 
 (define (compiler-load-lazy-alias-demand-merge
@@ -6945,7 +6841,7 @@
       variants
       index
       (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def variant-name _ _)
+      [(Def variant-name _ _)
         (or
           (= variant-name name)
           (compiler-load-lazy-surface-variant-direct-name-at?
@@ -7108,42 +7004,42 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (owned_view.compiler-owned-shared-view ty)
-    [(ast.AstType.Enum name)
+    [(Enum name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstType.EnumArgs name _)
+    [(EnumArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstType.Struct name)
+    [(Struct name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstType.StructArgs name _)
+    [(StructArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstType.Var name)
+    [(Var name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstType.VarArgs name _)
+    [(VarArgs name _)
       (compiler-load-session-state-lazy-name-demand
         state
         name
@@ -7151,7 +7047,7 @@
         summary
         locals)]
     ;; A C-function type's signature is not an alias use.
-    [(ast.AstType.CFunc _ _) (compiler-load-lazy-alias-demand-none)]
+    [(CFunc _ _) (compiler-load-lazy-alias-demand-none)]
     [_
       (ast.ast-type-fold-children
         ty
@@ -7170,8 +7066,8 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match maybe-ty
-    [(ast.AstMaybeType.No) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstMaybeType.Some ty)
+    [(No) (compiler-load-lazy-alias-demand-none)]
+    [(Some ty)
       (compiler-load-session-state-lazy-type-demand
         state
         ty
@@ -7189,7 +7085,7 @@
   (if (>= index (ast.ast-param-list-len params))
     (compiler-load-lazy-alias-demand-none)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _)
+      [(Param _ ty _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7227,7 +7123,7 @@
   (if (>= index (ast.ast-param-list-len params))
     locals
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _)
+      [(Param name _ _)
         (compiler-load-session-state-lazy-param-list-locals-at
           state
           params
@@ -7267,7 +7163,7 @@
       params
       index
       (ast.ast-macro-param-fallback))
-      [(ast.AstMacroParam.Param _ ty _ _)
+      [(Param _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7308,7 +7204,7 @@
       params
       index
       (ast.ast-macro-param-fallback))
-      [(ast.AstMacroParam.Param name _ _ _)
+      [(Param name _ _ _)
         (compiler-load-session-state-lazy-macro-param-list-locals-at
           state
           params
@@ -7344,7 +7240,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ ty _)
+      [(Def _ ty _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7387,7 +7283,7 @@
       variants
       index
       (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def _ types _)
+      [(Def _ types _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-type-list-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7424,35 +7320,35 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match pattern
-    [(ast.AstPattern.Var _ maybe-ty)
+    [(Var _ maybe-ty)
       (compiler-load-session-state-lazy-maybe-type-demand
         state
         maybe-ty
         alias
         summary
         locals)]
-    [(ast.AstPattern.Tuple patterns)
+    [(Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
         (deref patterns)
         alias
         summary
         locals)]
-    [(ast.AstPattern.Array patterns)
+    [(Array patterns)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
         (deref patterns)
         alias
         summary
         locals)]
-    [(ast.AstPattern.Slice patterns _)
+    [(Slice patterns _)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
         (deref patterns)
         alias
         summary
         locals)]
-    [(ast.AstPattern.Variant name patterns)
+    [(Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
           (owned_view.compiler-owned-shared-view state)
@@ -7466,9 +7362,9 @@
           alias
           summary
           locals))]
-    [(ast.AstPattern.Wildcard) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstPattern.Binding _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstPattern.Literal _) (compiler-load-lazy-alias-demand-none)]))
+    [(Wildcard) (compiler-load-lazy-alias-demand-none)]
+    [(Binding _) (compiler-load-lazy-alias-demand-none)]
+    [(Literal _) (compiler-load-lazy-alias-demand-none)]))
 
 (define (compiler-load-session-state-lazy-pattern-list-demand-at?
   [state : CompilerLoadSessionState]
@@ -7513,7 +7409,7 @@
   [pattern : ast.AstPattern]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match pattern
-    [(ast.AstPattern.Var name _)
+    [(Var name _)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-demand-bind-local-exhaustive
@@ -7521,7 +7417,7 @@
           locals
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(ast.AstPattern.Binding name)
+    [(Binding name)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-demand-bind-local-exhaustive
@@ -7529,28 +7425,28 @@
           locals
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(ast.AstPattern.Tuple patterns)
+    [(Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)
         locals)]
-    [(ast.AstPattern.Array patterns)
+    [(Array patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)
         locals)]
-    [(ast.AstPattern.Slice patterns _)
+    [(Slice patterns _)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)
         locals)]
-    [(ast.AstPattern.Variant _ patterns)
+    [(Variant _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)
         locals)]
-    [(ast.AstPattern.Wildcard) locals]
-    [(ast.AstPattern.Literal _) locals]))
+    [(Wildcard) locals]
+    [(Literal _) locals]))
 
 (define (compiler-load-session-state-lazy-pattern-list-locals-at
   [state : (& state CompilerLoadSessionState)]
@@ -7607,7 +7503,7 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name maybe-ty init)
+      [(Binding name maybe-ty init)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-maybe-type-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7647,7 +7543,7 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name _ _)
+      [(Binding name _ _)
         (compiler-load-session-state-lazy-let-bindings-locals-at
           state
           bindings
@@ -7670,7 +7566,7 @@
   (if (>= index (ast.ast-match-arm-list-len arms))
     (compiler-load-lazy-alias-demand-none)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(ast.AstMatchArm.Arm pattern body)
+      [(Arm pattern body)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-pattern-demand
             (owned_view.compiler-owned-shared-view state)
@@ -7772,16 +7668,16 @@
   ;; Names, binders and quoted syntax are resolved here; the other ordinary
   ;; forms merge their children's demand through the AstExpr child schema.
   (match (ast.ast-node-get node-id)
-    [(ast.AstExpr.Var name)
+    [(Var name)
       (compiler-load-session-state-lazy-name-demand
         state
         name
         alias
         summary
         locals)]
-    [(ast.AstExpr.Let let-box)
+    [(Let let-box)
       (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body)
+        [(Let bindings body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-let-bindings-demand-at?
               (owned_view.compiler-owned-shared-view state)
@@ -7800,9 +7696,9 @@
                 (& bindings)
                 locals
                 0)))])]
-    [(ast.AstExpr.Lambda lambda-box)
+    [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params ret body)
+        [(Lambda params ret body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-param-list-demand
               (owned_view.compiler-owned-shared-view state)
@@ -7826,7 +7722,7 @@
                   state
                   params
                   locals))))])]
-    [(ast.AstExpr.Set target value)
+    [(Set target value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
           (owned_view.compiler-owned-shared-view state)
@@ -7840,9 +7736,9 @@
           alias
           summary
           locals))]
-    [(ast.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee arms)
+        [(Match scrutinee arms)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-shared-view state)
@@ -7856,9 +7752,9 @@
               alias
               summary
               locals))])]
-    [(ast.AstExpr.Foreach foreach-box)
+    [(Foreach foreach-box)
       (match (__tl-box-place foreach-box)
-        [(ast.AstForeach.Foreach index ty start end body)
+        [(Foreach index ty start end body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
               (owned_view.compiler-owned-shared-view state)
@@ -7892,7 +7788,7 @@
                       locals
                       index)
                     (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
-    [(ast.AstExpr.ForeachActive lane body)
+    [(ForeachActive lane body)
       (compiler-load-session-state-lazy-expr-demand
         (owned_view.compiler-owned-shared-view state)
         body
@@ -7905,9 +7801,9 @@
             locals
             lane)
           (sym_i64_env.sym-i64-bind-id locals lane 1)))]
-    [(ast.AstExpr.SpmdReduce reduce-box)
+    [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ index ty start end init value)
+        [(Reduce _ index ty start end init value)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
               (owned_view.compiler-owned-shared-view state)
@@ -7948,9 +7844,9 @@
                         locals
                         index)
                       (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
-    [(ast.AstExpr.SpmdScan scan-box)
+    [(SpmdScan scan-box)
       (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan _ index ty start end prefix _ init value body)
+        [(Scan _ index ty start end prefix _ init value body)
           (let
             [value-locals : sym_i64_env.SymI64Env
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -8009,18 +7905,9 @@
                         alias
                         summary
                         body-locals)))))))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
+    [(SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            index
-            index-ty
-            start
-            end
-            slot
-            slot-ty
-            init
-            keep
-            body)
+        [(Compact index index-ty start end slot slot-ty init keep body)
           (let
             [keep-locals : sym_i64_env.SymI64Env
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
@@ -8086,7 +7973,7 @@
                           alias
                           summary
                           body-locals))))))))])]
-    [(ast.AstExpr.Comptime inner)
+    [(Comptime inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8096,7 +7983,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstExpr.Quote inner)
+    [(Quote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8106,7 +7993,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstExpr.Quasiquote inner)
+    [(Quasiquote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8116,7 +8003,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstExpr.Unquote inner)
+    [(Unquote inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8126,7 +8013,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstExpr.UnquoteSplicing inner)
+    [(UnquoteSplicing inner)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8137,31 +8024,29 @@
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
     ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
-    [(ast.AstExpr.MacroExpansion _ _ _)
-      (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.ArrayTake _ _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.WithRegion _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.WithResource _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.BracketClause _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrAddrOf _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrRead _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrWrite _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrOffset _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrCast _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.PtrToInt _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.IntToPtr _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.StringData _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.StringFromBytes _ _)
-      (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.ArrayData _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.CpuIdEax _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.CpuIdEbx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.CpuIdEcx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.CpuIdEdx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.Xgetbv _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.Syscall _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.ForOwnedState _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstExpr.ForOwnedStep _) (compiler-load-lazy-alias-demand-unknown)]
+    [(MacroExpansion _ _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ArrayTake _ _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(WithRegion _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(WithResource _) (compiler-load-lazy-alias-demand-unknown)]
+    [(BracketClause _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrAddrOf _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrRead _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrWrite _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrOffset _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrCast _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(PtrToInt _) (compiler-load-lazy-alias-demand-unknown)]
+    [(IntToPtr _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(StringData _) (compiler-load-lazy-alias-demand-unknown)]
+    [(StringFromBytes _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ArrayData _) (compiler-load-lazy-alias-demand-unknown)]
+    [(CpuIdEax _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(CpuIdEbx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(CpuIdEcx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(CpuIdEdx _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(Xgetbv _) (compiler-load-lazy-alias-demand-unknown)]
+    [(Syscall _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ForOwnedState _) (compiler-load-lazy-alias-demand-unknown)]
+    [(ForOwnedStep _) (compiler-load-lazy-alias-demand-unknown)]
     [_
       (ast.ast-expr-fold-children
         (ast.ast-node-get node-id)
@@ -8197,7 +8082,7 @@
         summary
         locals)
       (match (ast.ast-node-get call-id)
-        [(ast.AstExpr.Call func args)
+        [(Call func args)
           (let
             [function-demand : CompilerLoadLazyAliasDemand
               (compiler-load-session-state-lazy-module-macro-demand
@@ -8218,7 +8103,7 @@
                 alias
                 summary
                 locals)))]
-        [(ast.AstExpr.Var name)
+        [(Var name)
           (let
             [name-demand : CompilerLoadLazyAliasDemand
               (compiler-load-session-state-lazy-name-demand
@@ -8249,9 +8134,9 @@
     (if (>= spanned 0)
       (compiler-load-lazy-module-macro-qualified-by? state spanned module-id)
       (match (ast.ast-node-get call-id)
-        [(ast.AstExpr.Call func _)
+        [(Call func _)
           (compiler-load-lazy-module-macro-qualified-by? state func module-id)]
-        [(ast.AstExpr.Var name)
+        [(Var name)
           (compiler-load-session-state-lazy-name-qualified-by-id?
             state
             name
@@ -8263,16 +8148,14 @@
   [decl : ast.AstDecl]
   [module-id : i64]) : bool
   (match decl
-    [(ast.AstDecl.ModuleBody _ body)
+    [(ModuleBody _ body)
       (compiler-load-lazy-decl-list-module-macro-qualified-by?
         state
         (deref body)
         module-id)]
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
+    [(Import decl-meta (Spec (Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-qualified-by? state call-expr module-id)]
-    [(ast.AstDecl.Unsafe inner)
+    [(Unsafe inner)
       (compiler-load-lazy-decl-module-macro-qualified-by?
         state
         (deref inner)
@@ -8284,8 +8167,8 @@
   [decls : ast.AstDeclList]
   [module-id : i64]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) false]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) false]
+    [(Cons decl rest)
       (or
         (compiler-load-lazy-decl-module-macro-qualified-by?
           (owned_view.compiler-owned-shared-view state)
@@ -8303,8 +8186,8 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match meta
-    [(ast.AstGeneratedDeclMeta.No) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstGeneratedDeclMeta.Some _ _ args _)
+    [(No) (compiler-load-lazy-alias-demand-none)]
+    [(Some _ _ args _)
       (compiler-load-session-state-lazy-expr-list-demand
         state
         args
@@ -8319,15 +8202,15 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match decl
-    [(ast.AstDecl.Module _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.ModuleBody _ body)
+    [(Module _) (compiler-load-lazy-alias-demand-none)]
+    [(ModuleBody _ body)
       (compiler-load-session-state-lazy-decl-list-demand
         state
         (deref body)
         alias
         summary
         locals)]
-    [(ast.AstDecl.Def decl-meta _ maybe-ty body)
+    [(Def decl-meta _ maybe-ty body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-maybe-type-demand
           (owned_view.compiler-owned-shared-view state)
@@ -8341,7 +8224,7 @@
           alias
           summary
           locals))]
-    [(ast.AstDecl.DefFn decl-meta _ params ret body _)
+    [(DefFn decl-meta _ params ret body _)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-param-list-demand
           (owned_view.compiler-owned-shared-view state)
@@ -8365,7 +8248,7 @@
               state
               params
               locals))))]
-    [(ast.AstDecl.DefMacro decl-meta _ params ret body)
+    [(DefMacro decl-meta _ params ret body)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-lazy-alias-demand-merge
@@ -8392,7 +8275,7 @@
                 params
                 locals))))
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.Extern decl-meta _ _ _ ty)
+    [(Extern decl-meta _ _ _ ty)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-type-demand
@@ -8402,7 +8285,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.DefEnum decl-meta _ _ variants)
+    [(DefEnum decl-meta _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -8412,7 +8295,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+    [(DefEnumLifetimes decl-meta _ _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -8422,7 +8305,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
+    [(DefStruct decl-meta _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -8432,7 +8315,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
+    [(DefStructLifetimes decl-meta _ _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -8442,28 +8325,24 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
+    [(Import decl-meta (Spec (Macro call-expr _) _ _ _ _))
       (compiler-load-session-state-lazy-module-macro-demand
         state
         call-expr
         alias
         summary
         locals)]
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec (ast.AstImportKind.MacroDecls _ _) _ _ _ _))
+    [(Import decl-meta (Spec (MacroDecls _ _) _ _ _ _))
       (compiler-load-lazy-alias-demand-unknown)]
-    [(ast.AstDecl.Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.Test _ body _ _)
+    [(Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
+    [(Test _ body _ _)
       (compiler-load-session-state-lazy-expr-demand
         state
         body
         alias
         summary
         locals)]
-    [(ast.AstDecl.Unsafe inner)
+    [(Unsafe inner)
       ;; ast-decl-comptime-only? and ast-decl-generated-meta recurse through
       ;; Unsafe, so the outer dispatcher has already accounted for metadata.
       (compiler-load-session-state-lazy-decl-demand-inner
@@ -8472,13 +8351,11 @@
         alias
         summary
         locals)]
-    [(ast.AstDecl.DefDispatch decl-meta _ _)
-      (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.IncludeStrComptime _ _)
-      (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
+    [(DefDispatch decl-meta _ _) (compiler-load-lazy-alias-demand-none)]
+    [(IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
+    [(IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
+    [(IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
+    [(IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
@@ -8518,8 +8395,8 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) (compiler-load-lazy-alias-demand-none)]
+    [(Cons decl rest)
       (let
         [head : CompilerLoadLazyAliasDemand
           (compiler-load-session-state-lazy-decl-demand
@@ -8574,7 +8451,7 @@
     [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     (if candidate
       (match alias
-        [(ast.AstMaybeImportAlias.Some alias-name)
+        [(Some alias-name)
           (let
             [bound-6 (compiler-load-lazy-empty-surface-summary)]
             (compiler-load-session-state-lazy-decl-list-demand
@@ -8583,7 +8460,7 @@
               alias-name
               bound-6
               (sym_i64_env.sym-i64-empty)))]
-        [(ast.AstMaybeImportAlias.No) (compiler-load-lazy-alias-demand-none)])
+        [(No) (compiler-load-lazy-alias-demand-none)])
       (compiler-load-lazy-alias-demand-none))))
 
 ;; Serial/test compatibility adapter. Stateful loader traversal must use
@@ -8609,11 +8486,11 @@
     (compiler-load-session-state-lazy-imports-enabled? load-state)
     (not (compiler-load-prelude-importer? importer-path))
     (match kind
-      [(ast.AstImportKind.Module) true]
+      [(Module) true]
       [_ false])
     (match alias
-      [(ast.AstMaybeImportAlias.Some _) true]
-      [(ast.AstMaybeImportAlias.No) false])))
+      [(Some _) true]
+      [(No) false])))
 
 ;; Serial/test compatibility adapter. Stateful loader traversal must use the
 ;; session-explicit candidate above.
@@ -8719,16 +8596,16 @@
             (let
               [policy : CompilerLoadLazyImportPolicy summary.lazy-policy]
               (match kind
-                [(ast.AstImportKind.Module)
+                [(Module)
                   (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
                     (owned_view.compiler-owned-shared-view load-state)
                     (ast.ast-place-shared-view rest)
                     (match expected-module
-                      [(ast.AstMaybeModuleName.Some module-id) module-id]
-                      [(ast.AstMaybeModuleName.No) summary.module-id]))
+                      [(Some module-id) module-id]
+                      [(No) summary.module-id]))
                     false
                     (match alias
-                      [(ast.AstMaybeImportAlias.Some alias-name)
+                      [(Some alias-name)
                         (match policy
                           [(CompilerLoadLazyImportEager) false]
                           [(CompilerLoadLazyImportQualified)
@@ -8753,7 +8630,7 @@
                                     alias-name
                                     summary
                                     (sym_i64_env.sym-i64-empty)))))])]
-                      [(ast.AstMaybeImportAlias.No) false]))]
+                      [(No) false]))]
                 [_ false])))]))))
 
 (define (compiler-load-lazy-import-skip?
@@ -8786,42 +8663,40 @@
 (define (compiler-load-surface-module-maybe
   [module-name : ast.AstMaybeModuleName]) : CompilerLoadSurfaceMaybeString
   (match module-name
-    [(ast.AstMaybeModuleName.No) (CompilerLoadSurfaceNoString)]
-    [(ast.AstMaybeModuleName.Some name)
-      (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
+    [(No) (CompilerLoadSurfaceNoString)]
+    [(Some name) (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
 
 (define (compiler-load-surface-alias-maybe [alias : ast.AstMaybeImportAlias]) : CompilerLoadSurfaceMaybeString
   (match alias
-    [(ast.AstMaybeImportAlias.No) (CompilerLoadSurfaceNoString)]
-    [(ast.AstMaybeImportAlias.Some name)
-      (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
+    [(No) (CompilerLoadSurfaceNoString)]
+    [(Some name) (CompilerLoadSurfaceSomeString (ci.intern-str name))]))
 
 (define (compiler-load-surface-import-kind [kind : ast.AstImportKind]) : CompilerLoadSurfaceImportKind
   (match kind
-    [(ast.AstImportKind.Module) (CompilerLoadSurfaceImportModule)]
-    [(ast.AstImportKind.ModuleAll) (CompilerLoadSurfaceImportModule)]
-    [(ast.AstImportKind.ModuleItem _) (CompilerLoadSurfaceImportModule)]
-    [(ast.AstImportKind.Macro _ _) (CompilerLoadSurfaceImportMacro)]
-    [(ast.AstImportKind.MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
+    [(Module) (CompilerLoadSurfaceImportModule)]
+    [(ModuleAll) (CompilerLoadSurfaceImportModule)]
+    [(ModuleItem _) (CompilerLoadSurfaceImportModule)]
+    [(Macro _ _) (CompilerLoadSurfaceImportMacro)]
+    [(MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
 
 (define (compiler-load-surface-import-decl-emitting? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(ast.AstImportKind.MacroDecls _ _) true]
+    [(MacroDecls _ _) true]
     [_ false]))
 
 (define (compiler-load-surface-import-default-alias
   [kind : ast.AstImportKind]
   [import-path : String]) : CompilerLoadSurfaceMaybeString
   (match kind
-    [(ast.AstImportKind.Module)
+    [(Module)
       (CompilerLoadSurfaceSomeString
         (parser.parse-ast-dotted-import-default-alias import-path))]
     [_ (CompilerLoadSurfaceNoString)]))
 
 (define (compiler-load-surface-macro-result-kind [ret : ast.AstType]) : CompilerLoadSurfaceMacroResultKind
   (match ret
-    [(ast.AstType.Expr) (CompilerLoadSurfaceMacroExpr)]
-    [(ast.AstType.Var name)
+    [(Expr) (CompilerLoadSurfaceMacroExpr)]
+    [(Var name)
       (cond
         [(or
             (= name cbi.compiler-builtin-id-fix-Expr)
@@ -8846,14 +8721,14 @@
 
 (define (compiler-load-surface-fn-export? [export : ast.AstFnExport]) : bool
   (match export
-    [(ast.AstFnExport.No) false]
-    [(ast.AstFnExport.Export _) true]))
+    [(No) false]
+    [(Export _) true]))
 
 (define (compiler-load-surface-generated-meta?
   [meta : ast.AstGeneratedDeclMeta]) : bool
   (match meta
-    [(ast.AstGeneratedDeclMeta.No) false]
-    [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true]))
+    [(No) false]
+    [(Some _ _ _ _) true]))
 
 (define (compiler-load-surface-field-list-cleanup?
   [fields : (& fields ast.AstFieldDefList)]) : bool
@@ -8868,7 +8743,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ _ cleanup)
+      [(Def _ _ cleanup)
         (or
           (ast.ast-field-cleanup? cleanup)
           (compiler-load-surface-field-list-cleanup-at? fields (+ index 1)))])))
@@ -8903,7 +8778,7 @@
       variants
       index
       (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def _ _ cleanups)
+      [(Def _ _ cleanups)
         (or
           (compiler-load-surface-variant-payload-cleanup? cleanups)
           (compiler-load-surface-variant-list-cleanup-at? variants (+ index 1)))])))
@@ -8917,18 +8792,17 @@
 
 (define (compiler-load-surface-count-decl [decl : ast.AstDecl]) : CompilerLoadSurfaceCounts
   (match decl
-    [(ast.AstDecl.Import _ _) (CompilerLoadSurfaceCounts 1 0)]
-    [(ast.AstDecl.Unsafe inner-box)
-      (compiler-load-surface-count-decl (deref inner-box))]
-    [(ast.AstDecl.ModuleBody _ body-box)
+    [(Import _ _) (CompilerLoadSurfaceCounts 1 0)]
+    [(Unsafe inner-box) (compiler-load-surface-count-decl (deref inner-box))]
+    [(ModuleBody _ body-box)
       (compiler-load-surface-count-decls (deref body-box))]
-    [(ast.AstDecl.Module _) (CompilerLoadSurfaceCounts 0 0)]
+    [(Module _) (CompilerLoadSurfaceCounts 0 0)]
     [_ (CompilerLoadSurfaceCounts 0 1)]))
 
 (define (compiler-load-surface-count-decls [decls : ast.AstDeclList]) : CompilerLoadSurfaceCounts
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (CompilerLoadSurfaceCounts 0 0)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) (CompilerLoadSurfaceCounts 0 0)]
+    [(Cons decl rest)
       (compiler-load-surface-counts-add
         (compiler-load-surface-count-decl decl)
         (compiler-load-surface-count-decls rest))]))
@@ -8991,9 +8865,7 @@
   [was-unsafe : bool]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match decl
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec kind import-path module-name alias span))
+    [(Import decl-meta (Spec kind import-path module-name alias span))
       (compiler-load-surface-build-add-import
         build
         (CompilerLoadSurfaceImport
@@ -9006,7 +8878,7 @@
           (compiler-load-surface-import-default-alias kind import-path)
           (clone (__tl-box-place span)))
         (compiler-load-surface-import-decl-emitting? kind))]
-    [(ast.AstDecl.Def decl-meta name maybe-ty _)
+    [(Def decl-meta name maybe-ty _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9024,7 +8896,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.DefFn decl-meta name params ret _ metadata)
+    [(DefFn decl-meta name params ret _ metadata)
       (let
         [has-export : bool
           (compiler-load-surface-fn-export?
@@ -9046,7 +8918,7 @@
           has-export
           generated
           false))]
-    [(ast.AstDecl.Extern decl-meta name kind meta ty)
+    [(Extern decl-meta name kind meta ty)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9064,7 +8936,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.DefStruct decl-meta name repr cleanup fields)
+    [(DefStruct decl-meta name repr cleanup fields)
       (let
         [has-cleanup : bool
           (or
@@ -9092,13 +8964,7 @@
           false
           generated
           false))]
-    [(ast.AstDecl.DefStructLifetimes
-        decl-meta
-        name
-        lifetimes
-        repr
-        cleanup
-        fields)
+    [(DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
       (let
         [has-cleanup : bool
           (or
@@ -9126,7 +8992,7 @@
           false
           generated
           false))]
-    [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
+    [(DefEnum decl-meta name cleanup variants)
       (let
         [has-cleanup : bool
           (or
@@ -9153,7 +9019,7 @@
           false
           generated
           false))]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
+    [(DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [has-cleanup : bool
           (or
@@ -9180,7 +9046,7 @@
           false
           generated
           false))]
-    [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
+    [(DefMacro decl-meta name params ret body-box)
       (let
         [result-kind : CompilerLoadSurfaceMacroResultKind
           (compiler-load-surface-macro-result-kind
@@ -9205,7 +9071,7 @@
           false
           generated
           decl-emitting))]
-    [(ast.AstDecl.DefDispatch decl-meta name variants)
+    [(DefDispatch decl-meta name variants)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9223,7 +9089,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.Test name _ _ span)
+    [(Test name _ _ span)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9241,7 +9107,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.IncludeStr name _)
+    [(IncludeStr name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9259,7 +9125,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.IncludeStrComptime name _)
+    [(IncludeStrComptime name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9277,7 +9143,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.IncludeStrLzss name _)
+    [(IncludeStrLzss name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9295,7 +9161,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.IncludeBin name _)
+    [(IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9313,7 +9179,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (compiler-load-surface-build-decl
         source-path
         module-id
@@ -9321,13 +9187,13 @@
         generated
         true
         build)]
-    [(ast.AstDecl.ModuleBody nested-module body-box)
+    [(ModuleBody nested-module body-box)
       (compiler-load-surface-build-decls-into
         source-path
         nested-module
         (deref body-box)
         build)]
-    [(ast.AstDecl.Module _) build]
+    [(Module _) build]
     [_ build]))
 
 (define (compiler-load-surface-build-decl
@@ -9353,18 +9219,18 @@
   [decls : ast.AstDeclList]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) build]
-    [(ast.AstDeclListStep.Cons decl rest-box)
+    [(Nil) build]
+    [(Cons decl rest-box)
       (let
         [rest : ast.AstDeclList rest-box]
         (match (clone decl)
-          [(ast.AstDecl.Module next-module)
+          [(Module next-module)
             (compiler-load-surface-build-decls-into
               (string.copy source-path)
               next-module
               rest
               build)]
-          [(ast.AstDecl.ModuleBody nested-module body-box)
+          [(ModuleBody nested-module body-box)
             (compiler-load-surface-build-decls-into
               (string.copy source-path)
               module-id
@@ -9445,7 +9311,7 @@
   [fallback-id : i64]
   [qualified-load : bool]) : ResultCompilerLoadSurfaceSummary
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         [source-module : String
@@ -9454,13 +9320,13 @@
           (string.copy path)
           (ast.ast-place-shared-view decls)
           fallback-id)
-          [(ResultCompilerLoadModuleId.Ok _ module-id)
+          [(Ok _ module-id)
             (match (compiler-load-check-dotted-import-aliases
               (string.copy path)
               (ast.ast-place-shared-view decls)
               source-module)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadSurfaceSummary.Ok
+              [(Ok)
+                (Ok
                   (compiler-load-surface-summary-from-decls
                     path
                     source-path-id
@@ -9470,30 +9336,28 @@
                     (compiler-load-decl-list-has-module? decls)
                     qualified-load
                     decls))]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadSurfaceSummary.Err diag)])]
-          [(ResultCompilerLoadModuleId.Err diag)
-            (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
+              [(Err diag) (Err diag)])]
+          [(Err diag) (Err diag)]))]))
 
 (define (compiler-load-decl-defines-selected-item?
   [decl : ast.AstDecl]
   [item : i64]) : bool
   (match (ast.ast-decl-unwrapped decl)
-    [(ast.AstDecl.Def decl-meta name _ _) (= name item)]
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _) (= name item)]
-    [(ast.AstDecl.DefMacro decl-meta name _ _ _) (= name item)]
-    [(ast.AstDecl.DefDispatch decl-meta name _) (= name item)]
-    [(ast.AstDecl.Extern decl-meta name _ _ _) (= name item)]
-    [(ast.AstDecl.DefEnum decl-meta name _ variants)
+    [(Def decl-meta name _ _) (= name item)]
+    [(DefFn decl-meta name _ _ _ _) (= name item)]
+    [(DefMacro decl-meta name _ _ _) (= name item)]
+    [(DefDispatch decl-meta name _) (= name item)]
+    [(Extern decl-meta name _ _ _) (= name item)]
+    [(DefEnum decl-meta name _ variants)
       (or
         (= name item)
         (compiler-load-lazy-surface-variant-direct-name? variants item))]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ variants)
+    [(DefEnumLifetimes decl-meta name _ _ variants)
       (or
         (= name item)
         (compiler-load-lazy-surface-variant-direct-name? variants item))]
-    [(ast.AstDecl.DefStruct decl-meta name _ _ _) (= name item)]
-    [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _) (= name item)]
+    [(DefStruct decl-meta name _ _ _) (= name item)]
+    [(DefStructLifetimes decl-meta name _ _ _ _) (= name item)]
     [_ false]))
 
 (define (compiler-load-module-defines-selected-item?
@@ -9511,7 +9375,7 @@
             (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
             (match (ast.ast-place-shared-view decl)
-              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [(Module next-module) (set! cur-module next-module)]
               [_
                 (when
                   (and
@@ -9526,11 +9390,11 @@
   [expected-module : ast.AstMaybeModuleName]
   [decls : ast.AstDeclList]) : bool
   (match kind
-    [(ast.AstImportKind.ModuleItem item)
+    [(ModuleItem item)
       (match expected-module
-        [(ast.AstMaybeModuleName.Some target-module)
+        [(Some target-module)
           (compiler-load-module-defines-selected-item? decls target-module item)]
-        [(ast.AstMaybeModuleName.No) false])]
+        [(No) false])]
     [_ true]))
 
 ;; A module-scope generator parses as an import whose kind carries the macro
@@ -9538,10 +9402,10 @@
 ;; declarations are not its final export set.
 (define (compiler-load-decl-pending-generator? [decl : ast.AstDecl]) : bool
   (match (ast.ast-decl-unwrapped decl)
-    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec kind _ _ _ _))
+    [(Import _ (Spec kind _ _ _ _))
       (match kind
-        [(ast.AstImportKind.Macro _ _) true]
-        [(ast.AstImportKind.MacroDecls _ _) true]
+        [(Macro _ _) true]
+        [(MacroDecls _ _) true]
         [_ false])]
     [_ false]))
 
@@ -9559,7 +9423,7 @@
             (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
           (begin
             (match (ast.ast-place-shared-view decl)
-              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [(Module next-module) (set! cur-module next-module)]
               [_
                 (when
                   (and
@@ -9585,26 +9449,25 @@
     (ast.ast-place-shared-view decls))
     true
     (match kind
-      [(ast.AstImportKind.ModuleItem _)
+      [(ModuleItem _)
         (match expected-module
-          [(ast.AstMaybeModuleName.Some target-module)
+          [(Some target-module)
             (compiler-load-module-has-pending-generator? decls target-module)]
-          [(ast.AstMaybeModuleName.No) false])]
+          [(No) false])]
       [_ false])))
 
 (define (compiler-load-expected-module-seen?
   [seen : sym_i64_env.SymI64Env]
   [expected-module : ast.AstMaybeModuleName]) : bool
   (match expected-module
-    [(ast.AstMaybeModuleName.Some module-id)
-      (sym_i64_env.sym-i64-contains-id seen module-id)]
-    [(ast.AstMaybeModuleName.No) false]))
+    [(Some module-id) (sym_i64_env.sym-i64-contains-id seen module-id)]
+    [(No) false]))
 
 (define (compiler-load-missing-selected-item-message
   [module-name : String]
   [kind : ast.AstImportKind]) : String
   (match kind
-    [(ast.AstImportKind.ModuleItem item)
+    [(ModuleItem item)
       (str_cat.str-cat
         "compiler-load: module '"
         (str_cat.str-cat
@@ -9623,19 +9486,14 @@
   [source : ast.AstDeclList]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (match alias
-    [(ast.AstMaybeImportAlias.Some _)
+    [(Some _)
       (compiler-load-decl-list-prepend-from-source
-        (ast.AstDecl.Import
+        (Import
           (ast.ast-decl-meta-runtime-shared-view)
-          (ast.AstImportSpec.Spec
-            kind
-            import-path
-            expected-module
-            alias
-            (box span)))
+          (Spec kind import-path expected-module alias (box span)))
         source
         rest)]
-    [(ast.AstMaybeImportAlias.No) rest]))
+    [(No) rest]))
 
 (define (compiler-load-alias-path-list
   [importer-path : String]
@@ -9644,22 +9502,22 @@
   [alias : ast.AstMaybeImportAlias]
   [rest : ast.AstDeclPathList]) : ast.AstDeclPathList
   (match alias
-    [(ast.AstMaybeImportAlias.Some _)
+    [(Some _)
       (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         importer-path
         importer-decl-owner-id
         importer-path-id
         rest)]
-    [(ast.AstMaybeImportAlias.No) rest]))
+    [(No) rest]))
 
 (define (compiler-load-alias-module-list
   [importer-module-id : i64]
   [alias : ast.AstMaybeImportAlias]
   [rest : ast.AstDeclModuleList]) : ast.AstDeclModuleList
   (match alias
-    [(ast.AstMaybeImportAlias.Some _)
+    [(Some _)
       (ast.ast-decl-module-list-prepend-builder-id importer-module-id rest)]
-    [(ast.AstMaybeImportAlias.No) rest]))
+    [(No) rest]))
 
 ;; Imported module declarations switch the flattened declaration context; restore
 ;; the importer's source module before the alias marker and remaining decls.
@@ -9737,12 +9595,12 @@
 ;; sync; the arm order below mirrors the arm order there so they cannot drift.
 (define (compiler-load-decl-ordinary? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.ModuleBody _ _) false]
-    [(ast.AstDecl.Import _ _) false]
-    [(ast.AstDecl.IncludeStr _ _) false]
-    [(ast.AstDecl.IncludeStrComptime _ _) false]
-    [(ast.AstDecl.IncludeStrLzss _ _) false]
-    [(ast.AstDecl.IncludeBin _ _) false]
+    [(ModuleBody _ _) false]
+    [(Import _ _) false]
+    [(IncludeStr _ _) false]
+    [(IncludeStrComptime _ _) false]
+    [(IncludeStrLzss _ _) false]
+    [(IncludeBin _ _) false]
     [_ true]))
 
 ;; Length of the maximal run of ordinary declarations starting at the head of
@@ -9792,17 +9650,17 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Nil)
+      (Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new)
         (ast.ast-decl-module-list-new)
         seen)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
-          [(ast.AstDecl.ModuleBody target-module-id body-box)
+          [(ModuleBody target-module-id body-box)
             (let
               [target-module : String (ci.intern-str target-module-id)]
               [body : ast.AstDeclList (deref body-box)]
@@ -9813,7 +9671,7 @@
                 (compiler-load-decl-list-has-module-id?
                   (ast.ast-place-shared-view rest)
                   target-module-id))
-                (ResultCompilerLoadWithPaths.Err
+                (Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       (string.copy importer-path)
@@ -9834,11 +9692,7 @@
                   (string.copy import-root)
                   cfgs
                   pools)
-                  [(ResultCompilerLoadWithPaths.Ok
-                      body-decls
-                      body-paths
-                      body-modules
-                      body-seen)
+                  [(Ok body-decls body-paths body-modules body-seen)
                     (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                       (ast.ast-place-shared-view traversal)
                       rest
@@ -9852,12 +9706,8 @@
                       import-root
                       cfgs
                       pools)
-                      [(ResultCompilerLoadWithPaths.Ok
-                          rest-decls
-                          rest-paths
-                          rest-modules
-                          rest-seen)
-                        (ResultCompilerLoadWithPaths.Ok
+                      [(Ok rest-decls rest-paths rest-modules rest-seen)
+                        (Ok
                           (compiler-load-decl-list-prepend
                             (ast.ast-decl-module-id target-module-id)
                             (compiler-load-decl-list-append-onto
@@ -9885,18 +9735,9 @@
                                 importer-source-module-id
                                 rest-modules)))
                           rest-seen)]
-                      [(ResultCompilerLoadWithPaths.Err diag)
-                        (ResultCompilerLoadWithPaths.Err diag)])]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])))]
-          [(ast.AstDecl.Import
-              decl-meta
-              (ast.AstImportSpec.Spec
-                kind
-                import-path
-                expected-module
-                alias
-                span))
+                      [(Err diag) (Err diag)])]
+                  [(Err diag) (Err diag)])))]
+          [(Import decl-meta (Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                 (ast.ast-place-shared-view traversal)
@@ -9911,12 +9752,8 @@
                 import-root
                 cfgs
                 pools)
-                [(ResultCompilerLoadWithPaths.Ok
-                    rest-decls
-                    rest-paths
-                    rest-modules
-                    rest-seen)
-                  (ResultCompilerLoadWithPaths.Ok
+                [(Ok rest-decls rest-paths rest-modules rest-seen)
+                  (Ok
                     (compiler-load-decl-list-prepend-from-source
                       decl
                       decls
@@ -9930,8 +9767,7 @@
                       importer-source-module-id
                       rest-modules)
                     rest-seen)]
-                [(ResultCompilerLoadWithPaths.Err diag)
-                  (ResultCompilerLoadWithPaths.Err diag)])
+                [(Err diag) (Err diag)])
               (match (compiler-load-resolve-import-spec-with-roots-classified
                 (owned_view.compiler-owned-shared-view importer-path)
                 (owned_view.compiler-owned-shared-view import-root)
@@ -9940,7 +9776,7 @@
                 expected-module
                 alias
                 (owned_view.compiler-owned-shared-view stdlib-roots))
-                [(ResultCompilerLoadResolvedImport.Ok import)
+                [(Ok import)
                   (let
                     [resolved : String import.resolved]
                     [kind : ast.AstImportKind import.kind]
@@ -10019,7 +9855,7 @@
                         pools
                         (string.copy importer-source-module)
                         importer-source-module-id))
-                      [(ResultCompilerLoadWithPaths.Ok
+                      [(Ok
                           imported-decls
                           imported-paths
                           imported-modules
@@ -10051,7 +9887,7 @@
                                     validated-module
                                     (ast.ast-place-shared-view imported-decls))))
                               (return
-                                (ResultCompilerLoadWithPaths.Err
+                                (Err
                                   (box
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
@@ -10074,11 +9910,7 @@
                               import-root
                               cfgs
                               pools)
-                              [(ResultCompilerLoadWithPaths.Ok
-                                  rest-decls
-                                  rest-paths
-                                  rest-modules
-                                  rest-seen)
+                              [(Ok rest-decls rest-paths rest-modules rest-seen)
                                 (let
                                   [after-import-expected : ast.AstMaybeModuleName
                                     validated-module]
@@ -10095,7 +9927,7 @@
                                     (begin
                                       (compiler-load-session-state-lazy-import-record-skip!
                                         traversal.load-state)
-                                      (ResultCompilerLoadWithPaths.Ok
+                                      (Ok
                                         (compiler-load-decls-after-import
                                           kind
                                           resolved
@@ -10151,7 +9983,7 @@
                                           after-import-alias
                                           imported-decls
                                           rest-modules)]
-                                      (ResultCompilerLoadWithPaths.Ok
+                                      (Ok
                                         (compiler-load-decl-list-append-onto
                                           imported-decls
                                           after-decls)
@@ -10162,28 +9994,26 @@
                                           imported-modules
                                           after-modules)
                                         rest-seen))))]
-                              [(ResultCompilerLoadWithPaths.Err diag)
-                                (ResultCompilerLoadWithPaths.Err diag)])))]
-                      [(ResultCompilerLoadWithPaths.Err diag)
-                        (ResultCompilerLoadWithPaths.Err diag)]))]
-                [(ResultCompilerLoadResolvedImport.Err message)
-                  (ResultCompilerLoadWithPaths.Err
+                              [(Err diag) (Err diag)])))]
+                      [(Err diag) (Err diag)]))]
+                [(Err message)
+                  (Err
                     (box
                       (cdiag.compiler-diagnostic-from-ast-span
                         importer-path
                         (__tl-box-place span)
                         message)))]))]
-          [(ast.AstDecl.IncludeStr name include-path)
+          [(IncludeStr name include-path)
             (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.RuntimeString
+              RuntimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.RuntimeString
+                  RuntimeString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -10203,19 +10033,18 @@
                     (string.copy import-root)
                     cfgs
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeStrComptime name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeStrComptime name include-path)
             (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.ComptimeString
+              ComptimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.ComptimeString
+                  ComptimeString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -10235,19 +10064,18 @@
                     (string.copy import-root)
                     cfgs
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeStrLzss name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeStrLzss name include-path)
             (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.LzssString
+              LzssString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.LzssString
+                  LzssString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -10267,19 +10095,18 @@
                     (string.copy import-root)
                     cfgs
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeBin name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeBin name include-path)
             (match (compiler-load-expand-include-with-pools
-              CompilerLoadIncludeKind.Binary
+              Binary
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               pools)
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.Binary
+                  Binary
                   expanded
                   decls
                   (string.copy importer-path)
@@ -10299,8 +10126,7 @@
                     (string.copy import-root)
                     cfgs
                     pools))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              [(Err diag) (Err diag)])]
           [_
             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
               (ast.ast-place-shared-view traversal)
@@ -10315,12 +10141,8 @@
               (string.copy import-root)
               cfgs
               pools)
-              [(ResultCompilerLoadWithPaths.Ok
-                  rest-decls
-                  rest-paths
-                  rest-modules
-                  rest-seen)
-                (ResultCompilerLoadWithPaths.Ok
+              [(Ok rest-decls rest-paths rest-modules rest-seen)
+                (Ok
                   (compiler-load-decl-list-prepend-from-source
                     decl
                     decls
@@ -10334,8 +10156,7 @@
                     importer-source-module-id
                     rest-modules)
                   rest-seen)]
-              [(ResultCompilerLoadWithPaths.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]))]))
+              [(Err diag) (Err diag)])]))]))
 
 ;; Entry point of the loader's declaration walk.
 ;;
@@ -10414,11 +10235,7 @@
           (clone import-root)
           cfgs
           pools)
-          [(ResultCompilerLoadWithPaths.Ok
-              rest-decls
-              rest-paths
-              rest-modules
-              rest-seen)
+          [(Ok rest-decls rest-paths rest-modules rest-seen)
             (let
               [out-decls : ast.AstDeclList rest-decls]
               [out-paths : ast.AstDeclPathList rest-paths]
@@ -10452,13 +10269,8 @@
                         importer-source-module-id
                         out-modules))
                     (set! fold (- fold 1))))
-                (ResultCompilerLoadWithPaths.Ok
-                  out-decls
-                  out-paths
-                  out-modules
-                  rest-seen)))]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])))))
+                (Ok out-decls out-paths out-modules rest-seen)))]
+          [(Err diag) (Err diag)])))))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
   [path : (& path str)]
@@ -10550,7 +10362,7 @@
     [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [effective-source-module-fallback : String
@@ -10585,13 +10397,13 @@
               (ast.ast-place-shared-view decls)
               (string.copy module-id-fallback)
               module-id-fallback-id)
-              [(ResultCompilerLoadModuleId.Ok module-id module-name-id)
+              [(Ok module-id module-name-id)
                 (match (compiler-load-check-expected-module
                   (string.copy source-path)
                   (clone expected-module)
                   (string.copy module-id)
                   module-name-id)
-                  [(ResultCompilerLoadModuleId.Ok _ _)
+                  [(Ok _ _)
                     (if (compiler-load-seen-module-contains?
                       seen
                       (string.copy module-id)
@@ -10607,7 +10419,7 @@
                         (string.copy source-path)
                         (ast.ast-place-shared-view load-decls)
                         (string.copy source-module))
-                        [(ResultCompilerLoadAliasCheck.Ok)
+                        [(Ok)
                           (begin
                             ;; Replace a speculative lazy summary with the
                             ;; identity established by the actual load.
@@ -10647,27 +10459,21 @@
                               import-root
                               cfgs
                               pools))]
-                        [(ResultCompilerLoadAliasCheck.Err diag)
-                          (ResultCompilerLoadWithPaths.Err diag)]))]
-                  [(ResultCompilerLoadModuleId.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
-              [(ResultCompilerLoadModuleId.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)]))])]
+                        [(Err diag) (Err diag)]))]
+                  [(Err diag) (Err diag)])]
+              [(Err diag) (Err diag)]))])]
     (begin
       (compiler-load-session-state-surface-summary-load-exit! load-state)
       (if (= entry-depth 0)
         (match loaded
-          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+          [(Ok decls paths modules loaded-seen)
             (match (compiler-load-check-unqualified-import-collisions
               source-path
               (ast.ast-place-shared-view decls)
               paths)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])
+              [(Ok) (Ok decls paths modules loaded-seen)]
+              [(Err diag) (Err diag)])]
+          [(Err diag) (Err diag)])
         loaded))))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -10713,7 +10519,7 @@
     source
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No))
+    No))
 
 (define (compiler-load-source-with-paths-and-roots-cfg
   [path : String]
@@ -10726,7 +10532,7 @@
     source
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     cfgs))
 
 (define (compiler-load-source-with-paths-and-roots-expect
@@ -10834,9 +10640,9 @@
       (while (< index count)
         (begin
           (match (array-ref source-slots (+ source-offset index))
-            [(ast.AstDecl.ModuleBody _ source-body-box)
+            [(ModuleBody _ source-body-box)
               (match (array-ref dest-slots (+ dest-offset index))
-                [(ast.AstDecl.ModuleBody _ dest-body-box)
+                [(ModuleBody _ dest-body-box)
                   (compiler-load-propagate-compacted-decl-origins!
                     (deref source-body-box)
                     (deref dest-body-box)
@@ -10852,9 +10658,9 @@
   [records-start : i64]
   [records-end : i64]) : unit
   (match source
-    [(ast.AstProgram.Program source-decls-box)
+    [(Program source-decls-box)
       (match dest
-        [(ast.AstProgram.Program dest-decls-box)
+        [(Program dest-decls-box)
           (compiler-load-propagate-compacted-decl-origins!
             (deref source-decls-box)
             (deref dest-decls-box)
@@ -10903,12 +10709,12 @@
         cfgs
         scratch-pools)]
     (match parsed
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (match (ast.ast-program-copy-append-with-pools
           scratch-pools
           pools
           (ast.ast-place-shared-view program))
-          [(ast.AstProgramCompaction out-program _)
+          [(AstProgramCompaction out-program _)
             (let
               [records-end : i64 (reader.sp-node-pool-len)]
               [_origins : unit
@@ -10924,22 +10730,20 @@
               [_restore-caller : unit
                 (unsafe
                   (arena.tl_arena_set caller-arena))]
-              [out : parser.ResultAstProgramDiagnostic
-                (parser.ResultAstProgramDiagnostic.Ok out-program)]
+              [out : parser.ResultAstProgramDiagnostic (Ok out-program)]
               (begin
                 (ast.ast-node-pool-context-destroy-storage! scratch-pools)
                 (unsafe
                   (arena.tl_arena_destroy scratch-root))
                 out))])]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
+      [(Err diag)
         (let
           [_restore-caller : unit
             (unsafe
               (arena.tl_arena_set caller-arena))]
           [stable-diag : (Box cdiag.CompilerDiagnostic)
             (box (cdiag.compiler-diagnostic-copy (deref diag)))]
-          [out : parser.ResultAstProgramDiagnostic
-            (parser.ResultAstProgramDiagnostic.Err stable-diag)]
+          [out : parser.ResultAstProgramDiagnostic (Err stable-diag)]
           (begin
             (reader.sp-node-pool-truncate! records-start)
             (ast.ast-node-pool-context-destroy-storage! scratch-pools)
@@ -10951,16 +10755,15 @@
   [key : CompilerLoadProgramCacheKey]
   [result : parser.ResultAstProgramDiagnostic]) : parser.ResultAstProgramDiagnostic
   (match result
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (begin
         (if (compiler-load-program-cache-store
           key
           (ast.ast-place-shared-view program))
           (compiler-load-session-note-persistent!)
           unit)
-        (parser.ResultAstProgramDiagnostic.Ok program))]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (parser.ResultAstProgramDiagnostic.Err diag)]))
+        (Ok program))]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-load-cache-program-result-with-pools
   [load-state : CompilerLoadSessionState]
@@ -10968,7 +10771,7 @@
   [result : parser.ResultAstProgramDiagnostic]
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (match result
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (begin
         (if (compiler-load-session-state-program-cache-store
           (owned_view.compiler-owned-shared-view load-state)
@@ -10978,9 +10781,8 @@
             load-state
             pools)
           unit)
-        (parser.ResultAstProgramDiagnostic.Ok program))]
-    [(parser.ResultAstProgramDiagnostic.Err diag)
-      (parser.ResultAstProgramDiagnostic.Err diag)]))
+        (Ok program))]
+    [(Err diag) (Err diag)]))
 
 ;; Carry target-arena-owned cache inputs across `in-arena`'s restoration. Cache
 ;; table growth and persistent-floor bookkeeping deliberately remain in the
@@ -11042,8 +10844,8 @@
 (define (compiler-load-ast-program-result-ok?
   [result : (& result parser.ResultAstProgramDiagnostic)]) : bool
   (match result
-    [(parser.ResultAstProgramDiagnostic.Ok _) true]
-    [(parser.ResultAstProgramDiagnostic.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-local
   [key : CompilerLoadProgramCacheKey]
@@ -11106,11 +10908,11 @@
       (compiler-load-parse-file-diagnostic-escaping path cfgs)]
     (begin
       (match (& parsed)
-        [(parser.ResultAstProgramDiagnostic.Ok _)
+        [(Ok _)
           (if (compiler-load-program-admission-record-persistent key)
             unit
             unit)]
-        [(parser.ResultAstProgramDiagnostic.Err _) unit])
+        [(Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-admit-only-with-pools
@@ -11128,13 +10930,13 @@
         pools)]
     (begin
       (match (& parsed)
-        [(parser.ResultAstProgramDiagnostic.Ok _)
+        [(Ok _)
           (if (compiler-load-session-state-program-admission-record-persistent
             load-state
             key)
             unit
             unit)]
-        [(parser.ResultAstProgramDiagnostic.Err _) unit])
+        [(Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-session-id
@@ -11158,7 +10960,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (parser.ResultAstProgramDiagnostic.Ok program))]
+            (Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (let
             [immediate : bool
@@ -11203,7 +11005,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-session-state-program-cache-note-hit! load-state)
-            (parser.ResultAstProgramDiagnostic.Ok program))]
+            (Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (let
             [immediate : bool
@@ -11320,7 +11122,7 @@
           [(CompilerLoadProgramCacheHit program)
             (begin
               (compiler-load-program-cache-note-hit!)
-              (parser.ResultAstProgramDiagnostic.Ok program))]
+              (Ok program))]
           [(CompilerLoadProgramCacheMiss)
             (begin
               (compiler-load-program-cache-note-miss!)
@@ -11362,7 +11164,7 @@
           [(CompilerLoadProgramCacheHit program)
             (begin
               (compiler-load-session-state-program-cache-note-hit! load-state)
-              (parser.ResultAstProgramDiagnostic.Ok program))]
+              (Ok program))]
           [(CompilerLoadProgramCacheMiss)
             (begin
               (compiler-load-session-state-program-cache-note-miss!
@@ -11395,7 +11197,7 @@
       (string.copy path)
       source
       cfgs)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (compiler-load-program-with-paths-and-roots-expect-cfg
           path
           program
@@ -11404,8 +11206,7 @@
           expected-module
           cfgs
           parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+      [(Err diag) (Err diag)])))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
   [load-state : CompilerLoadSessionState]
@@ -11425,7 +11226,7 @@
       source
       cfgs
       pools)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
           load-state
           path
@@ -11436,8 +11237,7 @@
           cfgs
           pools
           parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+      [(Err diag) (Err diag)])))
 
 (define (compiler-load-source
   [path : String]
@@ -11449,11 +11249,7 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]) : ResultCompilerLoadWithPaths
-  (compiler-load-file-with-paths-and-roots-expect
-    path
-    seen
-    stdlib-roots
-    ast.AstMaybeModuleName.No))
+  (compiler-load-file-with-paths-and-roots-expect path seen stdlib-roots No))
 
 (define (compiler-load-file-with-paths-and-roots-cfg
   [path : String]
@@ -11464,7 +11260,7 @@
     path
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     cfgs))
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
@@ -11479,7 +11275,7 @@
     path
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     cfgs
     pools))
 
@@ -11500,16 +11296,15 @@
   [path-dedup : bool]
   [path-key-id : i64]) : ResultCompilerLoadWithPaths
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Ok decls paths modules loaded-seen)
+      (Ok
         decls
         paths
         modules
         (if path-dedup
           (sym_i64_env.sym-i64-bind-id loaded-seen path-key-id 1)
           loaded-seen))]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
+    [(Err diag) (Err diag)]))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg
   [path : String]
@@ -11652,7 +11447,7 @@
         expected-module
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
-        (ResultCompilerLoadWithPaths.Ok
+        (Ok
           (ast.ast-decl-list-new)
           (ast.ast-decl-path-list-new)
           (ast.ast-decl-module-list-new)
@@ -11678,7 +11473,7 @@
               (compiler-load-parse-file-diagnostic-escaping
                 (string.copy path)
                 parse-cfgs))
-              [(parser.ResultAstProgramDiagnostic.Ok program)
+              [(Ok program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root
                     path
@@ -11691,12 +11486,10 @@
                     parse-identity)
                   path-dedup
                   path-key-id)]
-              [(parser.ResultAstProgramDiagnostic.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])
+              [(Err diag) (Err diag)])
             (match (compiler-load-embedded-stdlib-source-for-path
               (string.copy path))
-              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-                  source)
+              [(CompilerEmbeddedStdlibSomeSource source)
                 (match (begin
                   (compiler-load-note-embedded-module! (string.copy path))
                   (if cache-current
@@ -11709,7 +11502,7 @@
                       (string.copy path)
                       source
                       parse-cfgs)))
-                  [(parser.ResultAstProgramDiagnostic.Ok program)
+                  [(Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root
                         (string.copy path)
@@ -11722,10 +11515,9 @@
                         parse-identity)
                       path-dedup
                       path-key-id)]
-                  [(parser.ResultAstProgramDiagnostic.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
-              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-                (ResultCompilerLoadWithPaths.Err
+                  [(Err diag) (Err diag)])]
+              [(CompilerEmbeddedStdlibNoSource)
+                (Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       (string.copy path)
@@ -11794,7 +11586,7 @@
         expected-module
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
-        (ResultCompilerLoadWithPaths.Ok
+        (Ok
           (ast.ast-decl-list-new)
           (ast.ast-decl-path-list-new)
           (ast.ast-decl-module-list-new)
@@ -11833,7 +11625,7 @@
                 (string.copy path)
                 parse-cfgs
                 pools))
-              [(parser.ResultAstProgramDiagnostic.Ok program)
+              [(Ok program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                     load-state
@@ -11851,12 +11643,10 @@
                     source-module-fallback-id)
                   path-dedup
                   path-key-id)]
-              [(parser.ResultAstProgramDiagnostic.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])
+              [(Err diag) (Err diag)])
             (match (compiler-load-embedded-stdlib-source-for-path
               (string.copy path))
-              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-                  source)
+              [(CompilerEmbeddedStdlibSomeSource source)
                 (match (begin
                   (compiler-load-session-state-note-embedded-module!
                     load-state
@@ -11874,7 +11664,7 @@
                       source
                       parse-cfgs
                       pools)))
-                  [(parser.ResultAstProgramDiagnostic.Ok program)
+                  [(Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                         load-state
@@ -11892,10 +11682,9 @@
                         source-module-fallback-id)
                       path-dedup
                       path-key-id)]
-                  [(parser.ResultAstProgramDiagnostic.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
-              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-                (ResultCompilerLoadWithPaths.Err
+                  [(Err diag) (Err diag)])]
+              [(CompilerEmbeddedStdlibNoSource)
+                (Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       (string.copy path)
@@ -11945,7 +11734,7 @@
     (string.copy path)
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     (compiler-load-dirname path)
     cfgs
     false))
@@ -11962,7 +11751,7 @@
     (string.copy path)
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     (compiler-load-dirname path)
     cfgs
     false
@@ -12204,8 +11993,8 @@
   [path : String]
   [path-id : i64]) : i64
   (match (load_i64_i64_map.get cache path-id)
-    [(load_i64_i64_map.LookupFound owned-id) owned-id]
-    [(load_i64_i64_map.LookupMissing)
+    [(LookupFound owned-id) owned-id]
+    [(LookupMissing)
       (let
         [owned : String
           (compiler-load-package-owned-path
@@ -12254,7 +12043,7 @@
     unit
     (begin
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(ast.AstParam.Param _ ty _)
+        [(Param _ ty _)
           (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
       (compiler-load-param-type-list-into params (+ index 1) out))))
 
@@ -12277,32 +12066,31 @@
         (string.copy manifest-dir)
         (string.copy package-name))]
     (if (not (io.file-exists? (string.copy path)))
-      (ResultCompilerLoadPackageSpmdInterface.Ok
-        CompilerLoadPackageSpmdInterface.Unavailable)
+      (Ok Unavailable)
       (match (compiler-load-session-try-read-input-text (& path))
-        [(io.ErrIoString error)
-          (ResultCompilerLoadPackageSpmdInterface.Err
+        [(ErrIoString error)
+          (Err
             (str_cat.str-cat
               "compiler-load: cannot read dependency tlci '"
               path
               "': "
               (io.error-message error)))]
-        [(io.OkIoString contents)
+        [(OkIoString contents)
           (match (tlci.tlci-parse-image (tlci.tlci-string->bytes contents))
-            [(tlci.ResultTlciImage.Err message)
-              (ResultCompilerLoadPackageSpmdInterface.Err
+            [(Err message)
+              (Err
                 (str_cat.str-cat
                   "compiler-load: invalid dependency tlci '"
                   path
                   "': "
                   message))]
-            [(tlci.ResultTlciImage.Ok image)
+            [(Ok image)
               (let
                 [metadata : tlci.TlciMetadata image.metadata]
                 (if (or
                   (not (string.eq metadata.package-name package-name))
                   (not (string.eq metadata.package-version package-version)))
-                  (ResultCompilerLoadPackageSpmdInterface.Err
+                  (Err
                     (str_cat.str-cat
                       "compiler-load: dependency tlci package identity mismatch for '"
                       path
@@ -12314,8 +12102,8 @@
                       metadata.package-name
                       "@"
                       metadata.package-version))
-                  (ResultCompilerLoadPackageSpmdInterface.Ok
-                    (CompilerLoadPackageSpmdInterface.Available
+                  (Ok
+                    (Available
                       (string.copy metadata.package-version)
                       metadata.spmd-callables))))])]))))
 
@@ -12390,17 +12178,16 @@
         (ci.intern-str name))]
     [callables : ast.AstImportedSpmdCallableList
       (match (clone interface)
-        [(CompilerLoadPackageSpmdInterface.Unavailable)
-          (ast.ast-imported-spmd-callable-list-new)]
-        [(CompilerLoadPackageSpmdInterface.Available _ items)
+        [(Unavailable) (ast.ast-imported-spmd-callable-list-new)]
+        [(Available _ items)
           (compiler-load-imported-spmd-callables-for
             (string.copy canonical-name)
             items)])]
-    (ast.AstImportedSpmdMetadata.Package
+    (Package
       (string.copy package-owner)
       (match interface
-        [(CompilerLoadPackageSpmdInterface.Available version _) version]
-        [(CompilerLoadPackageSpmdInterface.Unavailable) ""])
+        [(Available version _) version]
+        [(Unavailable) ""])
       (ci.intern-id-from-renderable
         (ci.intern-generated-canonical-name canonical-name))
       (box callables))))
@@ -12433,13 +12220,13 @@
         name-str)]
     [link-name : String
       (compiler-load-package-user-symbol (string.copy logical))]
-    (ast.AstDecl.Extern
+    (Extern
       (ast.ast-decl-meta-runtime-shared-view)
       name
-      (ast.AstExternKind.Function)
+      (Function)
       (box
         (ast.AstExternMetadata.Metadata
-          (ast.AstExternAbi.TypeLisp)
+          (TypeLisp)
           (ci.intern-id-from-renderable
             (ci.intern-generated-canonical-name
               (owned_view.compiler-owned-shared-view link-name)))
@@ -12461,7 +12248,7 @@
   [spmd-interface : CompilerLoadPackageSpmdInterface]
   [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
   (match (clone decl)
-    [(ast.AstDecl.DefFn decl-meta name params ret _ _)
+    [(DefFn decl-meta name params ret _ _)
       (CompilerLoadSomeDecl
         (ast.ast-decl-with-meta
           decl-meta
@@ -12479,10 +12266,10 @@
     ;; dependency-native results. Retaining the declaration also ensures the
     ;; catalog registry is consulted only after ordinary import visibility and
     ;; shadowing resolve this exact transformer.
-    [(ast.AstDecl.DefMacro _ _ _ _ _) (CompilerLoadSomeDecl decl)]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
-    [(ast.AstDecl.Module _) (CompilerLoadSomeDecl decl)]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(DefMacro _ _ _ _ _) (CompilerLoadSomeDecl decl)]
+    [(DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
+    [(Module _) (CompilerLoadSomeDecl decl)]
+    [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
         (match (compiler-load-package-transform-decl
@@ -12502,16 +12289,16 @@
   [paths : ast.AstDeclPathList]
   [fallback : String]) : String
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Cons path _) path]
-    [(ast.AstDeclPathListStep.Nil) fallback]))
+    [(Cons path _) path]
+    [(Nil) fallback]))
 
 (define (compiler-load-path-list-tail [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Cons _ rest)
+    [(Cons _ rest)
       (let
         [rest : ast.AstDeclPathList rest]
         rest)]
-    [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)]))
+    [(Nil) (ast.ast-decl-path-list-new)]))
 
 (define (compiler-load-package-owned-decl-entry-main-normalized?
   [normalized-entry-path : String]
@@ -12519,12 +12306,12 @@
   [decl-path : String]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
+    [(DefFn decl-meta name _ _ _ _)
       (compiler-load-package-entry-main-normalized?
         normalized-entry-path
         (compiler-load-normalize-path decl-path)
         (ci.intern-str name))]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (compiler-load-package-owned-decl-entry-main-normalized?
         normalized-entry-path
         _module
@@ -12553,8 +12340,8 @@
     (begin
       (while (not done)
         (match (ast.ast-decl-list-step decl-cursor)
-          [(ast.AstDeclListStep.Nil) (set! done true)]
-          [(ast.AstDeclListStep.Cons decl rest)
+          [(Nil) (set! done true)]
+          [(Cons decl rest)
             (let
               [decl-path : String
                 (compiler-load-path-list-head-or
@@ -12592,8 +12379,7 @@
                   owned-path-id
                   decl-provenance-id)
                 (match decl
-                  [(ast.AstDecl.Module name)
-                    (set! current-module (ci.intern-str name))]
+                  [(Module name) (set! current-module (ci.intern-str name))]
                   [_ unit])
                 (set! decl-cursor rest)
                 (set! path-cursor (compiler-load-path-list-tail path-cursor))))]))
@@ -12626,13 +12412,13 @@
   [module-id : i64]
   [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Nil)
+      (Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new)
         (ast.ast-decl-module-list-new)
         seen)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         [decl-path : String
@@ -12658,11 +12444,11 @@
         [rest-paths : ast.AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
           (match (clone decl)
-            [(ast.AstDecl.Module name) (ci.intern-str name)]
+            [(Module name) (ci.intern-str name)]
             [_ (string.copy module)])]
         [next-module-id : i64
           (match (clone decl)
-            [(ast.AstDecl.Module name) name]
+            [(Module name) name]
             [_ module-id])]
         (match (compiler-load-package-extern-decls
           (string.copy package-owner)
@@ -12674,11 +12460,7 @@
           next-module
           next-module-id
           (clone spmd-interface))
-          [(ResultCompilerLoadWithPaths.Ok
-              rest-decls
-              rest-decl-paths
-              rest-modules
-              rest-seen)
+          [(Ok rest-decls rest-decl-paths rest-modules rest-seen)
             (match (compiler-load-package-transform-decl
               package-owner
               package-root
@@ -12688,7 +12470,7 @@
               spmd-interface
               decl)
               [(CompilerLoadSomeDecl transformed)
-                (ResultCompilerLoadWithPaths.Ok
+                (Ok
                   (compiler-load-decl-list-prepend-from-source
                     transformed
                     decls
@@ -12703,18 +12485,13 @@
                     rest-modules)
                   rest-seen)]
               [(CompilerLoadNoDecl)
-                (ResultCompilerLoadWithPaths.Ok
-                  rest-decls
-                  rest-decl-paths
-                  rest-modules
-                  rest-seen)])]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)]))]))
+                (Ok rest-decls rest-decl-paths rest-modules rest-seen)])]
+          [(Err diag) (Err diag)]))]))
 
 (define (compiler-load-package-entry-for-source [source-path : String]) : ResultCompilerLoadPackageEntry
   (match (compiler-load-discover-manifest (string.copy source-path))
     [(CompilerLoadNoPath)
-      (ResultCompilerLoadPackageEntry.Err
+      (Err
         (str_cat.str-cat
           "compiler-load: dependency package manifest not found for "
           source-path))]
@@ -12722,17 +12499,17 @@
       (match (compiler-load-parse-manifest-diagnostic-infer-kind
         (string.copy manifest-path)
         (compiler-load-session-read-source-text manifest-path))
-        [(ResultCompilerPkgManifestDiagnostic.Err diag)
-          (ResultCompilerLoadPackageEntry.Err
+        [(Err diag)
+          (Err
             (str_cat.str-cat
               "compiler-load: invalid dependency package manifest '"
               manifest-path
               "': "
               (cdiag.compiler-diagnostic-message (__tl-box-place diag))))]
-        [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+        [(Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
-            (ResultCompilerLoadPackageEntry.Ok
+            (Ok
               (CompilerLoadPackageEntry
                 (compiler-load-normalize-path
                   (compiler-load-join-root-path
@@ -12773,7 +12550,7 @@
       ;; active *before* the marker.  Select the marker by the module it
       ;; introduces, otherwise the first declaration from a dependency can be
       ;; rebound under the final module of an already-seen prelude surface.
-      [(ast.AstDecl.Module name) (sym_i64_env.sym-i64-contains-id seen name)]
+      [(Module name) (sym_i64_env.sym-i64-contains-id seen name)]
       [_
         (or
           (and
@@ -12844,8 +12621,8 @@
     (begin
       (while (not done)
         (match (sym_i64_env.sym-i64-view cursor)
-          [(sym_i64_env.SymI64ViewNil) (set! done true)]
-          [(sym_i64_env.SymI64ViewBind key value rest)
+          [(SymI64ViewNil) (set! done true)]
+          [(SymI64ViewBind key value rest)
             (begin
               (if (and
                 (sym_i64_env.sym-i64-contains-id out key)
@@ -12858,7 +12635,7 @@
 (define (compiler-load-dependency-surface-interface
   [version : String]
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
-  (CompilerLoadPackageSpmdInterface.Available version spmd-callables))
+  (Available version spmd-callables))
 
 (define (compiler-load-dependency-surface-final-module-id
   [decls : ast.AstDeclList]
@@ -12870,11 +12647,11 @@
     (begin
       (while (not done)
         (match (ast.ast-decl-list-step cursor)
-          [(ast.AstDeclListStep.Nil) (set! done true)]
-          [(ast.AstDeclListStep.Cons decl rest)
+          [(Nil) (set! done true)]
+          [(Cons decl rest)
             (begin
               (match decl
-                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
+                [(Module next-module) (set! module-id next-module)]
                 [_ unit])
               (set! cursor rest))]))
       module-id)))
@@ -12937,7 +12714,7 @@
     [surface-state : CompilerLoadDependencySurfaceState
       (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
     (if (not (array-ref surface-state.enabled 0))
-      CompilerLoadDependencySurfaceImport.Unavailable
+      Unavailable
       (let
         [slot : i64
           (compiler-load-dependency-catalog-slot-for-provenance-id
@@ -12948,15 +12725,12 @@
             surface-state.fragments
             0)]
         (if (or (< slot 0) (>= slot fragments.len))
-          CompilerLoadDependencySurfaceImport.Unavailable
+          Unavailable
           (match (owned_view.compiler-owned-array-element-shared-view
             fragments.slots
             slot)
-            [(CompilerLoadDependencySurfaceFragment.Unavailable)
-              CompilerLoadDependencySurfaceImport.Unavailable]
-            [(CompilerLoadDependencySurfaceFragment.Ready
-                hydration
-                spmd-callables)
+            [(Unavailable) Unavailable]
+            [(Ready hydration spmd-callables)
               (let
                 [selection : CompilerLoadDependencySurfaceSelection
                   (compiler-load-dependency-surface-select hydration seen)]
@@ -12971,14 +12745,13 @@
                     (ast.ast-program selection.decls))]
                 [copied-program : ast.AstProgram
                   (match (owned_view.compiler-owned-shared-view copy)
-                    [(ast.AstProgramCompaction program _) program])]
+                    [(AstProgramCompaction program _) program])]
                 [copied-decls : ast.AstDeclList
                   (match copied-program
-                    [(ast.AstProgram.Program decls-box)
-                      (__tl-box-place decls-box)])]
+                    [(Program decls-box) (__tl-box-place decls-box)])]
                 [copied-pools : ast.AstNodePoolContext
                   (match copy
-                    [(ast.AstProgramCompaction _ pools) pools])]
+                    [(AstProgramCompaction _ pools) pools])]
                 [explicit-module : bool
                   (compiler-load-decl-list-has-module? copied-decls)]
                 [module-id-fallback-id : i64
@@ -13034,13 +12807,8 @@
                     (compiler-load-dependency-surface-interface
                       entry.version
                       spmd-callables))
-                    [(ResultCompilerLoadWithPaths.Err _)
-                      CompilerLoadDependencySurfaceImport.Unavailable]
-                    [(ResultCompilerLoadWithPaths.Ok
-                        decls
-                        paths
-                        modules
-                        loaded-seen)
+                    [(Err _) Unavailable]
+                    [(Ok decls paths modules loaded-seen)
                       (let
                         [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                         [provenance-count : i64
@@ -13055,12 +12823,8 @@
                                 surface-state.facts-builder
                                 0)
                               hydration.facts)
-                              [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err
-                                  _)
-                                (return
-                                  CompilerLoadDependencySurfaceImport.Unavailable)]
-                              [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok
-                                  next)
+                              [(Err _) (return Unavailable)]
+                              [(Ok next)
                                 (begin
                                   (set!
                                     (array-ref surface-state.facts-builder 0)
@@ -13084,12 +12848,7 @@
                           (set!
                             (array-ref surface-state.hit-count 0)
                             (+ (array-ref surface-state.hit-count 0) 1))
-                          (CompilerLoadDependencySurfaceImport.Ok
-                            (ResultCompilerLoadWithPaths.Ok
-                              decls
-                              paths
-                              modules
-                              loaded-seen))))])))]))))))
+                          (Ok (Ok decls paths modules loaded-seen))))])))]))))))
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
@@ -13100,11 +12859,11 @@
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source (string.copy resolved))
-    [(ResultCompilerLoadPackageEntry.Err message)
-      (ResultCompilerLoadWithPaths.Err
+    [(Err message)
+      (Err
         (box
           (cdiag.compiler-diagnostic-at-start (string.copy resolved) message)))]
-    [(ResultCompilerLoadPackageEntry.Ok entry)
+    [(Ok entry)
       (match (compiler-load-dependency-surface-import
         (string.copy resolved)
         seen
@@ -13113,16 +12872,15 @@
         expected-module
         (string.copy module-id-fallback)
         (string.copy source-module-fallback))
-        [(CompilerLoadDependencySurfaceImport.Ok loaded) loaded]
-        [(CompilerLoadDependencySurfaceImport.Unavailable)
+        [(Ok loaded) loaded]
+        [(Unavailable)
           (match (compiler-load-package-spmd-interface
             (string.copy entry.manifest-dir)
             (string.copy entry.owner)
             (string.copy entry.version))
-            [(ResultCompilerLoadPackageSpmdInterface.Err message)
-              (ResultCompilerLoadWithPaths.Err
-                (box (cdiag.compiler-diagnostic-at-start resolved message)))]
-            [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
+            [(Err message)
+              (Err (box (cdiag.compiler-diagnostic-at-start resolved message)))]
+            [(Ok spmd-interface)
               (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
                 (string.copy resolved)
                 seen
@@ -13131,11 +12889,7 @@
                 cfgs
                 module-id-fallback
                 source-module-fallback)
-                [(ResultCompilerLoadWithPaths.Ok
-                    imported-decls
-                    imported-paths
-                    _
-                    import-seen)
+                [(Ok imported-decls imported-paths _ import-seen)
                   (compiler-load-package-extern-decls
                     entry.owner
                     entry.manifest-dir
@@ -13146,8 +12900,7 @@
                     ""
                     cbi.compiler-builtin-id-fix-empty
                     spmd-interface)]
-                [(ResultCompilerLoadWithPaths.Err diag)
-                  (ResultCompilerLoadWithPaths.Err diag)])])])]))
+                [(Err diag) (Err diag)])])])]))
 
 (define (compiler-load-package-expand-include
   [kind : CompilerLoadIncludeKind]
@@ -13166,16 +12919,15 @@
       (string.copy importer-path)
       (string.copy include-path)
       stdlib-roots))
-    [(ResultPkgResolve.Ok resolved)
+    [(Ok resolved)
       (compiler-load-include-from-resolved
         kind
         importer-path
         include-path
         resolved
         name)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
+    [(Err message)
+      (Err (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : ast.AstDeclList]
@@ -13191,24 +12943,17 @@
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
-      (ResultCompilerLoadWithPaths.Ok
+    [(Nil)
+      (Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new)
         (ast.ast-decl-module-list-new)
         seen)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
-          [(ast.AstDecl.Import
-              decl-meta
-              (ast.AstImportSpec.Spec
-                kind
-                import-path
-                expected-module
-                alias
-                span))
+          [(Import decl-meta (Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
                 rest
@@ -13223,12 +12968,8 @@
                 (string.copy manifest-dir)
                 deps
                 cfgs)
-                [(ResultCompilerLoadWithPaths.Ok
-                    rest-decls
-                    rest-paths
-                    rest-modules
-                    rest-seen)
-                  (ResultCompilerLoadWithPaths.Ok
+                [(Ok rest-decls rest-paths rest-modules rest-seen)
+                  (Ok
                     (compiler-load-decl-list-prepend-from-source
                       decl
                       decls
@@ -13241,8 +12982,7 @@
                       importer-module-id
                       rest-modules)
                     rest-seen)]
-                [(ResultCompilerLoadWithPaths.Err diag)
-                  (ResultCompilerLoadWithPaths.Err diag)])
+                [(Err diag) (Err diag)])
               (match (compiler-load-resolve-package-import-spec-classified
                 (owned_view.compiler-owned-shared-view importer-path)
                 kind
@@ -13252,7 +12992,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (owned_view.compiler-owned-shared-view deps))
-                [(ResultCompilerLoadResolvedImport.Ok import)
+                [(Ok import)
                   (let
                     [resolved : String import.resolved]
                     [kind : ast.AstImportKind import.kind]
@@ -13359,7 +13099,7 @@
                           (if (string.eq source-fallback importer-source-module)
                             importer-source-module-id
                             -1))))
-                      [(ResultCompilerLoadWithPaths.Ok
+                      [(Ok
                           imported-decls
                           imported-paths
                           imported-modules
@@ -13390,7 +13130,7 @@
                                     validated-module
                                     (ast.ast-place-shared-view imported-decls))))
                               (return
-                                (ResultCompilerLoadWithPaths.Err
+                                (Err
                                   (box
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
@@ -13413,11 +13153,7 @@
                               manifest-dir
                               deps
                               cfgs)
-                              [(ResultCompilerLoadWithPaths.Ok
-                                  rest-decls
-                                  rest-paths
-                                  rest-modules
-                                  rest-seen)
+                              [(Ok rest-decls rest-paths rest-modules rest-seen)
                                 (let
                                   [after-import-expected : ast.AstMaybeModuleName
                                     validated-module]
@@ -13432,7 +13168,7 @@
                                   (if lazy-skip
                                     (begin
                                       (compiler-load-lazy-import-record-skip!)
-                                      (ResultCompilerLoadWithPaths.Ok
+                                      (Ok
                                         (compiler-load-decls-after-import
                                           kind
                                           resolved
@@ -13488,7 +13224,7 @@
                                           after-import-alias
                                           imported-decls
                                           rest-modules)]
-                                      (ResultCompilerLoadWithPaths.Ok
+                                      (Ok
                                         (compiler-load-decl-list-append-onto
                                           imported-decls
                                           after-decls)
@@ -13499,29 +13235,27 @@
                                           imported-modules
                                           after-modules)
                                         rest-seen))))]
-                              [(ResultCompilerLoadWithPaths.Err diag)
-                                (ResultCompilerLoadWithPaths.Err diag)])))]
-                      [(ResultCompilerLoadWithPaths.Err diag)
-                        (ResultCompilerLoadWithPaths.Err diag)]))]
-                [(ResultCompilerLoadResolvedImport.Err message)
-                  (ResultCompilerLoadWithPaths.Err
+                              [(Err diag) (Err diag)])))]
+                      [(Err diag) (Err diag)]))]
+                [(Err message)
+                  (Err
                     (box
                       (cdiag.compiler-diagnostic-from-ast-span
                         importer-path
                         (__tl-box-place span)
                         message)))]))]
-          [(ast.AstDecl.IncludeStr name include-path)
+          [(IncludeStr name include-path)
             (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.RuntimeString
+              RuntimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.RuntimeString
+                  RuntimeString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -13541,20 +13275,19 @@
                     (string.copy manifest-dir)
                     deps
                     cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeStrComptime name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeStrComptime name include-path)
             (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.ComptimeString
+              ComptimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.ComptimeString
+                  ComptimeString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -13574,20 +13307,19 @@
                     (string.copy manifest-dir)
                     deps
                     cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeStrLzss name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeStrLzss name include-path)
             (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.LzssString
+              LzssString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.LzssString
+                  LzssString
                   expanded
                   decls
                   (string.copy importer-path)
@@ -13607,20 +13339,19 @@
                     (string.copy manifest-dir)
                     deps
                     cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ast.AstDecl.IncludeBin name include-path)
+              [(Err diag) (Err diag)])]
+          [(IncludeBin name include-path)
             (match (compiler-load-package-expand-include
-              CompilerLoadIncludeKind.Binary
+              Binary
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
-              [(ResultCompilerLoadInclude.Ok expanded)
+              [(Ok expanded)
                 (compiler-load-prepend-include
-                  CompilerLoadIncludeKind.Binary
+                  Binary
                   expanded
                   decls
                   (string.copy importer-path)
@@ -13640,8 +13371,7 @@
                     (string.copy manifest-dir)
                     deps
                     cfgs))]
-              [(ResultCompilerLoadInclude.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
+              [(Err diag) (Err diag)])]
           [_
             (match (compiler-load-package-decls-with-module-and-roots
               rest
@@ -13656,12 +13386,8 @@
               (string.copy manifest-dir)
               deps
               cfgs)
-              [(ResultCompilerLoadWithPaths.Ok
-                  rest-decls
-                  rest-paths
-                  rest-modules
-                  rest-seen)
-                (ResultCompilerLoadWithPaths.Ok
+              [(Ok rest-decls rest-paths rest-modules rest-seen)
+                (Ok
                   (compiler-load-decl-list-prepend-from-source
                     decl
                     decls
@@ -13674,8 +13400,7 @@
                     importer-module-id
                     rest-modules)
                   rest-seen)]
-              [(ResultCompilerLoadWithPaths.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]))]))
+              [(Err diag) (Err diag)])]))]))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect-fallback
   [path : String]
@@ -13700,7 +13425,7 @@
     [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [effective-source-module-fallback : String
@@ -13735,13 +13460,13 @@
               (ast.ast-place-shared-view decls)
               (string.copy module-id-fallback)
               module-id-fallback-id)
-              [(ResultCompilerLoadModuleId.Ok module-id module-name-id)
+              [(Ok module-id module-name-id)
                 (match (compiler-load-check-expected-module
                   (string.copy source-path)
                   (clone expected-module)
                   (string.copy module-id)
                   module-name-id)
-                  [(ResultCompilerLoadModuleId.Ok _ _)
+                  [(Ok _ _)
                     (if (compiler-load-seen-module-contains?
                       seen
                       (string.copy module-id)
@@ -13757,7 +13482,7 @@
                         (string.copy source-path)
                         (ast.ast-place-shared-view load-decls)
                         (string.copy source-module))
-                        [(ResultCompilerLoadAliasCheck.Ok)
+                        [(Ok)
                           (begin
                             ;; Replace a speculative lazy summary with the
                             ;; identity established by the actual load.
@@ -13791,27 +13516,21 @@
                               (string.copy manifest-dir)
                               deps
                               cfgs))]
-                        [(ResultCompilerLoadAliasCheck.Err diag)
-                          (ResultCompilerLoadWithPaths.Err diag)]))]
-                  [(ResultCompilerLoadModuleId.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
-              [(ResultCompilerLoadModuleId.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)]))])]
+                        [(Err diag) (Err diag)]))]
+                  [(Err diag) (Err diag)])]
+              [(Err diag) (Err diag)]))])]
     (begin
       (compiler-load-surface-summary-load-exit!)
       (if (= entry-depth 0)
         (match loaded
-          [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+          [(Ok decls paths modules loaded-seen)
             (match (compiler-load-check-unqualified-import-collisions
               source-path
               (ast.ast-place-shared-view decls)
               paths)
-              [(ResultCompilerLoadAliasCheck.Ok)
-                (ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)]
-              [(ResultCompilerLoadAliasCheck.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])
+              [(Ok) (Ok decls paths modules loaded-seen)]
+              [(Err diag) (Err diag)])]
+          [(Err diag) (Err diag)])
         loaded))))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
@@ -13879,7 +13598,7 @@
         (compiler-load-parse-file-diagnostic-escaping
           (string.copy path)
           parse-cfgs))
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           (compiler-load-package-program-with-paths-and-roots-expect-fallback
             (string.copy path)
             program
@@ -13893,11 +13612,9 @@
             (clone parse-identity)
             (string.copy source-module-fallback)
             source-module-fallback-id)]
-        [(parser.ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])
+        [(Err diag) (Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path (string.copy path))
-        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-            source)
+        [(CompilerEmbeddedStdlibSomeSource source)
           (match (if cache-current
             (compiler-load-parse-embedded-source-diagnostic-session-id
               (string.copy path)
@@ -13908,7 +13625,7 @@
               (string.copy path)
               source
               parse-cfgs))
-            [(parser.ResultAstProgramDiagnostic.Ok program)
+            [(Ok program)
               (compiler-load-package-program-with-paths-and-roots-expect-fallback
                 (string.copy path)
                 program
@@ -13922,10 +13639,9 @@
                 (clone parse-identity)
                 (string.copy source-module-fallback)
                 source-module-fallback-id)]
-            [(parser.ResultAstProgramDiagnostic.Err diag)
-              (ResultCompilerLoadWithPaths.Err diag)])]
-        [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-          (ResultCompilerLoadWithPaths.Err
+            [(Err diag) (Err diag)])]
+        [(CompilerEmbeddedStdlibNoSource)
+          (Err
             (box
               (cdiag.compiler-diagnostic-at-start
                 (string.copy path)
@@ -13983,7 +13699,7 @@
     path
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     manifest-dir
     deps
     cfgs))
@@ -13999,7 +13715,7 @@
     path
     seen
     stdlib-roots
-    ast.AstMaybeModuleName.No
+    No
     manifest-dir
     deps
     cfgs
@@ -14019,24 +13735,23 @@
       (compiler-load-parse-identity
         (string.copy path)
         (compiler-load-canonical-module-id-from-path path)
-        ast.AstMaybeModuleName.No)]
+        No)]
     (match (compiler-load-parse-source-diagnostic-escaping
       (string.copy path)
       source
       parse-cfgs)
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (compiler-load-package-program-with-paths-and-roots-expect
           path
           program
           seen
           stdlib-roots
-          ast.AstMaybeModuleName.No
+          No
           manifest-dir
           deps
           parse-cfgs
           parse-identity)]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+      [(Err diag) (Err diag)])))
 
 (define (compiler-load-package-stdlib-prelude-file-with-roots-cfg
   [path : String]
@@ -14065,8 +13780,7 @@
             cfgs))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-              source)
+          [(CompilerEmbeddedStdlibSomeSource source)
             (begin
               (compiler-load-note-embedded-module! (string.copy path))
               (compiler-load-session-note-embedded-stdlib-source!)
@@ -14078,7 +13792,7 @@
                 (string.copy manifest-dir)
                 deps
                 cfgs))]
-          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+          [(CompilerEmbeddedStdlibNoSource)
             (compiler-load-package-file-with-paths-and-roots-cfg
               path
               seen
@@ -14117,22 +13831,14 @@
       (string.copy manifest-dir)
       (ast.ast-place-shared-view deps)
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
-          runtime-decls
-          runtime-paths
-          runtime-modules
-          runtime-seen)
+      [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
         (match (compiler-load-package-core-macro-prelude-with-roots-cfg
           runtime-seen
           (ast.ast-place-shared-view stdlib-roots)
           (string.copy manifest-dir)
           (ast.ast-place-shared-view deps)
           cfgs)
-          [(ResultCompilerLoadWithPaths.Ok
-              macro-decls
-              macro-paths
-              macro-modules
-              prelude-seen)
+          [(Ok macro-decls macro-paths macro-modules prelude-seen)
             (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
               (string.copy input-path)
               prelude-seen
@@ -14140,12 +13846,8 @@
               (string.copy manifest-dir)
               deps
               cfgs)
-              [(ResultCompilerLoadWithPaths.Ok
-                  entry-decls
-                  entry-paths
-                  entry-modules
-                  seen)
-                (ResultCompilerLoadWithPaths.Ok
+              [(Ok entry-decls entry-paths entry-modules seen)
+                (Ok
                   (compiler-load-decl-list-append
                     (compiler-load-decl-list-append runtime-decls macro-decls)
                     entry-decls)
@@ -14160,23 +13862,16 @@
                       macro-modules)
                     entry-modules)
                   seen)]
-              [(ResultCompilerLoadWithPaths.Err diag)
-                (ResultCompilerLoadWithPaths.Err diag)])]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])
+              [(Err diag) (Err diag)])]
+          [(Err diag) (Err diag)])]
+      [(Err diag) (Err diag)])
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
       (ast.ast-place-shared-view stdlib-roots)
       (string.copy manifest-dir)
       (ast.ast-place-shared-view deps)
       cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
+      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
           input-path
           prelude-seen
@@ -14184,29 +13879,22 @@
           manifest-dir
           deps
           cfgs)
-          [(ResultCompilerLoadWithPaths.Ok
-              entry-decls
-              entry-paths
-              entry-modules
-              seen)
-            (ResultCompilerLoadWithPaths.Ok
+          [(Ok entry-decls entry-paths entry-modules seen)
+            (Ok
               (compiler-load-decl-list-append prelude-decls entry-decls)
               (compiler-load-decl-path-list-append prelude-paths entry-paths)
               (compiler-load-decl-module-list-append
                 prelude-modules
                 entry-modules)
               seen)]
-          [(ResultCompilerLoadWithPaths.Err diag)
-            (ResultCompilerLoadWithPaths.Err diag)])]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (ResultCompilerLoadWithPaths.Err diag)])))
+          [(Err diag) (Err diag)])]
+      [(Err diag) (Err diag)])))
 
 (define (compiler-load-dependency-surfaces-restore-base!
   [surface-state : (& surface-state CompilerLoadDependencySurfaceState)]) : unit
   (match (array-ref surface-state.base-facts 0)
-    [(CompilerLoadDependencySurfaceBaseFacts.None)
-      (surface_facts.surface-typecheck-facts-clear!)]
-    [(CompilerLoadDependencySurfaceBaseFacts.Some facts)
+    [(None) (surface_facts.surface-typecheck-facts-clear!)]
+    [(Some facts)
       (if (surface_facts.surface-typecheck-facts-publish! (clone facts))
         unit
         (surface_facts.surface-typecheck-facts-clear!))]))
@@ -14219,22 +13907,22 @@
       (& state.dependency-surfaces)]
     [surface-count : i64 (array-ref surface-state.surface-decl-count 0)]
     (match loaded
-      [(ResultCompilerLoadWithPaths.Err diag)
+      [(Err diag)
         (begin
           (compiler-load-dependency-surfaces-restore-base! surface-state)
-          (ResultCompilerLoadWithPaths.Err diag))]
-      [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+          (Err diag))]
+      [(Ok decls paths modules seen)
         (if (or (not (array-ref surface-state.enabled 0)) (<= surface-count 0))
           (begin
             (compiler-load-dependency-surfaces-restore-base! surface-state)
-            (ResultCompilerLoadWithPaths.Ok decls paths modules seen))
+            (Ok decls paths modules seen))
           (match (surface_facts.surface-typecheck-facts-builder-finish
             (clone (array-ref surface-state.facts-builder 0)))
-            [(surface_facts.ResultSurfaceTypecheckFacts.Err _)
+            [(Err _)
               (begin
                 (compiler-load-dependency-surfaces-restore-base! surface-state)
-                (ResultCompilerLoadWithPaths.Ok decls paths modules seen))]
-            [(surface_facts.ResultSurfaceTypecheckFacts.Ok composed)
+                (Ok decls paths modules seen))]
+            [(Ok composed)
               (let
                 [candidate : surface_facts.SurfaceTypecheckFacts
                   (surface_facts.SurfaceTypecheckFacts
@@ -14254,7 +13942,7 @@
                     unit
                     (compiler-load-dependency-surfaces-restore-base!
                       surface-state))
-                  (ResultCompilerLoadWithPaths.Ok decls paths modules seen)))]))])))
+                  (Ok decls paths modules seen)))]))])))
 
 (define (compiler-load-package-file-with-runtime-cfg
   [input-path : String]
@@ -14283,8 +13971,8 @@
 
 (define (compiler-load-test-mkdir-direct [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
-    [(io.OkIoUnit) true]
-    [(io.ErrIoUnit _) false]))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
 
 (define (compiler-load-test-mkdir [path : String]) : bool
   (if (compiler-load-string-prefix-at? path "target/" 0)
@@ -14451,15 +14139,14 @@
 (define (compiler-pkg-manifest-first-library-dependency
   [manifest : (& manifest CompilerPkgManifest)]) : CompilerPkgMaybeDependency
   (match manifest.kind
-    [(CompilerPkgKindBin) (CompilerPkgMaybeDependency.NoDependency)]
+    [(CompilerPkgKindBin) (NoDependency)]
     [(CompilerPkgKindLib)
       (let
         [deps : CompilerPkgDepList
           (compiler-pkg-deps-list (clone manifest.deps))]
         (if (= (compiler-pkg-dep-list-count (& deps)) 0)
-          (CompilerPkgMaybeDependency.NoDependency)
-          (CompilerPkgMaybeDependency.Dependency
-            (compiler-pkg-dep-list-at (& deps) 0))))]))
+          (NoDependency)
+          (Dependency (compiler-pkg-dep-list-at (& deps) 0))))]))
 
 ;: Explain the dependency-free library invariant and its supported
 ;: composition/native-link alternatives.
@@ -14555,7 +14242,7 @@
     address))
 
 (define (compiler-load-github-address-error [alias : String]) : ResultPkgString
-  (ResultPkgString.Err
+  (Err
     (str_cat.str-cat
       "manifest dependency `"
       alias
@@ -14589,7 +14276,7 @@
           [(not (compiler-load-github-component-valid? (string.copy repo)))
             (compiler-load-github-address-error alias)]
           [else
-            (ResultPkgString.Ok
+            (Ok
               (str_cat.str-cat
                 "https://github.com/"
                 owner
@@ -14624,27 +14311,25 @@
   [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPkgString
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vhead)
-        [(reader.SexprView.Str val-id)
+        [(Str val-id)
           (match (reader.sexpr-view vrest)
-            [(reader.SexprView.Nil)
-              (ResultPkgString.Ok
-                (compiler-load-manifest-owned-intern-text val-id))]
+            [(Nil) (Ok (compiler-load-manifest-owned-intern-text val-id))]
             [_
-              (ResultPkgString.Err
+              (Err
                 (str_cat.str-cat
                   "manifest field `"
                   fname
                   "` takes a single string value"))])]
         [_
-          (ResultPkgString.Err
+          (Err
             (str_cat.str-cat
               "manifest field `"
               fname
               "` must have a string value"))])]
     [_
-      (ResultPkgString.Err
+      (Err
         (str_cat.str-cat "manifest field `" fname "` must have a string value"))]))
 
 (define (compiler-load-manifest-github-pin
@@ -14652,21 +14337,21 @@
   [address : String]
   [pin-form : reader.SpannedSexpr]) : ResultPkgString
   (match (reader.sexpr-view pin-form)
-    [(reader.SexprView.Cons pin-kind-node pin-tail)
+    [(Cons pin-kind-node pin-tail)
       (match (reader.sexpr-view pin-kind-node)
-        [(reader.SexprView.Sym pin-kind)
+        [(Sym pin-kind)
           (if (compiler-load-github-pin-kind-valid?
             (compiler-load-symbol-text pin-kind))
             (match (reader.sexpr-view pin-tail)
-              [(reader.SexprView.Cons pin-value-node end)
+              [(Cons pin-value-node end)
                 (match (reader.sexpr-view end)
-                  [(reader.SexprView.Nil)
+                  [(Nil)
                     (match (reader.sexpr-view pin-value-node)
-                      [(reader.SexprView.Str pin-value-id)
+                      [(Str pin-value-id)
                         (let
                           [pin-value : String (ci.intern-id-str pin-value-id)]
                           (if (string.eq pin-value "")
-                            (ResultPkgString.Err
+                            (Err
                               (str_cat.str-cat
                                 "manifest dependency `"
                                 alias
@@ -14677,36 +14362,36 @@
                               (compiler-load-symbol-text pin-kind)
                               pin-value)))]
                       [_
-                        (ResultPkgString.Err
+                        (Err
                           (str_cat.str-cat
                             "manifest dependency `"
                             alias
                             "` github pin must be a single string value"))])]
                   [_
-                    (ResultPkgString.Err
+                    (Err
                       (str_cat.str-cat
                         "manifest dependency `"
                         alias
                         "` github pin must be a single string value"))])]
               [_
-                (ResultPkgString.Err
+                (Err
                   (str_cat.str-cat
                     "manifest dependency `"
                     alias
                     "` github pin must be a single string value"))])
-            (ResultPkgString.Err
+            (Err
               (str_cat.str-cat
                 "manifest dependency `"
                 alias
                 "` github pin must be rev, tag, or branch")))]
         [_
-          (ResultPkgString.Err
+          (Err
             (str_cat.str-cat
               "manifest dependency `"
               alias
               "` github source requires exactly one rev, tag, or branch pin"))])]
     [_
-      (ResultPkgString.Err
+      (Err
         (str_cat.str-cat
           "manifest dependency `"
           alias
@@ -14716,36 +14401,36 @@
   [alias : String]
   [source-tail : reader.SpannedSexpr]) : ResultPkgString
   (match (reader.sexpr-view source-tail)
-    [(reader.SexprView.Cons address-node after-address)
+    [(Cons address-node after-address)
       (match (reader.sexpr-view address-node)
-        [(reader.SexprView.Str address-id)
+        [(Str address-id)
           (let
             [address : String (ci.intern-id-str address-id)]
             (match (reader.sexpr-view after-address)
-              [(reader.SexprView.Cons pin-form end)
+              [(Cons pin-form end)
                 (match (reader.sexpr-view end)
-                  [(reader.SexprView.Nil)
+                  [(Nil)
                     (compiler-load-manifest-github-pin alias address pin-form)]
                   [_
-                    (ResultPkgString.Err
+                    (Err
                       (str_cat.str-cat
                         "manifest dependency `"
                         alias
                         "` github source requires exactly one rev, tag, or branch pin"))])]
               [_
-                (ResultPkgString.Err
+                (Err
                   (str_cat.str-cat
                     "manifest dependency `"
                     alias
                     "` github source requires exactly one rev, tag, or branch pin"))]))]
         [_
-          (ResultPkgString.Err
+          (Err
             (str_cat.str-cat
               "manifest dependency `"
               alias
               "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`"))])]
     [_
-      (ResultPkgString.Err
+      (Err
         (str_cat.str-cat
           "manifest dependency `"
           alias
@@ -14755,45 +14440,44 @@
   [etail : reader.SpannedSexpr]
   [alias : String]) : ResultPkgString
   (match (reader.sexpr-view etail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vrest)
-        [(reader.SexprView.Nil)
+        [(Nil)
           (match (reader.sexpr-view vhead)
-            [(reader.SexprView.Str path-id)
-              (ResultPkgString.Ok
-                (compiler-load-manifest-owned-intern-text path-id))]
-            [(reader.SexprView.Cons source-kind-node source-tail)
+            [(Str path-id)
+              (Ok (compiler-load-manifest-owned-intern-text path-id))]
+            [(Cons source-kind-node source-tail)
               (match (reader.sexpr-view source-kind-node)
-                [(reader.SexprView.Sym source-kind)
+                [(Sym source-kind)
                   (if (string.eq
                     (compiler-load-symbol-text source-kind)
                     "github")
                     (compiler-load-manifest-github-value alias source-tail)
-                    (ResultPkgString.Err
+                    (Err
                       (str_cat.str-cat
                         "manifest dependency `"
                         alias
                         "` must be a path string or github source")))]
                 [_
-                  (ResultPkgString.Err
+                  (Err
                     (str_cat.str-cat
                       "manifest dependency `"
                       alias
                       "` must be a path string or github source"))])]
             [_
-              (ResultPkgString.Err
+              (Err
                 (str_cat.str-cat
                   "manifest dependency `"
                   alias
                   "` must be a path string or github source"))])]
         [_
-          (ResultPkgString.Err
+          (Err
             (str_cat.str-cat
               "manifest dependency `"
               alias
               "` takes a single path string or github source"))])]
     [_
-      (ResultPkgString.Err
+      (Err
         (str_cat.str-cat
           "manifest dependency `"
           alias
@@ -14801,88 +14485,73 @@
 
 (define (compiler-load-manifest-kind-token [val : String]) : ResultCompilerPkgKind
   (if (string.eq val "bin")
-    (ResultCompilerPkgKind.Ok (CompilerPkgKindBin))
+    (Ok (CompilerPkgKindBin))
     (if (or (string.eq val "staticlib") (string.eq val "lib"))
-      (ResultCompilerPkgKind.Ok (CompilerPkgKindLib))
-      (ResultCompilerPkgKind.Err
-        "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
+      (Ok (CompilerPkgKindLib))
+      (Err "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
 (define (compiler-load-manifest-kind-value [ftail : reader.SpannedSexpr]) : ResultCompilerPkgKind
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vrest)
-        [(reader.SexprView.Nil)
+        [(Nil)
           (match (reader.sexpr-view vhead)
-            [(reader.SexprView.Str val-id)
+            [(Str val-id)
               (compiler-load-manifest-kind-token (ci.intern-id-str val-id))]
-            [(reader.SexprView.Sym val)
+            [(Sym val)
               (compiler-load-manifest-kind-token
                 (compiler-load-symbol-text val))]
-            [_
-              (ResultCompilerPkgKind.Err
-                "manifest field `kind` must have a string or symbol value")])]
-        [_
-          (ResultCompilerPkgKind.Err
-            "manifest field `kind` takes a single value")])]
-    [_
-      (ResultCompilerPkgKind.Err
-        "manifest field `kind` must have a string or symbol value")]))
+            [_ (Err "manifest field `kind` must have a string or symbol value")])]
+        [_ (Err "manifest field `kind` takes a single value")])]
+    [_ (Err "manifest field `kind` must have a string or symbol value")]))
 
 (define (compiler-load-manifest-cons-dep
   [alias : String]
   [path : String]
   [rest : reader.SpannedSexpr]) : ResultCompilerPkgDeps
   (cond
-    [(string.eq alias "")
-      (ResultCompilerPkgDeps.Err "dependency alias must not be empty")]
+    [(string.eq alias "") (Err "dependency alias must not be empty")]
     [(not (compiler-load-package-token-valid? (string.copy alias)))
-      (ResultCompilerPkgDeps.Err
+      (Err
         "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
     [(string.eq path "")
-      (ResultCompilerPkgDeps.Err
+      (Err
         (str_cat.str-cat
           "manifest dependency `"
           alias
           "` path must not be empty"))]
     [else
       (match (compiler-load-manifest-parse-deps rest)
-        [(ResultCompilerPkgDeps.Err m) (ResultCompilerPkgDeps.Err m)]
-        [(ResultCompilerPkgDeps.Ok tail-deps)
+        [(Err m) (Err m)]
+        [(Ok tail-deps)
           (if (compiler-pkg-deps-alias-seen?
             (ast.ast-place-shared-view tail-deps)
             (string.copy alias))
-            (ResultCompilerPkgDeps.Err
-              (str_cat.str-cat "duplicate dependency alias `" alias "`"))
-            (ResultCompilerPkgDeps.Ok
-              (compiler-pkg-deps-cons alias path tail-deps)))])]))
+            (Err (str_cat.str-cat "duplicate dependency alias `" alias "`"))
+            (Ok (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : reader.SpannedSexpr]) : ResultCompilerPkgDeps
   (match (reader.sexpr-view entries)
-    [(reader.SexprView.Nil)
-      (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
-    [(reader.SexprView.Cons entry rest)
+    [(Nil) (Ok (compiler-pkg-deps-empty))]
+    [(Cons entry rest)
       (match (reader.sexpr-view entry)
-        [(reader.SexprView.Cons ehead etail)
+        [(Cons ehead etail)
           (match (reader.sexpr-view ehead)
-            [(reader.SexprView.Sym alias)
+            [(Sym alias)
               (let
                 [alias-text : String
                   (compiler-load-manifest-owned-syntax-text alias)]
                 (match (compiler-load-manifest-dependency-value
                   etail
                   (string.copy alias-text))
-                  [(ResultPkgString.Err m) (ResultCompilerPkgDeps.Err m)]
-                  [(ResultPkgString.Ok path)
+                  [(Err m) (Err m)]
+                  [(Ok path)
                     (compiler-load-manifest-cons-dep alias-text path rest)]))]
-            [_
-              (ResultCompilerPkgDeps.Err
-                "dependency entries must start with an alias name")])]
-        [_
-          (ResultCompilerPkgDeps.Err
-            "dependency entries must be lists like `(alias \"path\")`")])]
+            [_ (Err "dependency entries must start with an alias name")])]
+        [_ (Err "dependency entries must be lists like `(alias \"path\")`")])]
     [_
-      (ResultCompilerPkgDeps.Err
+      (Err
         "`dependencies` must be a list of `(alias \"path\")` or `(alias (github ...))` entries")]))
 
 ;: An empty link scope (no libraries, search paths, or args).
@@ -14996,21 +14665,21 @@
   [fname : String]
   [acc : fs.FsStringVector]) : ResultPkgStrVec
   (match (reader.sexpr-view values)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (if (= (fs.string-vector-len (& acc)) 0)
-        (ResultPkgStrVec.Err
+        (Err
           (str_cat.str-cat
             "`link` field `"
             fname
             "` requires at least one value"))
-        (ResultPkgStrVec.Ok acc))]
-    [(reader.SexprView.Cons vhead vrest)
+        (Ok acc))]
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vhead)
-        [(reader.SexprView.Str val-id)
+        [(Str val-id)
           (let
             [val : String (ci.intern-id-str val-id)]
             (if (string.eq val "")
-              (ResultPkgStrVec.Err
+              (Err
                 (str_cat.str-cat
                   "`link` field `"
                   fname
@@ -15023,10 +14692,10 @@
                     (compiler-load-manifest-owned-intern-text val-id))
                   (compiler-load-manifest-link-values vrest fname out)))))]
         [_
-          (ResultPkgStrVec.Err
+          (Err
             (str_cat.str-cat "`link` field `" fname "` values must be strings"))])]
     [_
-      (ResultPkgStrVec.Err
+      (Err
         (str_cat.str-cat
           "`link` field `"
           fname
@@ -15042,51 +14711,41 @@
     [scope : i64 (compiler-load-link-field-scope (string.copy fname))]
     [cat : i64 (compiler-load-link-field-category (string.copy fname))]
     (if (or (< scope 0) (< cat 0))
-      (ResultCompilerPkgLink.Err
-        (str_cat.str-cat "unknown `link` field `" fname "`"))
+      (Err (str_cat.str-cat "unknown `link` field `" fname "`"))
       (let
         [existing : fs.FsStringVector
           (compiler-pkg-link-get-vec (ast.ast-place-shared-view acc) scope cat)]
         (if (> (fs.string-vector-len (& existing)) 0)
-          (ResultCompilerPkgLink.Err
-            (str_cat.str-cat "duplicate `link` field `" fname "`"))
-          (ResultCompilerPkgLink.Ok
-            (compiler-pkg-link-set-vec acc scope cat values)))))))
+          (Err (str_cat.str-cat "duplicate `link` field `" fname "`"))
+          (Ok (compiler-pkg-link-set-vec acc scope cat values)))))))
 
 ;: Walk the `(field "...")` entries of a `(link ...)` section.
 (define (compiler-load-manifest-parse-link-into
   [entries : reader.SpannedSexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
   (match (reader.sexpr-view entries)
-    [(reader.SexprView.Nil) (ResultCompilerPkgLink.Ok acc)]
-    [(reader.SexprView.Cons entry rest)
+    [(Nil) (Ok acc)]
+    [(Cons entry rest)
       (match (reader.sexpr-view entry)
-        [(reader.SexprView.Cons ehead etail)
+        [(Cons ehead etail)
           (match (reader.sexpr-view ehead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (match (compiler-load-manifest-link-values
                 etail
                 (compiler-load-symbol-text fname)
                 (fs.string-vector-new))
-                [(ResultPkgStrVec.Err m) (ResultCompilerPkgLink.Err m)]
-                [(ResultPkgStrVec.Ok values)
+                [(Err m) (Err m)]
+                [(Ok values)
                   (match (compiler-load-manifest-link-store
                     acc
                     (compiler-load-symbol-text fname)
                     values)
-                    [(ResultCompilerPkgLink.Err m)
-                      (ResultCompilerPkgLink.Err m)]
-                    [(ResultCompilerPkgLink.Ok acc2)
+                    [(Err m) (Err m)]
+                    [(Ok acc2)
                       (compiler-load-manifest-parse-link-into rest acc2)])])]
-            [_
-              (ResultCompilerPkgLink.Err
-                "`link` entries must start with a field name")])]
-        [_
-          (ResultCompilerPkgLink.Err
-            "`link` entries must be lists like `(libraries \"...\")`")])]
-    [_
-      (ResultCompilerPkgLink.Err
-        "`link` must be a list of `(field \"...\")` entries")]))
+            [_ (Err "`link` entries must start with a field name")])]
+        [_ (Err "`link` entries must be lists like `(libraries \"...\")`")])]
+    [_ (Err "`link` must be a list of `(field \"...\")` entries")]))
 
 ;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
 (define (compiler-load-manifest-parse-link [entries : reader.SpannedSexpr]) : ResultCompilerPkgLink
@@ -15126,52 +14785,41 @@
   [has-link : bool]
   [link : CompilerPkgLink]) : ResultCompilerPkgManifest
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (let
         [final-entry : String
           (if has-entry
             entry
             (compiler-load-manifest-default-entry kind))]
         (cond
-          [(not has-name)
-            (ResultCompilerPkgManifest.Err
-              "manifest missing required field `name`")]
-          [(string.eq name "")
-            (ResultCompilerPkgManifest.Err
-              "manifest field `name` must not be empty")]
+          [(not has-name) (Err "manifest missing required field `name`")]
+          [(string.eq name "") (Err "manifest field `name` must not be empty")]
           [(not (compiler-load-package-token-valid? (string.copy name)))
-            (ResultCompilerPkgManifest.Err
+            (Err
               "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
-          [(not has-version)
-            (ResultCompilerPkgManifest.Err
-              "manifest missing required field `version`")]
+          [(not has-version) (Err "manifest missing required field `version`")]
           [(string.eq version "")
-            (ResultCompilerPkgManifest.Err
-              "manifest field `version` must not be empty")]
+            (Err "manifest field `version` must not be empty")]
           [(string.eq final-entry "")
-            (ResultCompilerPkgManifest.Err
-              "manifest field `entry` must not be empty")]
+            (Err "manifest field `entry` must not be empty")]
           [(not
               (compiler-load-normal-relative-entry? (string.copy final-entry)))
-            (ResultCompilerPkgManifest.Err
+            (Err
               "manifest field `entry` must be a normal relative path below the manifest directory")]
           [else
-            (ResultCompilerPkgManifest.Ok
-              (CompilerPkgManifest name version kind final-entry deps link))]))]
-    [(reader.SexprView.Cons field rest)
+            (Ok (CompilerPkgManifest name version kind final-entry deps link))]))]
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (cond
                 [(string.eq (compiler-load-symbol-text fname) "dependencies")
                   (if has-deps
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `dependencies`")
+                    (Err "duplicate manifest field `dependencies`")
                     (match (compiler-load-manifest-parse-deps ftail)
-                      [(ResultCompilerPkgDeps.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgDeps.Ok parsed-deps)
+                      [(Err m) (Err m)]
+                      [(Ok parsed-deps)
                         (compiler-load-manifest-fields
                           rest
                           name
@@ -15188,12 +14836,10 @@
                           link)]))]
                 [(string.eq (compiler-load-symbol-text fname) "link")
                   (if has-link
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `link`")
+                    (Err "duplicate manifest field `link`")
                     (match (compiler-load-manifest-parse-link ftail)
-                      [(ResultCompilerPkgLink.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgLink.Ok parsed-link)
+                      [(Err m) (Err m)]
+                      [(Ok parsed-link)
                         (compiler-load-manifest-fields
                           rest
                           name
@@ -15210,14 +14856,12 @@
                           parsed-link)]))]
                 [(string.eq (compiler-load-symbol-text fname) "name")
                   (if has-name
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `name`")
+                    (Err "duplicate manifest field `name`")
                     (match (compiler-load-manifest-string-value
                       ftail
                       (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
+                      [(Err m) (Err m)]
+                      [(Ok val)
                         (compiler-load-manifest-fields
                           rest
                           val
@@ -15234,14 +14878,12 @@
                           link)]))]
                 [(string.eq (compiler-load-symbol-text fname) "version")
                   (if has-version
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `version`")
+                    (Err "duplicate manifest field `version`")
                     (match (compiler-load-manifest-string-value
                       ftail
                       (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
+                      [(Err m) (Err m)]
+                      [(Ok val)
                         (compiler-load-manifest-fields
                           rest
                           name
@@ -15258,12 +14900,10 @@
                           link)]))]
                 [(string.eq (compiler-load-symbol-text fname) "kind")
                   (if has-kind
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `kind`")
+                    (Err "duplicate manifest field `kind`")
                     (match (compiler-load-manifest-kind-value ftail)
-                      [(ResultCompilerPkgKind.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultCompilerPkgKind.Ok val)
+                      [(Err m) (Err m)]
+                      [(Ok val)
                         (compiler-load-manifest-fields
                           rest
                           name
@@ -15280,14 +14920,12 @@
                           link)]))]
                 [(string.eq (compiler-load-symbol-text fname) "entry")
                   (if has-entry
-                    (ResultCompilerPkgManifest.Err
-                      "duplicate manifest field `entry`")
+                    (Err "duplicate manifest field `entry`")
                     (match (compiler-load-manifest-string-value
                       ftail
                       (compiler-load-symbol-text fname))
-                      [(ResultPkgString.Err m)
-                        (ResultCompilerPkgManifest.Err m)]
-                      [(ResultPkgString.Ok val)
+                      [(Err m) (Err m)]
+                      [(Ok val)
                         (compiler-load-manifest-fields
                           rest
                           name
@@ -15303,27 +14941,21 @@
                           has-link
                           link)]))]
                 [else
-                  (ResultCompilerPkgManifest.Err
+                  (Err
                     (str_cat.str-cat
                       "unknown manifest field `"
                       (compiler-load-symbol-text fname)
                       "`"))])]
-            [_
-              (ResultCompilerPkgManifest.Err
-                "package fields must start with a field name")])]
-        [_
-          (ResultCompilerPkgManifest.Err
-            "package fields must be lists like `(name \"...\")`")])]
-    [_
-      (ResultCompilerPkgManifest.Err
-        "package fields must be lists like `(name \"...\")`")]))
+            [_ (Err "package fields must start with a field name")])]
+        [_ (Err "package fields must be lists like `(name \"...\")`")])]
+    [_ (Err "package fields must be lists like `(name \"...\")`")]))
 
 ;: Parse the top-level `(package ...)` form.
 (define (compiler-load-manifest-from-form [form : reader.SpannedSexpr]) : ResultCompilerPkgManifest
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym s)
+        [(Sym s)
           (if (string.eq (compiler-load-symbol-text s) "package")
             (compiler-load-manifest-fields
               rest
@@ -15339,27 +14971,26 @@
               (compiler-pkg-deps-empty)
               false
               (compiler-pkg-link-empty))
-            (ResultCompilerPkgManifest.Err
+            (Err
               (str_cat.str-cat
                 "expected `package` form, got `"
                 (compiler-load-symbol-text s)
                 "`")))]
-        [_ (ResultCompilerPkgManifest.Err "manifest must start with `package`")])]
-    [_
-      (ResultCompilerPkgManifest.Err "manifest must be a `(package ...)` form")]))
+        [_ (Err "manifest must start with `package`")])]
+    [_ (Err "manifest must be a `(package ...)` form")]))
 
 (define (compiler-load-manifest-fields-have?
   [fields : reader.SpannedSexpr]
   [target : (& target str)]) : bool
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil) false]
-    [(reader.SexprView.Cons field rest)
+    [(Nil) false]
+    [(Cons field rest)
       (let
         [tail-has : bool (compiler-load-manifest-fields-have? rest target)]
         (match (reader.sexpr-view field)
-          [(reader.SexprView.Cons fhead _)
+          [(Cons fhead _)
             (match (reader.sexpr-view fhead)
-              [(reader.SexprView.Sym name)
+              [(Sym name)
                 (or
                   (string.eq (compiler-load-symbol-text name) target)
                   tail-has)]
@@ -15371,9 +15002,9 @@
   [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym s)
+        [(Sym s)
           (if (string.eq (compiler-load-symbol-text s) "package")
             (compiler-load-manifest-fields-have? rest target)
             false)]
@@ -15400,15 +15031,13 @@
       (io.file-exists?
         (compiler-load-manifest-convention-path manifest-path "src/lib.tl"))]
     (cond
-      [(and has-main (not has-lib))
-        (ResultCompilerPkgKind.Ok (CompilerPkgKindBin))]
-      [(and has-lib (not has-main))
-        (ResultCompilerPkgKind.Ok (CompilerPkgKindLib))]
+      [(and has-main (not has-lib)) (Ok (CompilerPkgKindBin))]
+      [(and has-lib (not has-main)) (Ok (CompilerPkgKindLib))]
       [(and has-main has-lib)
-        (ResultCompilerPkgKind.Err
+        (Err
           "manifest omits `kind` and `entry`, but both `src/main.tl` and `src/lib.tl` exist; add explicit `kind` or `entry`")]
       [else
-        (ResultCompilerPkgKind.Err
+        (Err
           "manifest omits `kind` and `entry`, but neither `src/main.tl` nor `src/lib.tl` exists; add `kind` and `entry` or create a conventional entry file")])))
 
 ;: Preserve the legacy `manifest: ...` syntax-error message while attaching the
@@ -15437,10 +15066,9 @@
   [entries : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
   (match (reader.spanned-sexpr-view entries)
-    [(reader.SpannedSexprView.Cons entry _ _)
+    [(Cons entry _ _)
       (match (reader.spanned-sexpr-view entry)
-        [(reader.SpannedSexprView.Cons alias _ _)
-          (reader.spanned-sexpr-span alias)]
+        [(Cons alias _ _) (reader.spanned-sexpr-span alias)]
         [_ fallback])]
     [_ fallback]))
 
@@ -15448,11 +15076,11 @@
   [fields : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
   (match (reader.spanned-sexpr-view fields)
-    [(reader.SpannedSexprView.Cons field rest _)
+    [(Cons field rest _)
       (match (reader.spanned-sexpr-view field)
-        [(reader.SpannedSexprView.Cons field-name entries _)
+        [(Cons field-name entries _)
           (match (reader.spanned-sexpr-view field-name)
-            [(reader.SpannedSexprView.Sym name _)
+            [(Sym name _)
               (if (string.eq (compiler-load-symbol-text name) "dependencies")
                 (compiler-load-manifest-first-dependency-entry-span
                   entries
@@ -15470,7 +15098,7 @@
   (let
     [fallback : token.SourceSpan (reader.spanned-sexpr-span (clone form))]
     (match (reader.spanned-sexpr-view form)
-      [(reader.SpannedSexprView.Cons _ fields _)
+      [(Cons _ fields _)
         (compiler-load-manifest-first-dependency-field-span fields fallback)]
       [_ fallback])))
 
@@ -15481,10 +15109,9 @@
   [form : reader.SpannedSexpr]
   [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-pkg-manifest-first-library-dependency (& manifest))
-    [(CompilerPkgMaybeDependency.NoDependency)
-      (ResultCompilerPkgManifestDiagnostic.Ok manifest)]
-    [(CompilerPkgMaybeDependency.Dependency dep)
-      (ResultCompilerPkgManifestDiagnostic.Err
+    [(NoDependency) (Ok manifest)]
+    [(Dependency dep)
+      (Err
         (box
           (cdiag.compiler-diagnostic-from-span
             path
@@ -15499,13 +15126,13 @@
     [raw-form : reader.SpannedSexpr (ast.ast-place-shared-view form)]
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files (string.copy path))
-        [(ResultCompilerPkgKind.Ok kind)
+        [(Ok kind)
           (compiler-load-manifest-validate-library-dependencies
             path
             form
             (compiler-load-manifest-with-kind manifest kind))]
-        [(ResultCompilerPkgKind.Err message)
-          (ResultCompilerPkgManifestDiagnostic.Err
+        [(Err message)
+          (Err
             (box
               (compiler-load-manifest-validation-diagnostic path form message)))])
       (compiler-load-manifest-validate-library-dependencies path form manifest))))
@@ -15514,20 +15141,20 @@
   [path : String]
   [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-load-manifest-from-form (ast.ast-place-shared-view form))
-    [(ResultCompilerPkgManifest.Ok manifest)
+    [(Ok manifest)
       (compiler-load-manifest-validate-library-dependencies path form manifest)]
-    [(ResultCompilerPkgManifest.Err message)
-      (ResultCompilerPkgManifestDiagnostic.Err
+    [(Err message)
+      (Err
         (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 (define (compiler-load-parse-manifest-form-diagnostic-infer-kind
   [path : String]
   [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-load-manifest-from-form (ast.ast-place-shared-view form))
-    [(ResultCompilerPkgManifest.Ok manifest)
+    [(Ok manifest)
       (compiler-load-manifest-apply-kind-inference path form manifest)]
-    [(ResultCompilerPkgManifest.Err message)
-      (ResultCompilerPkgManifestDiagnostic.Err
+    [(Err message)
+      (Err
         (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 ;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
@@ -15539,16 +15166,14 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
       (match (lexer.spanned-result source)
-        [(lexer.ResultSpannedTokens.Err err)
-          (ResultCompilerPkgManifestDiagnostic.Err
-            (box (compiler-load-manifest-source-error-diagnostic path err)))]
-        [(lexer.ResultSpannedTokens.Ok toks)
+        [(Err err)
+          (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
+        [(Ok toks)
           (match (reader.spanned-result toks)
-            [(reader.ResultSpannedSexpr.Err err)
-              (ResultCompilerPkgManifestDiagnostic.Err
+            [(Err err)
+              (Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]
-            [(reader.ResultSpannedSexpr.Ok form)
-              (compiler-load-parse-manifest-form-diagnostic path form)])])]
+            [(Ok form) (compiler-load-parse-manifest-form-diagnostic path form)])])]
     (begin
       (reader.sp-node-pool-truncate! mark)
       result)))
@@ -15560,15 +15185,14 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
       (match (lexer.spanned-result source)
-        [(lexer.ResultSpannedTokens.Err err)
-          (ResultCompilerPkgManifestDiagnostic.Err
-            (box (compiler-load-manifest-source-error-diagnostic path err)))]
-        [(lexer.ResultSpannedTokens.Ok toks)
+        [(Err err)
+          (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
+        [(Ok toks)
           (match (reader.spanned-result toks)
-            [(reader.ResultSpannedSexpr.Err err)
-              (ResultCompilerPkgManifestDiagnostic.Err
+            [(Err err)
+              (Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]
-            [(reader.ResultSpannedSexpr.Ok form)
+            [(Ok form)
               (compiler-load-parse-manifest-form-diagnostic-infer-kind
                 path
                 form)])])]
@@ -15625,7 +15249,7 @@
     [slash : i64
       (compiler-load-slash-index-from body 0 (string.string-length body))]
     (if (< slash 0)
-      (ResultPkgResolve.Err
+      (Err
         (str_cat.str-cat
           "compiler-load: pkg import missing '/' after alias: "
           import-path))
@@ -15637,13 +15261,13 @@
             (+ slash 1)
             (- (string.string-length body) (+ slash 1)))]
         (if (= (string.string-length alias) 0)
-          (ResultPkgResolve.Err
+          (Err
             (str_cat.str-cat
               "compiler-load: pkg import has empty alias: "
               import-path))
           (match (compiler-load-pkg-dep-lookup deps (string.copy alias))
             [(CompilerLoadNoPath)
-              (ResultPkgResolve.Err
+              (Err
                 (str_cat.str-cat
                   "compiler-load: unknown package alias '"
                   alias
@@ -15651,7 +15275,7 @@
                   import-path))]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? (string.copy dep-path))
-                (ResultPkgResolve.Err
+                (Err
                   (str_cat.str-cat
                     "compiler-load: GitHub dependency '"
                     alias
@@ -15660,11 +15284,11 @@
                 (let
                   [norm-rest : String (compiler-load-normalize-path rest)]
                   (if (compiler-load-path-escapes? (string.copy norm-rest))
-                    (ResultPkgResolve.Err
+                    (Err
                       (str_cat.str-cat
                         "compiler-load: pkg import escapes package root: "
                         import-path))
-                    (ResultPkgResolve.Ok
+                    (Ok
                       (compiler-load-normalize-path
                         (compiler-load-join-root-path
                           (compiler-load-join-root-path manifest-dir dep-path)
@@ -15715,14 +15339,13 @@
   [importer-path : String]
   [import-path : String]) : ResultPkgResolve
   (match (compiler-load-discover-manifest importer-path)
-    [(CompilerLoadNoPath) (ResultPkgResolve.Ok import-path)]
+    [(CompilerLoadNoPath) (Ok import-path)]
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic
         (string.copy manifest-path)
         (compiler-load-session-read-source-text manifest-path))
-        [(ResultCompilerPkgManifestDiagnostic.Err _)
-          (ResultPkgResolve.Ok import-path)]
-        [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+        [(Err _) (Ok import-path)]
+        [(Ok manifest)
           (compiler-load-resolve-pkg-import
             import-path
             (compiler-load-dirname manifest-path)

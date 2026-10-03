@@ -90,7 +90,6 @@
       (comptime.expr-var (comptime.string-append prefix-text "-truncate"))]
     [operation-mask : i64 0]
     [operation-index : i64 0]
-    [decls : ExprList (comptime.expr-list-empty)]
     [ctor : Expr (comptime.expr-var (type-nominal-name stack-type))]
     (while (< operation-index (comptime.expr-list-length operations))
       (let
@@ -125,52 +124,117 @@
       (comptime-error
         "compiler-scoped-stack-operations: expected at least one operation")
       unit)
-    (if (!= (bit-and operation-mask 1024) 0)
-      (set!
-        decls
+    `(begin
+      ,@(if (!= (bit-and operation-mask 1) 0)
         (comptime.expr-list-cons
-          `(define (,release-name [s : (& s ,stack-type)] [mark : i64]) : unit
-            (if (and
-              (> (array-length s.slots) 0)
-              (= (array-ref s.top 0) s.len)
-              (>= mark 0)
-              (<= mark s.len))
-              (set! (array-ref s.top 0) mark)
-              unit))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 512) 0)
-      (set!
-        decls
+          `(define ,empty-slots : (__tl_dyn-array ,T)
+            (__tl_make-array ,T 0))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 1) 0)
         (comptime.expr-list-cons
-          `(define (,truncate-name [s : ,stack-type] [mark : i64]) : ,stack-type
+          `(define ,empty-top : (__tl_dyn-array i64)
+            (__tl_make-array i64 1))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 1) 0)
+        (comptime.expr-list-cons
+          `(define (,empty-name) : ,stack-type
+            (,ctor
+              (unsafe
+                (ptr-read (ptr-addr-of ,empty-slots)))
+              0
+              (unsafe
+                (ptr-read (ptr-addr-of ,empty-top)))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 2) 0)
+        (comptime.expr-list-cons
+          `(define (,with-capacity-name [capacity : i64]) : ,stack-type
             (let
-              [n : i64
-                (if (< mark 0)
+              [top : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+              (begin
+                (set! (array-ref top 0) 0)
+                (,ctor
+                  (__tl_make-array
+                    ,T
+                    (if (< capacity 1)
+                      1
+                      capacity))
                   0
-                  (if (> mark s.len)
-                    s.len
-                    mark))]
+                  top))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 4) 0)
+        (comptime.expr-list-cons
+          `(define (,len-name [s : (& s ,stack-type)]) : i64
+            s.len)
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 8) 0)
+        (comptime.expr-list-cons
+          `(define (,emptiness-name [s : (& s ,stack-type)]) : bool
+            (= s.len 0))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 16) 0)
+        (comptime.expr-list-cons
+          `(define (,last-name [s : (& s ,stack-type)]) : ,T
+            (unsafe
+              (ptr-read (ptr-offset (__tl_array-data s.slots) (- s.len 1)))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 32) 0)
+        (comptime.expr-list-cons
+          `(define (,last-ref-name [s : (& s ,stack-type)]) : (& s ,T)
+            (& (array-ref s.slots (- s.len 1))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 64) 0)
+        (comptime.expr-list-cons
+          `(define (,prefix-name [s : (& s ,stack-type)] [count : i64]) : ,stack-type
+            (,ctor
+              (compiler_owned_view.compiler-owned-reference-shared-view
+                (& s.slots))
+              (if (< count 0)
+                0
+                (if (> count s.len)
+                  s.len
+                  count))
+              (compiler_owned_view.compiler-owned-reference-shared-view
+                (& s.top))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 128) 0)
+        (comptime.expr-list-cons
+          `(define (,copy-name
+            [dst : (&mut dst (__tl_dyn-array ,T))]
+            [src : (& src (__tl_dyn-array ,T))]
+            [count : i64]) : unit
+            (let
+              [index : i64 0]
+              (while (< index count)
+                (begin
+                  (set! (array-ref dst index) (array-ref src index))
+                  (set! index (+ index 1))))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 128) 0)
+        (comptime.expr-list-cons
+          `(define (,push-name [s : ,stack-type] [value : ,T]) : ,stack-type
+            (let
+              [n : i64 s.len]
               [slots : (__tl_dyn-array ,T) s.slots]
               [top : (__tl_dyn-array i64) s.top]
-              (begin
-                (if (> (array-length slots) 0)
-                  (set! (array-ref top 0) n)
-                  unit)
-                (,ctor slots n top))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 256) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,mark-name [s : (& s ,stack-type)]) : i64
-            s.len)
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 128) 0)
-      (set!
-        decls
+              (if (and (< n (array-length slots)) (= (array-ref top 0) n))
+                (begin
+                  (set! (array-ref slots n) value)
+                  (set! (array-ref top 0) (+ n 1))
+                  (,ctor slots (+ n 1) top))
+                (,push-copy-name slots n value))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 128) 0)
         (comptime.expr-list-cons
           `(define (,push-copy-name
             [slots : (__tl_dyn-array ,T)]
@@ -189,139 +253,42 @@
                 (set! (array-ref fresh n) value)
                 (set! (array-ref fresh-top 0) (+ n 1))
                 (,ctor fresh (+ n 1) fresh-top))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 128) 0)
-      (set!
-        decls
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 256) 0)
         (comptime.expr-list-cons
-          `(define (,push-name [s : ,stack-type] [value : ,T]) : ,stack-type
+          `(define (,mark-name [s : (& s ,stack-type)]) : i64
+            s.len)
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 512) 0)
+        (comptime.expr-list-cons
+          `(define (,truncate-name [s : ,stack-type] [mark : i64]) : ,stack-type
             (let
-              [n : i64 s.len]
+              [n : i64
+                (if (< mark 0)
+                  0
+                  (if (> mark s.len)
+                    s.len
+                    mark))]
               [slots : (__tl_dyn-array ,T) s.slots]
               [top : (__tl_dyn-array i64) s.top]
-              (if (and (< n (array-length slots)) (= (array-ref top 0) n))
-                (begin
-                  (set! (array-ref slots n) value)
-                  (set! (array-ref top 0) (+ n 1))
-                  (,ctor slots (+ n 1) top))
-                (,push-copy-name slots n value))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 128) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,copy-name
-            [dst : (&mut dst (__tl_dyn-array ,T))]
-            [src : (& src (__tl_dyn-array ,T))]
-            [count : i64]) : unit
-            (let
-              [index : i64 0]
-              (while (< index count)
-                (begin
-                  (set! (array-ref dst index) (array-ref src index))
-                  (set! index (+ index 1))))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 64) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,prefix-name [s : (& s ,stack-type)] [count : i64]) : ,stack-type
-            (,ctor
-              (compiler_owned_view.compiler-owned-reference-shared-view
-                (& s.slots))
-              (if (< count 0)
-                0
-                (if (> count s.len)
-                  s.len
-                  count))
-              (compiler_owned_view.compiler-owned-reference-shared-view
-                (& s.top))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 32) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,last-ref-name [s : (& s ,stack-type)]) : (& s ,T)
-            (& (array-ref s.slots (- s.len 1))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 16) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,last-name [s : (& s ,stack-type)]) : ,T
-            (unsafe
-              (ptr-read (ptr-offset (__tl_array-data s.slots) (- s.len 1)))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 8) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,emptiness-name [s : (& s ,stack-type)]) : bool
-            (= s.len 0))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 4) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,len-name [s : (& s ,stack-type)]) : i64
-            s.len)
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 2) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define (,with-capacity-name [capacity : i64]) : ,stack-type
-            (let
-              [top : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               (begin
-                (set! (array-ref top 0) 0)
-                (,ctor
-                  (__tl_make-array
-                    ,T
-                    (if (< capacity 1)
-                      1
-                      capacity))
-                  0
-                  top))))
-          decls))
-      unit)
-    ;; Every empty snapshot shares a zero-capacity lineage; push never reads its top.
-    (if (!= (bit-and operation-mask 1) 0)
-      (set!
-        decls
+                (if (> (array-length slots) 0)
+                  (set! (array-ref top 0) n)
+                  unit)
+                (,ctor slots n top))))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty))
+      ,@(if (!= (bit-and operation-mask 1024) 0)
         (comptime.expr-list-cons
-          `(define (,empty-name) : ,stack-type
-            (,ctor
-              (unsafe
-                (ptr-read (ptr-addr-of ,empty-slots)))
-              0
-              (unsafe
-                (ptr-read (ptr-addr-of ,empty-top)))))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 1) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define ,empty-top : (__tl_dyn-array i64)
-            (__tl_make-array i64 1))
-          decls))
-      unit)
-    (if (!= (bit-and operation-mask 1) 0)
-      (set!
-        decls
-        (comptime.expr-list-cons
-          `(define ,empty-slots : (__tl_dyn-array ,T)
-            (__tl_make-array ,T 0))
-          decls))
-      unit)
-    `(begin
-      ,@decls)))
+          `(define (,release-name [s : (& s ,stack-type)] [mark : i64]) : unit
+            (if (and
+              (> (array-length s.slots) 0)
+              (= (array-ref s.top 0) s.len)
+              (>= mark 0)
+              (<= mark s.len))
+              (set! (array-ref s.top 0) mark)
+              unit))
+          (comptime.expr-list-empty))
+        (comptime.expr-list-empty)))))

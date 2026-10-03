@@ -1624,7 +1624,7 @@
     [rewritten : ir.CompilerIrInstrSeq
       (ot.opt-test-fold-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-const-env-empty)
         (smoke-noop-int-cast-mov-instrs))]
     (unless (= (ot.opt-count-cast-instr-seq rewritten) 3) (return 1))
     (unless (smoke-mov-dst-var-type? rewritten 50 10 (Char)) (return 2))
@@ -1730,37 +1730,37 @@
     [object-array : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-pair (Var 1) (I64 1) (I64)))]
     [object-string : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-pair (Var 1) (I64 8) (U8)))]
     [object-mismatch : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-pair (Var 2) (I64 1) (I64)))]
     [object-call : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-call-barrier))]
     [object-store : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-store-barrier (Var 10)))]
     [object-element-store : ir.CompilerIrInstrSeq
       (ot.opt-test-bounds-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (Nil)
+        (opt.opt-bounds-facts-empty)
         (Empty)
         (smoke-bounds-object-store-barrier (Var 99)))]
     (cond

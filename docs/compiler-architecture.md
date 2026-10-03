@@ -615,6 +615,20 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Optimizer facts, constant/copy environments and ordered load/call tables use
+`compiler_scoped_stack.tl` snapshots: dense slots, a live length and a shared
+lineage top. Push mutates only a snapshot at that top with spare capacity;
+otherwise it copies the live prefix. A retained snapshot's entries stay
+immutable. Prefix only reads; truncate may rewind the top only after every
+longer snapshot has died. Release rewinds only the current top, leaving copied
+or superseded lineages untouched. Block-local scratch stacks survive between
+blocks after their facts die. GVN uses one dense node vector with bucket links;
+scope exit restores bucket heads in reverse insertion order before dropping
+nodes. Traversal order and existing lookup/intersection bounds remain intact.
+Each family selects its used operations; the generator includes push's storage
+helpers and empty's globals automatically. Snapshot, release, boundary and
+selection tests live in `compiler_scoped_stack_smoke.tl` and the safety corpus.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before

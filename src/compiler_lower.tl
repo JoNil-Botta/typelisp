@@ -548,6 +548,8 @@
   (cfg (any compile-profile test) 38 37))
 (define pointer-proof-request : i64
   (cfg (any compile-profile test) 39 38))
+(define debug-types : i64
+  (cfg (any compile-profile test) 40 39))
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -704,7 +706,7 @@
   [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
     [cells : (__tl_dyn-array i64)
-      (__tl_make-array i64 (cfg (any compile-profile test) 40 39))]
+      (__tl_make-array i64 (cfg (any compile-profile test) 41 40))]
     [address : i64
       (cast
         (unsafe
@@ -872,6 +874,9 @@
         (compiler-lower-state-cell
           pointer_proof.PointerProofRequest
           pointer_proof.PointerProofRequest.Disabled))
+      (set!
+        (array-ref cells debug-types)
+        (compiler-lower-state-cell LowerDebugTypes (lower-debug-types-empty)))
       state)))
 
 (define (compiler-lower-state-new-with-intern-state
@@ -42205,6 +42210,11 @@
                   (let
                     [binding-ty : ast.AstType
                       (lower-let-binding-type ctx maybe-ty init-ty)]
+                    [_debug-type : unit
+                      (lower-debug-type-root!
+                        (lower-state-owner init-state)
+                        ctx
+                        (lower-global-shared-view binding-ty))]
                     [binding-ir-ty : ast.AstType
                       (lower-one-word-register-storage-type ctx binding-ty)]
                     (match (lower-state-alloc-var init-state)
@@ -66565,6 +66575,12 @@
           (lower-global-shared-view params)
           (lower-global-shared-view ret-ty)
           (lower-global-shared-view body))]
+      [_debug-types : unit
+        (lower-debug-function-roots!
+          (lower-state-owner state)
+          ctx
+          (lower-global-shared-view params)
+          (lower-global-shared-view ret-ty))]
       (match ret-class
         [(Unsupported message)
           (Err (box (lower-diagnostic-at-expr ctx body message)))]
@@ -69867,6 +69883,749 @@
                 [(Unsafe _) (set! cur-decls rest)]))]))
       result)))
 
+;; --- debug type graph (#8237) ----------------------------------------------
+;; Job-owned under debug info. Every binding type lowering meets is interned
+;; into `graph` at once, in the job's `arena`, so nothing refers to a
+;; function's scratch storage. `keys` runs parallel to the graph's nodes and
+;; holds each node's dedup key; `index` maps a key's hash, linearly probed, to
+;; its node. A nominal node still being built has size -1.
+;; Under `--verify-ir`, `error` holds the first layout disagreement found.
+(defstruct LowerDebugTypes
+  (arena i64)
+  (keys (__tl_dyn-array String))
+  (index lower_i64_i64_map.Map)
+  (error String)
+  (graph ir.CompilerDebugTypeGraph))
+
+(define (lower-debug-types-empty) : LowerDebugTypes
+  (LowerDebugTypes
+    (arena.tl_arena_current)
+    (__tl_make-array String 0)
+    (lower_i64_i64_map.with-capacity 64)
+    ""
+    (ir.compiler-debug-type-graph-empty)))
+
+;; Intern TY into the debug type graph; a no-op without debug info.
+(define (lower-debug-type-root!
+  [owner : CompilerLowerState]
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : unit
+  (when
+    (ir.compiler-debug-info-enabled?)
+    (let
+      [types : LowerDebugTypes
+        (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+      (begin
+        (in-arena
+          (arena.Arena types.arena)
+          (lower-debug-type-id! ctx (&mut types) ty))
+        (compiler-lower-state-write! owner LowerDebugTypes debug-types types)))))
+
+;; Record a function's parameter and result types as debug type roots.
+(define (lower-debug-function-roots!
+  [owner : CompilerLowerState]
+  [ctx : tc_core.TcContext]
+  [params : ast.AstParamList]
+  [ret : ast.AstType]) : unit
+  (when
+    (ir.compiler-debug-info-enabled?)
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index (ast.ast-param-list-len (& params)))
+          (begin
+            (match (ast.ast-param-list-get
+              (& params)
+              index
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param _ ty _)
+                (lower-debug-type-root! owner ctx ty)])
+            (set! index (+ index 1))))
+        (lower-debug-type-root! owner ctx ret)))))
+
+(define (compiler-lower-state-debug-type-graph [owner : CompilerLowerState]) : ir.CompilerDebugTypeGraph
+  (let
+    [types : LowerDebugTypes
+      (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+    types.graph))
+
+(define (lower-debug-type-resolve [ctx : tc_core.TcContext] [ty : ast.AstType]) : ast.AstType
+  (tc_core.tc-type-strip-invalidate
+    (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))
+
+(define (lower-debug-type-layout [ctx : tc_core.TcContext] [ty : ast.AstType]) : tc_core.TcLayoutInfo
+  (match (tc_core.tc-inline-aggregate-type-layout ctx ty)
+    [(tc_core.ResultTcLayoutInfo.Ok info) info]
+    [(tc_core.ResultTcLayoutInfo.Err _) (tc_core.TcLayoutInfo.TcLayoutInfo 0 1)]))
+
+(define (lower-debug-node
+  [kind : i64]
+  [name : String]
+  [size : i64]
+  [align : i64]
+  [target : i64]
+  [count : i64]) : ir.CompilerDebugTypeNode
+  (ir.CompilerDebugTypeNode kind name size align target count 0 0 0))
+
+;; The node for KEY, or -1. On a miss, the hash slot where KEY would go is the
+;; first empty one probed.
+(define (lower-debug-type-slot
+  [types : (& types LowerDebugTypes)]
+  [key : (& key str)]) : i64
+  (let
+    [slot : i64 (stdlib.hash.string-key key)]
+    [found : bool false]
+    (begin
+      (while (not found)
+        (let
+          [id : i64 (lower_i64_i64_map.get-value-or (& types.index) slot -1)]
+          (if (or (< id 0) (string.eq (& (array-ref types.keys id)) key))
+            (set! found true)
+            (set! slot (+ slot 1)))))
+      slot)))
+
+(define (lower-debug-type-find
+  [types : (& types LowerDebugTypes)]
+  [key : (& key str)]) : i64
+  (lower_i64_i64_map.get-value-or
+    (& types.index)
+    (lower-debug-type-slot types key)
+    -1))
+
+;; Append NODE under KEY and return its id.
+(define (lower-debug-type-push!
+  [types : (&mut types LowerDebugTypes)]
+  [key : String]
+  [node : ir.CompilerDebugTypeNode]) : i64
+  (let
+    [id : i64 (ir.compiler-debug-type-graph-push-node! (&mut types.graph) node)]
+    (begin
+      (when
+        (>= id (array-length types.keys))
+        (let
+          [keys : (__tl_dyn-array String)
+            (__tl_make-array String (+ 16 (* 2 id)))]
+          [index : i64 0]
+          (begin
+            (while (< index id)
+              (begin
+                (set!
+                  (array-ref keys index)
+                  (owned_view.compiler-owned-array-element-shared-view
+                    types.keys
+                    index))
+                (set! index (+ index 1))))
+            (set! types.keys keys))))
+      (lower_i64_i64_map.insert-ref!
+        (&mut types.index)
+        (lower-debug-type-slot types (& key))
+        id)
+      (set! (array-ref types.keys id) key)
+      id)))
+
+(define (lower-debug-member!
+  [types : (&mut types LowerDebugTypes)]
+  [variant : i64]
+  [name : String]
+  [name-id : i64]
+  [type-id : i64]
+  [offset : i64]) : unit
+  (ir.compiler-debug-type-graph-push-member!
+    (&mut types.graph)
+    (ir.CompilerDebugTypeMember variant name name-id type-id offset)))
+
+;; The node id of TY, building it and everything it reaches on first use.
+(define (lower-debug-type-id!
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [raw : ast.AstType]) : i64
+  (let
+    [ty : ast.AstType (lower-debug-type-resolve ctx raw)]
+    (match (lower-global-shared-view ty)
+      [(ast.AstType.Struct name-id)
+        (lower-debug-nominal-id! ctx types name-id ty)]
+      [(ast.AstType.StructArgs name-id _)
+        (lower-debug-nominal-id! ctx types name-id ty)]
+      [(ast.AstType.Enum name-id)
+        (lower-debug-nominal-id! ctx types name-id ty)]
+      [(ast.AstType.EnumArgs name-id _)
+        (lower-debug-nominal-id! ctx types name-id ty)]
+      [_
+        (let
+          [key : String (tc_core.tc-type-render (lower-global-shared-view ty))]
+          [found : i64 (lower-debug-type-find types (& key))]
+          (if (>= found 0)
+            found
+            (lower-debug-structural-id! ctx types ty key)))])))
+
+(define (lower-debug-structural-id!
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [ty : ast.AstType]
+  [key : String]) : i64
+  (let
+    [layout : tc_core.TcLayoutInfo
+      (lower-debug-type-layout ctx (lower-global-shared-view ty))]
+    [size : i64 (tc_core.tc-layout-info-size layout)]
+    [align : i64 (tc_core.tc-layout-info-align layout)]
+    [id : i64
+      (lower-debug-type-push!
+        types
+        (string.copy (& key))
+        (lower-debug-node ir.compiler-debug-type-opaque key size align -1 -1))]
+    (begin
+      (ir.compiler-debug-type-graph-set-node!
+        (&mut types.graph)
+        id
+        (lower-debug-structural-node ctx types ty size align))
+      id)))
+
+(define (lower-debug-structural-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [ty : ast.AstType]
+  [size : i64]
+  [align : i64]) : ir.CompilerDebugTypeNode
+  (let
+    [name : String (tc_core.tc-type-render (lower-global-shared-view ty))]
+    (match ty
+      [(ast.AstType.String)
+        (lower-debug-node
+          ir.compiler-debug-type-handle
+          name
+          8
+          8
+          (lower-debug-type-id! ctx types (ast.AstType.U8))
+          -1)]
+      [(ast.AstType.Str)
+        (lower-debug-node
+          ir.compiler-debug-type-handle
+          name
+          8
+          8
+          (lower-debug-type-id! ctx types (ast.AstType.U8))
+          -1)]
+      [(ast.AstType.Tuple elems)
+        (lower-debug-tuple-node ctx types name (deref elems) size align)]
+      [(ast.AstType.Array elem count)
+        (lower-debug-node
+          ir.compiler-debug-type-array
+          name
+          size
+          align
+          (lower-debug-type-id!
+            ctx
+            types
+            (tc_core.tc-context-type-get ctx elem))
+          count)]
+      [(ast.AstType.DynArray elem)
+        (lower-debug-node
+          ir.compiler-debug-type-handle
+          name
+          8
+          8
+          (lower-debug-type-id!
+            ctx
+            types
+            (tc_core.tc-context-type-get ctx elem))
+          -1)]
+      [(ast.AstType.Box elem) (lower-debug-pointer-node ctx types name elem)]
+      [(ast.AstType.Ptr elem) (lower-debug-pointer-node ctx types name elem)]
+      [(ast.AstType.MutPtr elem) (lower-debug-pointer-node ctx types name elem)]
+      [(ast.AstType.Ref _ inner)
+        (lower-debug-reference-node ctx types name inner)]
+      [(ast.AstType.MutRef _ inner)
+        (lower-debug-reference-node ctx types name inner)]
+      [(ast.AstType.Func _ _)
+        (lower-debug-node ir.compiler-debug-type-function name 8 8 -1 -1)]
+      [(ast.AstType.CFunc _ _)
+        (lower-debug-node ir.compiler-debug-type-function name 8 8 -1 -1)]
+      [(ast.AstType.Expr)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [(ast.AstType.ExprList)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [(ast.AstType.Var _)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [(ast.AstType.VarArgs _ _)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [(ast.AstType.Slice _)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [(ast.AstType.Bytes)
+        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
+      [_ (lower-debug-node ir.compiler-debug-type-scalar name size align -1 -1)])))
+
+(define (lower-debug-pointer-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name : String]
+  [elem : i64]) : ir.CompilerDebugTypeNode
+  (lower-debug-node
+    ir.compiler-debug-type-pointer
+    name
+    8
+    8
+    (lower-debug-type-id! ctx types (tc_core.tc-context-type-get ctx elem))
+    -1))
+
+;; A borrow of str or a dynamic array reuses the referent's handle; a borrow of
+;; a Slice or bytes is a {data, len} view; any other borrow addresses its
+;; referent's storage.
+(define (lower-debug-reference-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name : String]
+  [inner : i64]) : ir.CompilerDebugTypeNode
+  (let
+    [referent : ast.AstType
+      (lower-debug-type-resolve ctx (tc_core.tc-context-type-get ctx inner))]
+    (match (lower-global-shared-view referent)
+      [(ast.AstType.Str)
+        (lower-debug-node
+          ir.compiler-debug-type-handle
+          name
+          8
+          8
+          (lower-debug-type-id! ctx types (ast.AstType.U8))
+          -1)]
+      [(ast.AstType.DynArray elem)
+        (lower-debug-node
+          ir.compiler-debug-type-handle
+          name
+          8
+          8
+          (lower-debug-type-id!
+            ctx
+            types
+            (tc_core.tc-context-type-get ctx elem))
+          -1)]
+      [(ast.AstType.Slice elem)
+        (lower-debug-node
+          ir.compiler-debug-type-view
+          name
+          16
+          8
+          (lower-debug-type-id!
+            ctx
+            types
+            (tc_core.tc-context-type-get ctx elem))
+          -1)]
+      [(ast.AstType.Bytes)
+        (lower-debug-node
+          ir.compiler-debug-type-view
+          name
+          16
+          8
+          (lower-debug-type-id! ctx types (ast.AstType.U8))
+          -1)]
+      [_
+        (lower-debug-node
+          ir.compiler-debug-type-pointer
+          name
+          8
+          8
+          (lower-debug-type-id! ctx types referent)
+          -1)])))
+
+;; Tuple elements sit where lowering addresses them: each aligned after the
+;; previous one.
+(define (lower-debug-tuple-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name : String]
+  [elems : ast.AstTypeList]
+  [size : i64]
+  [align : i64]) : ir.CompilerDebugTypeNode
+  (let
+    [count : i64 (ast.ast-type-list-len (& elems))]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    [cursor : i64 0]
+    [checked : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [elem : ast.AstType
+            (lower-debug-type-resolve
+              ctx
+              (tc_core.tc-context-type-get
+                ctx
+                (ast.ast-type-list-get
+                  (& elems)
+                  index
+                  (ast.ast-type-id-fallback))))]
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx (& elem)))]
+          [elem-layout : tc_core.TcLayoutInfo
+            (lower-debug-type-layout ctx (lower-global-shared-view elem))]
+          [expected : i64
+            (tc_core.tc-align-up
+              checked
+              (tc_core.tc-layout-info-align elem-layout))]
+          (begin
+            (lower-debug-check! types (& name) "element offset" offset expected)
+            (set!
+              checked
+              (+ expected (tc_core.tc-layout-info-size elem-layout)))
+            (set! (array-ref offsets index) offset)
+            (set! cursor (+ offset (lower-type-size ctx (& elem))))
+            (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))
+            (set! index (+ index 1)))))
+      (let
+        [first : i64 types.graph.member-count]
+        (begin
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (lower-debug-member!
+                types
+                -1
+                (string.int->string index)
+                index
+                (array-ref ids index)
+                (array-ref offsets index))
+              (set! index (+ index 1))))
+          (ir.CompilerDebugTypeNode
+            ir.compiler-debug-type-tuple
+            name
+            size
+            align
+            -1
+            -1
+            0
+            first
+            count))))))
+
+;; A nominal type reached again while its own layout is being built is
+;; referenced through one forward node, so the graph stays acyclic.
+(define (lower-debug-nominal-id!
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name-id : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [key : String (str_cat.str-cat "#" (string.int->string name-id))]
+    [found : i64 (lower-debug-type-find types (& key))]
+    (cond
+      [(< found 0) (lower-debug-nominal-build! ctx types name-id ty key)]
+      [(< (__tl-project-field (array-ref types.graph.nodes found) size) 0)
+        (let
+          [forward-key : String (str_cat.str-cat "forward " key)]
+          [forward : i64 (lower-debug-type-find types (& forward-key))]
+          (if (>= forward 0)
+            forward
+            (let
+              [layout : tc_core.TcLayoutInfo
+                (lower-debug-type-layout ctx (lower-global-shared-view ty))]
+              (lower-debug-type-push!
+                types
+                forward-key
+                (lower-debug-node
+                  ir.compiler-debug-type-forward
+                  (tc_core.tc-nominal-name-id-display name-id)
+                  (tc_core.tc-layout-info-size layout)
+                  (tc_core.tc-layout-info-align layout)
+                  found
+                  -1)))))]
+      [else found])))
+
+(define (lower-debug-nominal-build!
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name-id : i64]
+  [ty : ast.AstType]
+  [key : String]) : i64
+  (let
+    [name : String (tc_core.tc-nominal-name-id-display name-id)]
+    [id : i64
+      (lower-debug-type-push!
+        types
+        key
+        (lower-debug-node
+          ir.compiler-debug-type-struct
+          (string.copy (& name))
+          -1
+          -1
+          -1
+          -1))]
+    (begin
+      (ir.compiler-debug-type-graph-set-node!
+        (&mut types.graph)
+        id
+        (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+          [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+            (lower-debug-aggregate-node ctx types name layout)]
+          [(tc_core.ResultTcInlineAggregateLayout.Err _)
+            (lower-debug-node ir.compiler-debug-type-opaque name 0 1 -1 -1)]))
+      (lower-debug-nominal-check! ctx types id name-id ty)
+      id)))
+
+(define (lower-debug-aggregate-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name : String]
+  [layout : tc_core.TcInlineAggregateLayout]) : ir.CompilerDebugTypeNode
+  (let
+    [resident : bool
+      (tc_core.tc-inline-aggregate-layout-register-resident?
+        (lower-global-shared-view layout))]
+    (match layout
+      [(tc_core.TcInlineAggregateLayout.Struct size align fields)
+        (let
+          [count : i64 (tc_core.tc-inline-field-layout-list-count (& fields))]
+          [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (begin
+                (match (tc_core.tc-inline-field-layout-list-ref
+                  (& fields)
+                  index)
+                  [(tc_core.TcInlineFieldLayout.Field _ field-ty _)
+                    (set!
+                      (array-ref ids index)
+                      (lower-debug-type-id! ctx types field-ty))])
+                (set! index (+ index 1))))
+            (let
+              [first : i64 types.graph.member-count]
+              (begin
+                (set! index 0)
+                (while (< index count)
+                  (begin
+                    (match (tc_core.tc-inline-field-layout-list-ref
+                      (& fields)
+                      index)
+                      [(tc_core.TcInlineFieldLayout.Field field-id _ offset)
+                        (lower-debug-member!
+                          types
+                          -1
+                          (tc_core.tc-env-key-name-text field-id)
+                          field-id
+                          (array-ref ids index)
+                          offset)])
+                    (set! index (+ index 1))))
+                (ir.CompilerDebugTypeNode
+                  ir.compiler-debug-type-struct
+                  name
+                  size
+                  align
+                  -1
+                  -1
+                  (if resident
+                    (/ size 8)
+                    0)
+                  first
+                  count)))))]
+      [(tc_core.TcInlineAggregateLayout.Enum size align variants)
+        (lower-debug-enum-node ctx types name size align variants resident)])))
+
+(define (lower-debug-enum-node
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [name : String]
+  [size : i64]
+  [align : i64]
+  [variants : tc_core.TcInlineVariantLayoutList]
+  [resident : bool]) : ir.CompilerDebugTypeNode
+  (let
+    [tag : i64 (lower-debug-type-id! ctx types (ast.AstType.I64))]
+    [count : i64 (tc_core.tc-inline-variant-layout-list-count (& variants))]
+    [total : i64 0]
+    [variant : i64 0]
+    (begin
+      (while (< variant count)
+        (begin
+          (match (tc_core.tc-inline-variant-layout-list-ref
+            (& variants)
+            variant)
+            [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
+              (set!
+                total
+                (+
+                  total
+                  (tc_core.tc-inline-payload-layout-list-count (& payloads))))])
+          (set! variant (+ variant 1))))
+      (let
+        [ids : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        [slot : i64 0]
+        (begin
+          (set! variant 0)
+          (while (< variant count)
+            (begin
+              (match (tc_core.tc-inline-variant-layout-list-ref
+                (& variants)
+                variant)
+                [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
+                  (let
+                    [index : i64 0]
+                    (while (<
+                      index
+                      (tc_core.tc-inline-payload-layout-list-count (& payloads)))
+                      (begin
+                        (match (tc_core.tc-inline-payload-layout-list-ref
+                          (& payloads)
+                          index)
+                          [(tc_core.TcInlinePayloadLayout.Payload
+                              _
+                              payload-ty
+                              _)
+                            (set!
+                              (array-ref ids slot)
+                              (lower-debug-type-id! ctx types payload-ty))])
+                        (set! slot (+ slot 1))
+                        (set! index (+ index 1)))))])
+              (set! variant (+ variant 1))))
+          (let
+            [first : i64 types.graph.member-count]
+            (begin
+              (set! variant 0)
+              (set! slot 0)
+              (while (< variant count)
+                (begin
+                  (match (tc_core.tc-inline-variant-layout-list-ref
+                    (& variants)
+                    variant)
+                    [(tc_core.TcInlineVariantLayout.Variant
+                        variant-id
+                        _
+                        _
+                        payloads)
+                      (let
+                        [index : i64 0]
+                        (begin
+                          (lower-debug-member!
+                            types
+                            variant
+                            (tc_core.tc-env-key-name-text variant-id)
+                            variant-id
+                            -1
+                            -1)
+                          (while (<
+                            index
+                            (tc_core.tc-inline-payload-layout-list-count
+                              (& payloads)))
+                            (begin
+                              (match (tc_core.tc-inline-payload-layout-list-ref
+                                (& payloads)
+                                index)
+                                [(tc_core.TcInlinePayloadLayout.Payload
+                                    payload-index
+                                    _
+                                    offset)
+                                  (lower-debug-member!
+                                    types
+                                    variant
+                                    (string.int->string payload-index)
+                                    payload-index
+                                    (array-ref ids slot)
+                                    offset)])
+                              (set! slot (+ slot 1))
+                              (set! index (+ index 1))))))])
+                  (set! variant (+ variant 1))))
+              (ir.CompilerDebugTypeNode
+                ir.compiler-debug-type-enum
+                name
+                size
+                align
+                tag
+                count
+                (if resident
+                  (/ size 8)
+                  0)
+                first
+                (- types.graph.member-count first)))))))))
+
+;; The first layout disagreement `--verify-ir` found, or "".
+(define (lower-debug-types-error [owner : CompilerLowerState]) : String
+  (if (ir.compiler-debug-info-enabled?)
+    (let
+      [types : LowerDebugTypes
+        (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+      (string.copy (& types.error)))
+    ""))
+
+;; Under `--verify-ir`, keep the first disagreement between a graph value and
+;; the independent query EXPECTED.
+(define (lower-debug-check!
+  [types : (&mut types LowerDebugTypes)]
+  [name : (& name str)]
+  [what : String]
+  [graph-value : i64]
+  [expected : i64]) : unit
+  (when
+    (and
+      (ir.compiler-debug-type-graph-verify?)
+      (= (string.string-length (& types.error)) 0)
+      (!= graph-value expected))
+    (set!
+      types.error
+      (str_cat.str-cat
+        "debug type graph: "
+        (string.copy name)
+        " "
+        what
+        " is "
+        (string.int->string graph-value)
+        ", the typechecker says "
+        (string.int->string expected)))))
+
+;; Check a finished nominal node against the typechecker: its size and
+;; alignment as a type, and every member offset looked up by name.
+(define (lower-debug-nominal-check!
+  [ctx : tc_core.TcContext]
+  [types : (&mut types LowerDebugTypes)]
+  [id : i64]
+  [name-id : i64]
+  [ty : ast.AstType]) : unit
+  (when
+    (ir.compiler-debug-type-graph-verify?)
+    (let
+      [node : ir.CompilerDebugTypeNode
+        (owned_view.compiler-owned-array-element-shared-view
+          types.graph.nodes
+          id)]
+      [layout : tc_core.TcLayoutInfo (lower-debug-type-layout ctx ty)]
+      [member : i64 node.first-member]
+      [variant-id : i64 -1]
+      (begin
+        (lower-debug-check!
+          types
+          (& node.name)
+          "size"
+          node.size
+          (tc_core.tc-layout-info-size layout))
+        (lower-debug-check!
+          types
+          (& node.name)
+          "align"
+          node.align
+          (tc_core.tc-layout-info-align layout))
+        (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+          [(tc_core.ResultTcInlineAggregateLayout.Ok aggregate)
+            (while (< member (+ node.first-member node.member-count))
+              (let
+                [row : ir.CompilerDebugTypeMember
+                  (owned_view.compiler-owned-array-element-shared-view
+                    types.graph.members
+                    member)]
+                (begin
+                  (if (< row.type 0)
+                    (set! variant-id row.name-id)
+                    (lower-debug-check!
+                      types
+                      (& node.name)
+                      (str_cat.str-cat "member " row.name " offset")
+                      row.offset
+                      (if (< variant-id 0)
+                        (tc_core.tc-inline-aggregate-layout-field-offset-id
+                          (lower-global-shared-view aggregate)
+                          row.name-id)
+                        (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
+                          (lower-global-shared-view aggregate)
+                          variant-id
+                          row.name-id))))
+                  (set! member (+ member 1)))))]
+          [(tc_core.ResultTcInlineAggregateLayout.Err _) unit])))))
+
 (define (lower-compiler-program-checked-with-names-mode
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
@@ -69928,6 +70687,13 @@
                   ;; diagnostics, optimizers, and backend emitters may inspect
                   ;; symbol spellings, while construction above uses handles.
                   (lower-materialize-generated-role-symbols! lower-state)
+                  (let
+                    [debug-error : String (lower-debug-types-error lower-state)]
+                    (when
+                      (> (string.string-length (& debug-error)) 0)
+                      (return
+                        (ResultCompilerLower.Err
+                          (box (lower-diagnostic debug-error))))))
                   (match (compiler-lower-state-read
                     lower-state
                     pointer_proof.PointerProofRequest

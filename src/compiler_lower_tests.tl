@@ -15278,3 +15278,96 @@
 
 (define (lower-compiler-program [program : ast.AstProgram]) : lower.ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
+
+;; Lower SRC with debug info and type-graph verification on: the rendered
+;; debug type graph (#8237), or the lowering error.
+(define (compiler-lower-debug-type-graph-text [src : String]) : String
+  (let
+    [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [result : lower.ResultCompilerLower
+      (begin
+        (ir.compiler-debug-info-set-enabled! true)
+        (ir.compiler-debug-type-graph-verify-set! true)
+        (lower.lower-compiler-source-with-path-mode-and-state
+          state
+          "<source>"
+          src
+          (lower.CompilerLowerMode.Scalar)))]
+    (begin
+      (ir.compiler-debug-info-set-enabled! false)
+      (ir.compiler-debug-type-graph-verify-set! false)
+      (match result
+        [(lower.ResultCompilerLower.Ok _ _)
+          (let
+            [graph : ir.CompilerDebugTypeGraph
+              (lower.compiler-lower-state-debug-type-graph state)]
+            (ir.compiler-debug-type-graph-render (& graph)))]
+        [(lower.ResultCompilerLower.Err diag)
+          (str_cat.str-cat
+            "error: "
+            (cdiag.compiler-diagnostic-render (deref diag)))]))))
+
+;; Every scalar width, nested and register-pair structs, a tuple, an enum with
+;; unit, scalar and aggregate payloads, a fixed array of structs, a recursive
+;; enum through Box (a forward node), Ref, Slice and str views, String, a
+;; dynamic array, and one generated module at two instantiations.
+(define (compiler-lower-debug-type-graph-source) : String
+  "(import stdlib.option)\n(import (option.option i64) as oi)\n(import (option.option bool) as ob)\n(defstruct Point (x i64) (y i64))\n(defstruct Line (a Point) (b Point) (tag u8))\n(defenum Shape (Circle f64) (Rect Point Point) (Empty))\n(defenum Tree (Leaf i64) (Branch (Box Tree) (Box Tree)))\n(define (scalars [a : i8] [b : i16] [c : i32] [d : i64] [e : u8] [f : u16] [g : u32] [h : u64] [i : f32] [j : f64] [k : bool] [l : char]) : unit unit)\n(define (views [p : (& Point)] [s : (& str)] [xs : (& (Slice i64))] [name : String] [ys : (__tl_dyn-array i64)]) : i64 0)\n(define (main) : i64\n  (let\n    [line : Line (Line (Point 1 2) (Point 3 4) 5)]\n    [pair : (Tuple u8 i64 bool) (tuple 1 2 true)]\n    [shape : Shape (Shape.Empty)]\n    [grid : (Array Point 3) (array (Point 0 0) (Point 1 1) (Point 2 2))]\n    [tree : Tree (Tree.Leaf 1)]\n    [boxed : (Box i64) (box 7)]\n    [none : oi.Option (oi.Option.None)]\n    [flag : ob.Option (ob.Option.Some true)]\n    [name : String \"n\"]\n    [origin : Point (Point 1 2)]\n    [cells : (Array i64 2) (array 4 5)]\n    [ys : (__tl_dyn-array i64) (__tl_make-array i64 2)]\n    (begin\n      (scalars (cast 1 : i8) (cast 2 : i16) (cast 3 : i32) 4 (cast 5 : u8) (cast 6 : u16) (cast 7 : u32) (cast 8 : u64) (cast 1.5 : f32) 2.5 true 'c')\n      (views (& origin) \"s\" (slice-view (& cells) 0 2) name ys))))")
+
+(test
+  compiler-lower-debug-type-graph-golden
+  (test.assert-owned-string-eq
+    (compiler-lower-debug-type-graph-text
+      (compiler-lower-debug-type-graph-source))
+    "debug-types v1 nodes=30\nt0 scalar i8 size=1 align=1\nt1 scalar i16 size=2 align=2\nt2 scalar i32 size=4 align=4\nt3 scalar i64 size=8 align=8\nt4 scalar u8 size=1 align=1\nt5 scalar u16 size=2 align=2\nt6 scalar u32 size=4 align=4\nt7 scalar u64 size=8 align=8\nt8 scalar f32 size=4 align=4\nt9 scalar f64 size=8 align=8\nt10 scalar bool size=1 align=1\nt11 scalar char size=1 align=1\nt12 scalar unit size=0 align=1\nt13 pointer (& Point) size=8 align=8 target=t14\nt14 struct Point size=16 align=8 regs=2\n  .x t3 @0\n  .y t3 @8\nt15 handle (& str) size=8 align=8 target=t4\nt16 view (& (Slice i64)) size=16 align=8 target=t3\nt17 handle String size=8 align=8 target=t4\nt18 handle (__tl_dyn-array i64) size=8 align=8 target=t3\nt19 struct Line size=40 align=8\n  .a t14 @0\n  .b t14 @16\n  .tag t4 @32\nt20 tuple (Tuple u8 i64 bool) size=24 align=8\n  .0 t4 @0\n  .1 t3 @8\n  .2 t10 @16\nt21 enum Shape size=40 align=8 target=t3 count=3\n  variant Circle =0\n    .0 t9 @8\n  variant Rect =1\n    .0 t14 @8\n    .1 t14 @24\n  variant Empty =2\nt22 array (Array Point 3) size=48 align=8 target=t14 count=3\nt23 enum Tree size=24 align=8 target=t3 count=2\n  variant Leaf =0\n    .0 t3 @8\n  variant Branch =1\n    .0 t24 @8\n    .1 t24 @16\nt24 pointer (Box Tree) size=8 align=8 target=t25\nt25 forward Tree size=24 align=8 target=t23\nt26 pointer (Box i64) size=8 align=8 target=t3\nt27 enum stdlib.option.generated.i64/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t3 @8\nt28 enum stdlib.option.generated.bool/Option size=16 align=8 target=t3 count=2 regs=2\n  variant None =0\n  variant Some =1\n    .0 t10 @8\nt29 array (Array i64 2) size=16 align=8 target=t3 count=2\n"
+    "the debug type graph has every layout the typechecker computes"))
+
+(test
+  compiler-lower-debug-type-graph-stable
+  (test.assert-owned-string-eq
+    (compiler-lower-debug-type-graph-text
+      (compiler-lower-debug-type-graph-source))
+    (compiler-lower-debug-type-graph-text
+      (compiler-lower-debug-type-graph-source))
+    "two lowerings of one program give identical graphs"))
+
+(test
+  compiler-lower-debug-type-graph-off-without-debug-info
+  (test.assert-true
+    (let
+      [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      (match (lower.lower-compiler-source-with-path-mode-and-state
+        state
+        "<source>"
+        (compiler-lower-debug-type-graph-source)
+        (lower.CompilerLowerMode.Scalar))
+        [(lower.ResultCompilerLower.Ok _ _)
+          (=
+            (__tl-project-field
+              (lower.compiler-lower-state-debug-type-graph state)
+              node-count)
+            0)]
+        [(lower.ResultCompilerLower.Err _) false]))
+    "without debug info lowering builds no graph"))
+
+(test
+  compiler-lower-debug-type-graph-mismatch-fails
+  (test.assert-true
+    (let
+      [types : lower.LowerDebugTypes (lower.lower-debug-types-empty)]
+      [name : String "Point"]
+      (begin
+        (lower.lower-debug-check! (&mut types) (& name) "size" 16 16)
+        (let
+          [agreed : bool (= (string.string-length (& types.error)) 0)]
+          (begin
+            (ir.compiler-debug-type-graph-verify-set! true)
+            (lower.lower-debug-check! (&mut types) (& name) "size" 8 16)
+            (lower.lower-debug-check! (&mut types) (& name) "align" 4 8)
+            (ir.compiler-debug-type-graph-verify-set! false)
+            (and
+              agreed
+              (string.eq
+                (& types.error)
+                "debug type graph: Point size is 8, the typechecker says 16"))))))
+    "a layout disagreement is kept, first one only, and only under --verify-ir"))

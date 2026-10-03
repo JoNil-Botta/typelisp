@@ -408,7 +408,9 @@
                     (cli_option.cli-args-fail!
                       (&mut args)
                       "compile: --verify-ir was provided more than once")
-                    (set! compile-cli-verify-ir-requested true))]
+                    (begin
+                      (set! compile-cli-verify-ir-requested true)
+                      (ir.compiler-debug-type-graph-verify-set! true)))]
                 [(string.eq args.name "--trace-passes")
                   (if compile-cli-trace-passes-requested
                     (cli_option.cli-args-fail!
@@ -1937,6 +1939,7 @@
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
         (ir.compiler-debug-info-set-enabled! false)
+        (ir.compiler-debug-type-graph-verify-set! false)
         (ir.compiler-debug-path-remap-clear!)
         (compile-cli-dispatch count))]
     [profile? : bool compile-cli-allocation-profile-requested]

@@ -4248,7 +4248,7 @@
     [accesses : opt_aggregate_access_vec.Vec accesses-input]
     (if (>= index (ir.compiler-ir-instr-seq-count instrs))
       (if seen-alloc
-        (OptAggregateScanResult.Ok ptrs accesses)
+        (Ok ptrs accesses)
         (Reject))
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
@@ -4634,7 +4634,7 @@
               (set! frame (+ frame slot-count)))
             unit)])
       (set! index (+ index 1)))
-    (OptAggregatePromoteBuild.Build promote-slots frame)))
+    (Build promote-slots frame)))
 
 (define (opt-aggregate-promote-lookup-from
   [slot-list : (& slot-list opt_aggregate_promote_slot_vec.Vec)]
@@ -67267,7 +67267,7 @@
                         shape.phi-count
                         (Nil))
                         [(No) (No)]
-                        [(Some recs) (OptUcePlan.Some groups skips recs)])))])]))))))
+                        [(Some recs) (Some groups skips recs)])))])]))))))
 
 ;; Guard emission result: the instructions in evaluation order and the var
 ;; holding the and of all group conditions.
@@ -85208,7 +85208,7 @@
           [descriptor : OptBceMbDescriptor
             (if (< type-segment-bases 0)
               (No)
-              (OptBceMbDescriptor.Some
+              (Some
                 type-segment-bases
                 (opt-load-header-set-from-function
                   type-segment-bases
@@ -85489,7 +85489,7 @@
             [descriptor : OptBceMbDescriptor
               (if (< type-segment-bases 0)
                 (No)
-                (OptBceMbDescriptor.Some
+                (Some
                   type-segment-bases
                   (opt-load-header-set-from-function
                     type-segment-bases
@@ -112112,7 +112112,7 @@
   (let
     [out : opt_string_i64_map.Map seen]
     (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-      (OptInlineBoundsLabelScan.Ok out)
+      (Ok out)
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(BoundsCheck _ _ ok-label)
           (if (opt_string_i64_map.contains? (& out) ok-label)
@@ -113257,7 +113257,7 @@
         (let
           [next-reachable : opt_i64_i64_map.Map reachable]
           (opt_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
-          (OptReachState.State
+          (State
             next-reachable
             (opt-reach-worklist-push worklist slot)
             globals
@@ -113272,7 +113272,7 @@
           state
           (begin
             (opt_i64_i64_map.insert-ref! (&mut globals) name-id 1)
-            (OptReachState.State reachable worklist globals runtime-helper-mask))))]))
+            (State reachable worklist globals runtime-helper-mask))))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : (& index OptFunctionIndex)]
@@ -113353,11 +113353,7 @@
             ;; once per fixed runtime helper.
             (match (opt-reach-add-function-leaf index state helper)
               [(State reachable worklist globals mask)
-                (OptReachState.State
-                  reachable
-                  worklist
-                  globals
-                  (bit-or mask helper-bit))]))])]))
+                (State reachable worklist globals (bit-or mask helper-bit))]))])]))
 
 (define (opt-reach-add-call-target
   [index : (& index OptFunctionIndex)]
@@ -113432,7 +113428,7 @@
         [(Item slot rest)
           (let
             [popped : OptReachState
-              (OptReachState.State reachable rest globals runtime-helper-mask)]
+              (State reachable rest globals runtime-helper-mask)]
             (opt-reach-process
               (compiler-opt-global-shared-view index)
               (opt-reach-function
@@ -113659,11 +113655,7 @@
             externs
             (opt-reach-add-function-leaf
               index
-              (OptReachState.State
-                reachable
-                (opt-reach-worklist-new)
-                reachable-globals
-                0)
+              (State reachable (opt-reach-worklist-new) reachable-globals 0)
               "main"))
           (compiler-opt-global-shared-view globals)))
         [(State reachable-out _ reachable-globals-out _)
@@ -116906,7 +116898,7 @@
   [at : i64]
   [next : i64]) : OptGlobalModRefIndex
   (if (>= at globals.len)
-    (OptGlobalModRefIndex.Some out next)
+    (Some out next)
     (match (ir.compiler-ir-global-seq-ref globals at)
       [(Global name ty _)
         (if (not
@@ -117903,7 +117895,7 @@
   [at : i64]
   [next : i64]) : OptGlobalModRefIndex
   (if (>= at globals.len)
-    (OptGlobalModRefIndex.Some out next)
+    (Some out next)
     (match (ir.compiler-ir-global-seq-ref globals at)
       [(Global name ty _)
         (if (opt-global-obj-scalar-type? ty)
@@ -123442,14 +123434,14 @@
       (let
         [items : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
         (opt_i64_i64_map.insert-ref! (&mut items) root 1)
-        (OptScratchRootList.Dense items))]
+        (Dense items))]
     [(Dense found)
       (if (opt_i64_i64_map.contains? (& found) root)
         roots
         (let
           [items : opt_i64_i64_map.Map found]
           (opt_i64_i64_map.insert-ref! (&mut items) root 1)
-          (OptScratchRootList.Dense items)))]))
+          (Dense items)))]))
 
 (define (opt-scratch-direct-alloc
   [type-segment-bases : i64]

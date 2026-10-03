@@ -241,7 +241,7 @@
       [document-state : lvf.LspServerState
         (match (lsp.lsp-server-state-copy-document-result
           empty-state
-          (lsp.LspDocumentHandleResult.Continue docs)
+          (Continue docs)
           false)
           [(Continue next) next]
           [(Exit next) next])]
@@ -471,7 +471,7 @@
       [document-state : lvf.LspServerState
         (match (lsp.lsp-server-state-copy-document-result
           empty-state
-          (lsp.LspDocumentHandleResult.Continue docs)
+          (Continue docs)
           false)
           [(Continue next) next]
           [(Exit next) next])]

@@ -39,7 +39,7 @@
   (Extraction String doc_item_vec.Vec))
 
 (define (doc-extraction-empty) : DocExtraction
-  (DocExtraction.Extraction "" (doc_item_vec.new)))
+  (Extraction "" (doc_item_vec.new)))
 
 (defenum DocMaybeDeclInfo
   (No)
@@ -476,7 +476,7 @@
                   (set! pending-doc "")
                   (set! pending-has false)
                   (set! i (source_text.next-line-start src line-end)))))))))
-    (DocExtraction.Extraction module-doc (doc-item-array-to-list items))))
+    (Extraction module-doc (doc-item-array-to-list items))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
   (doc-extract-source (byte_buf.to-string (io.read-file path))))

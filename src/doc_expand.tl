@@ -1058,7 +1058,7 @@
         modules
         (doc_render.DocModule.Module
           module-name
-          (doc_extract.DocExtraction.Extraction
+          (Extraction
             "Generated module API."
             (doc-generated-module-items form items))))
       unit)))
@@ -1150,7 +1150,7 @@
                   ctx
                   (owned_view.compiler-owned-shared-view expanded-decls)
                   macro-examples)]
-              (ResultDocExpandedModules.Ok
+              (Ok
                 (doc-generated-modules-from-expanded-decls
                   ctx
                   expanded-decls
@@ -1267,7 +1267,7 @@
       (let
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not scan.has-macro)
-          (ResultDocExpandedModules.Ok (doc_module_vec.new))
+          (Ok (doc_module_vec.new))
           (let
             [intern-state : ci.InternCompatState intern-state]
             (compiler_load.compiler-load-session-state-use-with-intern-state!

@@ -167,7 +167,7 @@
       [args.failed (Err args.error)]
       [(lint_svec.is-empty? (& input-paths))
         (Ok
-          (SelfhostLintConfig.Package
+          (Package
             manifest-path
             has-manifest
             stdlib-roots
@@ -181,7 +181,7 @@
         (Err "selfhost-lint: cannot combine input paths with --manifest-path")]
       [else
         (Ok
-          (SelfhostLintConfig.File
+          (File
             input-paths
             stdlib-roots
             enforcing
@@ -2893,7 +2893,7 @@
   [package-imports : bool]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadImportList
   (match (ast.ast-decl-list-step decls)
-    [(Nil) (ResultSelfhostLintDeadImportList.Ok items)]
+    [(Nil) (Ok items)]
     [(Cons decl rest)
       (match decl
         [(Import decl-meta (Spec kind import-path expected-module alias _))
@@ -3107,7 +3107,7 @@
   [stdlib-roots : lint_svec.Vec]
   [package-imports : bool]) : ResultSelfhostLintDeadSourceList
   (if (>= index (lint_svec.len (& queue)))
-    (ResultSelfhostLintDeadSourceList.Ok queue)
+    (Ok queue)
     (match (selfhost-lint-package-dead-file-imports-in-scratch
       (lint_svec.get (& queue) index "")
       (owned_view.compiler-owned-shared-view import-root)
@@ -3177,8 +3177,7 @@
       package-imports)
       [(Err diag) (Err diag)]
       [(Ok paths)
-        (ResultSelfhostLintDeadSourceList.Ok
-          (selfhost-lint-package-dead-merge-paths-from items paths 0))])))
+        (Ok (selfhost-lint-package-dead-merge-paths-from items paths 0))])))
 
 (define (selfhost-lint-package-dead-closure-sources
   [entry-path : String]
@@ -3215,7 +3214,7 @@
   [items : lint_svec.Vec]
   [index : i64]) : ResultSelfhostLintDeadSourceList
   (if (>= index (lint_svec.len (& root-sources)))
-    (ResultSelfhostLintDeadSourceList.Ok items)
+    (Ok items)
     (match (selfhost-lint-package-dead-root-file-closure-sources
       (lint_svec.get (& root-sources) index "")
       (owned_view.compiler-owned-shared-view source-set)

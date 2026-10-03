@@ -4430,7 +4430,7 @@
         [(LookupMissing)
           (set! (array-ref values next) ty)
           (lower_i64_i64_map.insert-ref! (&mut ids) name-id next)
-          (LowerTypeCache.Some ids values (+ next 1) parent owner-address)])]))
+          (Some ids values (+ next 1) parent owner-address)])]))
 
 (define (lower-type-cache-from-env-into
   [env : tc_core.TcTypeEnv]
@@ -4450,7 +4450,7 @@
     [count : i64 (lower-type-env-count env)]
     (lower-type-cache-from-env-into
       env
-      (LowerTypeCache.Some
+      (Some
         (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
         (__tl_make-array ast.AstType count)
         0
@@ -4468,7 +4468,7 @@
     [count : i64 (lower-type-env-count env)]
     (lower-type-cache-from-env-into
       env
-      (LowerTypeCache.Some
+      (Some
         (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
         (__tl_make-array ast.AstType count)
         0
@@ -10399,7 +10399,7 @@
             (let
               [next-reachable : lower_i64_i64_map.Map reachable]
               (lower_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
-              (LowerReachState.State
+              (State
                 next-reachable
                 (lower-id-set-push worklist logical-id)
                 lower-state)))])]))
@@ -12972,10 +12972,7 @@
           (let
             [name : i64 (array-ref worklist.slots top)]
             [popped : LowerReachState
-              (LowerReachState.State
-                reachable
-                (LowerIdSet worklist.slots top)
-                lower-state)]
+              (State reachable (LowerIdSet worklist.slots top) lower-state)]
             (match (lower-function-body-index-find body-index name)
               [(Some body body-names body-path-owner-id)
                 (let
@@ -14969,7 +14966,7 @@
                   [main-state : LowerReachState
                     (lower-reach-add-logical
                       all-functions
-                      (LowerReachState.State
+                      (State
                         (lower_i64_i64_map.with-capacity 8192)
                         (lower-id-set-empty)
                         lower-state)

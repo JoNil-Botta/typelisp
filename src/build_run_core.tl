@@ -1848,9 +1848,7 @@
             (match (source-tool-link-program
               (SourceToolLinkRequest
                 source
-                (SourceToolProgram.Source
-                  stdlib-roots
-                  (cfg_core.compiler-cfg-empty))
+                (Source stdlib-roots (cfg_core.compiler-cfg-empty))
                 target
                 opt-level
                 mode
@@ -1939,9 +1937,7 @@
           (match (source-tool-link-and-run
             (SourceToolLinkRequest
               source
-              (SourceToolProgram.Source
-                stdlib-roots
-                (source-tool-cfg-names-to-env cfg-names))
+              (Source stdlib-roots (source-tool-cfg-names-to-env cfg-names))
               target
               opt-level
               mode

@@ -37672,8 +37672,7 @@ b_keep:
       (ir.compiler-ir-symbol-id left)
       2)
     (let
-      [types : backend.CompilerBackendGlobalTypeTable
-        (backend.CompilerBackendGlobalTypeTable.Dense ids values)]
+      [types : backend.CompilerBackendGlobalTypeTable (Dense ids values)]
       (and
         (match (backend.compiler-backend-global-type-lookup
           (backend.compiler-backend-global-shared-view types)

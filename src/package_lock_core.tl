@@ -219,7 +219,7 @@
           "`"))
       (begin
         (package-lock-entry-list-insert-at! (&mut next) entry index)
-        (ResultPackageLockEntryList.Ok next)))))
+        (Ok next)))))
 
 (define (package-lock-field-string-value
   [ftail : reader.SpannedSexpr]
@@ -444,7 +444,7 @@
   [entries : reader.SpannedSexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match (reader.sexpr-view entries)
-    [(Nil) (ResultPackageLockEntryList.Ok acc)]
+    [(Nil) (Ok acc)]
     [(Cons entry rest)
       (match (package-lock-entry-from-form entry)
         [(Err message) (Err message)]

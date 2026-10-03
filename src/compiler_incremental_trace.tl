@@ -1309,7 +1309,7 @@
             (compiler-trace-error
               compiler-trace-error-corrupt
               "trailing or truncated trace"))
-          (ResultCompilerIncrementalTraceRecords.Ok records)))]))
+          (Ok records)))]))
 
 (define (compiler-trace-kind-miss [kind : i64]) : i64
   (cond

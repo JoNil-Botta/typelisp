@@ -22344,7 +22344,7 @@
       (__tl_make-array compiler_ast_types.AstType count)]
     (if (= count 0)
       Empty
-      (CompilerBackendGlobalTypeTable.Dense
+      (Dense
         (compiler-backend-global-types-fill
           globals
           (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
@@ -37782,7 +37782,7 @@
   [seen : backend_string_i64_map.Map]
   [index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= index globals.len)
-    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (Ok seen)
     (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(Global name _ _)
         (let
@@ -37850,7 +37850,7 @@
   (if (>=
     seq-index
     (compiler_ir_types.compiler-ir-function-seq-count functions))
-    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (Ok seen)
     (match (array-ref functions.slots seq-index)
       [(Function name _ _ _ _ _)
         (let
@@ -37920,7 +37920,7 @@
   [seen : backend_string_i64_map.Map]
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
-    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (Ok seen)
     (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(Extern name-id _ _ _ _ link-symbol-id _ provided)
         (if (compiler-backend-emits-extern-symbol?

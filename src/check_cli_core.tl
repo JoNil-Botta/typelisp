@@ -97,16 +97,9 @@
       [args.failed (Err args.error)]
       [(and has-input has-manifest)
         (Err "selfhost-check: cannot combine input path with --manifest-path")]
-      [has-input
-        (Ok (SelfhostCheckConfig.File input-path stdlib-roots target cfg-names))]
+      [has-input (Ok (File input-path stdlib-roots target cfg-names))]
       [else
-        (Ok
-          (SelfhostCheckConfig.Package
-            manifest-path
-            has-manifest
-            stdlib-roots
-            target
-            cfg-names))])))
+        (Ok (Package manifest-path has-manifest stdlib-roots target cfg-names))])))
 
 (define (selfhost-check-print-passed) : i64
   (io.print-format "{}" "Type checking passed!\n")

@@ -110,7 +110,7 @@
         (Ok (Package check manifest-path has-manifest))]
       [has-manifest
         (Err "fmt: cannot combine input paths with --manifest-path")]
-      [else (Ok (FmtConfig.File check paths))])))
+      [else (Ok (File check paths))])))
 
 ;; `io.stderr-write` exits 134 when stderr fails, as `io.print-error` does, so
 ;; this unbounded rendering either completes or ends the process.

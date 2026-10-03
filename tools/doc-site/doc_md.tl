@@ -670,7 +670,7 @@
     [body-pos : i64 (md-next-line-start src delimiter-end n)]
     (match (md-scan-table-rows src body-pos n)
       [(Rows next rows)
-        (Block next (MdBlock.Table (md-split-pipe-row header-line) rows))])))
+        (Block next (Table (md-split-pipe-row header-line) rows))])))
 
 (define (md-scan-paragraph [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let

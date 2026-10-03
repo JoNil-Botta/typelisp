@@ -4333,7 +4333,7 @@
                 [(Some offset)
                   (opt_aggregate_access_vec.push-ref!
                     (&mut accesses)
-                    (Load dst offset load-ty))
+                    (OptAggregateAccess.Load dst offset load-ty))
                   (opt-aggregate-scan-instrs
                     type-segment-bases
                     base
@@ -4630,7 +4630,7 @@
               [storage : i64 (+ frame (- slot-count 1))]
               (opt_aggregate_promote_slot_vec.push-ref!
                 (&mut promote-slots)
-                (Slot base storage))
+                (OptAggregatePromoteSlot.Slot base storage))
               (set! frame (+ frame slot-count)))
             unit)])
       (set! index (+ index 1)))
@@ -4642,7 +4642,10 @@
   [index : i64]) : option_i64.Option
   (if (>= index (opt_aggregate_promote_slot_vec.len (& slot-list)))
     (None)
-    (match (opt_aggregate_promote_slot_vec.get (& slot-list) index (Slot 0 0))
+    (match (opt_aggregate_promote_slot_vec.get
+      (& slot-list)
+      index
+      (OptAggregatePromoteSlot.Slot 0 0))
       [(Slot found storage)
         (if (= found base)
           (Some storage)
@@ -4797,6 +4800,19 @@
 ;; at offset 0 on either or both sides becomes word loads, word stores, or
 ;; register moves.
 ;;
+;; LANES (#8555). A word may instead hold narrow fields -- a struct's `bool`
+;; flags packed after its `i64` fields, like `iterator.I64Range`'s `inclusive`
+;; or `IntoIter`'s `inclusive` and `exhausted` -- each a `load` / `store_ptr`
+;; of a 1-, 2- or 4-byte integer type (`opt-aggregate-split-lane-code`) at an
+;; offset aligned to its own size. Each such lane becomes its own register var,
+;; under the same agreement rule: every access at one lane has its type, and no
+;; two lanes of a word overlap. A word is either one whole-word var or a set of
+;; lane vars, never both, so a whole-word access to a word that has lanes (or
+;; the reverse) refuses the candidate. A copy cannot move a word of lanes -- the
+;; bytes between and around them are not tracked, and the copy would have to
+;; carry them -- so a `copy_bytes` over such a word refuses the candidate
+;; (`access:copy-lanes`).
+;;
 ;; HANDLES. The stack-promotion classifier's "handle-shaped" note
 ;; (`opt-aggregate-stack-promote-type?`) means "a fixed Struct/Enum/Tuple", not
 ;; "holds an owning handle": this language has no implicit destructor walk, and
@@ -4829,6 +4845,52 @@
     [(Ptr _) true]
     [(MutPtr _) true]
     [_ false]))
+
+;; The narrow integer types a lane may hold, as a nonzero code that fits the
+;; four bits a lane takes in its word's descriptor (opt-aggregate-split-lanes);
+;; 0 for every other type. Floats stay out for the reason the word types leave
+;; them out: they live in vector registers.
+(define (opt-aggregate-split-lane-code [ty : (& ty ast.AstType)]) : i64
+  (match ty
+    [(Bool) 1]
+    [(Char) 2]
+    [(I8) 3]
+    [(U8) 4]
+    [(I16) 5]
+    [(U16) 6]
+    [(I32) 7]
+    [(U32) 8]
+    [_ 0]))
+
+(define (opt-aggregate-split-lane-size [code : i64]) : i64
+  (cond [(<= code 4) 1] [(<= code 6) 2] [else 4]))
+
+(define (opt-aggregate-split-lane-type [code : i64]) : ast.AstType
+  (cond
+    [(= code 1) (Bool)]
+    [(= code 2) (Char)]
+    [(= code 3) (I8)]
+    [(= code 4) (U8)]
+    [(= code 5) (I16)]
+    [(= code 6) (U16)]
+    [(= code 7) (I32)]
+    [else (U32)]))
+
+;; A word's lanes are one i64: four bits per byte, holding the lane code of the
+;; lane that STARTS at that byte, or 0.
+(define (opt-aggregate-split-lane-at [lanes : i64] [byte : i64]) : i64
+  (bit-and (shr lanes (* byte 4)) 15))
+
+(define (opt-aggregate-split-lane-count-below [lanes : i64] [byte : i64]) : i64
+  (let
+    [count : i64 0]
+    [at : i64 0]
+    (while (< at byte)
+      (if (> (opt-aggregate-split-lane-at lanes at) 0)
+        (set! count (+ count 1))
+        unit)
+      (set! at (+ at 1)))
+    count))
 
 ;; --- refusal reasons ---------------------------------------------------------
 ;;
@@ -4877,6 +4939,9 @@
 (define (opt-aggregate-split-reason-copy-size) : i64
   32)
 
+(define (opt-aggregate-split-reason-copy-lanes) : i64
+  33)
+
 ;; ESCAPE: the address reaches something that is not one of the rewritten forms.
 (define (opt-aggregate-split-reason-escape) : i64
   40)
@@ -4897,6 +4962,7 @@
     [(= reason (opt-aggregate-split-reason-offset)) "access:offset"]
     [(= reason (opt-aggregate-split-reason-word-type)) "access:word-type"]
     [(= reason (opt-aggregate-split-reason-copy-size)) "access:copy-size"]
+    [(= reason (opt-aggregate-split-reason-copy-lanes)) "access:copy-lanes"]
     [(= reason (opt-aggregate-split-reason-escape)) "escape:use"]
     [(= reason (opt-aggregate-split-reason-escape-call)) "escape:call"]
     [else "other"]))
@@ -4907,7 +4973,7 @@
 ;; are indexed once and every lookup is a direct index, so nothing here scans.
 ;; `cand` holds `opt-aggregate-split-fields` integers per candidate.
 (define (opt-aggregate-split-fields) : i64
-  8)
+  9)
 
 (define (opt-aggregate-split-field-base) : i64
   0)
@@ -4936,6 +5002,13 @@
 ;; load or copy would become a register read, which is the whole point.
 (define (opt-aggregate-split-field-marks) : i64
   7)
+
+;; The most words any `copy_bytes` moves in or out of the candidate. A copy is
+;; classified where it stands, before the lanes of a later access are known,
+;; so the words it covers are checked against the lanes once every access is
+;; in (opt-aggregate-split-check-copy-lanes!).
+(define (opt-aggregate-split-field-copy-words) : i64
+  8)
 
 (define (opt-aggregate-split-get
   [cand : (& cand (__tl_dyn-array i64))]
@@ -5243,8 +5316,13 @@
 (defstruct OptSplitPlan
   (cand (__tl_dyn-array i64))
   (cand-ty (__tl_dyn-array ast.AstType))
+  ;; Per candidate word: the whole-word type, how the word is held (0 not
+  ;; accessed, 1 one whole-word var, 2 lanes), its lane descriptor
+  ;; (opt-aggregate-split-lane-at) and the first var assigned to it.
   (word-ty (__tl_dyn-array ast.AstType))
   (word-set (__tl_dyn-array i64))
+  (word-lanes (__tl_dyn-array i64))
+  (word-var (__tl_dyn-array i64))
   (ptr (__tl_dyn-array i64))
   (slot-owner (__tl_dyn-array i64))
   (rec-uses (__tl_dyn-array i64))
@@ -5259,6 +5337,8 @@
         (__tl_make-array i64 (* count (opt-aggregate-split-fields)))
         (__tl_make-array ast.AstType count)
         (__tl_make-array ast.AstType (* count (opt-aggregate-split-word-limit)))
+        (__tl_make-array i64 (* count (opt-aggregate-split-word-limit)))
+        (__tl_make-array i64 (* count (opt-aggregate-split-word-limit)))
         (__tl_make-array i64 (* count (opt-aggregate-split-word-limit)))
         (__tl_make-array i64 (* frame 2))
         (__tl_make-array i64 frame)
@@ -5310,12 +5390,74 @@
       [(= (array-ref word-set slot) 0)
         (set! (array-ref word-ty slot) ty)
         (set! (array-ref word-set slot) 1)]
-      [(opt-type-eq type-segment-bases (array-ref word-ty slot) ty) unit]
+      [(and
+          (= (array-ref word-set slot) 1)
+          (opt-type-eq type-segment-bases (array-ref word-ty slot) ty))
+        unit]
       [else
         (opt-aggregate-split-refuse!
           (&mut cand)
           index
           (opt-aggregate-split-reason-word-type))])))
+
+;; Whether a lane of `size` bytes at `byte` overlaps any lane of the word other
+;; than one starting at `byte` itself.
+(define (opt-aggregate-split-lane-overlaps?
+  [lanes : i64]
+  [byte : i64]
+  [size : i64]) : bool
+  (let
+    [at : i64 0]
+    [found : bool false]
+    (while (and (not found) (< at 8))
+      (let
+        [code : i64 (opt-aggregate-split-lane-at lanes at)]
+        (if (and
+          (> code 0)
+          (!= at byte)
+          (< at (+ byte size))
+          (< byte (+ at (opt-aggregate-split-lane-size code))))
+          (set! found true)
+          unit)
+        (set! at (+ at 1))))
+    found))
+
+;; Bind the lane of type code `code` at `byte` of `word`. The first access to a
+;; lane decides its type; every later one must agree, and a word that already
+;; holds a whole-word access (or a lane this one overlaps) is refused.
+(define (opt-aggregate-split-bind-lane!
+  [plan : (& plan OptSplitPlan)]
+  [index : i64]
+  [word : i64]
+  [byte : i64]
+  [code : i64]) : unit
+  (let
+    [slot : i64 (opt-aggregate-split-word-index index word)]
+    [word-set : (__tl_dyn-array i64) plan.word-set]
+    [word-lanes : (__tl_dyn-array i64) plan.word-lanes]
+    [cand : (__tl_dyn-array i64) plan.cand]
+    [lanes : i64 (array-ref word-lanes slot)]
+    [existing : i64 (opt-aggregate-split-lane-at lanes byte)]
+    (cond
+      [(= (array-ref word-set slot) 1)
+        (opt-aggregate-split-refuse!
+          (&mut cand)
+          index
+          (opt-aggregate-split-reason-word-type))]
+      [(= existing code) unit]
+      [(or
+          (> existing 0)
+          (opt-aggregate-split-lane-overlaps?
+            lanes
+            byte
+            (opt-aggregate-split-lane-size code)))
+        (opt-aggregate-split-refuse!
+          (&mut cand)
+          index
+          (opt-aggregate-split-reason-word-type))]
+      [else
+        (set! (array-ref word-lanes slot) (bit-or lanes (shl code (* byte 4))))
+        (set! (array-ref word-set slot) 2)])))
 
 ;; --- root collection ---------------------------------------------------------
 (define (opt-aggregate-split-claim-slots!
@@ -5576,20 +5718,35 @@
         plan.cand
         index
         (opt-aggregate-split-field-slots))]
+    [code : i64 (opt-aggregate-split-lane-code (& ty))]
+    [size : i64
+      (if (> code 0)
+        (opt-aggregate-split-lane-size code)
+        8)]
     (if (or
       (< offset 0)
       (>= offset (* words 8))
-      (> (- offset (* (/ offset 8) 8)) 0))
+      (> (- offset (* (/ offset size) size)) 0)
+      ;; A refused candidate's words are never assigned, and one refused for
+      ;; size has more words than its table row holds.
+      (opt-aggregate-split-refused? plan.cand index))
       (opt-aggregate-split-refuse!
         (&mut plan.cand)
         index
         (opt-aggregate-split-reason-offset))
-      (opt-aggregate-split-bind-word!
-        type-segment-bases
-        plan
-        index
-        (/ offset 8)
-        ty))))
+      (if (> code 0)
+        (opt-aggregate-split-bind-lane!
+          plan
+          index
+          (/ offset 8)
+          (- offset (* (/ offset 8) 8))
+          code)
+        (opt-aggregate-split-bind-word!
+          type-segment-bases
+          plan
+          index
+          (/ offset 8)
+          ty)))))
 
 ;; A call ARGUMENT that names the aggregate is refused with its own reason,
 ;; rather than being left to the use-count check, so the census can separate
@@ -5648,10 +5805,50 @@
           (&mut plan.cand)
           index
           (opt-aggregate-split-reason-copy-size))
-        (opt-aggregate-split-mark!
-          (&mut plan.cand)
+        (begin
+          (if (>
+            (/ size 8)
+            (opt-aggregate-split-get
+              plan.cand
+              index
+              (opt-aggregate-split-field-copy-words)))
+            (opt-aggregate-split-set!
+              (&mut plan.cand)
+              index
+              (opt-aggregate-split-field-copy-words)
+              (/ size 8))
+            unit)
+          (opt-aggregate-split-mark!
+            (&mut plan.cand)
+            index
+            (opt-aggregate-split-mark-touched)))))))
+
+;; A copy moves whole words, so no word it covers may hold lanes.
+(define (opt-aggregate-split-check-copy-lanes!
+  [plan : (& plan OptSplitPlan)]
+  [index : i64]) : unit
+  (if (>= index plan.count)
+    unit
+    (let
+      [copied : i64
+        (opt-aggregate-split-get
+          plan.cand
           index
-          (opt-aggregate-split-mark-touched))))))
+          (opt-aggregate-split-field-copy-words))]
+      [word : i64 0]
+      (while (and
+        (< word copied)
+        (not (opt-aggregate-split-refused? plan.cand index)))
+        (if (=
+          (array-ref plan.word-set (opt-aggregate-split-word-index index word))
+          2)
+          (opt-aggregate-split-refuse!
+            (&mut plan.cand)
+            index
+            (opt-aggregate-split-reason-copy-lanes))
+          unit)
+        (set! word (+ word 1)))
+      (opt-aggregate-split-check-copy-lanes! plan (+ index 1)))))
 
 (define (opt-aggregate-split-classify-copy!
   [type-segment-bases : i64]
@@ -5826,8 +6023,9 @@
           unit)))
     (opt-aggregate-split-check-uses! plan total-uses (+ var 1))))
 
-;; Assign the word vars of every surviving candidate and report the new frame.
-;; A candidate that would only move stores around is turned down here: without a
+;; Assign the vars of every surviving candidate and report the new frame: one
+;; per word, or one per lane of a word that holds lanes, in byte order. A
+;; candidate that would only move stores around is turned down here: without a
 ;; load or a copy the split buys nothing and only adds register pressure.
 (define (opt-aggregate-split-assign-words!
   [plan : (& plan OptSplitPlan)]
@@ -5836,7 +6034,7 @@
   (if (>= index plan.count)
     next
     (let
-      [words : i64
+      [vars : i64
         (if (opt-aggregate-split-refused? plan.cand index)
           0
           (if (not
@@ -5850,17 +6048,36 @@
                 index
                 (opt-aggregate-split-reason-no-gain))
               0)
-            (begin
+            (let
+              [words : i64
+                (opt-aggregate-split-get
+                  plan.cand
+                  index
+                  (opt-aggregate-split-field-slots))]
+              [word-var : (__tl_dyn-array i64) plan.word-var]
+              [word : i64 0]
+              [taken : i64 0]
               (opt-aggregate-split-set!
                 (&mut plan.cand)
                 index
                 (opt-aggregate-split-field-first-word)
                 next)
-              (opt-aggregate-split-get
-                plan.cand
-                index
-                (opt-aggregate-split-field-slots)))))]
-      (opt-aggregate-split-assign-words! plan (+ index 1) (+ next words)))))
+              (while (< word words)
+                (let
+                  [slot : i64 (opt-aggregate-split-word-index index word)]
+                  (set! (array-ref word-var slot) (+ next taken))
+                  (set!
+                    taken
+                    (+
+                      taken
+                      (if (= (array-ref plan.word-set slot) 2)
+                        (opt-aggregate-split-lane-count-below
+                          (array-ref plan.word-lanes slot)
+                          8)
+                        1)))
+                  (set! word (+ word 1))))
+              taken)))]
+      (opt-aggregate-split-assign-words! plan (+ index 1) (+ next vars)))))
 
 ;; --- refusal tracing ---------------------------------------------------------
 ;;
@@ -5912,16 +6129,13 @@
     (set! (array-ref cursor 0) (+ var 1))
     var))
 
+;; The var of a whole word (a word that holds lanes is never moved whole: a
+;; copy over one is refused, see opt-aggregate-split-check-copy-lanes!).
 (define (opt-aggregate-split-word-var
   [plan : (& plan OptSplitPlan)]
   [index : i64]
   [word : i64]) : i64
-  (+
-    (opt-aggregate-split-get
-      plan.cand
-      index
-      (opt-aggregate-split-field-first-word))
-    word))
+  (array-ref plan.word-var (opt-aggregate-split-word-index index word)))
 
 (define (opt-aggregate-split-word-type
   [plan : (& plan OptSplitPlan)]
@@ -5947,13 +6161,35 @@
         (opt-aggregate-split-field-slots))]
     [word : i64 0]
     (while (< word words)
-      (ir.compiler-ir-instr-builder-push!
-        builder
-        (ir.CompilerIrInstr.Mov
-          (opt-aggregate-split-word-var plan index word)
-          (I64 0)
-          (opt-aggregate-split-word-type plan index word)))
-      (set! word (+ word 1)))))
+      (let
+        [slot : i64 (opt-aggregate-split-word-index index word)]
+        (if (= (array-ref plan.word-set slot) 2)
+          (let
+            [lanes : i64 (array-ref plan.word-lanes slot)]
+            [byte : i64 0]
+            [var : i64 (array-ref plan.word-var slot)]
+            (while (< byte 8)
+              (let
+                [code : i64 (opt-aggregate-split-lane-at lanes byte)]
+                (if (> code 0)
+                  (let
+                    [ty : ast.AstType (opt-aggregate-split-lane-type code)]
+                    (ir.compiler-ir-instr-builder-push!
+                      builder
+                      (ir.CompilerIrInstr.Mov
+                        var
+                        (opt-licm-guard-zero (& ty))
+                        ty))
+                    (set! var (+ var 1)))
+                  unit)
+                (set! byte (+ byte 1)))))
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Mov
+              (opt-aggregate-split-word-var plan index word)
+              (I64 0)
+              (opt-aggregate-split-word-type plan index word))))
+        (set! word (+ word 1))))))
 
 ;; A pointer to word `word` of `base`: word 0 is the base pointer itself.
 (define (opt-aggregate-split-emit-word-ptr!
@@ -6050,18 +6286,26 @@
       index
       (- 0 1))))
 
+;; The var an access through `value` reads or writes: its word's var, or, in a
+;; word that holds lanes, the var of the lane starting at the access's byte.
 (define (opt-aggregate-split-access-word
   [plan : (& plan OptSplitPlan)]
   [value : ir.CompilerIrValue]
   [index : i64]) : i64
-  (opt-aggregate-split-word-var
-    plan
-    index
-    (/
+  (let
+    [offset : i64
       (opt-aggregate-split-ptr-offset
         plan.ptr
-        (opt-aggregate-split-value-var-or value 0))
-      8)))
+        (opt-aggregate-split-value-var-or value 0))]
+    [word : i64 (/ offset 8)]
+    [slot : i64 (opt-aggregate-split-word-index index word)]
+    (if (= (array-ref plan.word-set slot) 2)
+      (+
+        (array-ref plan.word-var slot)
+        (opt-aggregate-split-lane-count-below
+          (array-ref plan.word-lanes slot)
+          (- offset (* word 8))))
+      (opt-aggregate-split-word-var plan index word))))
 
 (define (opt-aggregate-split-rewrite-instr!
   [plan : (& plan OptSplitPlan)]
@@ -6265,6 +6509,7 @@
                 (compiler-opt-global-shared-view plan)
                 flat
                 0)
+              (opt-aggregate-split-check-copy-lanes! plan 0)
               (opt-aggregate-split-check-uses!
                 plan
                 (opt-collect-blocks-uses-array frame blocks)
@@ -12500,6 +12745,19 @@
 ;; A variable is left alone when its address is taken, a definition is not a
 ;; mov/pack/call/load/phi of one group type, its representation is not a known
 ;; register group, or it has more than opt-aggregate-split-word-limit words.
+;;
+;; A JOIN of groups (#8555). The multiblock inliner binds a callee's result at
+;; its continuation as one phi over the values its exits return, so a match on
+;; an inlined `iterator.into-next` reads `word %r, 0` of `%r = phi [pack [0,
+;; 0], pack [1, %i]]`. That var has one definition, so the rule above leaves it
+;; a group, and nothing downstream looks through a group phi: the tag stays a
+;; run-time value and the match is never threaded. A single-definition group
+;; phi whose every input is a var and whose every use is a `word` is split as
+;; well, and without the temp: each predecessor ends with `%g.i = word v, i`
+;; for the input v it carries (read through that edge's pack when v is itself
+;; split), and the phi goes away. The words are then ordinary multi-def scalars
+;; SSA joins with one phi each, and copy propagation and GVN fold every `word
+;; (pack ...)` input to the pack's own word -- the tag phi becomes `phi [0, 1]`.
 (defstruct OptGroupSplitPlan
   ;; Per var: first word var of an accepted group (-1 if none), its word
   ;; count, its SSE word mask and its group type.
@@ -12511,7 +12769,19 @@
   ;; built at the end of that predecessor.
   (edge-labels opt_dense_i64_vec.Vec)
   (edge-vars opt_dense_i64_vec.Vec)
-  (edge-packs opt_dense_i64_vec.Vec))
+  (edge-packs opt_dense_i64_vec.Vec)
+  ;; Per var: 1 when it is an accepted join (its phi is replaced by the edge
+  ;; words below), else 0.
+  (joins (__tl_dyn-array i64))
+  ;; Join edge words: the predecessor label, the join var, and the var its
+  ;; phi reads on that edge.
+  (join-labels opt_dense_i64_vec.Vec)
+  (join-vars opt_dense_i64_vec.Vec)
+  (join-inputs opt_dense_i64_vec.Vec)
+  ;; Per join edge, opt-aggregate-split-word-limit slots: the words of the
+  ;; `pack` that defines its input, when that pack can be read through
+  ;; (opt-group-split-pack-words), else `Var -1` in slot 0.
+  (join-words (__tl_dyn-array ir.CompilerIrValue)))
 
 ;; The group type a definition gives its var, or No for a definition this pass
 ;; cannot split.
@@ -12663,8 +12933,27 @@
 
 ;; Rewrite one non-phi instruction: packs for the groups it reads, then the
 ;; instruction with those uses substituted, then the words of a group it
-;; defines. `remap` is all `Var -1` between calls.
+;; defines. `remap` is all `Var -1` between calls. A join is only ever read by
+;; `word` (opt-group-split-assign-joins!), and that read is its word var.
 (define (opt-group-split-rewrite-instr!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
+  [cursor : (&mut cursor (__tl_dyn-array i64))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(Word dst (Var group) index ty)
+      (if (opt-group-split-join? plan group)
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.Mov
+            dst
+            (Var (+ (array-ref plan.words group) index))
+            ty))
+        (opt-group-split-rewrite-reads! plan builder remap cursor instr))]
+    [_ (opt-group-split-rewrite-reads! plan builder remap cursor instr)]))
+
+(define (opt-group-split-rewrite-reads!
   [plan : (& plan OptGroupSplitPlan)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
@@ -12755,18 +13044,21 @@
             (let
               [mapped : ir.CompilerIrPhiInputSeq
                 (opt-group-split-phi-inputs plan inputs)]
-              (if (opt-group-split-accepted? plan dst)
-                (let
-                  [temp : i64 (array-ref cursor 0)]
-                  (set! (array-ref cursor 0) (+ temp 1))
-                  (opt_dense_i64_vec.push-ref! (&mut phi-vars) dst)
-                  (opt_dense_i64_vec.push-ref! (&mut phi-temps) temp)
+              (if (opt-group-split-join? plan dst)
+                ;; Defined by its predecessors' edge words instead.
+                unit
+                (if (opt-group-split-accepted? plan dst)
+                  (let
+                    [temp : i64 (array-ref cursor 0)]
+                    (set! (array-ref cursor 0) (+ temp 1))
+                    (opt_dense_i64_vec.push-ref! (&mut phi-vars) dst)
+                    (opt_dense_i64_vec.push-ref! (&mut phi-temps) temp)
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.Phi temp mapped ty)))
                   (ir.compiler-ir-instr-builder-push!
                     (&mut builder)
-                    (ir.CompilerIrInstr.Phi temp mapped ty)))
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.CompilerIrInstr.Phi dst mapped ty))))]
+                    (ir.CompilerIrInstr.Phi dst mapped ty)))))]
           [_
             (unless
               phis-done
@@ -12778,9 +13070,10 @@
                 entry?
                 (& phi-vars)
                 (& phi-temps)))
-            (if (= index (- count 1))
+            (when
+              (= index (- count 1))
               (opt-group-split-emit-edge-packs! plan (&mut builder) label)
-              unit)
+              (opt-group-split-emit-join-words! plan (&mut builder) label))
             (opt-group-split-rewrite-instr!
               plan
               (&mut builder)
@@ -12817,6 +13110,96 @@
               (opt-group-split-emit-words! plan builder var (Var var))
               unit)])
         (set! index (+ index 1))))))
+
+;; Whether `var` is an accepted join (see the pass header).
+(define (opt-group-split-join? [plan : (& plan OptGroupSplitPlan)] [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length plan.joins))
+    (= (array-ref plan.joins var) 1)))
+
+;; The words of every join whose phi reads an input on the edge out of
+;; `label`, placed after that block's edge packs: `%g.i = mov w_i` when the
+;; input is a `pack [w_0 ..]` whose words can be read here, else `%g.i = word
+;; v, i`, with v read through its edge pack when it is itself split. Reading a
+;; pack's words directly is the fold block-local copy propagation makes of
+;; `word (pack ...)`; doing it here hands SSA and SCCP the tag literals in the
+;; same round instead of the next one.
+(define (opt-group-split-emit-join-words!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [label : i64]) : unit
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& plan.join-labels))]
+    [index : i64 0]
+    (while (< index count)
+      (if (= (opt_dense_i64_vec.get (& plan.join-labels) index -1) label)
+        (let
+          [input : i64 (opt_dense_i64_vec.get (& plan.join-inputs) index -1)]
+          [var : i64 (opt_dense_i64_vec.get (& plan.join-vars) index -1)]
+          [slot : i64 (* index (opt-aggregate-split-word-limit))]
+          (if (match (compiler-opt-global-array-element-shared-view
+            plan.join-words
+            slot)
+            [(Var word) (< word 0)]
+            [_ false])
+            (opt-group-split-emit-words!
+              plan
+              builder
+              var
+              (Var
+                (if (opt-group-split-accepted? plan input)
+                  (opt-group-split-edge-pack plan label input)
+                  input)))
+            (let
+              [base : i64 (array-ref plan.words var)]
+              [words : i64 (array-ref plan.counts var)]
+              [mask : i64 (array-ref plan.masks var)]
+              [word : i64 0]
+              (while (< word words)
+                (ir.compiler-ir-instr-builder-push!
+                  builder
+                  (ir.CompilerIrInstr.Mov
+                    (+ base word)
+                    (compiler-opt-global-array-element-shared-view
+                      plan.join-words
+                      (+ slot word))
+                    (opt-group-split-word-type mask word)))
+                (set! word (+ word 1))))))
+        unit)
+      (set! index (+ index 1)))))
+
+;; Whether `pack-index` names a single-definition `pack` of `words` words whose
+;; every word is a literal or a var defined once (a parameter included), so
+;; that its words still hold at the end of any block the pack reaches.
+(define (opt-group-split-pack-words?
+  [flat : (& flat OptSplitFlat)]
+  [defs : (& defs (__tl_dyn-array i64))]
+  [pack-index : i64]
+  [words : i64]) : bool
+  (if (< pack-index 0)
+    false
+    (match (opt-aggregate-split-at flat pack-index)
+      [(Pack _ values _)
+        (let
+          [count : i64 (ir.compiler-ir-value-seq-count values)]
+          [index : i64 0]
+          [ok : bool (= count words)]
+          (while (and ok (< index count))
+            (match (ir.compiler-ir-value-seq-ref values index)
+              [(Var var)
+                (if (or
+                  (< var 0)
+                  (>= var (array-length defs))
+                  (!= (array-ref defs var) 1))
+                  (set! ok false)
+                  unit)]
+              [(I64 _) unit]
+              [(Bool _) unit]
+              [_ (set! ok false)])
+            (set! index (+ index 1)))
+          ok)]
+      [_ false])))
 
 (define (opt-group-split-emit-edge-packs!
   [plan : (& plan OptGroupSplitPlan)]
@@ -12973,6 +13356,204 @@
       (set! index (+ index 1)))
     next))
 
+;; Whether every input of a phi is a var.
+(define (opt-group-split-phi-inputs-vars?
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+    [index : i64 0]
+    [ok : bool true]
+    (while (and ok (< index count))
+      (match (ir.compiler-ir-phi-input-seq-ref inputs index).value
+        [(Var _) unit]
+        [_ (set! ok false)])
+      (set! index (+ index 1)))
+    ok))
+
+;; The register-group word count of `var`'s type, or 0 when it is not a known
+;; group of at most opt-aggregate-split-word-limit words.
+(define (opt-group-split-join-words
+  [type-segment-bases : i64]
+  [representations : (& representations ir.CompilerIrRepresentationIndex)]
+  [plan : (& plan OptGroupSplitPlan)]
+  [var : i64]) : i64
+  (match (opt-ssa-var-types-lookup (& plan.types) var)
+    [(Some ty)
+      (match (ir.compiler-ir-representation-index-kind
+        type-segment-bases
+        representations
+        ty)
+        [(RegisterGroup words _)
+          (if (<= words (opt-aggregate-split-word-limit))
+            words
+            0)]
+        [_ 0])]
+    [(No) 0]))
+
+;; Accept the joins among `candidates` -- phi-defined vars whose inputs are all
+;; vars -- that are defined once, have no address taken, are a known register
+;; group of at most opt-aggregate-split-word-limit words, and are read by
+;; `word` and nothing else. Use counts are taken only when a candidate gets
+;; that far. Returns the next free var.
+(define (opt-group-split-assign-joins!
+  [type-segment-bases : i64]
+  [representations : (& representations ir.CompilerIrRepresentationIndex)]
+  [plan : (& plan OptGroupSplitPlan)]
+  [defs : (& defs (__tl_dyn-array i64))]
+  [bad : (& bad (__tl_dyn-array i64))]
+  [candidates : (& candidates opt_dense_i64_vec.Vec)]
+  [flat : (& flat OptSplitFlat)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [name : i64]
+  [frame : i64]
+  [next-var : i64]) : i64
+  (let
+    [count : i64 (opt_dense_i64_vec.len candidates)]
+    [groups : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [index : i64 0]
+    [next : i64 next-var]
+    (while (< index count)
+      (let
+        [var : i64 (opt_dense_i64_vec.get candidates index -1)]
+        (if (and
+          (= (array-ref defs var) 1)
+          (= (array-ref bad var) 0)
+          (>
+            (opt-group-split-join-words
+              type-segment-bases
+              representations
+              plan
+              var)
+            0))
+          (opt_dense_i64_vec.push-ref! (&mut groups) var)
+          unit)
+        (set! index (+ index 1))))
+    (if (= (opt_dense_i64_vec.len (& groups)) 0)
+      next
+      (let
+        [uses : (__tl_dyn-array i64)
+          (opt-collect-blocks-uses-array frame blocks)]
+        [word-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [joins : (__tl_dyn-array i64) plan.joins]
+        (set! index 0)
+        (while (< index flat.count)
+          (match (opt-aggregate-split-at flat index)
+            [(Word _ (Var src) _ _)
+              (if (and (>= src 0) (< src frame))
+                (set! (array-ref word-uses src) (+ (array-ref word-uses src) 1))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (< index (opt_dense_i64_vec.len (& groups)))
+          (let
+            [var : i64 (opt_dense_i64_vec.get (& groups) index -1)]
+            (if (and
+              (> (array-ref word-uses var) 0)
+              (= (array-ref word-uses var) (array-ref uses var)))
+              (match (opt-ssa-var-types-lookup (& plan.types) var)
+                [(Some ty)
+                  (match (ir.compiler-ir-representation-index-kind
+                    type-segment-bases
+                    representations
+                    ty)
+                    [(RegisterGroup words mask)
+                      (set! (array-ref plan.words var) next)
+                      (set! (array-ref plan.counts var) words)
+                      (set! (array-ref plan.masks var) mask)
+                      (set! (array-ref joins var) 1)
+                      (set! next (+ next words))
+                      (if (and
+                        compiler-opt-debug-trace-passes
+                        (not compiler-opt-debug-suppressed?))
+                        (io.print-error
+                          (str_cat.str-cat
+                            "group-split|"
+                            (ir.compiler-ir-symbol-text name)
+                            "|%"
+                            (string.int->string var)
+                            "|join|words="
+                            (string.int->string words)
+                            "\n"))
+                        unit)]
+                    [_ unit])]
+                [(No) unit])
+              unit)
+            (set! index (+ index 1))))
+        next))))
+
+;; The edge words of every accepted join: one (predecessor, join, input) entry
+;; per phi input, with the words of the input's defining `pack` when they can
+;; be read at the edge. `pack-at` is the flat index of each var's `pack`
+;; definition, or -1.
+(define (opt-group-split-plan-joins!
+  [plan : (&mut plan OptGroupSplitPlan)]
+  [flat : (& flat OptSplitFlat)]
+  [defs : (& defs (__tl_dyn-array i64))]
+  [pack-at : (& pack-at (__tl_dyn-array i64))]) : unit
+  (let
+    [index : i64 0]
+    (while (< index flat.count)
+      (match (opt-aggregate-split-at flat index)
+        [(Phi dst inputs _)
+          (if (opt-group-split-join? plan dst)
+            (let
+              [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+              [position : i64 0]
+              (while (< position count)
+                (let
+                  [input : ir.CompilerIrPhiInput
+                    (ir.compiler-ir-phi-input-seq-ref inputs position)]
+                  (match input.value
+                    [(Var var)
+                      (opt_dense_i64_vec.push-ref!
+                        (&mut plan.join-labels)
+                        input.label)
+                      (opt_dense_i64_vec.push-ref! (&mut plan.join-vars) dst)
+                      (opt_dense_i64_vec.push-ref! (&mut plan.join-inputs) var)]
+                    [_ unit])
+                  (set! position (+ position 1)))))
+            unit)]
+        [_ unit])
+      (set! index (+ index 1)))
+    (let
+      [entries : i64 (opt_dense_i64_vec.len (& plan.join-labels))]
+      [limit : i64 (opt-aggregate-split-word-limit)]
+      [words : (__tl_dyn-array ir.CompilerIrValue)
+        (__tl_make-array ir.CompilerIrValue (* entries limit))]
+      [entry : i64 0]
+      (while (< entry entries)
+        (let
+          [input : i64 (opt_dense_i64_vec.get (& plan.join-inputs) entry -1)]
+          [var : i64 (opt_dense_i64_vec.get (& plan.join-vars) entry -1)]
+          [count : i64 (array-ref plan.counts var)]
+          [pack-index : i64
+            (if (and
+              (>= input 0)
+              (< input (array-length pack-at))
+              (= (array-ref defs input) 1))
+              (array-ref pack-at input)
+              -1)]
+          [slot : i64 0]
+          (while (< slot limit)
+            (set!
+              (array-ref words (+ (* entry limit) slot))
+              (ir.CompilerIrValue.Var -1))
+            (set! slot (+ slot 1)))
+          (if (opt-group-split-pack-words? flat defs pack-index count)
+            (match (opt-aggregate-split-at flat pack-index)
+              [(Pack _ values _)
+                (set! slot 0)
+                (while (< slot count)
+                  (set!
+                    (array-ref words (+ (* entry limit) slot))
+                    (ir.compiler-ir-value-seq-ref values slot))
+                  (set! slot (+ slot 1)))]
+              [_ unit])
+            unit)
+          (set! entry (+ entry 1))))
+      (set! plan.join-words words))))
+
 (define (opt-group-split-function
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -12988,6 +13569,8 @@
           [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
           [bad : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
           [types : OptSsaVarTypes (opt-ssa-var-types-new)]
+          [join-candidates : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+          [pack-at : (__tl_dyn-array i64) (opt-group-split-filled frame -1)]
           [index : i64 0]
           (while (< index params.len)
             (match (ir.compiler-ir-param-seq-ref params index)
@@ -13011,6 +13594,16 @@
                 [(AddrOf _ src)
                   (set! (array-ref bad src) (opt-group-split-refused-address))]
                 [_
+                  (match (compiler-opt-global-shared-view instr)
+                    [(Phi dst inputs _)
+                      (if (opt-group-split-phi-inputs-vars? (& inputs))
+                        (opt_dense_i64_vec.push-ref! (&mut join-candidates) dst)
+                        unit)]
+                    [(Pack dst _ _)
+                      (if (and (>= dst 0) (< dst frame))
+                        (set! (array-ref pack-at dst) index)
+                        unit)]
+                    [_ unit])
                   (match (opt-instr-def-var
                     (compiler-opt-global-shared-view instr))
                     [(Some dst)
@@ -13035,8 +13628,13 @@
                 types
                 (opt_dense_i64_vec.new)
                 (opt_dense_i64_vec.new)
-                (opt_dense_i64_vec.new))]
-            [after-words : i64
+                (opt_dense_i64_vec.new)
+                (opt-group-split-filled frame 0)
+                (opt_dense_i64_vec.new)
+                (opt_dense_i64_vec.new)
+                (opt_dense_i64_vec.new)
+                (__tl_make-array ir.CompilerIrValue 0))]
+            [after-groups : i64
               (opt-group-split-assign!
                 type-segment-bases
                 (& representations)
@@ -13046,9 +13644,28 @@
                 name
                 frame
                 frame)]
+            [after-words : i64
+              (opt-group-split-assign-joins!
+                type-segment-bases
+                (& representations)
+                (& plan)
+                (& defs)
+                (& bad)
+                (& join-candidates)
+                (& flat)
+                (& blocks)
+                name
+                frame
+                after-groups)]
             (if (= after-words frame)
               func
               (let
+                [_joins : unit
+                  (opt-group-split-plan-joins!
+                    (&mut plan)
+                    (& flat)
+                    (& defs)
+                    (& pack-at))]
                 [after-edges : i64
                   (opt-group-split-plan-edges! (&mut plan) (& flat) after-words)]
                 [cursor : (__tl_dyn-array i64)
@@ -13266,7 +13883,9 @@
   [phi-var : i64]) : OptSsaPhiSites
   (let
     [items : opt_ssa_dense_vec.Vec sites.items]
-    (opt_ssa_dense_vec.push-ref! (&mut items) (PhiSite var label ty phi-var))
+    (opt_ssa_dense_vec.push-ref!
+      (&mut items)
+      (OptSsaDenseEntry.PhiSite var label ty phi-var))
     (OptSsaPhiSites items)))
 
 (define (opt-ssa-phi-sites-ref [sites : (& sites OptSsaPhiSites)] [index : i64]) : OptSsaDenseEntry
@@ -13288,7 +13907,9 @@
   [instrs : ir.CompilerIrInstrSeq]) : OptSsaRenameBlocks
   (let
     [items : opt_ssa_dense_vec.Vec blocks.items]
-    (opt_ssa_dense_vec.push-ref! (&mut items) (RenameBlock label instrs))
+    (opt_ssa_dense_vec.push-ref!
+      (&mut items)
+      (OptSsaDenseEntry.RenameBlock label instrs))
     (OptSsaRenameBlocks items)))
 
 (define (opt-ssa-rename-blocks-ref
@@ -13314,7 +13935,7 @@
     [items : opt_ssa_dense_vec.Vec outs.items]
     (opt_ssa_dense_vec.push-ref!
       (&mut items)
-      (BlockOut label (opt-ssa-env-snapshot env)))
+      (OptSsaDenseEntry.BlockOut label (opt-ssa-env-snapshot env)))
     (OptSsaBlockOuts items)))
 
 (define (opt-ssa-block-outs-ref [outs : (& outs OptSsaBlockOuts)] [index : i64]) : OptSsaDenseEntry
@@ -24227,7 +24848,9 @@
   (opt_i64_i64_map.with-capacity 1))
 
 ;; The program's value representations, for the size of a register group's
-;; home. Captured with the global extents, for the same reason.
+;; home and for the inliner's multiblock return gate
+;; (opt-inline-multiblock-return-type-ok?). Captured with the global extents,
+;; for the same reason.
 (define opt-licm-deref-representations : ir.CompilerIrRepresentationIndex
   (ir.compiler-ir-representation-index-empty))
 
@@ -31041,7 +31664,7 @@
         (opt-induction-derived-list-append-unique 0 one first)]
       [two : OptInductionDerivedList
         (let
-          [derived (Mul 8 1 (I64))]
+          [derived (OptInductionDerived.Mul 8 1 (I64))]
           (opt-induction-derived-list-append-unique 0 one derived))]
       [deriveds : OptInductionDerivedList (Nil)]
       [index : i64 0]
@@ -31075,7 +31698,7 @@
         (set!
           deriveds
           (let
-            [derived (Mul (+ index 10) index (I64))]
+            [derived (OptInductionDerived.Mul (+ index 10) index (I64))]
             (opt-induction-derived-list-append-unique 0 deriveds derived)))
         (set! index (+ index 1)))
       (match (compiler-opt-global-shared-view deriveds)
@@ -38771,7 +39394,8 @@
 ;;     and a self loop makes the block its own second predecessor), and the RPO
 ;;     test states that directly rather than relying on it.
 ;;   - B does not branch back to P: merging would turn the pair into a
-;;     self-looping block whose phis reference their own block.
+;;     self-looping block whose phis reference their own block (wanted only for
+;;     the straight-line loop below, where P's phis are re-keyed onto P).
 ;;   - Neither block is the entry. B cannot be (it has a predecessor), and
 ;;     leaving P out keeps the block that owns the frame exactly where it is.
 ;;   - B holds no phi with more than one input. With one predecessor every phi
@@ -38799,6 +39423,21 @@
 ;;     bit-test fold or add a spill/reload pair to a hot store), and it can flip
 ;;     an inline verdict (the checked inline tier prices a candidate by
 ;;     OPTIMIZING it, so every change here moves that measurement).
+;; Two LOOP SHAPES are merged on structure instead (#8555), when the stage is
+;; asked for them (`loops?`, outside the inliner's priced pipeline). Both are
+;; what folding a loop-invariant flag leaves of a loop -- a range loop's
+;; `inclusive` once aggregate_split has exposed it and SCCP has decided it --
+;; and both take blocks that run exactly as often as the block they join:
+;;   - a TOP TEST split off its header: P is a loop header (a predecessor
+;;     reaches it on a back edge) and B ends in the conditional branch. The
+;;     folded `(if flag live (< i n))` condition leaves its compare one block
+;;     past the header, behind the folded phi's dead `mov`, and `rotate_ssa`,
+;;     bounds-check versioning and unrolling all read the test off the header's
+;;     own terminator;
+;;   - a STRAIGHT-LINE LOOP: the surviving arm of a folded advance left as a
+;;     block of its own between the header and the latch, merged back with
+;;     both, back edge included (the one case where B may branch to P), so the
+;;     loop is one block again; see opt-cfg-merge-loop-chain?.
 ;; Phi keys: B's label disappears, so every phi input keyed on B in B's
 ;; successors is re-keyed to P. Only the LAST block of a merged run has
 ;; surviving successors -- every earlier one ends in the `Jump` that is dropped
@@ -38884,6 +39523,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [pred-label : i64]
   [pred-instrs : (& pred-instrs ir.CompilerIrInstrSeq)]
   [label : i64]) : bool
@@ -38913,24 +39553,176 @@
                   (=
                     (opt-thread-jump-target instrs)
                     (ir.compiler-ir-label-none))
-                  (opt-cfg-merge-absorbable-head? instrs)
-                  (not (opt-cfg-merge-targets-label? instrs pred-label))
-                  (opt-cfg-merge-reads-def?
-                    scratch
-                    (compiler-opt-global-shared-view instrs)
-                    (opt-cfg-merge-tail-def pred-instrs))
+                  (or
+                    (and
+                      loops?
+                      (opt-cfg-merge-loop-chain?
+                        index
+                        entry-label
+                        pred-label
+                        instrs))
+                    (and
+                      (opt-cfg-merge-absorbable-head? instrs)
+                      (not (opt-cfg-merge-targets-label? instrs pred-label))
+                      (or
+                        (opt-cfg-merge-reads-def?
+                          scratch
+                          (compiler-opt-global-shared-view instrs)
+                          (opt-cfg-merge-tail-def pred-instrs))
+                        (and
+                          loops?
+                          (opt-cfg-merge-ends-in-branch? instrs)
+                          (opt-cfg-merge-loop-header? index pred-label pred-rpo)))))
                   (opt-cfg-merge-phis-foldable? instrs 0 pred-label))])])))))
+
+;; The head of the straight run that ends at `label`: walk back while the block
+;; has exactly one predecessor and that predecessor ends in `jump` to it. Every
+;; block the walk passes below the head must be a scalar block
+;; (opt-cfg-merge-scalar-block?), so that merging the run leaves the head as
+;; the loop's one block; the answer is `label-none` when one is not. The walk
+;; is bounded by the block count, so a cycle of such blocks (unreachable code)
+;; cannot hold it.
+(define (opt-cfg-merge-scalar-run-head
+  [index : (& index OptCfgIndex)]
+  [entry-label : i64]
+  [label : i64]) : i64
+  (let
+    [current : i64 label]
+    [fuel : i64 (opt-cfg-index-block-count index)]
+    [done : bool false]
+    (while (and (not done) (> fuel 0))
+      (let
+        [preds : OptLabelSet (opt-cfg-index-predecessors index current)]
+        (if (or (= current entry-label) (not (= (opt-label-count preds) 1)))
+          (set! done true)
+          (let
+            [pred : i64 (opt-label-ref preds 0)]
+            (match (opt-cfg-index-find-block index pred)
+              [(No) (set! done true)]
+              [(Some block)
+                (match block
+                  [(Block _ pred-instrs)
+                    (if (= (opt-thread-jump-target (& pred-instrs)) current)
+                      (if (match (opt-cfg-index-find-block index current)
+                        [(Some below)
+                          (match below
+                            [(Block _ below-instrs)
+                              (opt-cfg-merge-scalar-block? (& below-instrs))])]
+                        [(No) false])
+                        (set! current pred)
+                        (begin
+                          (set! current (ir.compiler-ir-label-none))
+                          (set! done true)))
+                      (set! done true))])])))
+        (set! fuel (- fuel 1))))
+    current))
+
+;; A STRAIGHT-LINE LOOP (#8555): B ends in the branch that closes a loop whose
+;; header H heads the straight run B's only predecessor P ends -- every block
+;; from H to P has one predecessor and ends in `jump` to the next, so the loop
+;; is exactly H .. P, B and each of its blocks runs once per iteration -- and
+;; every block of that run below H holds only register arithmetic
+;; (opt-cfg-merge-scalar-block?). Folding a loop-invariant flag (SCCP deciding
+;; the `if inclusive ...` arms of a range loop's advance once aggregate_split
+;; has exposed the flag) leaves exactly that behind where the source had a
+;; diamond: the surviving arm of the advance as a block of its own, between a
+;; header and a latch that hold the body -- the advance comes first in the
+;; prelude `for` macro's range loop and last in a hand-written one. The
+;; unroller and the single-block bounds-check versioner only take a loop that
+;; is one block, so the run is merged back, the back edge included, whatever B
+;; holds: merging blocks that always run together moves no work onto or off
+;; any path. A run with memory, checks or calls BETWEEN header and latch is not
+;; merged this way -- a body that arrives in several such blocks (an inlined
+;; callee's) stays the multi-block versioner's, which prices its guard for the
+;; loop as written.
+(define (opt-cfg-merge-loop-chain?
+  [index : (& index OptCfgIndex)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(Branch _ then-label else-label)
+          (let
+            [head : i64
+              (opt-cfg-merge-scalar-run-head index entry-label pred-label)]
+            (and
+              (not (= head entry-label))
+              (not (= head (ir.compiler-ir-label-none)))
+              (or (= then-label head) (= else-label head))))]
+        [_ false]))))
+
+;; Whether every instruction of the block is a phi, a move, register
+;; arithmetic, a compare or a cast, or the block's own jump or branch.
+(define (opt-cfg-merge-scalar-block?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slot : i64 0]
+    [ok : bool true]
+    (while (and ok (< slot count))
+      (match (ir.compiler-ir-instr-seq-ref instrs slot)
+        [(Phi _ _ _) unit]
+        [(Mov _ _ _) unit]
+        [(BinOp _ _ _ _ _) unit]
+        [(UnOp _ _ _ _) unit]
+        [(Cast _ _ _ _) unit]
+        [(Jump _) unit]
+        [(Branch _ _ _) unit]
+        [_ (set! ok false)])
+      (set! slot (+ slot 1)))
+    ok))
+
+;; Whether the block's terminator is a two-way `branch`.
+(define (opt-cfg-merge-ends-in-branch?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(Branch _ _ _) true]
+        [_ false]))))
+
+;; Whether `label` (at RPO number `rpo`) is a loop header: some predecessor
+;; reaches it on a back edge, from a block no earlier in reverse postorder.
+(define (opt-cfg-merge-loop-header?
+  [index : (& index OptCfgIndex)]
+  [label : i64]
+  [rpo : i64]) : bool
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+    [count : i64 (opt-label-count preds)]
+    [slot : i64 0]
+    [found : bool false]
+    (while (and (not found) (< slot count))
+      (if (>= (opt-phi-cmp-fold-label-rpo index (opt-label-ref preds slot)) rpo)
+        (set! found true)
+        unit)
+      (set! slot (+ slot 1)))
+    found))
 
 ;; The block `label` absorbs, or `label-none`.
 (define (opt-cfg-merge-target
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (let
     [target : i64 (opt-thread-jump-target instrs)]
-    (if (opt-cfg-merge-mergeable? index scratch entry-label label instrs target)
+    (if (opt-cfg-merge-mergeable?
+      index
+      scratch
+      entry-label
+      loops?
+      label
+      instrs
+      target)
       target
       (ir.compiler-ir-label-none))))
 
@@ -38940,6 +39732,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [label : i64]) : bool
   (let
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
@@ -38956,6 +39749,7 @@
                   index
                   scratch
                   entry-label
+                  loops?
                   pred-label
                   pred-instrs
                   label)])])))))
@@ -38964,12 +39758,13 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [block : ir.CompilerIrBlock]) : bool
   (match block
     [(Block label instrs)
       (not
         (=
-          (opt-cfg-merge-target index scratch entry-label label instrs)
+          (opt-cfg-merge-target index scratch entry-label loops? label instrs)
           (ir.compiler-ir-label-none)))]))
 
 ;; One linear scan over the blocks the `cfg` stage just produced, reading the
@@ -38979,6 +39774,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view blocks)
     [(Array seq)
@@ -38990,6 +39786,7 @@
             index
             (compiler-opt-global-shared-view scratch)
             entry-label
+            loops?
             (ir.compiler-ir-block-seq-ref seq slot))
             (return true)
             (set! slot (+ slot 1))))
@@ -38998,12 +39795,14 @@
 (define (opt-cfg-merge-blocks-have-candidate?
   [index : OptCfgIndex]
   [entry-label : i64]
+  [loops? : bool]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (opt-cfg-merge-blocks-have-candidate-from?
     index
     (opt-used-array-new frame)
     entry-label
+    loops?
     blocks))
 
 (define (opt-cfg-merge-phi-to-mov [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -39035,6 +39834,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
@@ -39049,6 +39849,7 @@
           index
           (compiler-opt-global-shared-view scratch)
           entry-label
+          loops?
           label
           instrs))]
     (if (= target (ir.compiler-ir-label-none))
@@ -39064,6 +39865,7 @@
                   index
                   scratch
                   entry-label
+                  loops?
                   builder
                   target
                   next-instrs
@@ -39074,6 +39876,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [fuel : i64]) : ir.CompilerIrInstrSeq
@@ -39085,6 +39888,7 @@
       index
       scratch
       entry-label
+      loops?
       (&mut builder)
       label
       instrs
@@ -39149,6 +39953,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [redirect : (&mut redirect (__tl_dyn-array i64))]
   [root-label : i64]
   [label : i64]
@@ -39162,6 +39967,7 @@
           index
           (compiler-opt-global-shared-view scratch)
           entry-label
+          loops?
           label
           instrs))]
     (if (= target (ir.compiler-ir-label-none))
@@ -39179,6 +39985,7 @@
                     index
                     scratch
                     entry-label
+                    loops?
                     redirect
                     root-label
                     target
@@ -39200,6 +40007,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [redirect : (&mut redirect (__tl_dyn-array i64))]) : bool
   (let
     [count : i64 (opt-cfg-index-block-count index)]
@@ -39214,6 +40022,7 @@
               index
               (compiler-opt-global-shared-view scratch)
               entry-label
+              loops?
               label))
           (match (opt-cfg-index-block index id)
             [(No) unit]
@@ -39225,6 +40034,7 @@
                       index
                       (compiler-opt-global-shared-view scratch)
                       entry-label
+                      loops?
                       redirect
                       label
                       label
@@ -39258,6 +40068,7 @@
   [index : (& index OptCfgIndex)]
   [scratch : (__tl_dyn-array i64)]
   [entry-label : i64]
+  [loops? : bool]
   [redirect : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
   (let
     [count : i64 (opt-cfg-index-block-count index)]
@@ -39280,6 +40091,7 @@
                       index
                       (compiler-opt-global-shared-view scratch)
                       entry-label
+                      loops?
                       label
                       instrs
                       count)))])]))
@@ -39302,7 +40114,8 @@
 ;; hands back the untouched input list when it merges nothing.
 (define (opt-cfg-merge-blocks-round
   [blocks : ir.CompilerIrBlockList]
-  [frame : i64]) : OptBlockListPassResult
+  [frame : i64]
+  [loops? : bool]) : OptBlockListPassResult
   (let
     [work : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
     [index : OptCfgIndex
@@ -39320,13 +40133,19 @@
             index
             (compiler-opt-global-shared-view scratch)
             entry-label
+            loops?
             (&mut redirect)))
           (Result blocks false)
           (begin
             (opt-cfg-merge-rekey-all! index redirect)
             (let
               [merged : ir.CompilerIrBlockList
-                (opt-cfg-merge-build-blocks index scratch entry-label redirect)]
+                (opt-cfg-merge-build-blocks
+                  index
+                  scratch
+                  entry-label
+                  loops?
+                  redirect)]
               [merged-context : OptCfgContext
                 (opt-cfg-context-build (compiler-opt-global-shared-view merged))]
               (if (opt-cfg-merge-verified? merged merged-context)
@@ -39342,20 +40161,29 @@
 (define (opt-cfg-merge-blocks
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
+  [loops? : bool]
   [remaining : i64]) : OptBlockListPassResult
   (if (<= remaining 0)
     (Result blocks false)
     (match (opt-cfg-merge-blocks-round
       (compiler-opt-global-shared-view blocks)
-      frame)
+      frame
+      loops?)
       [(Result next changed)
         (if (not changed)
           (Result blocks false)
-          (match (opt-cfg-merge-blocks next frame (- remaining 1))
+          (match (opt-cfg-merge-blocks next frame loops? (- remaining 1))
             [(Result final _) (Result final true)]))])))
 
+;; `loops?` admits the two loop-shape merges (opt-cfg-merge-mergeable?). The
+;; pipeline passes it outside the inliner's priced pipeline only: a loop the
+;; merge makes one block is a loop the unroller then copies, and the checked
+;; tier, which prices a candidate by the size of its optimized body, would read
+;; that unrolled copy as the cost of the inline it is deciding (see
+;; opt-aggregate-split-function for the same reasoning about a live-only pass).
 (define (opt-cfg-merge-blocks-with-context-result
   [frame : i64]
+  [loops? : bool]
   [input : OptBlockCtxResult]) : OptBlockCtxResult
   (match (compiler-opt-global-shared-view input)
     [(Result blocks context context-valid)
@@ -39365,10 +40193,15 @@
           (opt-cfg-merge-blocks-have-candidate?
             context.index
             context.entry-label
+            loops?
             frame
             blocks)))
         input
-        (match (opt-cfg-merge-blocks blocks frame (opt-cfg-merge-blocks-fuel))
+        (match (opt-cfg-merge-blocks
+          blocks
+          frame
+          loops?
+          (opt-cfg-merge-blocks-fuel))
           [(Result next changed)
             (if (not changed)
               input
@@ -98747,6 +99580,7 @@
         (opt-pass-with-block-ctx
           (opt-cfg-merge-blocks-with-context-result
             gvn-frame
+            (not s.priced?)
             (opt-cfg-simplify-blocks-with-context-result
               (Result (opt-pass-blocks s) (opt-pass-ctx s) s.ctx-valid?)))
           s))]
@@ -103340,15 +104174,62 @@
       (set! position (+ position 1)))
     found))
 
+;; The return shapes a multiblock callee may have. Every `Return v` of the body
+;; becomes `dst = mov v` at the site (opt-inline-exit->result-instr), so a body
+;; with two exits gives the site's result var two definitions, and the caller
+;; stays in SSA only if that var can be renamed:
+;;   * a hidden `sret` return writes through the caller's pointer and returns
+;;     nothing to rename;
+;;   * a scalar or fixed register handle (opt-ssa-register-value-type?) and a
+;;     nominal of one known word are ordinary SSA candidates;
+;;   * a register group -- a small struct or a tag-and-payload enum such as
+;;     `iterator.IntoNext`, which the lowering returns in two registers -- is
+;;     split pre-SSA into one var per word by `group_split`, which takes a
+;;     known group of at most opt-aggregate-split-word-limit words (#8555);
+;;   * `unit` has no value.
+;; Anything else, a nominal of unknown representation in particular, would
+;; leave the caller multi-def, so it stays out of line. The representations
+;; are the program's own (opt-licm-deref-representations), installed before
+;; the inline stage runs; with none installed a nominal reads as unknown.
 (define (opt-inline-multiblock-return-type-ok?
   [params : ir.CompilerIrParamSeq]
   [ret : ast.AstType]) : bool
   (or
     (opt-inline-params-have-sret? params)
     (opt-ssa-register-value-type? ret)
-    (match ret
+    (match (& ret)
       [(Unit) true]
-      [_ false])))
+      [_
+        (opt-inline-return-representation-ok?
+          (& opt-licm-deref-representations)
+          (& ret))])))
+
+;; Whether `ret`'s representation is one SSA can rename after `group_split`: a
+;; known one-word nominal, or a known register group of at most
+;; opt-aggregate-split-word-limit words (the bound opt-group-split-assign!
+;; enforces). A region-wrapped nominal reads as unknown here; the inline stage
+;; carries no type-segment bases to look through it.
+(define (opt-inline-return-representation-ok?
+  [representations : (& representations ir.CompilerIrRepresentationIndex)]
+  [ret : (& ret ast.AstType)]) : bool
+  (match (match ret
+    [(Struct name)
+      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+    [(StructArgs name _)
+      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+    [(Enum name)
+      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+    [(EnumArgs name _)
+      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+    [_ ast.AstMaybeNominalKey.None])
+    [(Some key)
+      (match (ir.compiler-ir-representation-index-kind-for-key
+        representations
+        key)
+        [(KnownOneWord) true]
+        [(RegisterGroup count _) (<= count (opt-aggregate-split-word-limit))]
+        [(Unknown) false])]
+    [(None) false]))
 
 ;; The multiblock admission verdict, as a shape-refusal code. This is the one
 ;; place the clauses are ordered, and the order is the one the predicate has

@@ -16960,18 +16960,17 @@
     unit)
   (let
     [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (let
-      [inputs : TcElidedTypes (try (tc-elide-input-type-list pools args 0))]
-      [input-types : ast.AstTypeList inputs.types]
-      [lifetime : TcMaybeNameId
-        (tc-signature-single-input-lifetime
-          type-bases
-          (tc-global-shared-view input-types))]
-      [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
-      (Ok
-        (TcElidedType
-          (ast.ast-ty-func-with-pools pools input-types output.ty)
-          inputs.next-index)))))
+    [inputs : TcElidedTypes (try (tc-elide-input-type-list pools args 0))]
+    [input-types : ast.AstTypeList inputs.types]
+    [lifetime : TcMaybeNameId
+      (tc-signature-single-input-lifetime
+        type-bases
+        (tc-global-shared-view input-types))]
+    [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
+    (Ok
+      (TcElidedType
+        (ast.ast-ty-func-with-pools pools input-types output.ty)
+        inputs.next-index))))
 
 (define (tc-elide-input-type
   [pools : ast.AstNodePoolContext]
@@ -17361,23 +17360,21 @@
     unit)
   (let
     [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (let
-      [inputs : TcElidedParams
-        (try
-          (tc-elide-input-params-at
-            pools
-            (& params)
-            0
-            0
-            (ast.ast-param-list-with-capacity
-              (ast.ast-param-list-len (& params)))))]
-      [input-params : ast.AstParamList inputs.params]
-      [input-types : ast.AstTypeList
-        (tc-elided-param-type-list pools input-params)]
-      [lifetime : TcMaybeNameId
-        (tc-signature-single-input-lifetime type-bases input-types)]
-      [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
-      (Ok (TcElidedSignature input-params output.ty)))))
+    [inputs : TcElidedParams
+      (try
+        (tc-elide-input-params-at
+          pools
+          (& params)
+          0
+          0
+          (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))))]
+    [input-params : ast.AstParamList inputs.params]
+    [input-types : ast.AstTypeList
+      (tc-elided-param-type-list pools input-params)]
+    [lifetime : TcMaybeNameId
+      (tc-signature-single-input-lifetime type-bases input-types)]
+    [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
+    (Ok (TcElidedSignature input-params output.ty))))
 
 (define (tc-type-list-collect-reference-lifetimes
   [types : ast.AstTypeList]

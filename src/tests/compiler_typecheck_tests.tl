@@ -13,7 +13,6 @@
 (import compiler_clone_tests as clone_tests)
 (import compiler_parse_core as parser)
 (import compiler_symbols as csym)
-(import compiler_embedded_stdlib as ces)
 (import stdlib.arena)
 (import stdlib.string)
 (import sym_i64_env)
@@ -164,19 +163,19 @@
 
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
         (compiler-typecheck-diagnostic-matches? (& first) want))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-error-count-ok?
   [src : String]
   [want : String]
   [want-count : i64]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -186,7 +185,7 @@
         (and
           (= count want-count)
           (compiler-typecheck-diagnostic-matches? (& first) want)))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-error-location-ok?
   [src : String]
@@ -194,7 +193,7 @@
   [want-line : i64]
   [want-col : i64]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [value : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -202,14 +201,14 @@
           (string.eq (cdiag.compiler-diagnostic-message value) want)
           (= (cdiag.compiler-diagnostic-line value) want-line)
           (= (cdiag.compiler-diagnostic-col value) want-col)))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-error-code-ok?
   [src : String]
   [want-code : String]
   [want-category : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -222,7 +221,7 @@
                 [CompilerDiagnosticNoString false])
               false)]
           [CompilerDiagnosticNoString false]))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-secondary-count
   [labels : cdiag.CompilerDiagnosticLabelList]) : i64
@@ -240,7 +239,7 @@
   [want-col : i64]
   [want-secondary-count : i64]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -253,18 +252,18 @@
               (cdiag.compiler-diagnostic-secondary-spans first))
             want-secondary-count)
           (compiler-typecheck-help-present? first)))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-program-error-ok?
   [program : ast.AstProgram]
   [want : String]) : bool
   (match (tc_api.typecheck-compiler-program program)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message first) want))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 ;; With the growing ty-node pool a compile that starts with the pool at
 ;; capacity grows the backing array and succeeds rather than failing closed with
@@ -282,8 +281,8 @@
         [grew : bool (> (ast_tests.ty-node-pool-capacity) capacity)]
         [ok : bool
           (match result
-            [(tc_core.ResultCompilerTypecheck.Ok _) grew]
-            [(tc_core.ResultCompilerTypecheck.Err _) false])]
+            [(Ok _) grew]
+            [(Err _) false])]
         (begin
           (ast.ty-node-pool-reset!)
           ok)))))
@@ -307,13 +306,13 @@
   (match (parser.parse-ast-source-diagnostic
     (tc_core.tc-global-shared-view entry-path)
     src)
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-prefix-cache-paths entry-path))
-        [(tc_core.ResultCompilerTypecheck.Ok _) true]
-        [(tc_core.ResultCompilerTypecheck.Err _) false])]
-    [(parser.ResultAstProgramDiagnostic.Err _) false]))
+        [(Ok _) true]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-prefix-cache-smoke-ok?) : bool
   (let
@@ -366,14 +365,13 @@
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Ok summary)
-      (= (tc_api.compiler-typecheck-summary-score summary) want)]
-    [(tc_core.ResultCompilerTypecheck.Err _) false]))
+    [(Ok summary) (= (tc_api.compiler-typecheck-summary-score summary) want)]
+    [(Err _) false]))
 
 (define (compiler-typecheck-ok? [src : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Ok _) true]
-    [(tc_core.ResultCompilerTypecheck.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-typecheck-bad-call-source) : String
   "(define (id [x : i64]) : i64 x)
@@ -441,13 +439,13 @@
 
 (define (compiler-typecheck-rendered-error-ok? [src : String] [want : String]) : bool
   (match (tc_api.typecheck-compiler-source (tc_core.tc-global-shared-view src))
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-render-source
           (cdiag.compiler-diagnostic-list-first (deref diag))
           src)
         want)]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-escape-diagnostic-tests-ok?) : bool
   (and
@@ -865,7 +863,7 @@
   (let
     [generated-name-id : i64 (tc_core.tc-generated-name-id "GeneratedStruct")]
     [meta : ast.AstGeneratedDeclMeta
-      (ast.AstGeneratedDeclMeta.Some
+      (Some
         "policy-family"
         "GeneratedStruct"
         (ast.ast-expr-list-new)
@@ -875,8 +873,8 @@
         meta
         (ast.ast-decl-def-struct-id
           generated-name-id
-          (ast.AstStructRepr.Default)
-          (ast.AstStructCleanup.No)
+          (Default)
+          (No)
           (ast.ast-field-def-list-new)))]
     [diag : cdiag.CompilerDiagnostic
       (tc_core.tc-decl-diag
@@ -955,7 +953,7 @@
     [program : ast.AstProgram
       (owned_view.compiler-owned-reference-shared-view program)]
     (match program
-      [(ast.AstProgram.Program decls-box)
+      [(Program decls-box)
         (let
           [decls : ast.AstDeclList
             (ast.ast-decl-list-box-shared-view decls-box)]
@@ -971,31 +969,25 @@
                     (ast.ast-decl-fallback))]
                 (begin
                   (match decl
-                    [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                    [(DefStruct decl-meta candidate _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text candidate)
                         name)
                         (set! name-id candidate)
                         unit)]
-                    [(ast.AstDecl.DefStructLifetimes
-                        decl-meta
-                        candidate
-                        _
-                        _
-                        _
-                        _)
+                    [(DefStructLifetimes decl-meta candidate _ _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text candidate)
                         name)
                         (set! name-id candidate)
                         unit)]
-                    [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                    [(DefEnum decl-meta candidate _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text candidate)
                         name)
                         (set! name-id candidate)
                         unit)]
-                    [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                    [(DefEnumLifetimes decl-meta candidate _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text candidate)
                         name)
@@ -1009,11 +1001,11 @@
   (begin
     (tc_core.tc-agg-caches-reset!)
     (match (parser.parse-ast-source (compiler-typecheck-repr-c-layout-source))
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -1026,17 +1018,17 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "Packet"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok packet)
+                    [(Ok packet)
                       (match (tc_core.tc-inline-aggregate-layout-for-id
                         ctx
                         (compiler-typecheck-fixture-nominal-id program "Outer"))
-                        [(tc_core.ResultTcInlineAggregateLayout.Ok outer)
+                        [(Ok outer)
                           (match (tc_core.tc-inline-aggregate-layout-for-id
                             ctx
                             (compiler-typecheck-fixture-nominal-id
                               program
                               "WideC"))
-                            [(tc_core.ResultTcInlineAggregateLayout.Ok wide)
+                            [(Ok wide)
                               (let
                                 [wide-fields : tc_core.TcInlineFieldLayoutList
                                   (core_tests.tc-inline-layout-fields
@@ -1116,23 +1108,22 @@
                                       wide-fields
                                       "f11")
                                     42)))]
-                            [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                              false])]
-                        [(tc_core.ResultTcInlineAggregateLayout.Err _) false])]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
+                            [(Err _) false])]
+                        [(Err _) false])]
+                    [(Err _) false]))]
+              [(Err _) false])]
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
   (begin
     (tc_core.tc-agg-caches-reset!)
     (match (parser.parse-ast-source (compiler-typecheck-repr-c-f32-source))
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -1145,7 +1136,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "Vec2"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (and
                         (=
                           (tc_core.tc-inline-aggregate-layout-size
@@ -1170,10 +1161,10 @@
                             layout
                             "tag")
                           8))]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
+                    [(Err _) false]))]
+              [(Err _) false])]
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-repr-c-layout-error-ok?
   [src : String]
@@ -1182,11 +1173,11 @@
   (begin
     (tc_core.tc-agg-caches-reset!)
     (match (parser.parse-ast-source src)
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -1199,12 +1190,11 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program name))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok _) false]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err message)
-                      (string.eq message want)]))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
+                    [(Ok _) false]
+                    [(Err message) (string.eq message want)]))]
+              [(Err _) false])]
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-repr-c-mixed-layout-ok?) : bool
   (begin
@@ -1222,11 +1212,11 @@
   (point Point)
   (tag Tag)
   (tail u16))")
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -1239,7 +1229,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "Mixed"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (and
                         (=
                           (tc_core.tc-inline-aggregate-layout-size
@@ -1269,10 +1259,10 @@
                             layout
                             "tail")
                           40))]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
+                    [(Err _) false]))]
+              [(Err _) false])]
+          [(Err _) false])]
+      [(Err _) false])))
 
 ;; Explicit `(:align N)` layout: the one inline aggregate layout behind
 ;; `size-of`/`align-of`/`offset-of` and field addresses gives the C11
@@ -1324,7 +1314,7 @@
   [field : String]
   [want-offset : i64]) : bool
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+    [(Ok layout)
       (and
         (=
           (tc_core.tc-inline-aggregate-layout-size
@@ -1335,18 +1325,18 @@
             (tc_core.tc-global-shared-view layout))
           want-align)
         (= (core_tests.tc-inline-layout-field-offset layout field) want-offset))]
-    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-typecheck-repr-c-aligned-layout-ok?) : bool
   (begin
     (tc_core.tc-agg-caches-reset!)
     (match (parser.parse-ast-source
       (compiler-typecheck-repr-c-aligned-layout-source))
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ctx : tc_core.TcContext
                     (tc_core.tc-context-new
@@ -1391,9 +1381,9 @@
                       8
                       "items"
                       24)))]
-              [(csym.ResultCompilerRegistries.Err _) false])]
-          [(csym.ResultCompilerSymbols.Err _) false])]
-      [(parser.ResultAstProgram.Err _) false])))
+              [(Err _) false])]
+          [(Err _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-repr-c-align-errors-ok?) : bool
   (and
@@ -1500,11 +1490,11 @@
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : tc_core.ResultTcUnit
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [ctx : tc_core.TcContext
                   (tc_core.tc-context-new
@@ -1518,27 +1508,25 @@
                   ctx
                   (tc_core.tc-global-shared-view name)
                   (compiler-typecheck-fixture-nominal-id program name)))]
-            [(csym.ResultCompilerRegistries.Err message)
-              (tc_core.ResultTcUnit.Err message)])]
-        [(csym.ResultCompilerSymbols.Err message)
-          (tc_core.ResultTcUnit.Err message)])]
-    [(parser.ResultAstProgram.Err message) (tc_core.ResultTcUnit.Err message)]))
+            [(Err message) (Err message)])]
+        [(Err message) (Err message)])]
+    [(Err message) (Err message)]))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(tc_core.ResultTcUnit.Ok) true]
-    [(tc_core.ResultTcUnit.Err _) false]))
+    [(Ok) true]
+    [(Err _) false]))
 
 (define (compiler-typecheck-inline-layout-size-ok?
   [src : String]
   [name : String]
   [want : i64]) : bool
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [ctx : tc_core.TcContext
                   (tc_core.tc-context-new
@@ -1551,20 +1539,20 @@
                 (match (tc_core.tc-inline-aggregate-layout-for-id
                   ctx
                   (compiler-typecheck-fixture-nominal-id program name))
-                  [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                  [(Ok layout)
                     (= (tc_core.tc-inline-aggregate-layout-size layout) want)]
-                  [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                  [(Err _) false]))]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-inline-layout-error-ok?
   [src : String]
   [name : String]
   [want : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(tc_core.ResultTcUnit.Err message) (string.eq message want)]
-    [(tc_core.ResultTcUnit.Ok) false]))
+    [(Err message) (string.eq message want)]
+    [(Ok) false]))
 
 (define (compiler-typecheck-inline-field-id-at
   [fields : (& fields tc_core.TcInlineFieldLayoutList)]
@@ -1574,7 +1562,7 @@
     (>= index (tc_core.tc-inline-field-layout-list-count fields)))
     -1
     (match (tc_core.tc-inline-field-layout-list-ref fields index)
-      [(tc_core.TcInlineFieldLayout.Field name-id _ _) name-id])))
+      [(Field name-id _ _) name-id])))
 
 (define (compiler-typecheck-inline-variant-id-at
   [variants : (& variants tc_core.TcInlineVariantLayoutList)]
@@ -1584,7 +1572,7 @@
     (>= index (tc_core.tc-inline-variant-layout-list-count variants)))
     -1
     (match (tc_core.tc-inline-variant-layout-list-ref variants index)
-      [(tc_core.TcInlineVariantLayout.Variant name-id _ _ _) name-id])))
+      [(Variant name-id _ _ _) name-id])))
 
 ;; The retained layout builders allocate in their cache-owned arena but must
 ;; restore the caller's active arena after each allocation. Exercise all three
@@ -1622,10 +1610,7 @@
             state
             0
             4242
-            (tc_core.TcInlineAggregateLayout.Struct
-              8
-              8
-              (tc_core.tc-global-shared-view fields)))]
+            (Struct 8 8 (tc_core.tc-global-shared-view fields)))]
         [ok : bool
           (and
             (> storage 0)
@@ -1702,30 +1687,24 @@
       (tc_core.tc-inline-field-layout-list-set!
         (tc_core.tc-global-shared-view fields-a)
         0
-        (tc_core.TcInlineFieldLayout.Field 1101 (ast.AstType.I64) 0))]
+        (Field 1101 (I64) 0))]
     [_field-b : unit
       (tc_core.tc-inline-field-layout-list-set!
         (tc_core.tc-global-shared-view fields-b)
         0
-        (tc_core.TcInlineFieldLayout.Field 2202 (ast.AstType.U32) 0))]
+        (Field 2202 (U32) 0))]
     [_publish-a : unit
       (tc_core.tc-agg-layout-cache-store-for-state!
         state-a
         0
         101
-        (tc_core.TcInlineAggregateLayout.Struct
-          16
-          8
-          (tc_core.tc-global-shared-view fields-a)))]
+        (Struct 16 8 (tc_core.tc-global-shared-view fields-a)))]
     [_publish-b : unit
       (tc_core.tc-agg-layout-cache-store-for-state!
         state-b
         0
         202
-        (tc_core.TcInlineAggregateLayout.Struct
-          12
-          4
-          (tc_core.tc-global-shared-view fields-b)))]
+        (Struct 12 4 (tc_core.tc-global-shared-view fields-b)))]
     [storage-a : i64
       (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state state-a)]
     [storage-b : i64
@@ -1771,16 +1750,13 @@
           (tc_core.tc-inline-field-layout-list-set!
             (tc_core.tc-global-shared-view reused-a)
             0
-            (tc_core.TcInlineFieldLayout.Field 3303 (ast.AstType.U64) 0))]
+            (Field 3303 (U64) 0))]
         [_reuse-publish : unit
           (tc_core.tc-agg-layout-cache-store-for-state!
             state-a
             0
             303
-            (tc_core.TcInlineAggregateLayout.Struct
-              8
-              8
-              (tc_core.tc-global-shared-view reused-a)))]
+            (Struct 8 8 (tc_core.tc-global-shared-view reused-a)))]
         (begin
           (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-b)
           (let
@@ -1853,11 +1829,11 @@
 (defenum Tree
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [ctx : tc_core.TcContext
                   (tc_core.tc-context-new
@@ -1874,11 +1850,11 @@
                     (compiler-typecheck-fixture-nominal-id
                       program
                       "InlinePacket"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (let
                         [small-id : i64
                           (match (tc_core.tc-global-shared-view layout)
-                            [(tc_core.TcInlineAggregateLayout.Struct _ _ fields)
+                            [(Struct _ _ fields)
                               (compiler-typecheck-inline-field-id-at fields 3)]
                             [_ -1])]
                         (begin
@@ -1922,39 +1898,38 @@
                             18)
                             unit
                             (set! ok false))))]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                      (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id
                       program
                       "InlineChoice"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (let
                         [empty-id : i64
                           (match (tc_core.tc-global-shared-view layout)
-                            [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+                            [(Enum _ _ variants)
                               (compiler-typecheck-inline-variant-id-at
                                 variants
                                 0)]
                             [_ -1])]
                         [byte-id : i64
                           (match (tc_core.tc-global-shared-view layout)
-                            [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+                            [(Enum _ _ variants)
                               (compiler-typecheck-inline-variant-id-at
                                 variants
                                 1)]
                             [_ -1])]
                         [wide-id : i64
                           (match (tc_core.tc-global-shared-view layout)
-                            [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+                            [(Enum _ _ variants)
                               (compiler-typecheck-inline-variant-id-at
                                 variants
                                 2)]
                             [_ -1])]
                         [pair-id : i64
                           (match (tc_core.tc-global-shared-view layout)
-                            [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+                            [(Enum _ _ variants)
                               (compiler-typecheck-inline-variant-id-at
                                 variants
                                 3)]
@@ -2017,17 +1992,13 @@
                             8)
                             unit
                             (set! ok false))))]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                      (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "WidePacket"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (match (tc_core.tc-global-shared-view layout)
-                        [(tc_core.TcInlineAggregateLayout.Struct
-                            size
-                            align
-                            fields)
+                        [(Struct size align fields)
                           (let
                             [first-id : i64
                               (compiler-typecheck-inline-field-id-at fields 0)]
@@ -2067,17 +2038,13 @@
                               unit
                               (set! ok false)))]
                         [_ (set! ok false)])]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                      (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "WideChoice"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (match layout
-                        [(tc_core.TcInlineAggregateLayout.Enum
-                            size
-                            align
-                            variants)
+                        [(Enum size align variants)
                           (let
                             [first-id : i64
                               (compiler-typecheck-inline-variant-id-at
@@ -2091,12 +2058,7 @@
                               (match (tc_core.tc-inline-variant-layout-list-ref
                                 variants
                                 11)
-                                [(tc_core.TcInlineVariantLayout.Variant
-                                    _
-                                    _
-                                    _
-                                    items)
-                                  items])]
+                                [(Variant _ _ _ items) items])]
                             (if (and
                               (= size 32)
                               (= align 8)
@@ -2134,71 +2096,63 @@
                               unit
                               (set! ok false)))]
                         [_ (set! ok false)])]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                      (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id program "Tree"))
-                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+                    [(Ok layout)
                       (if (=
                         (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))]
-                    [(tc_core.ResultTcInlineAggregateLayout.Err _)
-                      (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
                     ctx
-                    (ast.ast-ty-tuple
-                      (tc_core.tc-type-list2 (ast.AstType.U8) (ast.AstType.I32))))
-                    [(tc_core.ResultTcLayoutInfo.Ok info)
+                    (ast.ast-ty-tuple (tc_core.tc-type-list2 (U8) (I32))))
+                    [(Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 8)
                         (= (tc_core.tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
-                    [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
                     ctx
                     (ast.ast-ty-array
-                      (ast.ast-ty-tuple
-                        (tc_core.tc-type-list2
-                          (ast.AstType.U8)
-                          (ast.AstType.I32)))
+                      (ast.ast-ty-tuple (tc_core.tc-type-list2 (U8) (I32)))
                       2))
-                    [(tc_core.ResultTcLayoutInfo.Ok info)
+                    [(Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 16)
                         (= (tc_core.tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
-                    [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
                     ctx
-                    (ast.ast-ty-box
-                      (ast.AstType.Struct (ci.intern "InlinePacket"))))
-                    [(tc_core.ResultTcLayoutInfo.Ok info)
+                    (ast.ast-ty-box (Struct (ci.intern "InlinePacket"))))
+                    [(Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 8)
                         (= (tc_core.tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
-                    [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
+                    [(Err _) (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-type-layout
                     ctx
-                    (ast.ast-ty-dyn-array
-                      (ast.AstType.Struct (ci.intern "InlinePacket"))))
-                    [(tc_core.ResultTcLayoutInfo.Ok info)
+                    (ast.ast-ty-dyn-array (Struct (ci.intern "InlinePacket"))))
+                    [(Ok info)
                       (if (and
                         (= (tc_core.tc-layout-info-size info) 8)
                         (= (tc_core.tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
-                    [(tc_core.ResultTcLayoutInfo.Err _) (set! ok false)])
+                    [(Err _) (set! ok false)])
                   ok))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-inline-dense-sequence-source) : String
   "(defstruct I64Sequence
@@ -2875,16 +2829,13 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string.eq
-      (tc_core.tc-type-render (ast.ast-ty-box (ast.AstType.I64)))
-      "(Box i64)")
+    (string.eq (tc_core.tc-type-render (ast.ast-ty-box (I64))) "(Box i64)")
     (tc_core.tc-type-eq
-      (ast.ast-ty-box
-        (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))
-      (ast.ast-ty-box (ast.AstType.I64)))
+      (ast.ast-ty-box (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
+      (ast.ast-ty-box (I64)))
     (tc_core.tc-type-contains-region
       (ast.ast-ty-box
-        (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+        (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (String)))
       cbi.compiler-builtin-id-fix-n)))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
@@ -3130,12 +3081,12 @@
   (and
     (match (tc_core.tc-result-info-kind
       (tc_core.tc-global-shared-view operand-info))
-      [(tc_core.TcTryResult) true]
-      [(tc_core.TcTryOption) false])
+      [(TcTryResult) true]
+      [(TcTryOption) false])
     (match (tc_core.tc-result-info-kind
       (tc_core.tc-global-shared-view return-info))
-      [(tc_core.TcTryResult) true]
-      [(tc_core.TcTryOption) false])
+      [(TcTryResult) true]
+      [(TcTryOption) false])
     (=
       (tc_core.tc-result-info-enum-id
         (tc_core.tc-global-shared-view operand-info))
@@ -3160,11 +3111,11 @@
     (tc_core.tc-type-eq
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view operand-info))
-      (ast.AstType.I64))
+      (I64))
     (tc_core.tc-type-eq
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view return-info))
-      (ast.AstType.Bool))
+      (Bool))
     (tc_core.tc-type-eq
       (tc_core.tc-result-info-err-type operand-info)
       (tc_core.tc-result-info-err-type return-info))))
@@ -3177,12 +3128,12 @@
   (and
     (match (tc_core.tc-result-info-kind
       (tc_core.tc-global-shared-view operand-info))
-      [(tc_core.TcTryResult) false]
-      [(tc_core.TcTryOption) true])
+      [(TcTryResult) false]
+      [(TcTryOption) true])
     (match (tc_core.tc-result-info-kind
       (tc_core.tc-global-shared-view return-info))
-      [(tc_core.TcTryResult) false]
-      [(tc_core.TcTryOption) true])
+      [(TcTryResult) false]
+      [(TcTryOption) true])
     (=
       (tc_core.tc-result-info-enum-id
         (tc_core.tc-global-shared-view operand-info))
@@ -3195,36 +3146,32 @@
     (tc_core.tc-type-eq
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view operand-info))
-      (ast.AstType.I64))
+      (I64))
     (tc_core.tc-type-eq
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view return-info))
-      (ast.AstType.Bool))
-    (tc_core.tc-type-eq
-      (tc_core.tc-result-info-err-type operand-info)
-      (ast.AstType.Unit))
-    (tc_core.tc-type-eq
-      (tc_core.tc-result-info-err-type return-info)
-      (ast.AstType.Unit))))
+      (Bool))
+    (tc_core.tc-type-eq (tc_core.tc-result-info-err-type operand-info) (Unit))
+    (tc_core.tc-type-eq (tc_core.tc-result-info-err-type return-info) (Unit))))
 
 (define (compiler-typecheck-try-query-residual-mismatch-ok?
   [result : tc_core.TcTryQueryResult]
   [operand-id : i64]
   [return-id : i64]) : bool
   (match result
-    [(tc_core.TcTryQueryCompatible _ _)
+    [(TcTryQueryCompatible _ _)
       (io.panic "typecheck: residual mismatch query was compatible")]
-    [(tc_core.TcTryQueryIncompatible
-        (tc_core.TcTryCarrier operand-info)
-        (tc_core.TcTryCarrier return-info)
-        (tc_core.TcTryResidualTypeMismatch operand-residual return-residual))
+    [(TcTryQueryIncompatible
+        (TcTryCarrier operand-info)
+        (TcTryCarrier return-info)
+        (TcTryResidualTypeMismatch operand-residual return-residual))
       (and
         (= (tc_core.tc-result-info-enum-id operand-info) operand-id)
         (= (tc_core.tc-result-info-enum-id return-info) return-id)
         (match (tc_core.tc-global-shared-view operand-residual)
-          [(ast.AstType.Struct operand-error-id)
+          [(Struct operand-error-id)
             (match (tc_core.tc-global-shared-view return-residual)
-              [(ast.AstType.Struct return-error-id)
+              [(Struct return-error-id)
                 ;; Both declarations were spelled `Error` in source, but the
                 ;; resolved nominal identities belong to different modules.
                 (if (= operand-error-id return-error-id)
@@ -3240,19 +3187,19 @@
               (str_cat.str-cat
                 "typecheck: operand residual was "
                 (tc_core.tc-type-render operand-residual)))]))]
-    [(tc_core.TcTryQueryIncompatible _ _ reason)
+    [(TcTryQueryIncompatible _ _ reason)
       (io.panic (tc_core.tc-try-incompatibility-message reason))]))
 
 (define (compiler-typecheck-try-query-forbidden-ok?
   [result : tc_core.TcTryQueryResult]) : bool
   (match result
-    [(tc_core.TcTryQueryCompatible _ _) false]
-    [(tc_core.TcTryQueryIncompatible
-        (tc_core.TcTryCarrier _)
-        (tc_core.TcTryCarrier _)
-        (tc_core.TcTryEarlyExitForbidden (tc_core.TcTryEarlyExitForbiddenSpmd)))
+    [(TcTryQueryCompatible _ _) false]
+    [(TcTryQueryIncompatible
+        (TcTryCarrier _)
+        (TcTryCarrier _)
+        (TcTryEarlyExitForbidden (TcTryEarlyExitForbiddenSpmd)))
       true]
-    [(tc_core.TcTryQueryIncompatible _ _ _) false]))
+    [(TcTryQueryIncompatible _ _ _) false]))
 
 (define (compiler-typecheck-try-query-context-ok? [ctx : tc_core.TcContext]) : bool
   (let
@@ -3279,38 +3226,38 @@
       (unless
         (match (tc_core.tc-try-query
           ctx
-          (ast.AstType.Enum input-result-id)
-          (ast.AstType.Enum outer-result-id)
-          tc_core.TcTryEarlyExitAllowed)
-          [(tc_core.TcTryQueryCompatible operand-info return-info)
+          (Enum input-result-id)
+          (Enum outer-result-id)
+          TcTryEarlyExitAllowed)
+          [(TcTryQueryCompatible operand-info return-info)
             (compiler-typecheck-try-query-result-info-ok?
               operand-info
               return-info
               input-result-id
               outer-result-id)]
-          [(tc_core.TcTryQueryIncompatible _ _ _) false])
+          [(TcTryQueryIncompatible _ _ _) false])
         (io.panic "typecheck: compatible Result try query failed"))
       (unless
         (match (tc_core.tc-try-query
           ctx
-          (ast.AstType.Enum input-option-id)
-          (ast.AstType.Enum outer-option-id)
-          tc_core.TcTryEarlyExitAllowed)
-          [(tc_core.TcTryQueryCompatible operand-info return-info)
+          (Enum input-option-id)
+          (Enum outer-option-id)
+          TcTryEarlyExitAllowed)
+          [(TcTryQueryCompatible operand-info return-info)
             (compiler-typecheck-try-query-option-info-ok?
               operand-info
               return-info
               input-option-id
               outer-option-id)]
-          [(tc_core.TcTryQueryIncompatible _ _ _) false])
+          [(TcTryQueryIncompatible _ _ _) false])
         (io.panic "typecheck: compatible Option try query failed"))
       (unless
         (compiler-typecheck-try-query-residual-mismatch-ok?
           (tc_core.tc-try-query
             ctx
-            (ast.AstType.Enum input-result-id)
-            (ast.AstType.Enum other-result-id)
-            tc_core.TcTryEarlyExitAllowed)
+            (Enum input-result-id)
+            (Enum other-result-id)
+            TcTryEarlyExitAllowed)
           input-result-id
           other-result-id)
         (io.panic "typecheck: residual mismatch try query failed"))
@@ -3318,9 +3265,9 @@
         (compiler-typecheck-try-query-forbidden-ok?
           (tc_core.tc-try-query
             ctx
-            (ast.AstType.Enum input-result-id)
-            (ast.AstType.Enum outer-result-id)
-            tc_core.TcTryEarlyExitForbiddenSpmd))
+            (Enum input-result-id)
+            (Enum outer-result-id)
+            TcTryEarlyExitForbiddenSpmd))
         (io.panic "typecheck: forbidden-context try query failed"))
       true)))
 
@@ -3335,15 +3282,14 @@
 (defstruct Error (code i64))
 (defenum OtherResult (OkOther i64) (ErrOther Error))
 (defenum OuterOption (SomeOuter bool) (NoneOuter))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths-checked
         program
         (ast.ast-decl-path-list-new))
-        [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx _ _)
-          (compiler-typecheck-try-query-context-ok? ctx)]
-        [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-        [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _ ctx _ _) (compiler-typecheck-try-query-context-ok? ctx)]
+        [(Partial _ _ _ _) false]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-resource-with-tests-ok?) : bool
   (and
@@ -3478,8 +3424,8 @@
         (ast.ast-field-def-cons
           (ast.ast-field-def-id
             (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
-            (ast.AstType.I64)
-            (ast.AstFieldCleanup.No))
+            (I64)
+            (No))
           (ast.ast-field-def-list-new)))
       (ast.ast-decl-list-new))))
 
@@ -3488,12 +3434,12 @@
     (ast.ast-decl-cons
       (ast.ast-decl-def-struct-id
         (ci.intern-generated-name "Bad")
-        (ast.AstStructRepr.Default)
-        (ast.AstStructCleanup.No)
+        (Default)
+        (No)
         (ast.ast-field-def-cons
           (ast.ast-field-def-id
             (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
-            (ast.AstType.I64)
+            (I64)
             (ast.ast-field-cleanup-fn-id
               (ci.intern-syntax-id-from-raw
                 (ci.intern-generated-name "close-fd"))))
@@ -3570,11 +3516,11 @@
     (ast.ast-decl-cons
       (ast.ast-decl-def-enum-id
         (ci.intern-generated-name "Bad")
-        (ast.AstEnumCleanup.No)
+        (No)
         (ast.ast-variant-def-cons
           (ast.ast-variant-def-id
             (ci.intern-generated-name "A")
-            (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new))
+            (ast.ast-type-cons (I64) (ast.ast-type-list-new))
             (ast.ast-variant-payload-cleanup-cons
               (ast.ast-variant-payload-cleanup-fn-id
                 (ci.intern-syntax-id-from-raw
@@ -3719,48 +3665,46 @@
 (define (compiler-typecheck-move-kind-copyable-group-ok?
   [ctx : tc_core.TcContext]) : bool
   (and
-    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.I32))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.F64))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.F32))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Bool))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Char))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Unit))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Never))
+    (tc_core.tc-type-copyable? ctx (I64))
+    (tc_core.tc-type-copyable? ctx (I32))
+    (tc_core.tc-type-copyable? ctx (F64))
+    (tc_core.tc-type-copyable? ctx (F32))
+    (tc_core.tc-type-copyable? ctx (Bool))
+    (tc_core.tc-type-copyable? ctx (Char))
+    (tc_core.tc-type-copyable? ctx (Unit))
+    (tc_core.tc-type-copyable? ctx (Never))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-func (ast.ast-type-list-new) (ast.AstType.I64)))
+      (ast.ast-ty-func (ast.ast-type-list-new) (I64)))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-ptr
-        (ast.ast-ty-region
-          cbi.compiler-builtin-id-fix-value
-          (ast.AstType.String))))
+        (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (String))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-mut-ptr (ast.ast-ty-dyn-array (ast.AstType.I64))))
+      (ast.ast-ty-mut-ptr (ast.ast-ty-dyn-array (I64))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (String)))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Str)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Str)))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Bytes)))
     ;; Arrays and tuples are structurally Copyable.
-    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 4))
-    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (ast.AstType.I64) 0))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (I64) 4))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (I64) 0))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
-          (ast.AstType.I64)
-          (ast.ast-type-cons (ast.AstType.Bool) (ast.ast-type-list-new)))))
+          (I64)
+          (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))))
     (tc_core.tc-type-copyable? ctx (ast.ast-ty-tuple (ast.ast-type-list-new)))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "ScalarC")))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Enum (ci.intern "ScalarEnum")))
+    (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Scalar")))
+    (tc_core.tc-type-copyable? ctx (Struct (ci.intern "ScalarC")))
+    (tc_core.tc-type-copyable? ctx (Enum (ci.intern "ScalarEnum")))
     ;; One recursive positive chain covers array + tuple +
     ;; struct + enum + shared reference.
     (tc_core.tc-type-copyable?
@@ -3792,51 +3736,41 @@
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
           (ast.ast-lifetime-list-new))))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))))
+    (tc_core.tc-type-copyable? ctx (I64))))
 
 (define (compiler-typecheck-move-kind-move-only-group-ok?
   [ctx : tc_core.TcContext]) : bool
   (and
-    (tc_core.tc-type-move-only? ctx (ast.AstType.String))
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Str))
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Bytes))
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (ast.AstType.I64)))
+    (tc_core.tc-type-move-only? ctx (String))
+    (tc_core.tc-type-move-only? ctx (Str))
+    (tc_core.tc-type-move-only? ctx (Bytes))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (I64)))
     ;; Zero-length arrays still classify by element.
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (ast.AstType.String) 0))
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (ast.AstType.I64)))
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Box")))
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Enum (ci.intern "MoveOnlyEnum")))
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Struct (ci.intern "CleanupScalar")))
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Enum (ci.intern "CleanupEnum")))
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (String) 0))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (I64)))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Box")))
+    (tc_core.tc-type-move-only? ctx (Enum (ci.intern "MoveOnlyEnum")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "CleanupScalar")))
+    (tc_core.tc-type-move-only? ctx (Enum (ci.intern "CleanupEnum")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Cycle")))
     ;; Nested enum/struct poison must propagate through every aggregate layer.
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Enum (ci.intern "PoisonChoice")))
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Struct (ci.intern "NestedPoison")))
+    (tc_core.tc-type-move-only? ctx (Enum (ci.intern "PoisonChoice")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "NestedPoison")))
     ;; Missing lifetime arguments are conservative.
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "RefBox")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "RefBox")))
     (tc_core.tc-type-move-only?
       ctx
       (ast.ast-ty-enum-args (ci.intern "RefOption") (ast.ast-lifetime-list-new)))
     (tc_core.tc-type-move-only?
       ctx
-      (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64)))
+      (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (I64)))
     (tc_core.tc-type-move-only?
       ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
-          (ast.AstType.Struct (ci.intern "Box"))
+          (Struct (ci.intern "Box"))
           (ast.ast-type-cons
-            (ast.ast-ty-dyn-array (ast.AstType.I64))
+            (ast.ast-ty-dyn-array (I64))
             (ast.ast-type-list-new)))))))
 
 (define (compiler-typecheck-move-kind-wrapper-group-ok?
@@ -3844,28 +3778,27 @@
   (and
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))
+      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (ast.AstType.String))))
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (String))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
-        (ast.ast-ty-tuple
-          (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new)))))
+        (ast.ast-ty-tuple (ast.ast-type-cons (I64) (ast.ast-type-list-new)))))
     (tc_core.tc-type-move-only?
       ctx
-      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (String)))
     (tc_core.tc-type-move-only?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-value
-        (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (ast.AstType.I64))))
-    (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
-    (tc_core.tc-type-move-only? ctx (ast.AstType.String))))
+        (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (I64))))
+    (tc_core.tc-type-copyable? ctx (I64))
+    (tc_core.tc-type-move-only? ctx (String))))
 
 (define (compiler-typecheck-move-kind-memo
   [ctx : tc_core.TcContext]
@@ -3882,13 +3815,11 @@
 ;; must agree with the first.
 (define (compiler-typecheck-move-kind-memo-ok? [ctx : tc_core.TcContext]) : bool
   (and
-    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
+    (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Scalar")))
     (= (compiler-typecheck-move-kind-memo ctx "Scalar") 1)
-    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Cycle")))
     (= (compiler-typecheck-move-kind-memo ctx "Cycle") 2)
-    (tc_core.tc-type-move-only?
-      ctx
-      (ast.AstType.Struct (ci.intern "NestedPoison")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "NestedPoison")))
     (= (compiler-typecheck-move-kind-memo ctx "TextPacket") 0)
     (compiler-typecheck-move-kind-copyable-group-ok? ctx)
     (compiler-typecheck-move-kind-move-only-group-ok? ctx)
@@ -3918,11 +3849,11 @@
 (defstruct NestedPoison (choice PoisonChoice))
 (defenum RefOption (:lifetimes a) (None) (SomeRef (& a i64)))
 (defenum MoveOnlyEnum (Text String))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [ctx : tc_core.TcContext
                   (tc_core.tc-context-new
@@ -3937,9 +3868,9 @@
                   (compiler-typecheck-move-kind-move-only-group-ok? ctx)
                   (compiler-typecheck-move-kind-wrapper-group-ok? ctx)
                   (compiler-typecheck-move-kind-memo-ok? ctx)))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;; Function bodies typecheck against a function-local fork of the module
 ;; environment (#8375): zero and many parameters, shadows, arena and unsafe
@@ -4065,24 +3996,15 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
+    (string.eq (tc_core.tc-type-render (ast.ast-ty-ptr (I64))) "(Ptr i64)")
     (string.eq
-      (tc_core.tc-type-render (ast.ast-ty-ptr (ast.AstType.I64)))
-      "(Ptr i64)")
-    (string.eq
-      (tc_core.tc-type-render
-        (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (ast.AstType.U8))))
+      (tc_core.tc-type-render (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
       "(MutPtr (Ptr u8))")
+    (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-ptr (I64)))
+    (not (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-mut-ptr (I64))))
     (tc_core.tc-type-eq
-      (ast.ast-ty-ptr (ast.AstType.I64))
-      (ast.ast-ty-ptr (ast.AstType.I64)))
-    (not
-      (tc_core.tc-type-eq
-        (ast.ast-ty-ptr (ast.AstType.I64))
-        (ast.ast-ty-mut-ptr (ast.AstType.I64))))
-    (tc_core.tc-type-eq
-      (ast.ast-ty-ptr
-        (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))
-      (ast.ast-ty-ptr (ast.AstType.I64)))))
+      (ast.ast-ty-ptr (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
+      (ast.ast-ty-ptr (I64)))))
 
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
@@ -4460,29 +4382,29 @@
     [string-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.String)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (String)))
         "(& n String)")]
     [str-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Str)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Str)))
         "(& n str)")]
     [bytes-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Bytes)))
         "(& n bytes)")]
     [bytes-mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (ast.AstType.Bytes)))
+          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (Bytes)))
         "(&mut n bytes)")]
     [mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
           (ast.ast-ty-mut-ref
             cbi.compiler-builtin-id-fix-value
-            (ast.ast-ty-dyn-array (ast.AstType.I64))))
+            (ast.ast-ty-dyn-array (I64))))
         "(&mut value (__tl_dyn-array i64))")]
     [structural-lifetime-source : i64 (ci.intern "macro-lifetime")]
     [intern-state : ci.InternCompatState
@@ -4499,12 +4421,11 @@
                 structural-session
                 7
                 structural-lifetime-source))
-            (ast.AstType.I64)))
+            (I64)))
         "(& macro-lifetime i64)")]
     [invalid-lifetime-render-ok : bool
       (string.eq
-        (tc_core.tc-type-render
-          (ast.ast-ty-ref (ci.intern-capacity) (ast.AstType.I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref (ci.intern-capacity) (I64)))
         (str_cat.str-cat
           "(& <id:"
           (string.int->string (ci.intern-capacity))
@@ -4518,13 +4439,10 @@
               cbi.compiler-builtin-id-fix-n
               (ast.ast-lifetime-list-new))))
         "(RefBox n)")]
-    [str-eq-ok : bool (tc_core.tc-type-eq (ast.AstType.Str) (ast.AstType.Str))]
-    [str-distinct-ok : bool
-      (not (tc_core.tc-type-eq (ast.AstType.Str) (ast.AstType.String)))]
-    [bytes-eq-ok : bool
-      (tc_core.tc-type-eq (ast.AstType.Bytes) (ast.AstType.Bytes))]
-    [bytes-distinct-ok : bool
-      (not (tc_core.tc-type-eq (ast.AstType.Bytes) (ast.AstType.Str)))]
+    [str-eq-ok : bool (tc_core.tc-type-eq (Str) (Str))]
+    [str-distinct-ok : bool (not (tc_core.tc-type-eq (Str) (String)))]
+    [bytes-eq-ok : bool (tc_core.tc-type-eq (Bytes) (Bytes))]
+    [bytes-distinct-ok : bool (not (tc_core.tc-type-eq (Bytes) (Str)))]
     [nominal-lifetime-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
@@ -4542,29 +4460,27 @@
       (tc_core.tc-type-eq
         (ast.ast-ty-ref
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-ty-region
-            cbi.compiler-builtin-id-fix-value
-            (ast.AstType.I64)))
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.I64)))]
+          (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (I64)))
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64)))]
     [region-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.I64))
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-m (ast.AstType.I64))))]
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-m (I64))))]
     [mut-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.I64))
-          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (ast.AstType.I64))))]
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
+          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (I64))))]
     [region-contains-ok : bool
       (tc_core.tc-type-contains-region
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (ast.AstType.I64))
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
         cbi.compiler-builtin-id-fix-n)]
     [inner-region-contains-ok : bool
       (tc_core.tc-type-contains-region
         (ast.ast-ty-mut-ref
           cbi.compiler-builtin-id-fix-value
-          (ast.ast-ty-region cbi.compiler-builtin-id-fix-m (ast.AstType.String)))
+          (ast.ast-ty-region cbi.compiler-builtin-id-fix-m (String)))
         cbi.compiler-builtin-id-fix-m)]
     (and
       string-ref-render-ok
@@ -5054,7 +4970,7 @@
 
 (define (compiler-typecheck-located-source-ok? [src : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diag)
+    [(Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -5065,7 +4981,7 @@
               "typecheck: unbound name missing")
             false)
           false))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-typecheck-located-ok?) : bool
   (and
@@ -5083,7 +4999,7 @@
     (begin
       (+ x y)
       (need3 x y))))")
-      [(tc_core.ResultCompilerTypecheck.Err diag)
+      [(Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -5093,14 +5009,14 @@
               "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
             (= (cdiag.compiler-diagnostic-line first) 9)
             (= (cdiag.compiler-diagnostic-col first) 7)))]
-      [(tc_core.ResultCompilerTypecheck.Ok _) false])))
+      [(Ok _) false])))
 
 (define (compiler-typecheck-nested-expression-diagnostic-span-ok?) : bool
   (let
     [span : ast.AstSourceSpan (ast.ast-source-span 7 5 7 12)]
-    [inner : i64 (ast.ast-node-push (ast.AstExpr.Var (ci.intern "missing")))]
+    [inner : i64 (ast.ast-node-push (Var (ci.intern "missing")))]
     [spanned-inner : i64 (ast.ast-expr-spanned inner span)]
-    [wrapped : i64 (ast_tests.ast-expr-ann spanned-inner (ast.AstType.I64))]
+    [wrapped : i64 (ast_tests.ast-expr-ann spanned-inner (I64))]
     [diag : cdiag.CompilerDiagnostic
       (tc_core.tc-expr-diag
         (ast.ast-node-pool-active-expr-segment-bases)
@@ -7435,7 +7351,7 @@
 
 (define (compiler-typecheck-macro-prelude-for-core-source) : String
   (match (load.compiler-load-embedded-stdlib-source "core_macros.tl")
-    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
+    [(CompilerEmbeddedStdlibSomeSource source)
       (let
         [start-marker : String
           "(defmacro (for [bindings : ExprBindingClause ...]"]
@@ -7449,7 +7365,7 @@
             "(module fixture.core_for)\n(import stdlib.comptime)\n"
             (string.substring source start (- end start)))
           (io.panic "typecheck: embedded scalar for macro source missing")))]
-    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+    [(CompilerEmbeddedStdlibNoSource)
       (io.panic "typecheck: embedded core macro source missing")]))
 
 (define (compiler-typecheck-macro-prelude-for-source) : String
@@ -7515,14 +7431,14 @@
   [value : tc_core.MacroMaybeHygieneName]
   [expected : i64]) : bool
   (match value
-    [(tc_core.MacroMaybeHygieneName.No) false]
-    [(tc_core.MacroMaybeHygieneName.Some actual) (= actual expected)]))
+    [(No) false]
+    [(Some actual) (= actual expected)]))
 
 (define (compiler-typecheck-hygiene-name-missing?
   [value : tc_core.MacroMaybeHygieneName]) : bool
   (match value
-    [(tc_core.MacroMaybeHygieneName.No) true]
-    [(tc_core.MacroMaybeHygieneName.Some _) false]))
+    [(No) true]
+    [(Some _) false]))
 
 (define (compiler-typecheck-macro-hygiene-env-extend
   [env : tc_core.MacroHygieneEnv]
@@ -8523,11 +8439,11 @@
     (begin
       (set! x (+ x 1))
       (if flag x 0))))")
-      [(tc_core.ResultCompilerTypecheck.Ok summary)
+      [(Ok summary)
         (if (= (tc_api.compiler-typecheck-summary-score summary) 121)
           unit
           (io.panic "typecheck: smoke score mismatch"))]
-      [(tc_core.ResultCompilerTypecheck.Err diag)
+      [(Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -9020,7 +8936,7 @@
                 (tc_core.tc-move-path-segments-append-array
                   (tc_core.tc-move-path-segments-empty)
                   index))
-              (tc_core.TcMovedPathKind.BorrowShared)
+              (BorrowShared)
               (ast.ast-node-push (ast.ast-global-shared-view origin))))
           (set! index (+ index 1))))
       out)))
@@ -9029,9 +8945,9 @@
   [a : tc_core.TcMovedPathFacts]
   [b : tc_core.TcMovedPathFacts]) : bool
   (match a
-    [(tc_core.TcMovedPathFacts.Dense store tail len)
+    [(Dense store tail len)
       (match b
-        [(tc_core.TcMovedPathFacts.Dense other-store other-tail other-len)
+        [(Dense other-store other-tail other-len)
           (and
             (unsafe
               (=
@@ -9050,9 +8966,9 @@
   [a : tc_core.TcMovedPathFacts]
   [b : tc_core.TcMovedPathFacts]) : bool
   (match a
-    [(tc_core.TcMovedPathFacts.Dense store _ _)
+    [(Dense store _ _)
       (match b
-        [(tc_core.TcMovedPathFacts.Dense other-store _ _)
+        [(Dense other-store _ _)
           (unsafe
             (=
               (ptr->int
@@ -9107,8 +9023,8 @@
         (tc_core.tc-move-path-segments-append-array
           (tc_core.tc-move-path-segments-empty)
           63))]
-    [origin-a : ast.AstExpr (ast.AstExpr.Var (ci.intern "origin-a"))]
-    [origin-b : ast.AstExpr (ast.AstExpr.Var (ci.intern "origin-b"))]
+    [origin-a : ast.AstExpr (Var (ci.intern "origin-a"))]
+    [origin-b : ast.AstExpr (Var (ci.intern "origin-b"))]
     [empty : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
     [one : tc_core.TcMovedSet (tc_core.tc-moved-add empty alpha-id)]
     [dupe : tc_core.TcMovedSet
@@ -9126,20 +9042,19 @@
       (match (tc_core.tc-moved-conflict
         (tc_core.tc-global-shared-view origin-whole)
         origin-root-id)
-        [(tc_core.TcMoveConflict.Some key origin-id)
+        [(Some key origin-id)
           (if (string.eq key "origin-root")
             origin-id
             (tc_core.tc-moved-no-origin-id))]
-        [tc_core.TcMoveConflict.No (tc_core.tc-moved-no-origin-id)])]
+        [No (tc_core.tc-moved-no-origin-id)])]
     [origin-whole-ok : bool
       (not (= origin-whole-id (tc_core.tc-moved-no-origin-id)))]
     [origin-clone-ok : bool
       (match (tc_core.tc-moved-conflict
         (tc_core.tc-moved-clone origin-whole)
         origin-root-id)
-        [(tc_core.TcMoveConflict.Some _ origin-id)
-          (= origin-id origin-whole-id)]
-        [tc_core.TcMoveConflict.No false])]
+        [(Some _ origin-id) (= origin-id origin-whole-id)]
+        [No false])]
     [partial : tc_core.TcMovedSet
       (tc_core.tc-moved-add-projection-path
         (tc_core.tc-moved-add-projection-path
@@ -9154,25 +9069,23 @@
       (match (tc_core.tc-moved-path-conflict
         (tc_core.tc-global-shared-view partial)
         items0)
-        [(tc_core.TcMoveConflict.Some key origin-id)
+        [(Some key origin-id)
           (and
             (string.eq key "items[0]")
             (not (= origin-id (tc_core.tc-moved-no-origin-id))))]
-        [tc_core.TcMoveConflict.No false])]
+        [No false])]
     [partial-parent-conflict : bool
       (match (tc_core.tc-moved-path-conflict
         (tc_core.tc-global-shared-view partial)
         items-root)
-        [(tc_core.TcMoveConflict.Some _ origin-id)
-          (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-        [tc_core.TcMoveConflict.No false])]
+        [(Some _ origin-id) (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
+        [No false])]
     [partial-root-conflict : bool
       (match (tc_core.tc-moved-root-conflict
         (tc_core.tc-global-shared-view partial)
         items-id)
-        [(tc_core.TcMoveConflict.Some _ origin-id)
-          (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-        [tc_core.TcMoveConflict.No false])]
+        [(Some _ origin-id) (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
+        [No false])]
     [partial-one : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-exact-path
         (tc_core.tc-moved-clone partial)
@@ -9187,8 +9100,8 @@
       (match (tc_core.tc-moved-path-exact-conflict
         (tc_core.tc-global-shared-view partial-one)
         items1)
-        [(tc_core.TcMoveConflict.Some _ _) true]
-        [tc_core.TcMoveConflict.No false])]
+        [(Some _ _) true]
+        [No false])]
     [partial-keeps-marker : bool
       (tc_core.tc-moved-partial? partial-one items-id)]
     [partial-clears-sibling : bool
@@ -9196,15 +9109,15 @@
         (match (tc_core.tc-moved-path-exact-conflict
           (tc_core.tc-global-shared-view partial-clear)
           items1)
-          [(tc_core.TcMoveConflict.Some _ _) true]
-          [tc_core.TcMoveConflict.No false]))]
+          [(Some _ _) true]
+          [No false]))]
     [partial-clears-marker : bool
       (not (tc_core.tc-moved-partial? partial-clear items-id))]
     [root-path : tc_core.TcMovedSet
       (tc_core.tc-moved-add-path-fact
         (tc_core.tc-moved-empty)
         shadowed-root
-        (tc_core.TcMovedPathKind.Move)
+        (Move)
         (tc_core.tc-moved-no-origin-id))]
     [root-path-clear : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-root-state root-path shadowed-id)]
@@ -9212,8 +9125,8 @@
       (match (tc_core.tc-moved-path-exact-conflict
         root-path-clear
         shadowed-root)
-        [(tc_core.TcMoveConflict.Some _ _) false]
-        [tc_core.TcMoveConflict.No true])]
+        [(Some _ _) false]
+        [No true])]
     [retained-parent : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
         (tc_core.tc-moved-empty)
@@ -9225,7 +9138,7 @@
       (tc_core.tc-moved-add-path-fact
         (tc_core.tc-global-shared-view retained-parent)
         shadowed-root
-        (tc_core.TcMovedPathKind.BorrowShared)
+        (BorrowShared)
         (ast.ast-node-push (ast.ast-global-shared-view origin-b)))]
     [growth-successor : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
@@ -9239,72 +9152,72 @@
         (match (tc_core.tc-moved-path-exact-conflict-kind
           retained-parent
           items0
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) true]
-          [tc_core.TcMoveConflict.No false])
+          (BorrowShared))
+          [(Some _ _) true]
+          [No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           retained-parent
           shadowed-root
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) false]
-          [tc_core.TcMoveConflict.No true])
+          (BorrowShared))
+          [(Some _ _) false]
+          [No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           retained-parent
           growth63
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) false]
-          [tc_core.TcMoveConflict.No true]))]
+          (BorrowShared))
+          [(Some _ _) false]
+          [No true]))]
     [successors-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
           growth-successor
           items0
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ origin-id)
+          (BorrowShared))
+          [(Some _ origin-id)
             (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-          [tc_core.TcMoveConflict.No false])
+          [No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           growth-successor
           growth63
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) true]
-          [tc_core.TcMoveConflict.No false])
+          (BorrowShared))
+          [(Some _ _) true]
+          [No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           growth-successor
           shadowed-root
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) false]
-          [tc_core.TcMoveConflict.No true])
+          (BorrowShared))
+          [(Some _ _) false]
+          [No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           sibling-successor
           items0
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) true]
-          [tc_core.TcMoveConflict.No false])
+          (BorrowShared))
+          [(Some _ _) true]
+          [No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           sibling-successor
           shadowed-root
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) true]
-          [tc_core.TcMoveConflict.No false])
+          (BorrowShared))
+          [(Some _ _) true]
+          [No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
           sibling-successor
           growth63
-          (tc_core.TcMovedPathKind.BorrowShared))
-          [(tc_core.TcMoveConflict.Some _ _) false]
-          [tc_core.TcMoveConflict.No true]))]
+          (BorrowShared))
+          [(Some _ _) false]
+          [No true]))]
     [query-agrees-with-facts : bool
       (and
         (tc_core.tc-moved-path-facts-contains-exact-kind?
           (tc_core.tc-moved-paths
             (tc_core.tc-global-shared-view growth-successor))
           items0
-          (tc_core.TcMovedPathKind.BorrowShared))
+          (BorrowShared))
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
             (tc_core.tc-moved-paths growth-successor)
             shadowed-root
-            (tc_core.TcMovedPathKind.BorrowShared))))]
+            (BorrowShared))))]
     [separate-store : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
         (tc_core.tc-moved-empty)
@@ -9329,7 +9242,7 @@
       (tc_core.tc-moved-remove-path-kind
         (tc_core.tc-global-shared-view cross-store-union)
         growth1
-        (tc_core.TcMovedPathKind.BorrowShared))]
+        (BorrowShared))]
     [cross-store-remove-ok : bool
       (and
         (=
@@ -9341,17 +9254,17 @@
           (tc_core.tc-moved-paths
             (tc_core.tc-global-shared-view cross-store-removed))
           growth0
-          (tc_core.TcMovedPathKind.BorrowShared))
+          (BorrowShared))
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
             (tc_core.tc-moved-paths cross-store-removed)
             growth1
-            (tc_core.TcMovedPathKind.BorrowShared))))]
+            (BorrowShared))))]
     [missing-removal : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-path-kind
         (tc_core.tc-global-shared-view cross-store-union)
         shadowed-root
-        (tc_core.TcMovedPathKind.Move))]
+        (Move))]
     [missing-removal-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths
@@ -9380,8 +9293,8 @@
       (match (tc_core.tc-moved-conflict
         (tc_core.tc-moved-union union-left union-right)
         shared-id)
-        [(tc_core.TcMoveConflict.Some _ origin-id) (= origin-id 101)]
-        [tc_core.TcMoveConflict.No false])]
+        [(Some _ origin-id) (= origin-id 101)]
+        [No false])]
     (and
       (=
         (let
@@ -10544,11 +10457,11 @@
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parser.parse-ast-source (compiler-typecheck-dup-extern-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-dup-extern-paths))
-        [(tc_core.ResultCompilerTypecheck.Err diag)
+        [(Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -10560,16 +10473,16 @@
               (string.contains (& message) (& duplicate-needle))
               (string.contains (& message) (& main-path))
               (string.contains (& message) (& assets-path))))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-dup-function-paths-ok?) : bool
   (match (parser.parse-ast-source (compiler-typecheck-dup-function-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-dup-extern-paths))
-        [(tc_core.ResultCompilerTypecheck.Err diag)
+        [(Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -10580,16 +10493,16 @@
               (string.eq (cdiag.compiler-diagnostic-path value) "src/assets.tl")
               (= (cdiag.compiler-diagnostic-line value) 2)
               (= (cdiag.compiler-diagnostic-col value) 31)))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-dup-type-path-ok? [source : String] [name : String]) : bool
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-dup-extern-paths))
-        [(tc_core.ResultCompilerTypecheck.Err diag)
+        [(Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -10600,8 +10513,8 @@
               (string.eq (cdiag.compiler-diagnostic-path value) "src/assets.tl")
               (= (cdiag.compiler-diagnostic-line value) 2)
               (= (cdiag.compiler-diagnostic-col value) 1)))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (compiler-typecheck-dup-type-paths-ok?) : bool
   (and
@@ -10619,16 +10532,16 @@
     ""
     "
 (defstruct Bad (:cleanup cleanup-bad) (fd i64))")
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (match (ast.ast-global-shared-view program)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
             [decl : ast.AstDecl
               (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))]
             (match decl
-              [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
+              [(DefStruct decl-meta name _ cleanup fields)
                 (begin
                   (set!
                     (array-ref decls.slots decls.offset)
@@ -10639,7 +10552,7 @@
                       cleanup
                       fields))
                   (match (tc_api.typecheck-compiler-program program)
-                    [(tc_core.ResultCompilerTypecheck.Err diag)
+                    [(Err diag)
                       (let
                         [value : cdiag.CompilerDiagnostic
                           (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -10649,9 +10562,9 @@
                             "typecheck: cleanup-owning struct Bad cannot use repr c")
                           (= (cdiag.compiler-diagnostic-line value) 2)
                           (= (cdiag.compiler-diagnostic-col value) 1)))]
-                    [(tc_core.ResultCompilerTypecheck.Ok _) false]))]
+                    [(Ok _) false]))]
               [_ false]))])]
-    [(parser.ResultAstProgramDiagnostic.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-typecheck-imported-decl-origin-ok?) : bool
   (begin
@@ -10667,11 +10580,11 @@
     (match (load_tests.compiler-load-file-with-paths
       "target/tc_decl_origin_entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(Ok decls paths _ _)
         (match (tc_api.typecheck-compiler-program-with-paths
           (ast.ast-program decls)
           paths)
-          [(tc_core.ResultCompilerTypecheck.Err diag)
+          [(Err diag)
             (let
               [value : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-list-first (deref diag))]
@@ -10684,8 +10597,8 @@
                   "target/tc_decl_origin_dep.tl")
                 (= (cdiag.compiler-diagnostic-line value) 2)
                 (= (cdiag.compiler-diagnostic-col value) 1)))]
-          [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-      [(load.ResultCompilerLoadWithPaths.Err _) false])))
+          [(Ok _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-semantic-diagnostic-spans-ok?) : bool
   (and

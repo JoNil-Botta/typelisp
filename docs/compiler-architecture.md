@@ -701,6 +701,28 @@ retaining capacity without scanning it; generation rollover resets all stamps.
 Entries are added only after a lookup miss, so live keys are unique. No caller
 retains an older table or a view across vector growth.
 
+Aggregate scalar replacement tracks each eight-byte word as either one scalar
+or disjoint, naturally aligned integer/bool lanes. Every access to a lane must
+agree on its type. Whole-word accesses and copies covering a lane word refuse
+the candidate, because padding bytes have no scalar representation. Refused
+candidates never index the fixed-size word table. The aggregate-split tests
+cover lane folding, overlapping accesses and copies across lane words.
+
+Register-group splitting also accepts a single-definition phi when every input
+is a variable and every use extracts a word. It emits scalar definitions in
+the predecessor blocks and lets SSA repair join them. An input pack may supply
+its operands directly only when those operands are literals or have one
+definition; otherwise the edge extracts the original group value. Escaping
+group joins retain their aggregate representation.
+
+The multiblock inliner admits known one-word nominal results and register groups
+within the group splitter's word limit, using the installed program
+representation index. Unknown representations stay out of line. CFG cleanup
+may merge a split loop test or a straight scalar loop chain while preserving
+phi predecessor keys; those loop-shape merges stay disabled in the inliner's
+priced pipeline. The range-loop integration and assembly cases check the
+resulting code and preserve located bounds failures.
+
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit
 pools, and the span rows its rewrite added; the phase is rewound before the

@@ -30,24 +30,22 @@
     [index : i64 0]
     [length : i64 (string.string-length text)]
     (while (< index length)
-      (begin
-        (set!
-          embedded-stdlib-tlci-source-hash
-          (%
-            (+
-              (* embedded-stdlib-tlci-source-hash 131)
-              (cast (string.string-ref text index) : i64))
-            2147483647))
-        (set! index (+ index 1))))))
+      (set!
+        embedded-stdlib-tlci-source-hash
+        (%
+          (+
+            (* embedded-stdlib-tlci-source-hash 131)
+            (cast (string.string-ref text index) : i64))
+          2147483647))
+      (set! index (+ index 1)))))
 
 (define (embedded-stdlib-tlci-line-end [text : (& text str)] [start : i64]) : i64
   (let
     [index : i64 start]
     [length : i64 (string.string-length text)]
-    (begin
-      (while (and (< index length) (!= (string.string-ref text index) '\n'))
-        (set! index (+ index 1)))
-      index)))
+    (while (and (< index length) (!= (string.string-ref text index) '\n'))
+      (set! index (+ index 1)))
+    index))
 
 (define (embedded-stdlib-tlci-trim-cr [line : String]) : String
   (let
@@ -78,16 +76,15 @@
         (str_cat.str-cat (string.copy module) "/" (ci.intern-str name-id)))]
     [index : i64 0]
     [duplicate : bool false]
-    (begin
-      (while (and (not duplicate) (< index (svec.len names)))
-        (if (string.eq (svec.get names index "") name)
-          (set! duplicate true)
-          (set! index (+ index 1))))
-      (if duplicate
-        (set!
-          embedded-stdlib-tlci-build-error
-          (str_cat.str-cat "duplicate stdlib macro identity: " name))
-        (svec.push-ref! names name)))))
+    (while (and (not duplicate) (< index (svec.len names)))
+      (if (string.eq (svec.get names index "") name)
+        (set! duplicate true)
+        (set! index (+ index 1))))
+    (if duplicate
+      (set!
+        embedded-stdlib-tlci-build-error
+        (str_cat.str-cat "duplicate stdlib macro identity: " name))
+      (svec.push-ref! names name))))
 
 (define (embedded-stdlib-tlci-collect-decl!
   [decl : ast.AstDecl]
@@ -97,18 +94,16 @@
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
     [(DefMacro decl-meta name params ret body)
-      (begin
-        (embedded-stdlib-tlci-push-name! names module name)
-        (compiler_tlci_native_producer.tlci-native-macro-captures-push!
-          captures
-          (compiler_tlci_native_producer.TlciNativeMacroCapture
-            (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
-              (string.copy module)
-              name)
-            params
-            (compiler_tlci_native_producer.embedded-native-macro-result-kind
-              ret)
-            body)))]
+      (embedded-stdlib-tlci-push-name! names module name)
+      (compiler_tlci_native_producer.tlci-native-macro-captures-push!
+        captures
+        (compiler_tlci_native_producer.TlciNativeMacroCapture
+          (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
+            (string.copy module)
+            name)
+          params
+          (compiler_tlci_native_producer.embedded-native-macro-result-kind ret)
+          body))]
     [(Unsafe inner)
       (embedded-stdlib-tlci-collect-decl!
         (ast.ast-decl-box-shared-view inner)
@@ -140,9 +135,8 @@
             names
             captures)]
         [_
-          (begin
-            (embedded-stdlib-tlci-collect-decl! decl (& module) names captures)
-            (embedded-stdlib-tlci-collect-decls! rest module names captures))])]))
+          (embedded-stdlib-tlci-collect-decl! decl (& module) names captures)
+          (embedded-stdlib-tlci-collect-decls! rest module names captures)])]))
 
 (define (embedded-stdlib-tlci-collect-file!
   [root : (& root str)]
@@ -198,30 +192,23 @@
         (if (< end (string.string-length manifest))
           (+ end 1)
           end)]
-      (begin
-        (when
-          (> (string.string-length line) 0)
-          (embedded-stdlib-tlci-collect-file! (& root) line names captures))
-        (embedded-stdlib-tlci-collect-manifest!
-          manifest
-          root
-          next
-          names
-          captures)))))
+      (when
+        (> (string.string-length line) 0)
+        (embedded-stdlib-tlci-collect-file! (& root) line names captures))
+      (embedded-stdlib-tlci-collect-manifest! manifest root next names captures))))
 
 (define (embedded-stdlib-tlci-params-variadic?
   [params : (& params ast.AstMacroParamList)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index params.len))
-        (match (array-ref params.slots index)
-          [(Param _ _ variadic _)
-            (if variadic
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index params.len))
+      (match (array-ref params.slots index)
+        [(Param _ _ variadic _)
+          (if variadic
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (embedded-stdlib-tlci-result-kind [result-kind : i64]) : String
   (cond [(= result-kind 1) "module"] [(= result-kind 2) "decls"] [else "expr"]))
@@ -237,53 +224,48 @@
   (let
     [out : String ""]
     [index : i64 0]
-    (begin
-      (while (< index (array-length names))
-        (begin
+    (while (< index (array-length names))
+      (let
+        [identity : String
+          (unsafe
+            (ptr-read
+              (ptr-cast
+                (__tl_array-data (array (& (array-ref names index))))
+                : (Ptr String))))]
+        [slot : i64
+          (compiler_tlci_native_producer.tlci-native-macro-capture-slot
+            captures
+            (ast.ast-place-shared-view identity))]
+        (if (< slot 0)
+          (set!
+            embedded-stdlib-tlci-build-error
+            (str_cat.str-cat
+              "missing source capture for stdlib macro identity: "
+              identity))
           (let
-            [identity : String
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array (& (array-ref names index))))
-                    : (Ptr String))))]
-            [slot : i64
-              (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                captures
-                (ast.ast-place-shared-view identity))]
-            (if (< slot 0)
-              (set!
-                embedded-stdlib-tlci-build-error
-                (str_cat.str-cat
-                  "missing source capture for stdlib macro identity: "
-                  identity))
-              (let
-                [params : (& captures ast.AstMacroParamList)
-                  (&
-                    (__tl-project-field (array-ref captures.slots slot) params))]
-                [result-kind-code : i64
-                  (__tl-project-field
-                    (array-ref captures.slots slot)
-                    result-kind)]
-                [result-kind : String
-                  (embedded-stdlib-tlci-result-kind result-kind-code)]
-                [owned-result-kind : String (string.copy (& result-kind))]
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    identity
-                    "\t"
-                    (string.int->string params.len)
-                    "\t"
-                    (if (embedded-stdlib-tlci-params-variadic? params)
-                      "variadic"
-                      "fixed")
-                    "\t"
-                    owned-result-kind
-                    "\n")))))
-          (set! index (+ index 1))))
-      out)))
+            [params : (& captures ast.AstMacroParamList)
+              (& (__tl-project-field (array-ref captures.slots slot) params))]
+            [result-kind-code : i64
+              (__tl-project-field (array-ref captures.slots slot) result-kind)]
+            [result-kind : String
+              (embedded-stdlib-tlci-result-kind result-kind-code)]
+            [owned-result-kind : String (string.copy (& result-kind))]
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                identity
+                "\t"
+                (string.int->string params.len)
+                "\t"
+                (if (embedded-stdlib-tlci-params-variadic? params)
+                  "variadic"
+                  "fixed")
+                "\t"
+                owned-result-kind
+                "\n")))))
+      (set! index (+ index 1)))
+    out))
 
 (define (embedded-native-write
   [output : String]
@@ -304,72 +286,70 @@
     (ast.ast-place-shared-view names)
     captures)
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat "embedded stdlib tlci: " message "\n"))
-        1)]
+      (io.print-error (str_cat.str-cat "embedded stdlib tlci: " message "\n"))
+      1]
     [(Ok bytes)
       (let
         [bytes-len : i64 (array-length bytes)]
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-        (begin
-          (io.write-file output (byte_buf.as-bytes (& contents)))
-          (io.print-format
-            "{}"
-            (str_cat.str-cat
-              "embedded stdlib tlci: wrote "
-              (string.int->string bytes-len)
-              " bytes for "
-              (string.int->string (array-length names))
-              " macro entries ("
-              (string.int->string
-                (array-ref
-                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                  0))
-              " native)\n"))
-          ;; The native entry count is an upper bound on coverage: a native entry
-          ;; may still route single arms back to the interpreter. Report the arm
-          ;; sites separately so #5596's zero-fallback goal is measurable.
-          ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
-          ;; a family's real blocker is read out of the producer instead of
-          ;; inferred from an AST histogram, which mis-predicts it. stdout keeps
-          ;; exactly the two lines the gates match on. Refs #5596.
-          (io.print-error
-            (if full-blockers
+        (io.write-file output (byte_buf.as-bytes (& contents)))
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            "embedded stdlib tlci: wrote "
+            (string.int->string bytes-len)
+            " bytes for "
+            (string.int->string (array-length names))
+            " macro entries ("
+            (string.int->string
               (array-ref
-                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
-                0)
-              (if identity-manifest
-                (embedded-stdlib-tlci-identity-manifest (& names) captures)
-                (array-ref
-                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
-                  0))))
-          (io.print-format
-            "{}"
-            (str_cat.str-cat
-              "embedded stdlib tlci: coverage native-entries="
-              (string.int->string
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                0))
+            " native)\n"))
+        ;; The native entry count is an upper bound on coverage: a native entry
+        ;; may still route single arms back to the interpreter. Report the arm
+        ;; sites separately so #5596's zero-fallback goal is measurable.
+        ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
+        ;; a family's real blocker is read out of the producer instead of
+        ;; inferred from an AST histogram, which mis-predicts it. stdout keeps
+        ;; exactly the two lines the gates match on. Refs #5596.
+        (io.print-error
+          (if full-blockers
+            (array-ref
+              compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
+              0)
+            (if identity-manifest
+              (embedded-stdlib-tlci-identity-manifest (& names) captures)
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                0))))
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            "embedded stdlib tlci: coverage native-entries="
+            (string.int->string
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                0))
+            " shell-entries="
+            (string.int->string
+              (-
+                (array-length names)
                 (array-ref
                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                  0))
-              " shell-entries="
-              (string.int->string
-                (-
-                  (array-length names)
-                  (array-ref
-                    compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                    0)))
-              " partial-entries="
-              (string.int->string
-                (array-ref
-                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
-                  0))
-              " interpreted-arms="
-              (string.int->string
-                (array-ref
-                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
-                  0))
-              "\n"))
-          0))]))
+                  0)))
+            " partial-entries="
+            (string.int->string
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
+                0))
+            " interpreted-arms="
+            (string.int->string
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
+                0))
+            "\n"))
+        0)]))
 
 (define (main) : i64
   (if (and (!= (io.arg-count) 7) (!= (io.arg-count) 8))
@@ -397,70 +377,64 @@
         (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
       (cond
         [(and diagnostics-mode (not (or full-blockers identity-manifest)))
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "embedded stdlib tlci: invalid diagnostics mode: "
-                (io.arg 7)
-                "\n"))
-            2)]
+          (io.print-error
+            (str_cat.str-cat
+              "embedded stdlib tlci: invalid diagnostics mode: "
+              (io.arg 7)
+              "\n"))
+          2]
         [(not (or (string.eq target "linux") (string.eq target "windows")))
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "embedded stdlib tlci: invalid host target: "
-                target
-                "\n"))
-            1)]
+          (io.print-error
+            (str_cat.str-cat
+              "embedded stdlib tlci: invalid host target: "
+              target
+              "\n"))
+          1]
         [(not (string.eq target (embedded-stdlib-tlci-build-host)))
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "embedded stdlib tlci: requested host target `"
-                target
-                "` does not match build host `"
-                (embedded-stdlib-tlci-build-host)
-                "`\n"))
-            1)]
+          (io.print-error
+            (str_cat.str-cat
+              "embedded stdlib tlci: requested host target `"
+              target
+              "` does not match build host `"
+              (embedded-stdlib-tlci-build-host)
+              "`\n"))
+          1]
         [else
           (let
             [rodata : (__tl_dyn-array u8)
               (byte_buf.to-array (io.read-file rodata-path))]
-            (begin
-              (embedded-stdlib-tlci-collect-manifest!
-                (byte_buf.to-string (io.read-file manifest-path))
-                root
-                0
-                (&mut names)
-                (&mut captures))
-              (if (>
-                (string.string-length
-                  (embedded-stdlib-tlci-build-error-shared-view))
-                0)
-                (begin
-                  (io.print-error
-                    (str_cat.str-cat
-                      "embedded stdlib tlci: "
-                      (embedded-stdlib-tlci-build-error-shared-view)
-                      "\n"))
-                  1)
-                (let
-                  [name-count : i64 (svec.len (& names))]
-                  [name-array (__tl_make-array String name-count)]
-                  [name-index : i64 0]
-                  (begin
-                    (while (< name-index name-count)
-                      (begin
-                        (set!
-                          (array-ref name-array name-index)
-                          (svec.get (& names) name-index ""))
-                        (set! name-index (+ name-index 1))))
-                    (embedded-native-write
-                      output
-                      build-hash
-                      (string.eq target "windows")
-                      rodata
-                      name-array
-                      full-blockers
-                      identity-manifest
-                      (& captures)))))))]))))
+            (embedded-stdlib-tlci-collect-manifest!
+              (byte_buf.to-string (io.read-file manifest-path))
+              root
+              0
+              (&mut names)
+              (&mut captures))
+            (if (>
+              (string.string-length
+                (embedded-stdlib-tlci-build-error-shared-view))
+              0)
+              (begin
+                (io.print-error
+                  (str_cat.str-cat
+                    "embedded stdlib tlci: "
+                    (embedded-stdlib-tlci-build-error-shared-view)
+                    "\n"))
+                1)
+              (let
+                [name-count : i64 (svec.len (& names))]
+                [name-array (__tl_make-array String name-count)]
+                [name-index : i64 0]
+                (while (< name-index name-count)
+                  (set!
+                    (array-ref name-array name-index)
+                    (svec.get (& names) name-index ""))
+                  (set! name-index (+ name-index 1)))
+                (embedded-native-write
+                  output
+                  build-hash
+                  (string.eq target "windows")
+                  rodata
+                  name-array
+                  full-blockers
+                  identity-manifest
+                  (& captures)))))]))))

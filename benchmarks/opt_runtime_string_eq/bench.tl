@@ -15,13 +15,12 @@
   [short : (& short str)]) : i64
   (let
     [acc : i64 0]
-    (begin
-      (set! acc (+ acc (score-bool (string.eq empty "") 1)))
-      (set! acc (+ acc (score-bool (string.eq short short) 3)))
-      (set! acc (+ acc (score-bool (string.eq text same) 5)))
-      (set! acc (+ acc (score-bool (string.eq text first-mismatch) 7)))
-      (set! acc (+ acc (score-bool (string.eq text late-mismatch) 11)))
-      acc)))
+    (set! acc (+ acc (score-bool (string.eq empty "") 1)))
+    (set! acc (+ acc (score-bool (string.eq short short) 3)))
+    (set! acc (+ acc (score-bool (string.eq text same) 5)))
+    (set! acc (+ acc (score-bool (string.eq text first-mismatch) 7)))
+    (set! acc (+ acc (score-bool (string.eq text late-mismatch) 11)))
+    acc))
 
 (define (string-eq-repeat [text : String] [short : String] [rounds : i64]) : i64
   (let
@@ -34,28 +33,25 @@
     [late-mismatch : String
       (string.append (string.substring text 0 (- n 1)) "!")]
     [acc : i64 0]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (string-eq-round
-                (& text)
-                (& same)
-                (& first-mismatch)
-                (& late-mismatch)
-                (& empty)
-                (& short))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i rounds)
+      (set!
+        acc
+        (+
+          acc
+          (string-eq-round
+            (& text)
+            (& same)
+            (& first-mismatch)
+            (& late-mismatch)
+            (& empty)
+            (& short))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [text : String (io.arg 1)]
     [short : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
-    (begin
-      (io.println "{}" (string-eq-repeat text short rounds))
-      0)))
+    (io.println "{}" (string-eq-repeat text short rounds))
+    0))

@@ -5,6 +5,5 @@
 (define (main [outer : vec.Vec]) : (& outer (Slice i64))
   (let
     [inner : vec.Vec (vec.new)]
-    (begin
-      (vec.push-ref! (&mut inner) 10)
-      (vec.view (& inner)))))
+    (vec.push-ref! (&mut inner) 10)
+    (vec.view (& inner))))

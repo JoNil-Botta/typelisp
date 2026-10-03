@@ -71,11 +71,10 @@
   (let
     [index : i64 0]
     (while (< index 4)
-      (begin
-        (set!
-          (array-ref bytes (+ at index))
-          (cast (bit-and (shr value (* index 8)) 255) : u8))
-        (set! index (+ index 1))))))
+      (set!
+        (array-ref bytes (+ at index))
+        (cast (bit-and (shr value (* index 8)) 255) : u8))
+      (set! index (+ index 1)))))
 
 ;; 24 CIE bytes, then 44-byte FDEs: length 40, CIE pointer, zero location
 ;; field, range 0x1b, empty augmentation, 25 program bytes, 3 nops.
@@ -85,28 +84,22 @@
     [program : (__tl_dyn-array u8) (eh-frame-bench-program)]
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 (+ 24 (* count 44)))]
     [index : i64 0]
-    (begin
-      (while (< index 24)
-        (begin
-          (set! (array-ref bytes index) (array-ref cie index))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index count)
-        (let
-          [at : i64 (+ 24 (* index 44))]
-          [byte : i64 0]
-          (begin
-            (eh-frame-bench-put-u32! (&mut bytes) at 40)
-            (eh-frame-bench-put-u32! (&mut bytes) (+ at 4) (+ at 4))
-            (eh-frame-bench-put-u32! (&mut bytes) (+ at 12) 0x1b)
-            (while (< byte 25)
-              (begin
-                (set!
-                  (array-ref bytes (+ (+ at 17) byte))
-                  (array-ref program byte))
-                (set! byte (+ byte 1))))
-            (set! index (+ index 1)))))
-      bytes)))
+    (while (< index 24)
+      (set! (array-ref bytes index) (array-ref cie index))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index count)
+      (let
+        [at : i64 (+ 24 (* index 44))]
+        [byte : i64 0]
+        (eh-frame-bench-put-u32! (&mut bytes) at 40)
+        (eh-frame-bench-put-u32! (&mut bytes) (+ at 4) (+ at 4))
+        (eh-frame-bench-put-u32! (&mut bytes) (+ at 12) 0x1b)
+        (while (< byte 25)
+          (set! (array-ref bytes (+ (+ at 17) byte)) (array-ref program byte))
+          (set! byte (+ byte 1)))
+        (set! index (+ index 1))))
+    bytes))
 
 (define (eh-frame-bench-run [count : i64]) : i64
   (let
@@ -114,9 +107,8 @@
     [limits : eh.CompilerEhFrameLimits (eh.compiler-eh-frame-default-limits)]
     (match (eh.compiler-eh-frame-decode (& section) 1 (& limits))
       [(Err error)
-        (begin
-          (io.print-error error.message)
-          1)]
+        (io.print-error error.message)
+        1]
       [(Ok image)
         (let
           [images : (__tl_dyn-array eh.CompilerEhFrameImage)
@@ -124,68 +116,59 @@
           [selections : (__tl_dyn-array eh.CompilerEhFrameSelection)
             (__tl_make-array eh.CompilerEhFrameSelection count)]
           [index : i64 0]
-          (begin
-            (set! (array-ref images 0) image)
-            ;; Reverse final order, 32 bytes of code per function.
-            (while (< index count)
-              (begin
-                (set!
-                  (array-ref selections index)
-                  (eh.CompilerEhFrameSelection
-                    0
-                    index
-                    (+ 0x400000 (* (- (- count 1) index) 32))))
-                (set! index (+ index 1))))
-            (match (eh.compiler-eh-frame-encode
-              (& images)
-              (& selections)
-              0x9000000
-              (& limits))
-              [(Err error)
-                (begin
-                  (io.print-error error.message)
-                  1)]
-              [(Ok output)
-                (match (eh.compiler-eh-frame-encode-header
-                  (& output.rows)
-                  0x8000000
-                  0x9000000
-                  (& limits))
-                  [(Ok header)
-                    (match (eh.compiler-eh-frame-decode-header
-                      (& header)
-                      0x8000000
-                      (& limits))
-                      [(Ok table)
-                        (begin
-                          (io.println "fdes={}" count)
-                          (io.println "input_bytes={}" (array-length section))
-                          (io.println
-                            "output_bytes={}"
-                            (array-length output.bytes))
-                          (io.println "header_bytes={}" (array-length header))
-                          ;; Decode reads the input once; encoding reads each
-                          ;; program once and writes the output; the header is
-                          ;; written and read back.
-                          (io.println
-                            "bytes_visited={}"
-                            (+
-                              (+
-                                (array-length section)
-                                (* 2 (array-length output.bytes)))
-                              (* 2 (array-length header))))
-                          (if (= (array-length table.rows) count)
-                            0
-                            1))]
-                      [(Err error)
-                        (begin
-                          (io.print-error error.message)
-                          1)])]
-                  [_
-                    (begin
-                      (io.print-error
-                        "eh-frame-bench: header encoding failed\n")
-                      1)])])))])))
+          (set! (array-ref images 0) image)
+          ;; Reverse final order, 32 bytes of code per function.
+          (while (< index count)
+            (set!
+              (array-ref selections index)
+              (eh.CompilerEhFrameSelection
+                0
+                index
+                (+ 0x400000 (* (- (- count 1) index) 32))))
+            (set! index (+ index 1)))
+          (match (eh.compiler-eh-frame-encode
+            (& images)
+            (& selections)
+            0x9000000
+            (& limits))
+            [(Err error)
+              (io.print-error error.message)
+              1]
+            [(Ok output)
+              (match (eh.compiler-eh-frame-encode-header
+                (& output.rows)
+                0x8000000
+                0x9000000
+                (& limits))
+                [(Ok header)
+                  (match (eh.compiler-eh-frame-decode-header
+                    (& header)
+                    0x8000000
+                    (& limits))
+                    [(Ok table)
+                      (io.println "fdes={}" count)
+                      (io.println "input_bytes={}" (array-length section))
+                      (io.println "output_bytes={}" (array-length output.bytes))
+                      (io.println "header_bytes={}" (array-length header))
+                      ;; Decode reads the input once; encoding reads each
+                      ;; program once and writes the output; the header is
+                      ;; written and read back.
+                      (io.println
+                        "bytes_visited={}"
+                        (+
+                          (+
+                            (array-length section)
+                            (* 2 (array-length output.bytes)))
+                          (* 2 (array-length header))))
+                      (if (= (array-length table.rows) count)
+                        0
+                        1)]
+                    [(Err error)
+                      (io.print-error error.message)
+                      1])]
+                [_
+                  (io.print-error "eh-frame-bench: header encoding failed\n")
+                  1])]))])))
 
 (define (main) : i64
   (eh-frame-bench-run (eh-frame-bench-count)))

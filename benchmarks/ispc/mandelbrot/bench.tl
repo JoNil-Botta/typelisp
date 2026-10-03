@@ -27,29 +27,27 @@
     (let
       [x : f32 (array-ref x-values i)]
       [y : f32 (array-ref y-values i)]
-      (begin
-        (set! (array-ref z-re i) x)
-        (set! (array-ref z-im i) y)
-        (set! (array-ref iterations i) 0)
-        (set! (array-ref remaining i) max-iterations)
-        (while (> (array-ref remaining i) 0)
-          (if (>
-            (+
-              (* (array-ref z-re i) (array-ref z-re i))
-              (* (array-ref z-im i) (array-ref z-im i)))
-            escape-radius)
-            (set! (array-ref remaining i) 0)
-            (let
-              [old-re : f32 (array-ref z-re i)]
-              [old-im : f32 (array-ref z-im i)]
-              [new-re : f32 (- (* old-re old-re) (* old-im old-im))]
-              [new-im : f32 (* (+ old-re old-re) old-im)]
-              (begin
-                (set! (array-ref z-re i) (+ x new-re))
-                (set! (array-ref z-im i) (+ y new-im))
-                (set! (array-ref iterations i) (+ (array-ref iterations i) 1))
-                (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))
-        (set! (array-ref output i) (array-ref iterations i))))))
+      (set! (array-ref z-re i) x)
+      (set! (array-ref z-im i) y)
+      (set! (array-ref iterations i) 0)
+      (set! (array-ref remaining i) max-iterations)
+      (while (> (array-ref remaining i) 0)
+        (if (>
+          (+
+            (* (array-ref z-re i) (array-ref z-re i))
+            (* (array-ref z-im i) (array-ref z-im i)))
+          escape-radius)
+          (set! (array-ref remaining i) 0)
+          (let
+            [old-re : f32 (array-ref z-re i)]
+            [old-im : f32 (array-ref z-im i)]
+            [new-re : f32 (- (* old-re old-re) (* old-im old-im))]
+            [new-im : f32 (* (+ old-re old-re) old-im)]
+            (set! (array-ref z-re i) (+ x new-re))
+            (set! (array-ref z-im i) (+ y new-im))
+            (set! (array-ref iterations i) (+ (array-ref iterations i) 1))
+            (set! (array-ref remaining i) (+ (array-ref remaining i) -1)))))
+      (set! (array-ref output i) (array-ref iterations i)))))
 
 (define (mandelbrot
   [x0 : f32]
@@ -72,48 +70,43 @@
     [dy : f32 (/ (- y1 y0) (cast height : f32))]
     [j : i64 0]
     (while (< j height)
-      (begin
-        (let
-          [i : i64 0]
-          (while (< i width)
-            (begin
-              (set! (array-ref x-values i) (+ x0 (* (cast i : f32) dx)))
-              (set! (array-ref y-values i) (+ y0 (* (cast j : f32) dy)))
-              (set! i (+ i 1)))))
-        (let
-          [kernel : (->
-            (&mut iterations (Slice i32))
-            (&mut remaining (Slice i32))
-            (&mut output (Slice i32))
-            (&mut x-values (Slice f32))
-            (&mut y-values (Slice f32))
-            (&mut z-re (Slice f32))
-            (&mut z-im (Slice f32))
-            i64
-            i32
-            f32
-            unit)
-            mandelbrot-row]
-          (kernel
-            iterations
-            remaining
-            row-output
-            x-values
-            y-values
-            z-re
-            z-im
-            width
-            max-iterations
-            (cast 4.0 : f32)))
-        (let
-          [i : i64 0]
-          (while (< i width)
-            (begin
-              (set!
-                (array-ref output (+ i (* j width)))
-                (array-ref row-output i))
-              (set! i (+ i 1)))))
-        (set! j (+ j 1))))))
+      (let
+        [i : i64 0]
+        (while (< i width)
+          (set! (array-ref x-values i) (+ x0 (* (cast i : f32) dx)))
+          (set! (array-ref y-values i) (+ y0 (* (cast j : f32) dy)))
+          (set! i (+ i 1))))
+      (let
+        [kernel : (->
+          (&mut iterations (Slice i32))
+          (&mut remaining (Slice i32))
+          (&mut output (Slice i32))
+          (&mut x-values (Slice f32))
+          (&mut y-values (Slice f32))
+          (&mut z-re (Slice f32))
+          (&mut z-im (Slice f32))
+          i64
+          i32
+          f32
+          unit)
+          mandelbrot-row]
+        (kernel
+          iterations
+          remaining
+          row-output
+          x-values
+          y-values
+          z-re
+          z-im
+          width
+          max-iterations
+          (cast 4.0 : f32)))
+      (let
+        [i : i64 0]
+        (while (< i width)
+          (set! (array-ref output (+ i (* j width))) (array-ref row-output i))
+          (set! i (+ i 1))))
+      (set! j (+ j 1)))))
 
 (define (expected-value [case-id : i64] [index : i64]) : i32
   (cond
@@ -153,9 +146,8 @@
   (let
     [i : i64 0]
     (while (< i count)
-      (begin
-        (set! (array-ref values i) (expected-value case-id i))
-        (set! i (+ i 1))))))
+      (set! (array-ref values i) (expected-value case-id i))
+      (set! i (+ i 1)))))
 
 (define (buffers-equal
   [left : (& left (Slice i32))]
@@ -164,47 +156,39 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i count)
-        (begin
-          (if (!= (array-ref left i) (array-ref right i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i count)
+      (if (!= (array-ref left i) (array-ref right i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (checksum [values : (& values (Slice i32))] [count : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! sum (+ sum (* (+ i 1) (cast (+ (array-ref values i) 1) : i64))))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i count)
+      (set! sum (+ sum (* (+ i 1) (cast (+ (array-ref values i) 1) : i64))))
+      (set! i (+ i 1)))
+    sum))
 
 (define (mandelbrot-i32-buffer [capacity : i64]) : i32v.Vec
   (let
     [out : i32v.Vec (i32v.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (while (< index capacity)
-        (begin
-          (i32v.push! out 0)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index capacity)
+      (i32v.push! out 0)
+      (set! index (+ index 1)))
+    out))
 
 (define (mandelbrot-f32-buffer [capacity : i64]) : f32v.Vec
   (let
     [out : f32v.Vec (f32v.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (while (< index capacity)
-        (begin
-          (f32v.push! out (cast 0.0 : f32))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index capacity)
+      (f32v.push! out (cast 0.0 : f32))
+      (set! index (+ index 1)))
+    out))
 
 (define (run-case
   [case-id : i64]
@@ -245,34 +229,33 @@
       (i32v.view-mut (&mut iterations))]
     [remaining-view : (&mut remaining (Slice i32))
       (i32v.view-mut (&mut remaining))]
-    (begin
-      (set! (array-ref got-view count) sentinel)
-      (set! (array-ref want-view count) sentinel)
-      (fill-expected! want-view case-id count)
-      (mandelbrot
-        x0
-        y0
-        x1
-        y1
-        width
-        height
-        max-iterations
-        got-view
-        row-output-view
-        x-values-view
-        y-values-view
-        z-re-view
-        z-im-view
-        iterations-view
-        remaining-view)
-      (and
-        (buffers-equal
-          (slice-view got-view 0 count)
-          (slice-view want-view 0 count)
-          count)
-        (= (array-ref got-view count) sentinel)
-        (= (array-ref want-view count) sentinel)
-        (= (checksum (slice-view got-view 0 count) count) expected-checksum)))))
+    (set! (array-ref got-view count) sentinel)
+    (set! (array-ref want-view count) sentinel)
+    (fill-expected! want-view case-id count)
+    (mandelbrot
+      x0
+      y0
+      x1
+      y1
+      width
+      height
+      max-iterations
+      got-view
+      row-output-view
+      x-values-view
+      y-values-view
+      z-re-view
+      z-im-view
+      iterations-view
+      remaining-view)
+    (and
+      (buffers-equal
+        (slice-view got-view 0 count)
+        (slice-view want-view 0 count)
+        count)
+      (= (array-ref got-view count) sentinel)
+      (= (array-ref want-view count) sentinel)
+      (= (checksum (slice-view got-view 0 count) count) expected-checksum))))
 
 (define (main) : i64
   (if (and

@@ -20,9 +20,7 @@
     [acc : i64 0]
     [i : i64 0]
     [iterations : i64 (+ base-iterations (io.arg-count))]
-    (begin
-      (while (< i iterations)
-        (begin
-          (set! acc (+ (* acc 1664525) 1013904223))
-          (set! i (+ i 1))))
-      (bit-and acc 255))))
+    (while (< i iterations)
+      (set! acc (+ (* acc 1664525) 1013904223))
+      (set! i (+ i 1)))
+    (bit-and acc 255)))

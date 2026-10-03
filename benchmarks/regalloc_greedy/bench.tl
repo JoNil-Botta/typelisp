@@ -292,33 +292,30 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [byte : i64 (rg-byte-at text n i)]
-          (cond
-            [(= byte 35)
-              (while (and (< i n) (not (= (rg-byte-at text n i) 10)))
-                (set! i (+ i 1)))]
-            [(or (rg-digit? byte) (= byte 45))
-              (let
-                [negative : bool (= byte 45)]
-                [value : i64 0]
-                (begin
-                  (when negative (set! i (+ i 1)))
-                  (while (rg-digit? (rg-byte-at text n i))
-                    (begin
-                      (set! value (+ (* value 10) (- (rg-byte-at text n i) 48)))
-                      (set! i (+ i 1))))
-                  (i64vec.set-ref!
-                    out
-                    count
-                    (if negative
-                      (- 0 value)
-                      value))
-                  (set! count (+ count 1))))]
-            [else (set! i (+ i 1))])))
-      count)))
+    (while (< i n)
+      (let
+        [byte : i64 (rg-byte-at text n i)]
+        (cond
+          [(= byte 35)
+            (while (and (< i n) (not (= (rg-byte-at text n i) 10)))
+              (set! i (+ i 1)))]
+          [(or (rg-digit? byte) (= byte 45))
+            (let
+              [negative : bool (= byte 45)]
+              [value : i64 0]
+              (when negative (set! i (+ i 1)))
+              (while (rg-digit? (rg-byte-at text n i))
+                (set! value (+ (* value 10) (- (rg-byte-at text n i) 48)))
+                (set! i (+ i 1)))
+              (i64vec.set-ref!
+                out
+                count
+                (if negative
+                  (- 0 value)
+                  value))
+              (set! count (+ count 1)))]
+          [else (set! i (+ i 1))])))
+    count))
 
 ;; compiler-reg-low-bit-index32 / -low-bit-index32-nonzero: the De Bruijn
 ;; multiply-and-look-up index of the lowest set bit of a 32-bit word. The
@@ -331,76 +328,72 @@
     (rg-ref rg-lowbit slot)))
 
 (define (rg-lowbit-init!) : unit
-  (begin
-    (rg-set! rg-lowbit 0 0)
-    (rg-set! rg-lowbit 1 1)
-    (rg-set! rg-lowbit 2 28)
-    (rg-set! rg-lowbit 3 2)
-    (rg-set! rg-lowbit 4 29)
-    (rg-set! rg-lowbit 5 14)
-    (rg-set! rg-lowbit 6 24)
-    (rg-set! rg-lowbit 7 3)
-    (rg-set! rg-lowbit 8 30)
-    (rg-set! rg-lowbit 9 22)
-    (rg-set! rg-lowbit 10 20)
-    (rg-set! rg-lowbit 11 15)
-    (rg-set! rg-lowbit 12 25)
-    (rg-set! rg-lowbit 13 17)
-    (rg-set! rg-lowbit 14 4)
-    (rg-set! rg-lowbit 15 8)
-    (rg-set! rg-lowbit 16 31)
-    (rg-set! rg-lowbit 17 27)
-    (rg-set! rg-lowbit 18 13)
-    (rg-set! rg-lowbit 19 23)
-    (rg-set! rg-lowbit 20 21)
-    (rg-set! rg-lowbit 21 19)
-    (rg-set! rg-lowbit 22 16)
-    (rg-set! rg-lowbit 23 7)
-    (rg-set! rg-lowbit 24 26)
-    (rg-set! rg-lowbit 25 12)
-    (rg-set! rg-lowbit 26 18)
-    (rg-set! rg-lowbit 27 6)
-    (rg-set! rg-lowbit 28 11)
-    (rg-set! rg-lowbit 29 5)
-    (rg-set! rg-lowbit 30 10)
-    (rg-set! rg-lowbit 31 9)))
+  (rg-set! rg-lowbit 0 0)
+  (rg-set! rg-lowbit 1 1)
+  (rg-set! rg-lowbit 2 28)
+  (rg-set! rg-lowbit 3 2)
+  (rg-set! rg-lowbit 4 29)
+  (rg-set! rg-lowbit 5 14)
+  (rg-set! rg-lowbit 6 24)
+  (rg-set! rg-lowbit 7 3)
+  (rg-set! rg-lowbit 8 30)
+  (rg-set! rg-lowbit 9 22)
+  (rg-set! rg-lowbit 10 20)
+  (rg-set! rg-lowbit 11 15)
+  (rg-set! rg-lowbit 12 25)
+  (rg-set! rg-lowbit 13 17)
+  (rg-set! rg-lowbit 14 4)
+  (rg-set! rg-lowbit 15 8)
+  (rg-set! rg-lowbit 16 31)
+  (rg-set! rg-lowbit 17 27)
+  (rg-set! rg-lowbit 18 13)
+  (rg-set! rg-lowbit 19 23)
+  (rg-set! rg-lowbit 20 21)
+  (rg-set! rg-lowbit 21 19)
+  (rg-set! rg-lowbit 22 16)
+  (rg-set! rg-lowbit 23 7)
+  (rg-set! rg-lowbit 24 26)
+  (rg-set! rg-lowbit 25 12)
+  (rg-set! rg-lowbit 26 18)
+  (rg-set! rg-lowbit 27 6)
+  (rg-set! rg-lowbit 28 11)
+  (rg-set! rg-lowbit 29 5)
+  (rg-set! rg-lowbit 30 10)
+  (rg-set! rg-lowbit 31 9))
 
 ;; compiler-reg-greedy-pool-index-build / -pool-index: canonical register id ->
 ;; pool slot, first occurrence wins, -1 when the register is not in the pool.
 (define (rg-pool-init!) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i rg-pool-index-capacity)
-        (begin
-          (rg-set! rg-pool-idx i -1)
-          (set! i (+ i 1))))
-      (rg-set! rg-pool-reg 0 rg-id-rax)
-      (rg-set! rg-pool-reg 1 6)
-      (rg-set! rg-pool-reg 2 7)
-      (rg-set! rg-pool-reg 3 9)
-      (rg-set! rg-pool-reg 4 rg-id-rcx)
-      (rg-set! rg-pool-reg 5 rg-id-rdx)
-      (rg-set! rg-pool-reg 6 10)
-      (rg-set! rg-pool-reg 7 11)
-      (rg-set! rg-pool-reg 8 8)
-      (rg-set! rg-pool-reg 9 12)
-      (rg-set! rg-pool-reg 10 13)
-      (rg-set! rg-pool-reg 11 14)
-      (rg-set! rg-pool-reg 12 15)
-      (rg-set! rg-pool-reg 13 3)
-      (set! i 0)
-      (while (< i rg-pool-count)
-        (let
-          [key : i64 (rg-ref rg-pool-reg i)]
-          (begin
-            (when
-              (and
-                (>= key 0)
-                (< key rg-pool-index-capacity)
-                (< (rg-ref rg-pool-idx key) 0))
-              (rg-set! rg-pool-idx key i))
-            (set! i (+ i 1))))))))
+    (while (< i rg-pool-index-capacity)
+      (rg-set! rg-pool-idx i -1)
+      (set! i (+ i 1)))
+    (rg-set! rg-pool-reg 0 rg-id-rax)
+    (rg-set! rg-pool-reg 1 6)
+    (rg-set! rg-pool-reg 2 7)
+    (rg-set! rg-pool-reg 3 9)
+    (rg-set! rg-pool-reg 4 rg-id-rcx)
+    (rg-set! rg-pool-reg 5 rg-id-rdx)
+    (rg-set! rg-pool-reg 6 10)
+    (rg-set! rg-pool-reg 7 11)
+    (rg-set! rg-pool-reg 8 8)
+    (rg-set! rg-pool-reg 9 12)
+    (rg-set! rg-pool-reg 10 13)
+    (rg-set! rg-pool-reg 11 14)
+    (rg-set! rg-pool-reg 12 15)
+    (rg-set! rg-pool-reg 13 3)
+    (set! i 0)
+    (while (< i rg-pool-count)
+      (let
+        [key : i64 (rg-ref rg-pool-reg i)]
+        (when
+          (and
+            (>= key 0)
+            (< key rg-pool-index-capacity)
+            (< (rg-ref rg-pool-idx key) 0))
+          (rg-set! rg-pool-idx key i))
+        (set! i (+ i 1))))))
 
 (define (rg-pool-index [reg : i64]) : i64
   (if (and (>= reg 0) (< reg rg-pool-index-capacity))
@@ -412,12 +405,10 @@
   (let
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< i rg-forb-count) (not found))
-        (begin
-          (when (= (rg-ref rg-forb i) reg) (set! found true))
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i rg-forb-count) (not found))
+      (when (= (rg-ref rg-forb i) reg) (set! found true))
+      (set! i (+ i 1)))
+    found))
 
 ;; compiler-reg-id-seq-contains? over `hint-regs`: the whole pool, or -- for a
 ;; call-spanning or parameter root -- only the callee-saved suffix.
@@ -425,12 +416,10 @@
   (let
     [i : i64 rg-hint-start]
     [found : bool false]
-    (begin
-      (while (and (< i rg-pool-count) (not found))
-        (begin
-          (when (= (rg-ref rg-pool-reg i) reg) (set! found true))
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i rg-pool-count) (not found))
+      (when (= (rg-ref rg-pool-reg i) reg) (set! found true))
+      (set! i (+ i 1)))
+    found))
 
 ;; compiler-reg-call-word-in-range?: does this clobber word hold a point
 ;; strictly inside (start, end)?
@@ -498,20 +487,18 @@
     [index : i64 (rg-ref rg-seg-lo var)]
     [limit : i64 (rg-ref rg-seg-hi var)]
     [hit : bool false]
-    (begin
-      (while (and (< index limit) (not hit))
-        (let
-          [segment-start : i64 (rg-ref rg-seg-start index)]
-          [low : i64
-            (if (= segment-start hull-start)
-              segment-start
-              (- segment-start 1))]
-          (begin
-            (when
-              (rg-call-set-in-range? set low (rg-ref rg-seg-end index))
-              (set! hit true))
-            (set! index (+ index 1)))))
-      hit)))
+    (while (and (< index limit) (not hit))
+      (let
+        [segment-start : i64 (rg-ref rg-seg-start index)]
+        [low : i64
+          (if (= segment-start hull-start)
+            segment-start
+            (- segment-start 1))]
+        (when
+          (rg-call-set-in-range? set low (rg-ref rg-seg-end index))
+          (set! hit true))
+        (set! index (+ index 1))))
+    hit))
 
 ;; compiler-reg-greedy-var-spans-clobber?: the coarse hull gate, then the
 ;; segment-aware answer (a hull hole is genuine deadness).
@@ -542,20 +529,19 @@
     [left-index : i64 left-lo]
     [right-index : i64 right-lo]
     [overlap : bool false]
-    (begin
-      (while (and (< left-index left-hi) (< right-index right-hi) (not overlap))
-        (let
-          [left-start : i64 (rg-ref rg-seg-start left-index)]
-          [left-end : i64 (rg-ref rg-seg-end left-index)]
-          [right-start : i64 (rg-ref rg-seg-start right-index)]
-          [right-end : i64 (rg-ref rg-seg-end right-index)]
-          (cond
-            [(and (<= left-end right-start) (not (= right-start 0)))
-              (set! left-index (+ left-index 1))]
-            [(and (<= right-end left-start) (not (= left-start 0)))
-              (set! right-index (+ right-index 1))]
-            [else (set! overlap true)])))
-      overlap)))
+    (while (and (< left-index left-hi) (< right-index right-hi) (not overlap))
+      (let
+        [left-start : i64 (rg-ref rg-seg-start left-index)]
+        [left-end : i64 (rg-ref rg-seg-end left-index)]
+        [right-start : i64 (rg-ref rg-seg-start right-index)]
+        [right-end : i64 (rg-ref rg-seg-end right-index)]
+        (cond
+          [(and (<= left-end right-start) (not (= right-start 0)))
+            (set! left-index (+ left-index 1))]
+          [(and (<= right-end left-start) (not (= left-start 0)))
+            (set! right-index (+ right-index 1))]
+          [else (set! overlap true)])))
+    overlap))
 
 ;; compiler-reg-vars-interfere-segmented-index?: per-var segments when both
 ;; sides have them, the coarse hull as the conservative fallback.
@@ -586,14 +572,13 @@
     [base : i64 (* reg-index rg-ustride)]
     [lo : i64 0]
     [hi : i64 count]
-    (begin
-      (while (< lo hi)
-        (let
-          [mid : i64 (+ lo (shr (- hi lo) 1))]
-          (if (< (rg-ref rg-union (+ base (* mid rg-entry-words))) bound)
-            (set! lo (+ mid 1))
-            (set! hi mid))))
-      lo)))
+    (while (< lo hi)
+      (let
+        [mid : i64 (+ lo (shr (- hi lo) 1))]
+        (if (< (rg-ref rg-union (+ base (* mid rg-entry-words))) bound)
+          (set! lo (+ mid 1))
+          (set! hi mid))))
+    lo))
 
 ;; compiler-reg-live-union-segment-hits?: one binary search plus one load.
 (define (rg-union-segment-hits?
@@ -617,18 +602,16 @@
     [count : i64 (rg-ref rg-ucount reg-index)]
     [index : i64 lo]
     [hit : bool false]
-    (begin
-      (while (and (< index hi) (not hit))
-        (begin
-          (when
-            (rg-union-segment-hits?
-              reg-index
-              count
-              (rg-effective-start (rg-ref rg-seg-start index))
-              (rg-ref rg-seg-end index))
-            (set! hit true))
-          (set! index (+ index 1))))
-      hit)))
+    (while (and (< index hi) (not hit))
+      (when
+        (rg-union-segment-hits?
+          reg-index
+          count
+          (rg-effective-start (rg-ref rg-seg-start index))
+          (rg-ref rg-seg-end index))
+        (set! hit true))
+      (set! index (+ index 1)))
+    hit))
 
 ;; compiler-reg-live-union-refresh-max!: prefix maxima of `end` over [from, n).
 (define (rg-union-refresh-max! [reg-index : i64] [count : i64] [from : i64]) : unit
@@ -646,10 +629,9 @@
       (let
         [at : i64 (+ base (* index rg-entry-words))]
         [end : i64 (rg-ref rg-union (+ at 1))]
-        (begin
-          (when (> end running) (set! running end))
-          (rg-set! rg-union (+ at 2) running)
-          (set! index (+ index 1)))))))
+        (when (> end running) (set! running end))
+        (rg-set! rg-union (+ at 2) running)
+        (set! index (+ index 1))))))
 
 ;; compiler-reg-live-union-insert-segment!: keep the entries sorted by
 ;; effective start; ties keep insertion order.
@@ -663,18 +645,16 @@
     [at : i64 (rg-union-lower-bound reg-index count es-start)]
     [cursor : i64 (- (* count rg-entry-words) 1)]
     [floor : i64 (* at rg-entry-words)]
-    (begin
-      (while (>= cursor floor)
-        (begin
-          (rg-set!
-            rg-union
-            (+ base (+ cursor rg-entry-words))
-            (rg-ref rg-union (+ base cursor)))
-          (set! cursor (- cursor 1))))
-      (rg-set! rg-union (+ base floor) es-start)
-      (rg-set! rg-union (+ base (+ floor 1)) end)
-      (rg-set! rg-ucount reg-index (+ count 1))
-      (rg-union-refresh-max! reg-index (+ count 1) at))))
+    (while (>= cursor floor)
+      (rg-set!
+        rg-union
+        (+ base (+ cursor rg-entry-words))
+        (rg-ref rg-union (+ base cursor)))
+      (set! cursor (- cursor 1)))
+    (rg-set! rg-union (+ base floor) es-start)
+    (rg-set! rg-union (+ base (+ floor 1)) end)
+    (rg-set! rg-ucount reg-index (+ count 1))
+    (rg-union-refresh-max! reg-index (+ count 1) at)))
 
 ;; compiler-reg-live-union-add!: a var without segment data cannot be modelled
 ;; by the union and only bumps the coarse-resident count.
@@ -686,12 +666,11 @@
     (if (= lo hi)
       (rg-set! rg-ucoarse reg-index (+ (rg-ref rg-ucoarse reg-index) 1))
       (while (< index hi)
-        (begin
-          (rg-union-insert-segment!
-            reg-index
-            (rg-effective-start (rg-ref rg-seg-start index))
-            (rg-ref rg-seg-end index))
-          (set! index (+ index 1)))))))
+        (rg-union-insert-segment!
+          reg-index
+          (rg-effective-start (rg-ref rg-seg-start index))
+          (rg-ref rg-seg-end index))
+        (set! index (+ index 1))))))
 
 ;; compiler-reg-live-union-remove!: both sides ascend in effective start, so
 ;; one merge pass compacts out exactly one entry per segment.
@@ -708,36 +687,32 @@
         [write : i64 0]
         [seg-index : i64 lo]
         [first-drop : i64 count]
-        (begin
-          (while (< read count)
-            (let
-              [from : i64 (+ base (* read rg-entry-words))]
-              [to : i64 (+ base (* write rg-entry-words))]
-              [matched : bool
-                (if (< seg-index hi)
-                  (and
-                    (=
-                      (rg-ref rg-union from)
-                      (rg-effective-start (rg-ref rg-seg-start seg-index)))
-                    (=
-                      (rg-ref rg-union (+ from 1))
-                      (rg-ref rg-seg-end seg-index)))
-                  false)]
+        (while (< read count)
+          (let
+            [from : i64 (+ base (* read rg-entry-words))]
+            [to : i64 (+ base (* write rg-entry-words))]
+            [matched : bool
+              (if (< seg-index hi)
+                (and
+                  (=
+                    (rg-ref rg-union from)
+                    (rg-effective-start (rg-ref rg-seg-start seg-index)))
+                  (= (rg-ref rg-union (+ from 1)) (rg-ref rg-seg-end seg-index)))
+                false)]
+            (if matched
               (begin
-                (if matched
+                (when (< write first-drop) (set! first-drop write))
+                (set! seg-index (+ seg-index 1)))
+              (begin
+                (when
+                  (not (= from to))
                   (begin
-                    (when (< write first-drop) (set! first-drop write))
-                    (set! seg-index (+ seg-index 1)))
-                  (begin
-                    (when
-                      (not (= from to))
-                      (begin
-                        (rg-set! rg-union to (rg-ref rg-union from))
-                        (rg-set! rg-union (+ to 1) (rg-ref rg-union (+ from 1)))))
-                    (set! write (+ write 1))))
-                (set! read (+ read 1)))))
-          (rg-set! rg-ucount reg-index write)
-          (rg-union-refresh-max! reg-index write first-drop))))))
+                    (rg-set! rg-union to (rg-ref rg-union from))
+                    (rg-set! rg-union (+ to 1) (rg-ref rg-union (+ from 1)))))
+                (set! write (+ write 1))))
+            (set! read (+ read 1))))
+        (rg-set! rg-ucount reg-index write)
+        (rg-union-refresh-max! reg-index write first-drop)))))
 
 ;; compiler-reg-greedy-occupancy-set-bit!: the union mirrors the bitset
 ;; exactly, so it is only touched when this call actually flips the bit.
@@ -753,16 +728,15 @@
           [mask : i64 (shl 1 (bit-and var 31))]
           [old : i64 (rg-ref rg-occ flat-index)]
           [was-set : bool (not (= (bit-and old mask) 0))]
-          (begin
+          (if present
+            (when (not was-set) (rg-union-add! reg-index var))
+            (when was-set (rg-union-remove! reg-index var)))
+          (rg-set!
+            rg-occ
+            flat-index
             (if present
-              (when (not was-set) (rg-union-add! reg-index var))
-              (when was-set (rg-union-remove! reg-index var)))
-            (rg-set!
-              rg-occ
-              flat-index
-              (if present
-                (bit-or old mask)
-                (bit-and old (bit-xor mask -1))))))))))
+              (bit-or old mask)
+              (bit-and old (bit-xor mask -1)))))))))
 
 ;; compiler-reg-greedy-occupancy-clear!
 (define (rg-occupancy-clear! [var : i64]) : unit
@@ -771,13 +745,12 @@
     (let
       [first : i64 (rg-ref rg-primary var)]
       [second : i64 (rg-ref rg-secondary var)]
-      (begin
-        (rg-occupancy-set-bit! first var false)
-        (when
-          (and (>= second 0) (not (= first second)))
-          (rg-occupancy-set-bit! second var false))
-        (rg-set! rg-primary var -1)
-        (rg-set! rg-secondary var -1)))))
+      (rg-occupancy-set-bit! first var false)
+      (when
+        (and (>= second 0) (not (= first second)))
+        (rg-occupancy-set-bit! second var false))
+      (rg-set! rg-primary var -1)
+      (rg-set! rg-secondary var -1))))
 
 ;; compiler-reg-greedy-occupancy-assign!
 (define (rg-occupancy-assign! [var : i64] [first : i64] [second : i64]) : unit
@@ -795,25 +768,22 @@
 ;; compiler-reg-greedy-assignment-register! / -spill! / -unassign! over
 ;; compiler-reg-assignment-table-insert / -unassign.
 (define (rg-assign-register! [var : i64] [reg-index : i64]) : unit
-  (begin
-    (rg-occupancy-assign! var reg-index -1)
-    (rg-set! rg-present var 1)
-    (rg-set! rg-kind var 1)
-    (rg-set! rg-reg var (rg-ref rg-pool-reg reg-index))))
+  (rg-occupancy-assign! var reg-index -1)
+  (rg-set! rg-present var 1)
+  (rg-set! rg-kind var 1)
+  (rg-set! rg-reg var (rg-ref rg-pool-reg reg-index)))
 
 (define (rg-assign-spill! [var : i64]) : unit
-  (begin
-    (rg-occupancy-clear! var)
-    (rg-set! rg-present var 1)
-    (rg-set! rg-kind var 2)
-    (rg-set! rg-reg var -1)))
+  (rg-occupancy-clear! var)
+  (rg-set! rg-present var 1)
+  (rg-set! rg-kind var 2)
+  (rg-set! rg-reg var -1))
 
 (define (rg-assign-unassign! [var : i64]) : unit
-  (begin
-    (rg-occupancy-clear! var)
-    (rg-set! rg-present var 0)
-    (rg-set! rg-kind var 0)
-    (rg-set! rg-reg var -1)))
+  (rg-occupancy-clear! var)
+  (rg-set! rg-present var 0)
+  (rg-set! rg-kind var 0)
+  (rg-set! rg-reg var -1))
 
 ;; compiler-reg-priority-key-weight: the band-free spill weight of a key.
 (define (rg-key-weight [key : i64]) : i64
@@ -833,21 +803,19 @@
     (let
       [bits : i64 (rg-ref rg-occ (+ (* reg-index rg-wordcount) word-index))]
       [best : i64 acc]
-      (begin
-        (while (not (= bits 0))
-          (let
-            [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
-            (begin
-              (when
-                (and (not (= other var)) (rg-vars-interfere? var other))
-                (let
-                  [weight : i64
-                    (if (< other rg-vars)
-                      (rg-ref rg-key other)
-                      0)]
-                  (when (> weight best) (set! best weight))))
-              (set! bits (bit-and bits (- bits 1))))))
-        (rg-interferer-max var reg-index (+ word-index 1) best)))))
+      (while (not (= bits 0))
+        (let
+          [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
+          (when
+            (and (not (= other var)) (rg-vars-interfere? var other))
+            (let
+              [weight : i64
+                (if (< other rg-vars)
+                  (rg-ref rg-key other)
+                  0)]
+              (when (> weight best) (set! best weight))))
+          (set! bits (bit-and bits (- bits 1)))))
+      (rg-interferer-max var reg-index (+ word-index 1) best))))
 
 ;; compiler-reg-greedy-reg-free?: the union answers when the candidate has
 ;; segments, no resident of this register lacks them, and the candidate is not
@@ -886,29 +854,27 @@
     (let
       [bits : i64 (rg-ref rg-occ (+ (* reg-index rg-wordcount) word-index))]
       [best : i64 acc]
-      (begin
-        (while (and (not (= bits 0)) (< best rg-evict-inf))
-          (let
-            [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
-            (begin
-              (when
-                (and (not (= other var)) (rg-vars-interfere? var other))
-                (let
-                  [ec : i64
-                    (if (< other rg-vars)
-                      (rg-ref rg-evict other)
-                      0)]
-                  [weight : i64
-                    (if (< other rg-vars)
-                      (rg-key-weight (rg-ref rg-key other))
-                      0)]
-                  (if (>= ec rg-evict-cap)
-                    (set! best rg-evict-inf)
-                    (when (> weight best) (set! best weight)))))
-              (set! bits (bit-and bits (- bits 1))))))
-        (if (>= best rg-evict-inf)
-          best
-          (rg-interferer-max-capped var reg-index (+ word-index 1) best))))))
+      (while (and (not (= bits 0)) (< best rg-evict-inf))
+        (let
+          [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
+          (when
+            (and (not (= other var)) (rg-vars-interfere? var other))
+            (let
+              [ec : i64
+                (if (< other rg-vars)
+                  (rg-ref rg-evict other)
+                  0)]
+              [weight : i64
+                (if (< other rg-vars)
+                  (rg-key-weight (rg-ref rg-key other))
+                  0)]
+              (if (>= ec rg-evict-cap)
+                (set! best rg-evict-inf)
+                (when (> weight best) (set! best weight)))))
+          (set! bits (bit-and bits (- bits 1)))))
+      (if (>= best rg-evict-inf)
+        best
+        (rg-interferer-max-capped var reg-index (+ word-index 1) best)))))
 
 ;; compiler-reg-greedy-first-evictable: the first pool register all of whose
 ;; interferers are strictly lower weight and none over the cascade cap.
@@ -949,9 +915,8 @@
 (define (rg-heap-swap! [a : i64] [b : i64]) : unit
   (let
     [t : i64 (rg-ref rg-heap a)]
-    (begin
-      (rg-set! rg-heap a (rg-ref rg-heap b))
-      (rg-set! rg-heap b t))))
+    (rg-set! rg-heap a (rg-ref rg-heap b))
+    (rg-set! rg-heap b t)))
 
 (define (rg-heap-sift-up! [index : i64]) : unit
   (if (<= index 0)
@@ -990,10 +955,9 @@
 (define (rg-heap-push! [v : i64]) : unit
   (let
     [index : i64 rg-heap-len]
-    (begin
-      (rg-set! rg-heap index v)
-      (set! rg-heap-len (+ index 1))
-      (rg-heap-sift-up! index))))
+    (rg-set! rg-heap index v)
+    (set! rg-heap-len (+ index 1))
+    (rg-heap-sift-up! index)))
 
 ;; The pending array stays authoritative for membership: entries it no longer
 ;; marks are lazily discarded on pop, so evict-requeue needs no decrease-key.
@@ -1003,13 +967,12 @@
     (let
       [top : i64 (rg-ref rg-heap 0)]
       [last-index : i64 (- rg-heap-len 1)]
-      (begin
-        (rg-set! rg-heap 0 (rg-ref rg-heap last-index))
-        (set! rg-heap-len last-index)
-        (when (> last-index 0) (rg-heap-sift-down! last-index 0))
-        (if (and (>= top 0) (< top rg-vars) (= (rg-ref rg-pending top) 1))
-          top
-          (rg-heap-pop!))))))
+      (rg-set! rg-heap 0 (rg-ref rg-heap last-index))
+      (set! rg-heap-len last-index)
+      (when (> last-index 0) (rg-heap-sift-down! last-index 0))
+      (if (and (>= top 0) (< top rg-vars) (= (rg-ref rg-pending top) 1))
+        top
+        (rg-heap-pop!)))))
 
 ;; compiler-reg-greedy-evict-requeue!: unassign every interfering resident of
 ;; `reg-index`, re-enqueue it at its own priority and bump its cascade count.
@@ -1018,24 +981,22 @@
     unit
     (let
       [bits : i64 (rg-ref rg-occ (+ (* reg-index rg-wordcount) word-index))]
-      (begin
-        (while (not (= bits 0))
-          (let
-            [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
+      (while (not (= bits 0))
+        (let
+          [other : i64 (+ (* word-index rg-word-bits) (rg-low-bit-nz bits))]
+          (when
+            (and (not (= other var)) (rg-vars-interfere? var other))
             (begin
+              (rg-assign-unassign! other)
               (when
-                (and (not (= other var)) (rg-vars-interfere? var other))
+                (< other rg-vars)
                 (begin
-                  (rg-assign-unassign! other)
-                  (when
-                    (< other rg-vars)
-                    (begin
-                      (rg-set! rg-pending other 1)
-                      (rg-heap-push! other)
-                      (rg-set! rg-evict other (+ (rg-ref rg-evict other) 1))))
-                  (set! rg-evictions (+ rg-evictions 1))))
-              (set! bits (bit-and bits (- bits 1))))))
-        (rg-evict-requeue! var reg-index (+ word-index 1))))))
+                  (rg-set! rg-pending other 1)
+                  (rg-heap-push! other)
+                  (rg-set! rg-evict other (+ (rg-ref rg-evict other) 1))))
+              (set! rg-evictions (+ rg-evictions 1))))
+          (set! bits (bit-and bits (- bits 1)))))
+      (rg-evict-requeue! var reg-index (+ word-index 1)))))
 
 ;; compiler-reg-greedy-arg-pref-reg: an outgoing call argument tries its ABI
 ;; argument register first, free-only, never evicting.
@@ -1088,76 +1049,72 @@
         (if csr-only
           rg-caller-saved-count
           0)]
-      (begin
-        (set! rg-hint-start start-idx)
-        (set! rg-forb-count 0)
+      (set! rg-hint-start start-idx)
+      (set! rg-forb-count 0)
+      (when
+        (not csr-only)
         (when
-          (not csr-only)
+          spans-shift
           (begin
-            (when
-              spans-shift
+            (rg-set! rg-forb rg-forb-count rg-id-rcx)
+            (set! rg-forb-count (+ rg-forb-count 1))))
+        (when
+          spans-div
+          (begin
+            (rg-set! rg-forb rg-forb-count rg-id-rax)
+            (set! rg-forb-count (+ rg-forb-count 1))
+            (rg-set! rg-forb rg-forb-count rg-id-rdx)
+            (set! rg-forb-count (+ rg-forb-count 1)))))
+      (let
+        [pref : i64 (rg-arg-pref-reg var csr-only)]
+        [hint : i64 (rg-hint-free-reg var)]
+        [chosen : i64
+          (if (>= pref 0)
+            pref
+            hint)]
+        (if (>= chosen 0)
+          (begin
+            (rg-assign-register! var chosen)
+            (set! rg-assigned (+ rg-assigned 1))
+            rg-stage-assign)
+          (let
+            [free : i64 (rg-first-free var start-idx rg-pool-count)]
+            (if (>= free 0)
               (begin
-                (rg-set! rg-forb rg-forb-count rg-id-rcx)
-                (set! rg-forb-count (+ rg-forb-count 1))))
-            (when
-              spans-div
-              (begin
-                (rg-set! rg-forb rg-forb-count rg-id-rax)
-                (set! rg-forb-count (+ rg-forb-count 1))
-                (rg-set! rg-forb rg-forb-count rg-id-rdx)
-                (set! rg-forb-count (+ rg-forb-count 1))))))
-        (let
-          [pref : i64 (rg-arg-pref-reg var csr-only)]
-          [hint : i64 (rg-hint-free-reg var)]
-          [chosen : i64
-            (if (>= pref 0)
-              pref
-              hint)]
-          (if (>= chosen 0)
-            (begin
-              (rg-assign-register! var chosen)
-              (set! rg-assigned (+ rg-assigned 1))
-              rg-stage-assign)
-            (let
-              [free : i64 (rg-first-free var start-idx rg-pool-count)]
-              (if (>= free 0)
-                (begin
-                  (rg-assign-register! var free)
-                  (set! rg-assigned (+ rg-assigned 1))
-                  rg-stage-assign)
-                (let
-                  [weight : i64 (rg-key-weight (rg-ref rg-key var))]
-                  [ev : i64
-                    (rg-first-evictable var weight start-idx rg-pool-count)]
-                  (if (>= ev 0)
-                    (begin
-                      (rg-evict-requeue! var ev 0)
-                      (rg-assign-register! var ev)
-                      (set! rg-assigned (+ rg-assigned 1))
-                      rg-stage-assign)
-                    (begin
-                      (rg-assign-spill! var)
-                      (set! rg-spilled (+ rg-spilled 1))
-                      (if (not
-                        (= (rg-ref rg-seg-lo var) (rg-ref rg-seg-hi var)))
-                        (begin
-                          (set! rg-splits (+ rg-splits 1))
-                          rg-stage-split)
-                        rg-stage-spill))))))))))))
+                (rg-assign-register! var free)
+                (set! rg-assigned (+ rg-assigned 1))
+                rg-stage-assign)
+              (let
+                [weight : i64 (rg-key-weight (rg-ref rg-key var))]
+                [ev : i64
+                  (rg-first-evictable var weight start-idx rg-pool-count)]
+                (if (>= ev 0)
+                  (begin
+                    (rg-evict-requeue! var ev 0)
+                    (rg-assign-register! var ev)
+                    (set! rg-assigned (+ rg-assigned 1))
+                    rg-stage-assign)
+                  (begin
+                    (rg-assign-spill! var)
+                    (set! rg-spilled (+ rg-spilled 1))
+                    (if (not (= (rg-ref rg-seg-lo var) (rg-ref rg-seg-hi var)))
+                      (begin
+                        (set! rg-splits (+ rg-splits 1))
+                        rg-stage-split)
+                      rg-stage-spill)))))))))))
 
 ;; compiler-reg-greedy-worklist-seed!: mark every collected root pending.
 (define (rg-worklist-seed! [i : i64] [count : i64]) : unit
-  (if (>= i count)
-    unit
-    (begin
-      (let
-        [v : i64 (rg-ref rg-order i)]
-        (when
-          (and (>= v 0) (< v rg-vars))
-          (begin
-            (rg-set! rg-pending v 1)
-            (rg-heap-push! v))))
-      (rg-worklist-seed! (+ i 1) count))))
+  (unless
+    (>= i count)
+    (let
+      [v : i64 (rg-ref rg-order i)]
+      (when
+        (and (>= v 0) (< v rg-vars))
+        (begin
+          (rg-set! rg-pending v 1)
+          (rg-heap-push! v))))
+    (rg-worklist-seed! (+ i 1) count)))
 
 ;; compiler-reg-greedy-worklist-run!: pop the highest-weight pending root,
 ;; dequeue it, run selectOrSplit, record its terminal stage, repeat.
@@ -1214,19 +1171,18 @@
             0)]
         [take-right : bool
           (and (< j hi) (or (>= i mid) (rg-weight-before? right left)))]
-        (begin
-          (if take-right
-            (begin
-              (if from-order
-                (rg-set! rg-sortbuf k right)
-                (rg-set! rg-order k right))
-              (set! j (+ j 1)))
-            (begin
-              (if from-order
-                (rg-set! rg-sortbuf k left)
-                (rg-set! rg-order k left))
-              (set! i (+ i 1))))
-          (set! k (+ k 1)))))))
+        (if take-right
+          (begin
+            (if from-order
+              (rg-set! rg-sortbuf k right)
+              (rg-set! rg-order k right))
+            (set! j (+ j 1)))
+          (begin
+            (if from-order
+              (rg-set! rg-sortbuf k left)
+              (rg-set! rg-order k left))
+            (set! i (+ i 1))))
+        (set! k (+ k 1))))))
 
 (define (rg-merge-pass! [from-order : bool] [count : i64] [width : i64]) : unit
   (let
@@ -1241,9 +1197,8 @@
           (if (< (+ lo (+ width width)) count)
             (+ lo (+ width width))
             count)]
-        (begin
-          (rg-merge-run! from-order lo mid hi)
-          (set! lo hi))))))
+        (rg-merge-run! from-order lo mid hi)
+        (set! lo hi)))))
 
 (define (rg-sort! [count : i64]) : unit
   (if (< count 2)
@@ -1251,20 +1206,17 @@
     (let
       [width : i64 1]
       [flipped : bool false]
-      (begin
-        (while (< width count)
-          (begin
-            (rg-merge-pass! (not flipped) count width)
-            (set! flipped (not flipped))
-            (set! width (+ width width))))
-        (when
-          flipped
-          (let
-            [i : i64 0]
-            (while (< i count)
-              (begin
-                (rg-set! rg-order i (rg-ref rg-sortbuf i))
-                (set! i (+ i 1))))))))))
+      (while (< width count)
+        (rg-merge-pass! (not flipped) count width)
+        (set! flipped (not flipped))
+        (set! width (+ width width)))
+      (when
+        flipped
+        (let
+          [i : i64 0]
+          (while (< i count)
+            (rg-set! rg-order i (rg-ref rg-sortbuf i))
+            (set! i (+ i 1))))))))
 
 ;; compiler-reg-block-index-of-point: the last block whose start point is <= it.
 (define (rg-block-index-of-point [point : i64]) : i64
@@ -1272,16 +1224,15 @@
     [lo : i64 0]
     [hi : i64 (- rg-nblocks 1)]
     [best : i64 0]
-    (begin
-      (while (<= lo hi)
-        (let
-          [mid : i64 (shr (+ lo hi) 1)]
-          (if (<= (rg-ref rg-tokens (+ rg-points-base mid)) point)
-            (begin
-              (set! best mid)
-              (set! lo (+ mid 1)))
-            (set! hi (- mid 1)))))
-      best)))
+    (while (<= lo hi)
+      (let
+        [mid : i64 (shr (+ lo hi) 1)]
+        (if (<= (rg-ref rg-tokens (+ rg-points-base mid)) point)
+          (begin
+            (set! best mid)
+            (set! lo (+ mid 1)))
+          (set! hi (- mid 1)))))
+    best))
 
 ;; compiler-reg-priority-band-value: a value contained in ONE block is LOCAL
 ;; and ranks below every global, locals among themselves in start order.
@@ -1311,38 +1262,34 @@
   (let
     [max-raw : i64 0]
     [v : i64 0]
-    (begin
-      (while (< v rg-vars)
-        (begin
-          (when (> (rg-ref rg-raw v) max-raw) (set! max-raw (rg-ref rg-raw v)))
-          (set! v (+ v 1))))
-      (set! v 0)
-      (while (< v rg-vars)
-        (let
-          [r : i64 (rg-ref rg-raw v)]
-          [d : i64
-            (if (> r rg-weight-cap)
-              rg-weight-cap
-              r)]
-          [tie : i64
-            (if (= max-raw 0)
-              0
-              (let
-                [scaled : i64 (/ (* r rg-tie-span) (+ max-raw 1))]
-                (if (>= scaled rg-tie-span)
-                  (- rg-tie-span 1)
-                  scaled)))]
-          (begin
-            (rg-set! rg-key v (+ (* d rg-tie-span) tie))
-            (set! v (+ v 1)))))
-      (set! v 0)
-      (while (< v rg-vars)
-        (begin
-          (rg-set!
-            rg-key
-            v
-            (+ (* (rg-ref rg-key v) rg-band-span) (rg-priority-band-value v)))
-          (set! v (+ v 1)))))))
+    (while (< v rg-vars)
+      (when (> (rg-ref rg-raw v) max-raw) (set! max-raw (rg-ref rg-raw v)))
+      (set! v (+ v 1)))
+    (set! v 0)
+    (while (< v rg-vars)
+      (let
+        [r : i64 (rg-ref rg-raw v)]
+        [d : i64
+          (if (> r rg-weight-cap)
+            rg-weight-cap
+            r)]
+        [tie : i64
+          (if (= max-raw 0)
+            0
+            (let
+              [scaled : i64 (/ (* r rg-tie-span) (+ max-raw 1))]
+              (if (>= scaled rg-tie-span)
+                (- rg-tie-span 1)
+                scaled)))]
+        (rg-set! rg-key v (+ (* d rg-tie-span) tie))
+        (set! v (+ v 1))))
+    (set! v 0)
+    (while (< v rg-vars)
+      (rg-set!
+        rg-key
+        v
+        (+ (* (rg-ref rg-key v) rg-band-span) (rg-priority-band-value v)))
+      (set! v (+ v 1)))))
 
 ;; compiler-reg-assignment-table-location-conflicts?, run over the finished
 ;; plan: no two vars holding one register may have overlapping segments.
@@ -1350,43 +1297,37 @@
   (let
     [conflicts : i64 0]
     [reg-index : i64 0]
-    (begin
-      (while (< reg-index rg-pool-count)
+    (while (< reg-index rg-pool-count)
+      (let
+        [count : i64 0]
+        [word-index : i64 0]
+        (while (< word-index rg-wordcount)
+          (let
+            [bits : i64
+              (rg-ref rg-occ (+ (* reg-index rg-wordcount) word-index))]
+            (while (not (= bits 0))
+              (rg-set!
+                rg-residents
+                count
+                (+ (* word-index rg-word-bits) (rg-low-bit-nz bits)))
+              (set! count (+ count 1))
+              (set! bits (bit-and bits (- bits 1))))
+            (set! word-index (+ word-index 1))))
         (let
-          [count : i64 0]
-          [word-index : i64 0]
-          (begin
-            (while (< word-index rg-wordcount)
-              (let
-                [bits : i64
-                  (rg-ref rg-occ (+ (* reg-index rg-wordcount) word-index))]
-                (begin
-                  (while (not (= bits 0))
-                    (begin
-                      (rg-set!
-                        rg-residents
-                        count
-                        (+ (* word-index rg-word-bits) (rg-low-bit-nz bits)))
-                      (set! count (+ count 1))
-                      (set! bits (bit-and bits (- bits 1)))))
-                  (set! word-index (+ word-index 1)))))
+          [a : i64 0]
+          (while (< a count)
             (let
-              [a : i64 0]
-              (while (< a count)
-                (let
-                  [b : i64 (+ a 1)]
-                  (begin
-                    (while (< b count)
-                      (begin
-                        (when
-                          (rg-vars-interfere?
-                            (rg-ref rg-residents a)
-                            (rg-ref rg-residents b))
-                          (set! conflicts (+ conflicts 1)))
-                        (set! b (+ b 1))))
-                    (set! a (+ a 1))))))
-            (set! reg-index (+ reg-index 1)))))
-      conflicts)))
+              [b : i64 (+ a 1)]
+              (while (< b count)
+                (when
+                  (rg-vars-interfere?
+                    (rg-ref rg-residents a)
+                    (rg-ref rg-residents b))
+                  (set! conflicts (+ conflicts 1)))
+                (set! b (+ b 1)))
+              (set! a (+ a 1)))))
+        (set! reg-index (+ reg-index 1))))
+    conflicts))
 
 ;; Read one function's record out of the token tape into the reusable arrays.
 ;; This is the per-function state the compiler rebuilds for every function: the
@@ -1401,115 +1342,102 @@
     [fill : i64 0]
     [v : i64 0]
     [i : i64 0]
-    (begin
-      (set! rg-vars (rg-ref rg-tokens offset))
-      (set! rg-nblocks (rg-ref rg-tokens (+ offset 1)))
-      (set! rg-ncand (rg-ref rg-tokens (+ offset 2)))
-      (set! rg-nrows (rg-ref rg-tokens (+ offset 7)))
-      (set! rg-points-base (+ offset 8))
-      (set! rg-cand-base (+ rg-points-base (+ rg-nblocks 1)))
-      (set! rg-wordcount (shr (+ rg-vars 31) 5))
-      (set!
-        rg-clobber-words
-        (+ (shr (rg-ref rg-tokens (+ rg-points-base rg-nblocks)) 5) 1))
-      (while (< v rg-vars)
-        (begin
-          (rg-set! rg-seg-lo v 0)
-          (rg-set! rg-seg-hi v 0)
-          (rg-set! rg-raw v 0)
-          (rg-set! rg-key v 0)
-          (rg-set! rg-hint v -1)
-          (rg-set! rg-argpref v -1)
-          (rg-set! rg-param v 0)
-          (rg-set! rg-group v 0)
-          (rg-set! rg-present v 0)
-          (rg-set! rg-kind v 0)
-          (rg-set! rg-reg v -1)
-          (rg-set! rg-primary v -1)
-          (rg-set! rg-secondary v -1)
-          (rg-set! rg-pending v 0)
-          (rg-set! rg-evict v 0)
-          (rg-set! rg-stage v 0)
-          (set! v (+ v 1))))
-      (set! i 0)
-      (while (< i (* rg-pool-count rg-wordcount))
-        (begin
-          (rg-set! rg-occ i 0)
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rg-pool-count)
-        (begin
-          (rg-set! rg-ucount i 0)
-          (rg-set! rg-ucoarse i 0)
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rg-clobber-words)
-        (begin
-          (rg-set! rg-callbits i 0)
-          (rg-set! rg-divbits i 0)
-          (rg-set! rg-shiftbits i 0)
-          (set! i (+ i 1))))
-      (set! cursor (+ rg-cand-base rg-ncand))
-      (set! i 0)
-      (while (< i ncall)
-        (let
-          [p : i64 (rg-ref rg-tokens (+ cursor i))]
-          (begin
-            (rg-set!
-              rg-callbits
-              (shr p 5)
-              (bit-or (rg-ref rg-callbits (shr p 5)) (shl 1 (bit-and p 31))))
-            (set! i (+ i 1)))))
-      (set! cursor (+ cursor ncall))
-      (set! i 0)
-      (while (< i ndiv)
-        (let
-          [p : i64 (rg-ref rg-tokens (+ cursor i))]
-          (begin
-            (rg-set!
-              rg-divbits
-              (shr p 5)
-              (bit-or (rg-ref rg-divbits (shr p 5)) (shl 1 (bit-and p 31))))
-            (set! i (+ i 1)))))
-      (set! cursor (+ cursor ndiv))
-      (set! i 0)
-      (while (< i nshift)
-        (let
-          [p : i64 (rg-ref rg-tokens (+ cursor i))]
-          (begin
-            (rg-set!
-              rg-shiftbits
-              (shr p 5)
-              (bit-or (rg-ref rg-shiftbits (shr p 5)) (shl 1 (bit-and p 31))))
-            (set! i (+ i 1)))))
-      (set! cursor (+ cursor nshift))
-      (set! i 0)
-      (while (< i rg-nrows)
-        (let
-          [var : i64 (rg-ref rg-tokens cursor)]
-          [k : i64 (rg-ref rg-tokens (+ cursor 1))]
-          [s : i64 0]
-          (begin
-            (rg-set! rg-seg-lo var fill)
-            (while (< s k)
-              (begin
-                (rg-set!
-                  rg-seg-start
-                  fill
-                  (rg-ref rg-tokens (+ cursor (+ 2 (* s 2)))))
-                (rg-set!
-                  rg-seg-end
-                  fill
-                  (rg-ref rg-tokens (+ cursor (+ 3 (* s 2)))))
-                (set! fill (+ fill 1))
-                (set! s (+ s 1))))
-            (rg-set! rg-seg-hi var fill)
-            (rg-set! rg-raw var (rg-ref rg-tokens (+ cursor (+ 2 (* k 2)))))
-            (rg-set! rg-hint var (rg-ref rg-tokens (+ cursor (+ 3 (* k 2)))))
-            (rg-set! rg-argpref var (rg-ref rg-tokens (+ cursor (+ 4 (* k 2)))))
-            (rg-set! rg-param var (rg-ref rg-tokens (+ cursor (+ 5 (* k 2)))))
-            (set! cursor (+ cursor (+ 6 (* k 2))))
-            (set! i (+ i 1))))))))
+    (set! rg-vars (rg-ref rg-tokens offset))
+    (set! rg-nblocks (rg-ref rg-tokens (+ offset 1)))
+    (set! rg-ncand (rg-ref rg-tokens (+ offset 2)))
+    (set! rg-nrows (rg-ref rg-tokens (+ offset 7)))
+    (set! rg-points-base (+ offset 8))
+    (set! rg-cand-base (+ rg-points-base (+ rg-nblocks 1)))
+    (set! rg-wordcount (shr (+ rg-vars 31) 5))
+    (set!
+      rg-clobber-words
+      (+ (shr (rg-ref rg-tokens (+ rg-points-base rg-nblocks)) 5) 1))
+    (while (< v rg-vars)
+      (rg-set! rg-seg-lo v 0)
+      (rg-set! rg-seg-hi v 0)
+      (rg-set! rg-raw v 0)
+      (rg-set! rg-key v 0)
+      (rg-set! rg-hint v -1)
+      (rg-set! rg-argpref v -1)
+      (rg-set! rg-param v 0)
+      (rg-set! rg-group v 0)
+      (rg-set! rg-present v 0)
+      (rg-set! rg-kind v 0)
+      (rg-set! rg-reg v -1)
+      (rg-set! rg-primary v -1)
+      (rg-set! rg-secondary v -1)
+      (rg-set! rg-pending v 0)
+      (rg-set! rg-evict v 0)
+      (rg-set! rg-stage v 0)
+      (set! v (+ v 1)))
+    (set! i 0)
+    (while (< i (* rg-pool-count rg-wordcount))
+      (rg-set! rg-occ i 0)
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i rg-pool-count)
+      (rg-set! rg-ucount i 0)
+      (rg-set! rg-ucoarse i 0)
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i rg-clobber-words)
+      (rg-set! rg-callbits i 0)
+      (rg-set! rg-divbits i 0)
+      (rg-set! rg-shiftbits i 0)
+      (set! i (+ i 1)))
+    (set! cursor (+ rg-cand-base rg-ncand))
+    (set! i 0)
+    (while (< i ncall)
+      (let
+        [p : i64 (rg-ref rg-tokens (+ cursor i))]
+        (rg-set!
+          rg-callbits
+          (shr p 5)
+          (bit-or (rg-ref rg-callbits (shr p 5)) (shl 1 (bit-and p 31))))
+        (set! i (+ i 1))))
+    (set! cursor (+ cursor ncall))
+    (set! i 0)
+    (while (< i ndiv)
+      (let
+        [p : i64 (rg-ref rg-tokens (+ cursor i))]
+        (rg-set!
+          rg-divbits
+          (shr p 5)
+          (bit-or (rg-ref rg-divbits (shr p 5)) (shl 1 (bit-and p 31))))
+        (set! i (+ i 1))))
+    (set! cursor (+ cursor ndiv))
+    (set! i 0)
+    (while (< i nshift)
+      (let
+        [p : i64 (rg-ref rg-tokens (+ cursor i))]
+        (rg-set!
+          rg-shiftbits
+          (shr p 5)
+          (bit-or (rg-ref rg-shiftbits (shr p 5)) (shl 1 (bit-and p 31))))
+        (set! i (+ i 1))))
+    (set! cursor (+ cursor nshift))
+    (set! i 0)
+    (while (< i rg-nrows)
+      (let
+        [var : i64 (rg-ref rg-tokens cursor)]
+        [k : i64 (rg-ref rg-tokens (+ cursor 1))]
+        [s : i64 0]
+        (rg-set! rg-seg-lo var fill)
+        (while (< s k)
+          (rg-set!
+            rg-seg-start
+            fill
+            (rg-ref rg-tokens (+ cursor (+ 2 (* s 2)))))
+          (rg-set! rg-seg-end fill (rg-ref rg-tokens (+ cursor (+ 3 (* s 2)))))
+          (set! fill (+ fill 1))
+          (set! s (+ s 1)))
+        (rg-set! rg-seg-hi var fill)
+        (rg-set! rg-raw var (rg-ref rg-tokens (+ cursor (+ 2 (* k 2)))))
+        (rg-set! rg-hint var (rg-ref rg-tokens (+ cursor (+ 3 (* k 2)))))
+        (rg-set! rg-argpref var (rg-ref rg-tokens (+ cursor (+ 4 (* k 2)))))
+        (rg-set! rg-param var (rg-ref rg-tokens (+ cursor (+ 5 (* k 2)))))
+        (set! cursor (+ cursor (+ 6 (* k 2))))
+        (set! i (+ i 1))))))
 
 ;; One function's greedy allocation: build the priority keys, collect the
 ;; candidate roots in candidate order, sort them, seed the worklist and run it,
@@ -1520,50 +1448,46 @@
     [i : i64 0]
     [spans : i64 0]
     [conflicts : i64 0]
-    (begin
-      (rg-load-function offset)
-      (rg-build-keys!)
-      (set! rg-assigned 0)
-      (set! rg-spilled 0)
-      (set! rg-splits 0)
-      (set! rg-evictions 0)
-      (set! rg-heap-len 0)
-      (while (< i rg-ncand)
-        (begin
-          (rg-set! rg-order i (rg-ref rg-tokens (+ rg-cand-base i)))
-          (set! i (+ i 1))))
-      (rg-sort! rg-ncand)
-      (rg-worklist-seed! 0 rg-ncand)
-      (rg-worklist-run!)
-      (set! i 0)
-      (while (< i rg-vars)
-        (begin
-          (when
-            (and
-              (not (= (rg-ref rg-seg-lo i) (rg-ref rg-seg-hi i)))
-              (rg-var-spans-clobber? i (& rg-callbits)))
-            (set! spans (+ spans 1)))
-          (set! i (+ i 1))))
-      (set! rg-spans-seen (+ rg-spans-seen spans))
-      (when (= rg-verify 1) (set! conflicts (rg-count-conflicts)))
-      (set! hash (rg-mix hash rg-vars))
-      (set! hash (rg-mix hash rg-ncand))
-      (set! hash (rg-mix hash rg-assigned))
-      (set! hash (rg-mix hash rg-spilled))
-      (set! hash (rg-mix hash rg-splits))
-      (set! hash (rg-mix hash rg-evictions))
-      (set! hash (rg-mix hash spans))
-      (set! hash (rg-mix hash conflicts))
-      (set! i 0)
-      (while (< i rg-ncand)
-        (let
-          [v : i64 (rg-ref rg-tokens (+ rg-cand-base i))]
-          (begin
-            (set! hash (rg-mix hash (rg-ref rg-stage v)))
-            (set! hash (rg-mix hash (rg-ref rg-kind v)))
-            (set! hash (rg-mix hash (rg-ref rg-reg v)))
-            (set! i (+ i 1)))))
-      hash)))
+    (rg-load-function offset)
+    (rg-build-keys!)
+    (set! rg-assigned 0)
+    (set! rg-spilled 0)
+    (set! rg-splits 0)
+    (set! rg-evictions 0)
+    (set! rg-heap-len 0)
+    (while (< i rg-ncand)
+      (rg-set! rg-order i (rg-ref rg-tokens (+ rg-cand-base i)))
+      (set! i (+ i 1)))
+    (rg-sort! rg-ncand)
+    (rg-worklist-seed! 0 rg-ncand)
+    (rg-worklist-run!)
+    (set! i 0)
+    (while (< i rg-vars)
+      (when
+        (and
+          (not (= (rg-ref rg-seg-lo i) (rg-ref rg-seg-hi i)))
+          (rg-var-spans-clobber? i (& rg-callbits)))
+        (set! spans (+ spans 1)))
+      (set! i (+ i 1)))
+    (set! rg-spans-seen (+ rg-spans-seen spans))
+    (when (= rg-verify 1) (set! conflicts (rg-count-conflicts)))
+    (set! hash (rg-mix hash rg-vars))
+    (set! hash (rg-mix hash rg-ncand))
+    (set! hash (rg-mix hash rg-assigned))
+    (set! hash (rg-mix hash rg-spilled))
+    (set! hash (rg-mix hash rg-splits))
+    (set! hash (rg-mix hash rg-evictions))
+    (set! hash (rg-mix hash spans))
+    (set! hash (rg-mix hash conflicts))
+    (set! i 0)
+    (while (< i rg-ncand)
+      (let
+        [v : i64 (rg-ref rg-tokens (+ rg-cand-base i))]
+        (set! hash (rg-mix hash (rg-ref rg-stage v)))
+        (set! hash (rg-mix hash (rg-ref rg-kind v)))
+        (set! hash (rg-mix hash (rg-ref rg-reg v)))
+        (set! i (+ i 1))))
+    hash))
 
 (define (rg-bench [path : String] [rounds : i64]) : i64
   (let
@@ -1579,108 +1503,100 @@
     [round : i64 0]
     [start : i64 0]
     [acc : i64 rg-hash-basis]
-    (begin
-      (set! rg-tokens (rg-zero-vec capacity))
-      (set! acc (rg-mix acc (rg-scan-ints text (&mut rg-tokens))))
-      (set! functions (rg-ref rg-tokens 1))
-      (set! expected-spans (rg-ref rg-tokens 2))
-      (set! rg-offsets (rg-zero-vec (+ functions 1)))
-      (let
-        [f : i64 0]
-        (while (< f functions)
-          (let
-            [vars : i64 (rg-ref rg-tokens cursor)]
-            [nblocks : i64 (rg-ref rg-tokens (+ cursor 1))]
-            [ncand : i64 (rg-ref rg-tokens (+ cursor 2))]
-            [ncall : i64 (rg-ref rg-tokens (+ cursor 3))]
-            [ndiv : i64 (rg-ref rg-tokens (+ cursor 4))]
-            [nshift : i64 (rg-ref rg-tokens (+ cursor 5))]
-            [nseg : i64 (rg-ref rg-tokens (+ cursor 6))]
-            [nrows : i64 (rg-ref rg-tokens (+ cursor 7))]
-            [point : i64 (rg-ref rg-tokens (+ (+ cursor 8) nblocks))]
-            [p : i64 0]
-            [r : i64 0]
-            (begin
-              (rg-set! rg-offsets f cursor)
-              (when (> vars max-vars) (set! max-vars vars))
-              (when (> nseg max-segs) (set! max-segs nseg))
-              (when (> point max-point) (set! max-point point))
-              (set!
-                p
-                (+
-                  (+ (+ cursor 8) (+ nblocks 1))
-                  (+ ncand (+ ncall (+ ndiv nshift)))))
-              (while (< r nrows)
-                (begin
-                  (set! p (+ p (+ 6 (* (rg-ref rg-tokens (+ p 1)) 2))))
-                  (set! r (+ r 1))))
-              (set! cursor p)
-              (set! f (+ f 1))))))
-      (set! max-words (shr (+ max-vars 31) 5))
-      (set! rg-lowbit (rg-zero-vec 32))
-      (set! rg-pool-reg (rg-zero-vec rg-pool-count))
-      (set! rg-pool-idx (rg-zero-vec rg-pool-index-capacity))
-      (rg-lowbit-init!)
-      (rg-pool-init!)
-      (set! rg-seg-lo (rg-zero-vec (+ max-vars 1)))
-      (set! rg-seg-hi (rg-zero-vec (+ max-vars 1)))
-      (set! rg-seg-start (rg-zero-vec (+ max-segs 1)))
-      (set! rg-seg-end (rg-zero-vec (+ max-segs 1)))
-      (set! rg-raw (rg-zero-vec (+ max-vars 1)))
-      (set! rg-key (rg-zero-vec (+ max-vars 1)))
-      (set! rg-hint (rg-zero-vec (+ max-vars 1)))
-      (set! rg-argpref (rg-zero-vec (+ max-vars 1)))
-      (set! rg-param (rg-zero-vec (+ max-vars 1)))
-      (set! rg-group (rg-zero-vec (+ max-vars 1)))
-      (set! rg-present (rg-zero-vec (+ max-vars 1)))
-      (set! rg-kind (rg-zero-vec (+ max-vars 1)))
-      (set! rg-reg (rg-zero-vec (+ max-vars 1)))
-      (set! rg-primary (rg-zero-vec (+ max-vars 1)))
-      (set! rg-secondary (rg-zero-vec (+ max-vars 1)))
-      (set! rg-pending (rg-zero-vec (+ max-vars 1)))
-      (set! rg-evict (rg-zero-vec (+ max-vars 1)))
-      (set! rg-stage (rg-zero-vec (+ max-vars 1)))
-      (set! rg-order (rg-zero-vec (+ max-vars 1)))
-      (set! rg-sortbuf (rg-zero-vec (+ max-vars 1)))
-      (set! rg-residents (rg-zero-vec (+ max-vars 1)))
-      (set! rg-heap (rg-zero-vec (+ (* max-vars 5) 16)))
-      (set! rg-occ (rg-zero-vec (+ (* rg-pool-count max-words) 1)))
-      (set! rg-ustride (* (+ max-segs 1) rg-entry-words))
-      (set! rg-union (rg-zero-vec (+ (* rg-pool-count rg-ustride) 1)))
-      (set! rg-ucount (rg-zero-vec rg-pool-count))
-      (set! rg-ucoarse (rg-zero-vec rg-pool-count))
-      (set! rg-callbits (rg-zero-vec (+ (shr max-point 5) 2)))
-      (set! rg-divbits (rg-zero-vec (+ (shr max-point 5) 2)))
-      (set! rg-shiftbits (rg-zero-vec (+ (shr max-point 5) 2)))
-      (set! rg-forb (rg-zero-vec 8))
-      (while (< round rounds)
+    (set! rg-tokens (rg-zero-vec capacity))
+    (set! acc (rg-mix acc (rg-scan-ints text (&mut rg-tokens))))
+    (set! functions (rg-ref rg-tokens 1))
+    (set! expected-spans (rg-ref rg-tokens 2))
+    (set! rg-offsets (rg-zero-vec (+ functions 1)))
+    (let
+      [f : i64 0]
+      (while (< f functions)
         (let
-          [step : i64 0]
-          [index : i64 0]
-          (begin
-            (set!
-              rg-verify
-              (if (= round 0)
-                1
-                0))
-            (set! acc (rg-mix acc round))
-            (while (< step functions)
-              (begin
-                (set! index (+ start step))
-                (when (>= index functions) (set! index (- index functions)))
-                (set!
-                  acc
-                  (rg-mix acc (rg-run-function (rg-ref rg-offsets index))))
-                (set! step (+ step 1))))
-            (set! start (+ start 1))
-            (when (>= start functions) (set! start 0))
-            (set! round (+ round 1)))))
-      (rg-mix acc (- rg-spans-seen (* expected-spans rounds))))))
+          [vars : i64 (rg-ref rg-tokens cursor)]
+          [nblocks : i64 (rg-ref rg-tokens (+ cursor 1))]
+          [ncand : i64 (rg-ref rg-tokens (+ cursor 2))]
+          [ncall : i64 (rg-ref rg-tokens (+ cursor 3))]
+          [ndiv : i64 (rg-ref rg-tokens (+ cursor 4))]
+          [nshift : i64 (rg-ref rg-tokens (+ cursor 5))]
+          [nseg : i64 (rg-ref rg-tokens (+ cursor 6))]
+          [nrows : i64 (rg-ref rg-tokens (+ cursor 7))]
+          [point : i64 (rg-ref rg-tokens (+ (+ cursor 8) nblocks))]
+          [p : i64 0]
+          [r : i64 0]
+          (rg-set! rg-offsets f cursor)
+          (when (> vars max-vars) (set! max-vars vars))
+          (when (> nseg max-segs) (set! max-segs nseg))
+          (when (> point max-point) (set! max-point point))
+          (set!
+            p
+            (+
+              (+ (+ cursor 8) (+ nblocks 1))
+              (+ ncand (+ ncall (+ ndiv nshift)))))
+          (while (< r nrows)
+            (set! p (+ p (+ 6 (* (rg-ref rg-tokens (+ p 1)) 2))))
+            (set! r (+ r 1)))
+          (set! cursor p)
+          (set! f (+ f 1)))))
+    (set! max-words (shr (+ max-vars 31) 5))
+    (set! rg-lowbit (rg-zero-vec 32))
+    (set! rg-pool-reg (rg-zero-vec rg-pool-count))
+    (set! rg-pool-idx (rg-zero-vec rg-pool-index-capacity))
+    (rg-lowbit-init!)
+    (rg-pool-init!)
+    (set! rg-seg-lo (rg-zero-vec (+ max-vars 1)))
+    (set! rg-seg-hi (rg-zero-vec (+ max-vars 1)))
+    (set! rg-seg-start (rg-zero-vec (+ max-segs 1)))
+    (set! rg-seg-end (rg-zero-vec (+ max-segs 1)))
+    (set! rg-raw (rg-zero-vec (+ max-vars 1)))
+    (set! rg-key (rg-zero-vec (+ max-vars 1)))
+    (set! rg-hint (rg-zero-vec (+ max-vars 1)))
+    (set! rg-argpref (rg-zero-vec (+ max-vars 1)))
+    (set! rg-param (rg-zero-vec (+ max-vars 1)))
+    (set! rg-group (rg-zero-vec (+ max-vars 1)))
+    (set! rg-present (rg-zero-vec (+ max-vars 1)))
+    (set! rg-kind (rg-zero-vec (+ max-vars 1)))
+    (set! rg-reg (rg-zero-vec (+ max-vars 1)))
+    (set! rg-primary (rg-zero-vec (+ max-vars 1)))
+    (set! rg-secondary (rg-zero-vec (+ max-vars 1)))
+    (set! rg-pending (rg-zero-vec (+ max-vars 1)))
+    (set! rg-evict (rg-zero-vec (+ max-vars 1)))
+    (set! rg-stage (rg-zero-vec (+ max-vars 1)))
+    (set! rg-order (rg-zero-vec (+ max-vars 1)))
+    (set! rg-sortbuf (rg-zero-vec (+ max-vars 1)))
+    (set! rg-residents (rg-zero-vec (+ max-vars 1)))
+    (set! rg-heap (rg-zero-vec (+ (* max-vars 5) 16)))
+    (set! rg-occ (rg-zero-vec (+ (* rg-pool-count max-words) 1)))
+    (set! rg-ustride (* (+ max-segs 1) rg-entry-words))
+    (set! rg-union (rg-zero-vec (+ (* rg-pool-count rg-ustride) 1)))
+    (set! rg-ucount (rg-zero-vec rg-pool-count))
+    (set! rg-ucoarse (rg-zero-vec rg-pool-count))
+    (set! rg-callbits (rg-zero-vec (+ (shr max-point 5) 2)))
+    (set! rg-divbits (rg-zero-vec (+ (shr max-point 5) 2)))
+    (set! rg-shiftbits (rg-zero-vec (+ (shr max-point 5) 2)))
+    (set! rg-forb (rg-zero-vec 8))
+    (while (< round rounds)
+      (let
+        [step : i64 0]
+        [index : i64 0]
+        (set!
+          rg-verify
+          (if (= round 0)
+            1
+            0))
+        (set! acc (rg-mix acc round))
+        (while (< step functions)
+          (set! index (+ start step))
+          (when (>= index functions) (set! index (- index functions)))
+          (set! acc (rg-mix acc (rg-run-function (rg-ref rg-offsets index))))
+          (set! step (+ step 1)))
+        (set! start (+ start 1))
+        (when (>= start functions) (set! start 0))
+        (set! round (+ round 1))))
+    (rg-mix acc (- rg-spans-seen (* expected-spans rounds)))))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (rg-bench path rounds))
-      0)))
+    (io.println "{}" (rg-bench path rounds))
+    0))

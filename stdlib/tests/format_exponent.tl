@@ -8,9 +8,8 @@
 (define (exponent-counted
   [state : (&mut state ExponentEvalState)]
   [value : i64]) : i64
-  (begin
-    (set! state.calls (+ state.calls 1))
-    value))
+  (set! state.calls (+ state.calls 1))
+  value)
 
 (define (format-borrowed-i64 [value : (& value i64)]) : String
   (format.format "{:.2e}" value))
@@ -207,12 +206,10 @@
         (= (cast (string.string-ref (& text) 1) : i64) 46)
         (= (cast (string.string-ref (& text) 402) : i64) 101)
         (= (cast (string.string-ref (& text) 403) : i64) 48))]
-    (begin
-      (while (and ok (< index 402))
-        (begin
-          (set! ok (= (cast (string.string-ref (& text) index) : i64) 48))
-          (set! index (+ index 1))))
-      ok)))
+    (while (and ok (< index 402))
+      (set! ok (= (cast (string.string-ref (& text) index) : i64) 48))
+      (set! index (+ index 1)))
+    ok))
 
 (define (main) : i64
   (cond

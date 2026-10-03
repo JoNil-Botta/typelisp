@@ -60,24 +60,21 @@
     [cursor : i64 0]
     [v : i64 0]
     [e : i64 0]
-    (begin
-      (while (< v vertices)
-        (begin
-          (set! (array-ref offset-slots v) cursor)
-          (set! state (gd-next-state state))
-          (set! cursor (+ cursor (+ 2 (% (gd-draw state) 5))))
-          (set! v (+ v 1))))
-      (set! (array-ref offset-slots vertices) cursor)
-      (while (< e cursor)
-        (begin
-          (set! state (gd-next-state state))
-          (set! (array-ref target-slots e) (% (gd-draw state) vertices))
-          (set! state (gd-next-state state))
-          (set!
-            (array-ref weight-slots e)
-            (+ 1 (% (gd-draw state) (- gd-weight-limit 1))))
-          (set! e (+ e 1))))
-      cursor)))
+    (while (< v vertices)
+      (set! (array-ref offset-slots v) cursor)
+      (set! state (gd-next-state state))
+      (set! cursor (+ cursor (+ 2 (% (gd-draw state) 5))))
+      (set! v (+ v 1)))
+    (set! (array-ref offset-slots vertices) cursor)
+    (while (< e cursor)
+      (set! state (gd-next-state state))
+      (set! (array-ref target-slots e) (% (gd-draw state) vertices))
+      (set! state (gd-next-state state))
+      (set!
+        (array-ref weight-slots e)
+        (+ 1 (% (gd-draw state) (- gd-weight-limit 1))))
+      (set! e (+ e 1)))
+    cursor))
 
 (define (gd-dijkstra
   [offsets : (&mut offsets i64vec.Vec)]
@@ -100,123 +97,103 @@
     [i : i64 0]
     [heap-size : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i vertices)
-        (begin
-          (set! (array-ref dist-slots i) gd-infinity)
-          (set! (array-ref settled-slots i) 0)
-          (set! i (+ i 1))))
-      (set! (array-ref dist-slots source) 0)
-      (set! (array-ref heap-key-slots 0) 0)
-      (set! (array-ref heap-node-slots 0) source)
-      (set! heap-size 1)
-      (while (> heap-size 0)
-        (let
-          [top-key : i64 (array-ref heap-key-slots 0)]
-          [top-node : i64 (array-ref heap-node-slots 0)]
-          [slot : i64 0]
-          [sifting : bool true]
-          (begin
-            (set! heap-size (- heap-size 1))
-            (set!
-              (array-ref heap-key-slots 0)
-              (array-ref heap-key-slots heap-size))
-            (set!
-              (array-ref heap-node-slots 0)
-              (array-ref heap-node-slots heap-size))
-            (while sifting
-              (let
-                [left : i64 (+ (* slot 2) 1)]
-                [right : i64 (+ (* slot 2) 2)]
-                [best : i64 slot]
-                (begin
-                  (when
-                    (and
-                      (< left heap-size)
-                      (<
-                        (array-ref heap-key-slots left)
-                        (array-ref heap-key-slots best)))
-                    (set! best left))
-                  (when
-                    (and
-                      (< right heap-size)
-                      (<
-                        (array-ref heap-key-slots right)
-                        (array-ref heap-key-slots best)))
-                    (set! best right))
-                  (if (= best slot)
-                    (set! sifting false)
-                    (begin
-                      (let
-                        [key : i64 (array-ref heap-key-slots slot)]
-                        [node : i64 (array-ref heap-node-slots slot)]
-                        (begin
-                          (set!
-                            (array-ref heap-key-slots slot)
-                            (array-ref heap-key-slots best))
-                          (set! (array-ref heap-key-slots best) key)
-                          (set!
-                            (array-ref heap-node-slots slot)
-                            (array-ref heap-node-slots best))
-                          (set! (array-ref heap-node-slots best) node)))
-                      (set! slot best))))))
+    (while (< i vertices)
+      (set! (array-ref dist-slots i) gd-infinity)
+      (set! (array-ref settled-slots i) 0)
+      (set! i (+ i 1)))
+    (set! (array-ref dist-slots source) 0)
+    (set! (array-ref heap-key-slots 0) 0)
+    (set! (array-ref heap-node-slots 0) source)
+    (set! heap-size 1)
+    (while (> heap-size 0)
+      (let
+        [top-key : i64 (array-ref heap-key-slots 0)]
+        [top-node : i64 (array-ref heap-node-slots 0)]
+        [slot : i64 0]
+        [sifting : bool true]
+        (set! heap-size (- heap-size 1))
+        (set! (array-ref heap-key-slots 0) (array-ref heap-key-slots heap-size))
+        (set!
+          (array-ref heap-node-slots 0)
+          (array-ref heap-node-slots heap-size))
+        (while sifting
+          (let
+            [left : i64 (+ (* slot 2) 1)]
+            [right : i64 (+ (* slot 2) 2)]
+            [best : i64 slot]
             (when
-              (= (array-ref settled-slots top-node) 0)
+              (and
+                (< left heap-size)
+                (<
+                  (array-ref heap-key-slots left)
+                  (array-ref heap-key-slots best)))
+              (set! best left))
+            (when
+              (and
+                (< right heap-size)
+                (<
+                  (array-ref heap-key-slots right)
+                  (array-ref heap-key-slots best)))
+              (set! best right))
+            (if (= best slot)
+              (set! sifting false)
+              (begin
+                (let
+                  [key : i64 (array-ref heap-key-slots slot)]
+                  [node : i64 (array-ref heap-node-slots slot)]
+                  (set!
+                    (array-ref heap-key-slots slot)
+                    (array-ref heap-key-slots best))
+                  (set! (array-ref heap-key-slots best) key)
+                  (set!
+                    (array-ref heap-node-slots slot)
+                    (array-ref heap-node-slots best))
+                  (set! (array-ref heap-node-slots best) node))
+                (set! slot best)))))
+        (when
+          (= (array-ref settled-slots top-node) 0)
+          (let
+            [e : i64 (array-ref offset-slots top-node)]
+            [stop : i64 (array-ref offset-slots (+ top-node 1))]
+            (set! (array-ref settled-slots top-node) 1)
+            (while (< e stop)
               (let
-                [e : i64 (array-ref offset-slots top-node)]
-                [stop : i64 (array-ref offset-slots (+ top-node 1))]
-                (begin
-                  (set! (array-ref settled-slots top-node) 1)
-                  (while (< e stop)
-                    (let
-                      [next : i64 (array-ref target-slots e)]
-                      [relaxed : i64 (+ top-key (array-ref weight-slots e))]
-                      (begin
-                        (when
-                          (< relaxed (array-ref dist-slots next))
-                          (let
-                            [child : i64 heap-size]
-                            (begin
-                              (set! (array-ref dist-slots next) relaxed)
-                              (set!
-                                (array-ref heap-key-slots heap-size)
-                                relaxed)
-                              (set! (array-ref heap-node-slots heap-size) next)
-                              (set! heap-size (+ heap-size 1))
-                              (while (and
-                                (> child 0)
-                                (>
-                                  (array-ref heap-key-slots (/ (- child 1) 2))
-                                  (array-ref heap-key-slots child)))
-                                (begin
-                                  (let
-                                    [parent : i64 (/ (- child 1) 2)]
-                                    [key : i64 (array-ref heap-key-slots child)]
-                                    [node : i64
-                                      (array-ref heap-node-slots child)]
-                                    (begin
-                                      (set!
-                                        (array-ref heap-key-slots child)
-                                        (array-ref heap-key-slots parent))
-                                      (set!
-                                        (array-ref heap-key-slots parent)
-                                        key)
-                                      (set!
-                                        (array-ref heap-node-slots child)
-                                        (array-ref heap-node-slots parent))
-                                      (set!
-                                        (array-ref heap-node-slots parent)
-                                        node)))
-                                  (set! child (/ (- child 1) 2)))))))
-                        (set! e (+ e 1)))))))))))
-      (set! i 0)
-      (while (< i vertices)
-        (begin
-          (when
-            (< (array-ref dist-slots i) gd-infinity)
-            (set! total (% (+ total (array-ref dist-slots i)) gd-modulus)))
-          (set! i (+ i 1))))
-      total)))
+                [next : i64 (array-ref target-slots e)]
+                [relaxed : i64 (+ top-key (array-ref weight-slots e))]
+                (when
+                  (< relaxed (array-ref dist-slots next))
+                  (let
+                    [child : i64 heap-size]
+                    (set! (array-ref dist-slots next) relaxed)
+                    (set! (array-ref heap-key-slots heap-size) relaxed)
+                    (set! (array-ref heap-node-slots heap-size) next)
+                    (set! heap-size (+ heap-size 1))
+                    (while (and
+                      (> child 0)
+                      (>
+                        (array-ref heap-key-slots (/ (- child 1) 2))
+                        (array-ref heap-key-slots child)))
+                      (let
+                        [parent : i64 (/ (- child 1) 2)]
+                        [key : i64 (array-ref heap-key-slots child)]
+                        [node : i64 (array-ref heap-node-slots child)]
+                        (set!
+                          (array-ref heap-key-slots child)
+                          (array-ref heap-key-slots parent))
+                        (set! (array-ref heap-key-slots parent) key)
+                        (set!
+                          (array-ref heap-node-slots child)
+                          (array-ref heap-node-slots parent))
+                        (set! (array-ref heap-node-slots parent) node))
+                      (set! child (/ (- child 1) 2)))))
+                (set! e (+ e 1))))))))
+    (set! i 0)
+    (while (< i vertices)
+      (when
+        (< (array-ref dist-slots i) gd-infinity)
+        (set! total (% (+ total (array-ref dist-slots i)) gd-modulus)))
+      (set! i (+ i 1)))
+    total))
 
 (define (gd-bench [vertices : i64] [rounds : i64]) : i64
   (let
@@ -229,33 +206,30 @@
     [heap-node : i64vec.Vec (gd-zero-vec (+ (* vertices gd-max-degree) 2))]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (gd-build (&mut offsets) (&mut targets) (&mut weights) vertices 1)
-      (while (< round rounds)
-        (begin
-          (set!
-            acc
-            (%
-              (+
-                (* acc 31)
-                (gd-dijkstra
-                  (&mut offsets)
-                  (&mut targets)
-                  (&mut weights)
-                  (&mut dist)
-                  (&mut settled)
-                  (&mut heap-key)
-                  (&mut heap-node)
-                  vertices
-                  (% round vertices)))
-              gd-modulus))
-          (set! round (+ round 1))))
-      acc)))
+    (gd-build (&mut offsets) (&mut targets) (&mut weights) vertices 1)
+    (while (< round rounds)
+      (set!
+        acc
+        (%
+          (+
+            (* acc 31)
+            (gd-dijkstra
+              (&mut offsets)
+              (&mut targets)
+              (&mut weights)
+              (&mut dist)
+              (&mut settled)
+              (&mut heap-key)
+              (&mut heap-node)
+              vertices
+              (% round vertices)))
+          gd-modulus))
+      (set! round (+ round 1)))
+    acc))
 
 (define (main) : i64
   (let
     [vertices : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (gd-bench vertices rounds))
-      0)))
+    (io.println "{}" (gd-bench vertices rounds))
+    0))

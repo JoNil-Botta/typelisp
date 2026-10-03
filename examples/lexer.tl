@@ -99,10 +99,9 @@
 (define (ident-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
-    (begin
-      (while (and (< j n) (is-ident-char (string.char-at src j)))
-        (set! j (+ j 1)))
-      j)))
+    (while (and (< j n) (is-ident-char (string.char-at src j)))
+      (set! j (+ j 1)))
+    j))
 
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(Token.Ident text)` token.
@@ -133,42 +132,35 @@
     [i : i64 0]
     [n : i64 (string.string-length src)]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.char-at src i)]
-          (cond
-            [(is-space c) (set! i (+ i 1))]
-            [(is-alpha c)
-              ;; Accumulate a run of identifier chars into one `Token.Ident` token.
-              (let
-                [start : i64 i]
-                [end : i64 (ident-end src i n)]
-                (begin
-                  (token-vec.push-ref! toks (ident-token src start end))
-                  (set! count (+ count 1))
-                  (set! i end)))]
-            [(is-digit c)
-              ;; Accumulate a run of digits into one `Token.Int` token.
-              (let
-                [acc : i64 0]
-                (begin
-                  (while (and (< i n) (is-digit (string.char-at src i)))
-                    (begin
-                      (set!
-                        acc
-                        (+ (* acc 10) (digit-value (string.char-at src i))))
-                      (set! i (+ i 1))))
-                  (token-vec.push-ref! toks (Int acc))
-                  (set! count (+ count 1))))]
-            [else
-              (begin
-                (token-vec.push-ref! toks (single-token c))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))])))
-      ;; A real lexer terminates the stream; record the sentinel too.
-      (token-vec.push-ref! toks End)
-      count)))
+    (while (< i n)
+      (let
+        [c : char (string.char-at src i)]
+        (cond
+          [(is-space c) (set! i (+ i 1))]
+          [(is-alpha c)
+            ;; Accumulate a run of identifier chars into one `Token.Ident` token.
+            (let
+              [start : i64 i]
+              [end : i64 (ident-end src i n)]
+              (token-vec.push-ref! toks (ident-token src start end))
+              (set! count (+ count 1))
+              (set! i end))]
+          [(is-digit c)
+            ;; Accumulate a run of digits into one `Token.Int` token.
+            (let
+              [acc : i64 0]
+              (while (and (< i n) (is-digit (string.char-at src i)))
+                (set! acc (+ (* acc 10) (digit-value (string.char-at src i))))
+                (set! i (+ i 1)))
+              (token-vec.push-ref! toks (Int acc))
+              (set! count (+ count 1)))]
+          [else
+            (token-vec.push-ref! toks (single-token c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))])))
+    ;; A real lexer terminates the stream; record the sentinel too.
+    (token-vec.push-ref! toks End)
+    count))
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
 ;; the parens):
@@ -185,7 +177,6 @@
     [toks : token-vec.Vec (token-vec.with-capacity 16)]
     [count : i64 (lex "foo - 3 * (12 / 4)" (&mut toks))]
     [result : i64 (+ count (ident-text-length (token-vec.get (& toks) 0 End)))]
-    (begin
-      (io.print-format "{}" "lexer score: ")
-      (io.println "{}" result)
-      result)))
+    (io.print-format "{}" "lexer score: ")
+    (io.println "{}" result)
+    result))

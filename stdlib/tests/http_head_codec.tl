@@ -48,207 +48,173 @@
           [actual : String (byte_buf.to-string serialized.bytes)]
           [expected : String
             "GET /path?q=1 HTTP/1.1\r\nHost: example.test\r\n\r\n"]
-          (begin
-            (test.assert-string-eq
-              (& actual)
-              (& expected)
-              "basic request bytes")
-            (match serialized.body-plan
-              [(HttpRequestPlanNone) unit]
-              [_ (fail "basic request body plan")])))])))
+          (test.assert-string-eq (& actual) (& expected) "basic request bytes")
+          (match serialized.body-plan
+            [(HttpRequestPlanNone) unit]
+            [_ (fail "basic request body plan")]))])))
 
 (define (assert-request-framing) : unit
-  (begin
-    (let
-      [headers : http_types.HttpHeaders (http_types.headers-empty)]
-      (begin
-        (set!
-          headers
-          (http_types.headers-append headers (public-field "Host" "x")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "content-length" "5, 5")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "Content-Length" "5")))
-        (match (http_head_codec.serialize-request-head
-          (http_types.HttpMethod (byte_buf.from-string "POST"))
-          (http_types.HttpRequestTarget (byte_buf.from-string "/"))
-          headers
-          (HttpRequestBodyFixed 5)
-          (http_types.default-head-limits))
-          [(HttpRequestSerializeErr _)
-            (fail "identical content lengths rejected")]
-          [(HttpRequestSerializeOk serialized)
-            (let
-              [actual : String (byte_buf.to-string serialized.bytes)]
-              [expected : String
-                "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n"]
-              (begin
+  (let
+    [headers : http_types.HttpHeaders (http_types.headers-empty)]
+    (set! headers (http_types.headers-append headers (public-field "Host" "x")))
+    (set!
+      headers
+      (http_types.headers-append headers (public-field "content-length" "5, 5")))
+    (set!
+      headers
+      (http_types.headers-append headers (public-field "Content-Length" "5")))
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "POST"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+      headers
+      (HttpRequestBodyFixed 5)
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr _) (fail "identical content lengths rejected")]
+      [(HttpRequestSerializeOk serialized)
+        (let
+          [actual : String (byte_buf.to-string serialized.bytes)]
+          [expected : String
+            "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n"]
+          (test.assert-string-eq
+            (& actual)
+            (& expected)
+            "content length canonicalized")
+          (match serialized.body-plan
+            [(HttpRequestPlanFixed length)
+              (test.assert-i64-eq length 5 "fixed plan length")]
+            [_ (fail "fixed plan variant")]))]))
+  (let
+    [headers : http_types.HttpHeaders (http_types.headers-empty)]
+    (set! headers (http_types.headers-append headers (public-field "Host" "x")))
+    (set!
+      headers
+      (http_types.headers-append
+        headers
+        (public-field "Trailer" "X-Sum, x-meta")))
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "POST"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "/upload"))
+      headers
+      (HttpRequestBodyChunked (Http11ChunkedAuthorized))
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr _) (fail "authorized chunked request rejected")]
+      [(HttpRequestSerializeOk serialized)
+        (let
+          [actual : String (byte_buf.to-string serialized.bytes)]
+          [expected : String
+            "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: x-sum, x-meta\r\n\r\n"]
+          (test.assert-string-eq
+            (& actual)
+            (& expected)
+            "chunked request canonical bytes")
+          (match serialized.body-plan
+            [(HttpRequestPlanChunked _ names)
+              (test.assert-i64-eq
+                (http_types.header-name-set-len (& names))
+                2
+                "chunked trailer count")
+              (let
+                [first : String
+                  (byte_buf.bytes-to-string
+                    (http_types.header-name-set-ref (& names) 0))]
+                [expected-first : String "x-sum"]
                 (test.assert-string-eq
-                  (& actual)
-                  (& expected)
-                  "content length canonicalized")
-                (match serialized.body-plan
-                  [(HttpRequestPlanFixed length)
-                    (test.assert-i64-eq length 5 "fixed plan length")]
-                  [_ (fail "fixed plan variant")])))])))
-    (let
-      [headers : http_types.HttpHeaders (http_types.headers-empty)]
-      (begin
-        (set!
-          headers
-          (http_types.headers-append headers (public-field "Host" "x")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "Trailer" "X-Sum, x-meta")))
-        (match (http_head_codec.serialize-request-head
-          (http_types.HttpMethod (byte_buf.from-string "POST"))
-          (http_types.HttpRequestTarget (byte_buf.from-string "/upload"))
-          headers
-          (HttpRequestBodyChunked (Http11ChunkedAuthorized))
-          (http_types.default-head-limits))
-          [(HttpRequestSerializeErr _)
-            (fail "authorized chunked request rejected")]
-          [(HttpRequestSerializeOk serialized)
-            (let
-              [actual : String (byte_buf.to-string serialized.bytes)]
-              [expected : String
-                "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: x-sum, x-meta\r\n\r\n"]
-              (begin
-                (test.assert-string-eq
-                  (& actual)
-                  (& expected)
-                  "chunked request canonical bytes")
-                (match serialized.body-plan
-                  [(HttpRequestPlanChunked _ names)
-                    (begin
-                      (test.assert-i64-eq
-                        (http_types.header-name-set-len (& names))
-                        2
-                        "chunked trailer count")
-                      (let
-                        [first : String
-                          (byte_buf.bytes-to-string
-                            (http_types.header-name-set-ref (& names) 0))]
-                        [expected-first : String "x-sum"]
-                        (test.assert-string-eq
-                          (& first)
-                          (& expected-first)
-                          "trailer normalized")))]
-                  [_ (fail "chunked plan variant")])))])))))
+                  (& first)
+                  (& expected-first)
+                  "trailer normalized"))]
+            [_ (fail "chunked plan variant")]))])))
 
 (define (assert-request-rejections) : unit
-  (begin
-    (let
-      [headers : http_types.HttpHeaders (http_types.headers-empty)]
-      (begin
-        (set!
-          headers
-          (http_types.headers-append headers (public-field "Host" "x")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "Content-Length" "1")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "Transfer-Encoding" "chunked")))
-        (match (http_head_codec.serialize-request-head
-          (http_types.HttpMethod (byte_buf.from-string "POST"))
-          (http_types.HttpRequestTarget (byte_buf.from-string "/"))
-          headers
-          (HttpRequestBodyFixed 1)
-          (http_types.default-head-limits))
-          [(HttpRequestSerializeErr error)
-            (begin
-              (test.assert-false
-                error.poison-connection
-                "local rejection not poison")
-              (match error.kind
-                [(HttpTransferEncodingWithContentLength) unit]
-                [_ (fail "TE plus CL error kind")]))]
-          [_ (fail "TE plus CL request accepted")])))
-    (let
-      [headers : http_types.HttpHeaders (headers-one "host" "x")]
-      (match (http_head_codec.serialize-request-head
-        (http_types.HttpMethod (byte_buf.from-string "GET"))
-        (http_types.HttpRequestTarget (byte_buf.from-string "http://bad/"))
+  (let
+    [headers : http_types.HttpHeaders (http_types.headers-empty)]
+    (set! headers (http_types.headers-append headers (public-field "Host" "x")))
+    (set!
+      headers
+      (http_types.headers-append headers (public-field "Content-Length" "1")))
+    (set!
+      headers
+      (http_types.headers-append
         headers
-        (HttpRequestBodyNone)
-        (http_types.default-head-limits))
-        [(HttpRequestSerializeErr error)
-          (match error.kind
-            [(HttpInvalidRequestTarget) unit]
-            [_ (fail "absolute target error kind")])]
-        [_ (fail "absolute-form target accepted")]))
-    (let
-      [headers : http_types.HttpHeaders (headers-one "Authorization" "secret")]
-      (match (http_head_codec.serialize-request-head
-        (http_types.HttpMethod (byte_buf.from-string "GET"))
-        (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+        (public-field "Transfer-Encoding" "chunked")))
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "POST"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+      headers
+      (HttpRequestBodyFixed 1)
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr error)
+        (test.assert-false error.poison-connection "local rejection not poison")
+        (match error.kind
+          [(HttpTransferEncodingWithContentLength) unit]
+          [_ (fail "TE plus CL error kind")])]
+      [_ (fail "TE plus CL request accepted")]))
+  (let
+    [headers : http_types.HttpHeaders (headers-one "host" "x")]
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "GET"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "http://bad/"))
+      headers
+      (HttpRequestBodyNone)
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr error)
+        (match error.kind
+          [(HttpInvalidRequestTarget) unit]
+          [_ (fail "absolute target error kind")])]
+      [_ (fail "absolute-form target accepted")]))
+  (let
+    [headers : http_types.HttpHeaders (headers-one "Authorization" "secret")]
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "GET"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+      headers
+      (HttpRequestBodyNone)
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr error)
+        (match error.kind
+          [(HttpSensitiveHeaderMustBeMarked) unit]
+          [_ (fail "sensitivity error kind")])]
+      [_ (fail "public Authorization accepted")]))
+  (let
+    [headers : http_types.HttpHeaders (http_types.headers-empty)]
+    (set! headers (http_types.headers-append headers (public-field "Host" "x")))
+    (set!
+      headers
+      (http_types.headers-append
         headers
-        (HttpRequestBodyNone)
-        (http_types.default-head-limits))
-        [(HttpRequestSerializeErr error)
-          (match error.kind
-            [(HttpSensitiveHeaderMustBeMarked) unit]
-            [_ (fail "sensitivity error kind")])]
-        [_ (fail "public Authorization accepted")]))
-    (let
-      [headers : http_types.HttpHeaders (http_types.headers-empty)]
-      (begin
-        (set!
-          headers
-          (http_types.headers-append headers (public-field "Host" "x")))
-        (set!
-          headers
-          (http_types.headers-append
-            headers
-            (public-field "Trailer" "cOnTeNt-TyPe")))
-        (match (http_head_codec.serialize-request-head
-          (http_types.HttpMethod (byte_buf.from-string "POST"))
-          (http_types.HttpRequestTarget (byte_buf.from-string "/"))
-          headers
-          (HttpRequestBodyChunked (Http11ChunkedAuthorized))
-          (http_types.default-head-limits))
-          [(HttpRequestSerializeErr error)
-            (match error.kind
-              [(HttpForbiddenTrailerName) unit]
-              [_ (fail "shared forbidden trailer declaration kind")])]
-          [_ (fail "representation metadata trailer declared")])))))
+        (public-field "Trailer" "cOnTeNt-TyPe")))
+    (match (http_head_codec.serialize-request-head
+      (http_types.HttpMethod (byte_buf.from-string "POST"))
+      (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+      headers
+      (HttpRequestBodyChunked (Http11ChunkedAuthorized))
+      (http_types.default-head-limits))
+      [(HttpRequestSerializeErr error)
+        (match error.kind
+          [(HttpForbiddenTrailerName) unit]
+          [_ (fail "shared forbidden trailer declaration kind")])]
+      [_ (fail "representation metadata trailer declared")])))
 
 (define (assert-fixed-response
   [head : http_types.HttpResponseHead]
   [expected-consumed : i64]) : unit
-  (begin
-    (test.assert-i64-eq head.status.code 200 "response status")
-    (test.assert-i64-eq head.consumed expected-consumed "head consumed")
-    (match head.body-plan
-      [(HttpResponsePlanFixed length)
-        (test.assert-i64-eq length 5 "response fixed length")]
-      [_ (fail "response fixed plan")])
+  (test.assert-i64-eq head.status.code 200 "response status")
+  (test.assert-i64-eq head.consumed expected-consumed "head consumed")
+  (match head.body-plan
+    [(HttpResponsePlanFixed length)
+      (test.assert-i64-eq length 5 "response fixed length")]
+    [_ (fail "response fixed plan")])
+  (let
+    [name : String "content-length"]
+    [name-bytes : (& name bytes) (byte_buf.str-as-bytes (& name))]
+    [index : i64 (http_types.headers-find (& head.headers) name-bytes)]
+    (test.assert-true (>= index 0) "canonical content length present")
     (let
-      [name : String "content-length"]
-      [name-bytes : (& name bytes) (byte_buf.str-as-bytes (& name))]
-      [index : i64 (http_types.headers-find (& head.headers) name-bytes)]
-      (begin
-        (test.assert-true (>= index 0) "canonical content length present")
-        (let
-          [actual : String (header-value-string (& head.headers) index)]
-          [expected : String "5"]
-          (test.assert-string-eq
-            (& actual)
-            (& expected)
-            "canonical response length"))))))
+      [actual : String (header-value-string (& head.headers) index)]
+      [expected : String "5"]
+      (test.assert-string-eq
+        (& actual)
+        (& expected)
+        "canonical response length"))))
 
 (define (assert-response-suffix) : unit
   (let
@@ -263,12 +229,11 @@
         (HttpConnectDenied))]
     (match (http_head_codec.response-parser-feed parser view)
       [(HttpResponseFeedComplete head consumed)
-        (begin
-          (test.assert-i64-eq
-            consumed
-            (string.string-length (& head-only))
-            "same-buffer suffix unconsumed")
-          (assert-fixed-response head (string.string-length (& head-only))))]
+        (test.assert-i64-eq
+          consumed
+          (string.string-length (& head-only))
+          "same-buffer suffix unconsumed")
+        (assert-fixed-response head (string.string-length (& head-only)))]
       [_ (fail "coalesced response did not complete")])))
 
 (define (assert-one-byte-response-suffix) : unit
@@ -282,15 +247,14 @@
         (HttpConnectDenied))]
     (match (http_head_codec.response-parser-feed parser view)
       [(HttpResponseFeedComplete head consumed)
-        (begin
-          (test.assert-i64-eq
-            consumed
-            (string.string-length (& head-text))
-            "one-byte suffix unconsumed")
-          (test.assert-i64-eq
-            head.consumed
-            (string.string-length (& head-text))
-            "one-byte suffix head boundary"))]
+        (test.assert-i64-eq
+          consumed
+          (string.string-length (& head-text))
+          "one-byte suffix unconsumed")
+        (test.assert-i64-eq
+          head.consumed
+          (string.string-length (& head-text))
+          "one-byte suffix head boundary")]
       [_ (fail "one-byte coalesced suffix rejected")])))
 
 (define (assert-large-response-suffix) : unit
@@ -298,29 +262,26 @@
     [head-text : String "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n"]
     [wire : byte_buf.ByteBuf (byte_buf.from-string (clone head-text))]
     [index : i64 0]
-    (begin
-      (while (< index 32768)
-        (begin
-          (set! wire (byte_buf.push wire (cast 120 : u8)))
-          (set! index (+ index 1))))
-      (let
-        [view : (& wire bytes) (byte_buf.as-bytes (& wire))]
-        [parser : http_head_codec.HttpResponseParser
-          (http_head_codec.response-parser-default
-            (HttpResponseToOther)
-            (HttpConnectDenied))]
-        (match (http_head_codec.response-parser-feed parser view)
-          [(HttpResponseFeedComplete head consumed)
-            (begin
-              (test.assert-i64-eq
-                consumed
-                (string.string-length (& head-text))
-                "large suffix unconsumed")
-              (test.assert-i64-eq
-                head.consumed
-                (string.string-length (& head-text))
-                "large suffix head boundary"))]
-          [_ (fail "large coalesced suffix rejected")])))))
+    (while (< index 32768)
+      (set! wire (byte_buf.push wire (cast 120 : u8)))
+      (set! index (+ index 1)))
+    (let
+      [view : (& wire bytes) (byte_buf.as-bytes (& wire))]
+      [parser : http_head_codec.HttpResponseParser
+        (http_head_codec.response-parser-default
+          (HttpResponseToOther)
+          (HttpConnectDenied))]
+      (match (http_head_codec.response-parser-feed parser view)
+        [(HttpResponseFeedComplete head consumed)
+          (test.assert-i64-eq
+            consumed
+            (string.string-length (& head-text))
+            "large suffix unconsumed")
+          (test.assert-i64-eq
+            head.consumed
+            (string.string-length (& head-text))
+            "large suffix head boundary")]
+        [_ (fail "large coalesced suffix rejected")]))))
 
 (define (assert-every-split) : unit
   (let
@@ -340,30 +301,23 @@
             (http_head_codec.response-parser-default
               (HttpResponseToOther)
               (HttpConnectDenied))]
-          (begin
-            (match (http_head_codec.response-parser-feed parser left)
-              [(HttpResponseFeedNeedInput next first-consumed)
-                (begin
+          (match (http_head_codec.response-parser-feed parser left)
+            [(HttpResponseFeedNeedInput next first-consumed)
+              (test.assert-i64-eq first-consumed split "first split consumed")
+              (match (http_head_codec.response-parser-feed next right)
+                [(HttpResponseFeedComplete head second-consumed)
                   (test.assert-i64-eq
-                    first-consumed
-                    split
-                    "first split consumed")
-                  (match (http_head_codec.response-parser-feed next right)
-                    [(HttpResponseFeedComplete head second-consumed)
-                      (begin
-                        (test.assert-i64-eq
-                          second-consumed
-                          (- n split)
-                          "second split consumed")
-                        (assert-fixed-response head n))]
-                    [_ (fail "fragmented response did not complete")]))]
-              [(HttpResponseFeedComplete head consumed)
-                (begin
-                  (test.assert-i64-eq split n "early split completion")
-                  (test.assert-i64-eq consumed n "full split consumed")
-                  (assert-fixed-response head n))]
-              [_ (fail "fragmented response rejected")])
-            (set! split (+ split 1))))
+                    second-consumed
+                    (- n split)
+                    "second split consumed")
+                  (assert-fixed-response head n)]
+                [_ (fail "fragmented response did not complete")])]
+            [(HttpResponseFeedComplete head consumed)
+              (test.assert-i64-eq split n "early split completion")
+              (test.assert-i64-eq consumed n "full split consumed")
+              (assert-fixed-response head n)]
+            [_ (fail "fragmented response rejected")])
+          (set! split (+ split 1)))
         unit))))
 
 (define (assert-response-plan
@@ -396,47 +350,46 @@
       [_ (fail "response plan input rejected")])))
 
 (define (assert-response-semantics) : unit
-  (begin
-    (assert-response-plan
-      "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n"
-      (HttpResponseToHead)
-      (HttpConnectDenied)
-      0)
-    (assert-response-plan
-      "HTTP/1.1 204 No Content\r\nContent-Length: 7\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      0)
-    (assert-response-plan
-      "HTTP/1.1 304 Not Modified\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      0)
-    (assert-response-plan
-      "HTTP/1.1 103 Early Hints\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      0)
-    (assert-response-plan
-      "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      4)
-    (assert-response-plan
-      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      1)
-    (assert-response-plan
-      "HTTP/1.1 200 OK\r\n\r\n"
-      (HttpResponseToOther)
-      (HttpConnectDenied)
-      2)
-    (assert-response-plan
-      "HTTP/1.1 200 Connection Established\r\n\r\n"
-      (HttpResponseToConnect)
-      (HttpConnectAuthorized)
-      3)))
+  (assert-response-plan
+    "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n"
+    (HttpResponseToHead)
+    (HttpConnectDenied)
+    0)
+  (assert-response-plan
+    "HTTP/1.1 204 No Content\r\nContent-Length: 7\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    0)
+  (assert-response-plan
+    "HTTP/1.1 304 Not Modified\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    0)
+  (assert-response-plan
+    "HTTP/1.1 103 Early Hints\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    0)
+  (assert-response-plan
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    4)
+  (assert-response-plan
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    1)
+  (assert-response-plan
+    "HTTP/1.1 200 OK\r\n\r\n"
+    (HttpResponseToOther)
+    (HttpConnectDenied)
+    2)
+  (assert-response-plan
+    "HTTP/1.1 200 Connection Established\r\n\r\n"
+    (HttpResponseToConnect)
+    (HttpConnectAuthorized)
+    3))
 
 (define (assert-response-error
   [wire : String]
@@ -450,78 +403,73 @@
         (HttpConnectDenied))]
     (match (http_head_codec.response-parser-feed parser view)
       [(HttpResponseFeedErr error _)
-        (begin
-          (test.assert-true error.poison-connection "peer error poisons")
-          (test.assert-i64-eq
-            error.offset
-            expected-offset
-            "stable error offset")
-          (match error.kind
-            [(HttpBareLineFeed)
-              (test.assert-i64-eq expected-kind 0 "bare LF kind")]
-            [(HttpInvalidFieldName)
-              (test.assert-i64-eq expected-kind 1 "field whitespace kind")]
-            [(HttpObsoleteLineFold)
-              (test.assert-i64-eq expected-kind 2 "obs-fold kind")]
-            [(HttpContentLengthOverflow)
-              (test.assert-i64-eq expected-kind 3 "length overflow kind")]
-            [(HttpTransferEncodingWithContentLength)
-              (test.assert-i64-eq expected-kind 4 "TE plus CL kind")]
-            [(HttpChunkedCodingNotFinal)
-              (test.assert-i64-eq expected-kind 5 "chunked order kind")]
-            [_ (fail "unexpected response error kind")]))]
+        (test.assert-true error.poison-connection "peer error poisons")
+        (test.assert-i64-eq error.offset expected-offset "stable error offset")
+        (match error.kind
+          [(HttpBareLineFeed)
+            (test.assert-i64-eq expected-kind 0 "bare LF kind")]
+          [(HttpInvalidFieldName)
+            (test.assert-i64-eq expected-kind 1 "field whitespace kind")]
+          [(HttpObsoleteLineFold)
+            (test.assert-i64-eq expected-kind 2 "obs-fold kind")]
+          [(HttpContentLengthOverflow)
+            (test.assert-i64-eq expected-kind 3 "length overflow kind")]
+          [(HttpTransferEncodingWithContentLength)
+            (test.assert-i64-eq expected-kind 4 "TE plus CL kind")]
+          [(HttpChunkedCodingNotFinal)
+            (test.assert-i64-eq expected-kind 5 "chunked order kind")]
+          [_ (fail "unexpected response error kind")])]
       [_ (fail "malformed response accepted")])))
 
 (define (assert-response-rejections) : unit
-  (begin
-    (assert-response-error "HTTP/1.1 200 OK\n" 15 0)
-    (assert-response-error "HTTP/1.1 200 OK\r\nBad : x\r\n\r\n" 20 1)
-    (assert-response-error "HTTP/1.1 200 OK\r\n folded\r\n\r\n" 17 2)
-    (assert-response-error
-      "HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775808\r\n\r\n"
-      51
-      3)
-    (let
-      [wire : String
-        "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToOther)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedErr error _)
-          (match error.kind
-            [(HttpTransferEncodingWithContentLength) unit]
-            [_ (fail "TE plus CL response kind")])]
-        [_ (fail "TE plus CL response accepted")]))
-    (let
-      [wire : String
-        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToOther)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedErr error _)
-          (match error.kind
-            [(HttpChunkedCodingNotFinal) unit]
-            [_ (fail "chunked order response kind")])]
-        [_ (fail "non-final chunked accepted")]))
-    (let
-      [wire : String "HTTP/1.1 200 Connection Established\r\n\r\n"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToConnect)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedErr error _)
-          (match error.kind
-            [(HttpConnectCapabilityRequired) unit]
-            [_ (fail "CONNECT capability error kind")])]
-        [_ (fail "unauthorized CONNECT tunnel accepted")]))))
+  (assert-response-error "HTTP/1.1 200 OK\n" 15 0)
+  (assert-response-error "HTTP/1.1 200 OK\r\nBad : x\r\n\r\n" 20 1)
+  (assert-response-error "HTTP/1.1 200 OK\r\n folded\r\n\r\n" 17 2)
+  (assert-response-error
+    "HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775808\r\n\r\n"
+    51
+    3)
+  (let
+    [wire : String
+      "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
+        (HttpResponseToOther)
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedErr error _)
+        (match error.kind
+          [(HttpTransferEncodingWithContentLength) unit]
+          [_ (fail "TE plus CL response kind")])]
+      [_ (fail "TE plus CL response accepted")]))
+  (let
+    [wire : String
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
+        (HttpResponseToOther)
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedErr error _)
+        (match error.kind
+          [(HttpChunkedCodingNotFinal) unit]
+          [_ (fail "chunked order response kind")])]
+      [_ (fail "non-final chunked accepted")]))
+  (let
+    [wire : String "HTTP/1.1 200 Connection Established\r\n\r\n"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
+        (HttpResponseToConnect)
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedErr error _)
+        (match error.kind
+          [(HttpConnectCapabilityRequired) unit]
+          [_ (fail "CONNECT capability error kind")])]
+      [_ (fail "unauthorized CONNECT tunnel accepted")])))
 
 (define (assert-limit-error
   [wire : String]
@@ -558,48 +506,46 @@
               [else (fail "value limit violation accepted")])])])))
 
 (define (assert-parser-limits-and-eof) : unit
-  (begin
-    (assert-limit-error
-      "HTTP/1.1 200 OK\r\n\r\n"
-      (http_types.HttpHeadLimits 18 18 10 10 10)
-      0)
-    (assert-limit-error
-      "HTTP/1.1 200 OK\r\n\r\n"
-      (http_types.HttpHeadLimits 100 10 10 10 10)
-      1)
-    (assert-limit-error
-      "HTTP/1.1 200 OK\r\nA: 1\r\nB: 2\r\n\r\n"
-      (http_types.HttpHeadLimits 100 40 1 10 10)
-      2)
-    (assert-limit-error
-      "HTTP/1.1 200 OK\r\nLong: x\r\n\r\n"
-      (http_types.HttpHeadLimits 100 40 10 3 10)
-      3)
-    (assert-limit-error
-      "HTTP/1.1 200 OK\r\nX: 1234\r\n\r\n"
-      (http_types.HttpHeadLimits 100 40 10 10 3)
-      4)
-    (let
-      [wire : String "HTTP/1.1 200 OK\r\nX: unfinished"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToOther)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedNeedInput next consumed)
-          (begin
-            (test.assert-i64-eq
-              consumed
-              (string.string-length (& wire))
-              "truncated prefix consumed")
-            (match (http_head_codec.response-parser-finish next)
-              [(HttpResponseFinishErr error)
-                (match error.kind
-                  [(HttpTruncatedHead) unit]
-                  [_ (fail "truncated finish kind")])]
-              [_ (fail "truncated parser marked complete")]))]
-        [_ (fail "truncated parser feed outcome")]))))
+  (assert-limit-error
+    "HTTP/1.1 200 OK\r\n\r\n"
+    (http_types.HttpHeadLimits 18 18 10 10 10)
+    0)
+  (assert-limit-error
+    "HTTP/1.1 200 OK\r\n\r\n"
+    (http_types.HttpHeadLimits 100 10 10 10 10)
+    1)
+  (assert-limit-error
+    "HTTP/1.1 200 OK\r\nA: 1\r\nB: 2\r\n\r\n"
+    (http_types.HttpHeadLimits 100 40 1 10 10)
+    2)
+  (assert-limit-error
+    "HTTP/1.1 200 OK\r\nLong: x\r\n\r\n"
+    (http_types.HttpHeadLimits 100 40 10 3 10)
+    3)
+  (assert-limit-error
+    "HTTP/1.1 200 OK\r\nX: 1234\r\n\r\n"
+    (http_types.HttpHeadLimits 100 40 10 10 3)
+    4)
+  (let
+    [wire : String "HTTP/1.1 200 OK\r\nX: unfinished"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
+        (HttpResponseToOther)
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedNeedInput next consumed)
+        (test.assert-i64-eq
+          consumed
+          (string.string-length (& wire))
+          "truncated prefix consumed")
+        (match (http_head_codec.response-parser-finish next)
+          [(HttpResponseFinishErr error)
+            (match error.kind
+              [(HttpTruncatedHead) unit]
+              [_ (fail "truncated finish kind")])]
+          [_ (fail "truncated parser marked complete")])]
+      [_ (fail "truncated parser feed outcome")])))
 
 (define (assert-field-validator) : unit
   (let
@@ -618,102 +564,96 @@
             (byte_buf.bytes-to-string
               (http_types.header-value-bytes (& checked.value)))]
           [expected : String "kept bytes"]
-          (begin
-            (test.assert-string-eq (& actual) (& expected) "field OWS trim")
-            (match (http_types.header-debug-disposition (& checked))
-              [(HttpHeaderDebugRedacted) unit]
-              [_ (fail "sensitive debug disposition")])))])))
+          (test.assert-string-eq (& actual) (& expected) "field OWS trim")
+          (match (http_types.header-debug-disposition (& checked))
+            [(HttpHeaderDebugRedacted) unit]
+            [_ (fail "sensitive debug disposition")]))])))
 
 (define (assert-response-trailer-declarations) : unit
-  (begin
-    (let
-      [wire : String
-        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Sum\r\nTrailer: x-meta, x-sum\r\n\r\nbody"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToOther)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedComplete head consumed)
-          (begin
-            (test.assert-i64-eq
-              consumed
-              (- (string.string-length (& wire)) 4)
-              "response declaration exact head consumption")
-            (test.assert-i64-eq
-              (http_types.header-name-set-len (& head.trailer-names))
-              2
-              "duplicate response declarations normalize")
-            (let
-              [first : String
-                (byte_buf.bytes-to-string
-                  (http_types.header-name-set-ref (& head.trailer-names) 0))]
-              [second : String
-                (byte_buf.bytes-to-string
-                  (http_types.header-name-set-ref (& head.trailer-names) 1))]
-              [expected-first : String "x-sum"]
-              [expected-second : String "x-meta"]
-              (begin
-                (test.assert-string-eq
-                  (& first)
-                  (& expected-first)
-                  "first response trailer declaration")
-                (test.assert-string-eq
-                  (& second)
-                  (& expected-second)
-                  "second response trailer declaration"))))]
-        [_ (fail "response trailer declarations rejected")]))
-    (let
-      [wire : String
-        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: Content-Length\r\n\r\n"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [parser : http_head_codec.HttpResponseParser
-        (http_head_codec.response-parser-default
-          (HttpResponseToOther)
-          (HttpConnectDenied))]
-      (match (http_head_codec.response-parser-feed parser view)
-        [(HttpResponseFeedErr error _)
-          (match error.kind
-            [(HttpForbiddenTrailerName) unit]
-            [_ (fail "forbidden response declaration kind")])]
-        [_ (fail "forbidden response trailer declaration accepted")]))
-    (let
-      [wire : String "HTTP/1.1 200 OK\r\nTrailer: x, abcdefgh\r\n\r\n"]
-      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
-      [limits : http_types.HttpHeadLimits
-        (http_types.HttpHeadLimits 256 128 8 7 64)]
-      (match (http_head_codec.response-parser-new
-        limits
+  (let
+    [wire : String
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Sum\r\nTrailer: x-meta, x-sum\r\n\r\nbody"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
         (HttpResponseToOther)
-        (HttpConnectDenied))
-        [(HttpResponseParserNewErr _)
-          (fail "response declaration offset parser construction")]
-        [(HttpResponseParserNewOk parser)
-          (match (http_head_codec.response-parser-feed parser view)
-            [(HttpResponseFeedErr error _)
-              (begin
-                (test.assert-i64-eq
-                  error.offset
-                  36
-                  "response declaration long-name offset")
-                (match error.kind
-                  [(HttpNameTooLong) unit]
-                  [_ (fail "long response declaration kind")]))]
-            [_ (fail "long response trailer declaration accepted")])]))))
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedComplete head consumed)
+        (test.assert-i64-eq
+          consumed
+          (- (string.string-length (& wire)) 4)
+          "response declaration exact head consumption")
+        (test.assert-i64-eq
+          (http_types.header-name-set-len (& head.trailer-names))
+          2
+          "duplicate response declarations normalize")
+        (let
+          [first : String
+            (byte_buf.bytes-to-string
+              (http_types.header-name-set-ref (& head.trailer-names) 0))]
+          [second : String
+            (byte_buf.bytes-to-string
+              (http_types.header-name-set-ref (& head.trailer-names) 1))]
+          [expected-first : String "x-sum"]
+          [expected-second : String "x-meta"]
+          (test.assert-string-eq
+            (& first)
+            (& expected-first)
+            "first response trailer declaration")
+          (test.assert-string-eq
+            (& second)
+            (& expected-second)
+            "second response trailer declaration"))]
+      [_ (fail "response trailer declarations rejected")]))
+  (let
+    [wire : String
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: Content-Length\r\n\r\n"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [parser : http_head_codec.HttpResponseParser
+      (http_head_codec.response-parser-default
+        (HttpResponseToOther)
+        (HttpConnectDenied))]
+    (match (http_head_codec.response-parser-feed parser view)
+      [(HttpResponseFeedErr error _)
+        (match error.kind
+          [(HttpForbiddenTrailerName) unit]
+          [_ (fail "forbidden response declaration kind")])]
+      [_ (fail "forbidden response trailer declaration accepted")]))
+  (let
+    [wire : String "HTTP/1.1 200 OK\r\nTrailer: x, abcdefgh\r\n\r\n"]
+    [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+    [limits : http_types.HttpHeadLimits
+      (http_types.HttpHeadLimits 256 128 8 7 64)]
+    (match (http_head_codec.response-parser-new
+      limits
+      (HttpResponseToOther)
+      (HttpConnectDenied))
+      [(HttpResponseParserNewErr _)
+        (fail "response declaration offset parser construction")]
+      [(HttpResponseParserNewOk parser)
+        (match (http_head_codec.response-parser-feed parser view)
+          [(HttpResponseFeedErr error _)
+            (test.assert-i64-eq
+              error.offset
+              36
+              "response declaration long-name offset")
+            (match error.kind
+              [(HttpNameTooLong) unit]
+              [_ (fail "long response declaration kind")])]
+          [_ (fail "long response trailer declaration accepted")])])))
 
 (define (main) : i64
-  (begin
-    (assert-request-basic)
-    (assert-request-framing)
-    (assert-request-rejections)
-    (assert-response-suffix)
-    (assert-one-byte-response-suffix)
-    (assert-large-response-suffix)
-    (assert-every-split)
-    (assert-response-semantics)
-    (assert-response-rejections)
-    (assert-parser-limits-and-eof)
-    (assert-field-validator)
-    (assert-response-trailer-declarations)
-    42))
+  (assert-request-basic)
+  (assert-request-framing)
+  (assert-request-rejections)
+  (assert-response-suffix)
+  (assert-one-byte-response-suffix)
+  (assert-large-response-suffix)
+  (assert-every-split)
+  (assert-response-semantics)
+  (assert-response-rejections)
+  (assert-parser-limits-and-eof)
+  (assert-field-validator)
+  (assert-response-trailer-declarations)
+  42)

@@ -11,17 +11,15 @@
   (let
     [eof : bool (io.stdin-read-eof? (& read))]
     [text : String (byte_buf.to-string (io.stdin-read-buffer read))]
-    (begin
-      (test.assert-owned-string-eq
-        text
-        expected-text
-        (str_cat.str-cat message " text"))
-      (test.assert-bool-eq eof expected-eof (str_cat.str-cat message " eof")))))
+    (test.assert-owned-string-eq
+      text
+      expected-text
+      (str_cat.str-cat message " text"))
+    (test.assert-bool-eq eof expected-eof (str_cat.str-cat message " eof"))))
 
 (define (main) : i64
-  (begin
-    (assert-stdin-read (io.stdin-read-bytes 2) "ab" false "first byte read")
-    (assert-stdin-read (io.stdin-read-bytes 10) "cdef" true "short byte read")
-    (assert-stdin-read (io.stdin-read-bytes 0) "" true "zero byte read")
-    (test.assert-true (io.stdin-at-eof?) "zero-byte read preserves EOF")
-    42))
+  (assert-stdin-read (io.stdin-read-bytes 2) "ab" false "first byte read")
+  (assert-stdin-read (io.stdin-read-bytes 10) "cdef" true "short byte read")
+  (assert-stdin-read (io.stdin-read-bytes 0) "" true "zero byte read")
+  (test.assert-true (io.stdin-at-eof?) "zero-byte read preserves EOF")
+  42)

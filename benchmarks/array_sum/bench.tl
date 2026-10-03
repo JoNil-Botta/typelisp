@@ -26,9 +26,8 @@
     [slots (i64vec.slots-mut xs)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref slots i) (+ (* i 2654435761) 1013904223))
-        (set! i (+ i 1))))))
+      (set! (array-ref slots i) (+ (* i 2654435761) 1013904223))
+      (set! i (+ i 1)))))
 
 (define (main) : i64
   (let
@@ -37,19 +36,15 @@
     [xs : i64vec.Vec (i64vec.Vec (__tl_make-array i64 n) n)]
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (fill (&mut xs) n)
-      (let
-        [slots (i64vec.slots-mut (&mut xs))]
-        (begin
-          (while (< r rounds)
-            (begin
-              (let
-                [i : i64 0]
-                (while (< i n)
-                  (begin
-                    (set! acc (+ acc (array-ref slots i)))
-                    (set! i (+ i 1)))))
-              (set! (array-ref slots r) acc)
-              (set! r (+ r 1))))
-          (bit-and acc 255))))))
+    (fill (&mut xs) n)
+    (let
+      [slots (i64vec.slots-mut (&mut xs))]
+      (while (< r rounds)
+        (let
+          [i : i64 0]
+          (while (< i n)
+            (set! acc (+ acc (array-ref slots i)))
+            (set! i (+ i 1))))
+        (set! (array-ref slots r) acc)
+        (set! r (+ r 1)))
+      (bit-and acc 255))))

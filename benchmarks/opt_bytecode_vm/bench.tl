@@ -40,60 +40,47 @@
     [stack : (Array i64 2) (array 0 0)]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
-          (let
-            [input : i64 (% (+ (* round 2654435761) 12345) vm-prime)]
-            [pc : i64 0]
-            [sp : i64 0]
-            (begin
-              (while (< pc 9)
-                (begin
-                  (match (array-ref program pc)
-                    [(PushInput)
-                      (begin
-                        (set! (array-ref stack sp) input)
-                        (set! sp (+ sp 1)))]
-                    [(PushConst value)
-                      (begin
-                        (set! (array-ref stack sp) value)
-                        (set! sp (+ sp 1)))]
-                    [(Dup)
-                      (begin
-                        (set! (array-ref stack sp) (array-ref stack (- sp 1)))
-                        (set! sp (+ sp 1)))]
-                    [(AddOp)
-                      (let
-                        [b : i64 (array-ref stack (- sp 1))]
-                        [a : i64 (array-ref stack (- sp 2))]
-                        (begin
-                          (set! (array-ref stack (- sp 2)) (% (+ a b) vm-prime))
-                          (set! sp (- sp 1))))]
-                    [(MulOp)
-                      (let
-                        [b : i64 (array-ref stack (- sp 1))]
-                        [a : i64 (array-ref stack (- sp 2))]
-                        (begin
-                          (set! (array-ref stack (- sp 2)) (% (* a b) vm-prime))
-                          (set! sp (- sp 1))))]
-                    [(XorOp)
-                      (let
-                        [b : i64 (array-ref stack (- sp 1))]
-                        [a : i64 (array-ref stack (- sp 2))]
-                        (begin
-                          (set!
-                            (array-ref stack (- sp 2))
-                            (% (bit-xor a b) vm-prime))
-                          (set! sp (- sp 1))))])
-                  (set! pc (+ pc 1))))
-              (set! acc (% (+ acc (array-ref stack 0)) vm-prime))))
-          (set! round (+ round 1))))
-      acc)))
+    (while (< round rounds)
+      (let
+        [input : i64 (% (+ (* round 2654435761) 12345) vm-prime)]
+        [pc : i64 0]
+        [sp : i64 0]
+        (while (< pc 9)
+          (match (array-ref program pc)
+            [(PushInput)
+              (set! (array-ref stack sp) input)
+              (set! sp (+ sp 1))]
+            [(PushConst value)
+              (set! (array-ref stack sp) value)
+              (set! sp (+ sp 1))]
+            [(Dup)
+              (set! (array-ref stack sp) (array-ref stack (- sp 1)))
+              (set! sp (+ sp 1))]
+            [(AddOp)
+              (let
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
+                (set! (array-ref stack (- sp 2)) (% (+ a b) vm-prime))
+                (set! sp (- sp 1)))]
+            [(MulOp)
+              (let
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
+                (set! (array-ref stack (- sp 2)) (% (* a b) vm-prime))
+                (set! sp (- sp 1)))]
+            [(XorOp)
+              (let
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
+                (set! (array-ref stack (- sp 2)) (% (bit-xor a b) vm-prime))
+                (set! sp (- sp 1)))])
+          (set! pc (+ pc 1)))
+        (set! acc (% (+ acc (array-ref stack 0)) vm-prime)))
+      (set! round (+ round 1)))
+    acc))
 
 (define (main) : i64
   (let
     [rounds : i64 (string.>int (io.arg 1))]
-    (begin
-      (io.println "{}" (vm-bench rounds))
-      0)))
+    (io.println "{}" (vm-bench rounds))
+    0))

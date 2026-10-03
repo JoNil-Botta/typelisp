@@ -3,9 +3,8 @@
 (import doc_site_expand_pages_core)
 
 (define (doc-site-expand-usage) : i64
-  (begin
-    (io.print-error "doc-site-expand: expected output directory")
-    1))
+  (io.print-error "doc-site-expand: expected output directory")
+  1)
 
 (define (main) : i64
   (if (= (io.arg-count) 2)

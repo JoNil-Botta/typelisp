@@ -6,6 +6,5 @@
 (define (main) : i64
   (let
     [value : String "not a literal expression"]
-    (begin
-      (comptime-require-string-literal value)
-      42)))
+    (comptime-require-string-literal value)
+    42))

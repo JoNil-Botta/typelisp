@@ -11,10 +11,9 @@
   (let
     [index : i64 start]
     [length : i64 (string.string-length manifest)]
-    (begin
-      (while (and (< index length) (!= (string.string-ref manifest index) '\n'))
-        (set! index (+ index 1)))
-      index)))
+    (while (and (< index length) (!= (string.string-ref manifest index) '\n'))
+      (set! index (+ index 1)))
+    index))
 
 (define (embedded-stdlib-verify-trim-cr [line : String]) : String
   (let

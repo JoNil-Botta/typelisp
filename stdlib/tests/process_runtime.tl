@@ -127,25 +127,23 @@
 (define (process-runtime-env-vec-command) : process.ProcessCommand
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
-    (begin
-      (process.env-vec-append!
-        (&mut env)
-        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-        "process-env-vec-value")
-      (process.command-with-env-vec
-        (process.command
-          "/usr/bin/printenv"
-          (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
-        (& env)))))
+    (process.env-vec-append!
+      (&mut env)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")
+    (process.command-with-env-vec
+      (process.command
+        "/usr/bin/printenv"
+        (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+      (& env))))
 
 (define (process-runtime-argv-vec-command) : process.ProcessCommand
   (let
     [argv : svec.Vec (svec.with-capacity 3)]
-    (begin
-      (svec.push-ref! (&mut argv) "%s:%s")
-      (svec.push-ref! (&mut argv) "argv")
-      (svec.push-ref! (&mut argv) "vec")
-      (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
+    (svec.push-ref! (&mut argv) "%s:%s")
+    (svec.push-ref! (&mut argv) "argv")
+    (svec.push-ref! (&mut argv) "vec")
+    (process.command-from-argv-vec "/usr/bin/printf" (& argv))))
 
 (define (process-runtime-stdin-command) : process.ProcessCommand
   (process.command-with-stdin
@@ -189,28 +187,26 @@
 (define (process-runtime-windows-env-vec-command) : process.ProcessCommand
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
-    (begin
-      (process.env-vec-append!
-        (&mut env)
-        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-        "process-env-vec-value")
-      (process.command-with-env-vec
-        (process.command
-          "C:\\Windows\\System32\\cmd.exe"
+    (process.env-vec-append!
+      (&mut env)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")
+    (process.command-with-env-vec
+      (process.command
+        "C:\\Windows\\System32\\cmd.exe"
+        (process.args-cons
+          "/C"
           (process.args-cons
-            "/C"
-            (process.args-cons
-              "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
-              (process.args-empty))))
-        (& env)))))
+            "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+            (process.args-empty))))
+      (& env))))
 
 (define (process-runtime-windows-argv-vec-command) : process.ProcessCommand
   (let
     [argv : svec.Vec (svec.with-capacity 2)]
-    (begin
-      (svec.push-ref! (&mut argv) "/C")
-      (svec.push-ref! (&mut argv) "echo argv-vec=ok")
-      (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
+    (svec.push-ref! (&mut argv) "/C")
+    (svec.push-ref! (&mut argv) "echo argv-vec=ok")
+    (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv))))
 
 (define (process-runtime-windows-missing-command) : process.ProcessCommand
   (process.command
@@ -222,18 +218,17 @@
     [buf : (__tl_dyn-array u8)
       (unsafe
         (process_runtime.env-cstring "TL_TEST" "1"))]
-    (begin
-      (test.assert-i64-eq (array-length buf) 10 "env cstring length")
-      (assert-u8-eq (array-ref buf 0) 84 "env cstring T")
-      (assert-u8-eq (array-ref buf 1) 76 "env cstring L")
-      (assert-u8-eq (array-ref buf 2) 95 "env cstring underscore")
-      (assert-u8-eq (array-ref buf 3) 84 "env cstring second T")
-      (assert-u8-eq (array-ref buf 4) 69 "env cstring E")
-      (assert-u8-eq (array-ref buf 5) 83 "env cstring S")
-      (assert-u8-eq (array-ref buf 6) 84 "env cstring final T")
-      (assert-u8-eq (array-ref buf 7) 61 "env cstring equals")
-      (assert-u8-eq (array-ref buf 8) 49 "env cstring value")
-      (assert-u8-eq (array-ref buf 9) 0 "env cstring nul"))))
+    (test.assert-i64-eq (array-length buf) 10 "env cstring length")
+    (assert-u8-eq (array-ref buf 0) 84 "env cstring T")
+    (assert-u8-eq (array-ref buf 1) 76 "env cstring L")
+    (assert-u8-eq (array-ref buf 2) 95 "env cstring underscore")
+    (assert-u8-eq (array-ref buf 3) 84 "env cstring second T")
+    (assert-u8-eq (array-ref buf 4) 69 "env cstring E")
+    (assert-u8-eq (array-ref buf 5) 83 "env cstring S")
+    (assert-u8-eq (array-ref buf 6) 84 "env cstring final T")
+    (assert-u8-eq (array-ref buf 7) 61 "env cstring equals")
+    (assert-u8-eq (array-ref buf 8) 49 "env cstring value")
+    (assert-u8-eq (array-ref buf 9) 0 "env cstring nul")))
 
 (define (assert-process-runtime-windows-msvc-env-output) : unit
   (let
@@ -390,19 +385,18 @@
               (process.start (process-runtime-printf-command "async-b"))
               "process async start b: ")
             process.cleanup-process-child])
-        (begin
-          (assert-process-ok
-            (process.wait (&mut child-b))
-            0
-            "async-b"
-            ""
-            "process async wait b")
-          (assert-process-ok
-            (process.wait (&mut child-a))
-            0
-            "async-a"
-            ""
-            "process async wait a")))
+        (assert-process-ok
+          (process.wait (&mut child-b))
+          0
+          "async-b"
+          ""
+          "process async wait b")
+        (assert-process-ok
+          (process.wait (&mut child-a))
+          0
+          "async-a"
+          ""
+          "process async wait a"))
       (assert-process-child-spawn-failed
         (process.start
           (process.command

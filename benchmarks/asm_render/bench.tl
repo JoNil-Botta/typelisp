@@ -121,42 +121,36 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [byte : i64 (asm-byte-at text n i)]
-          (cond
-            [(= byte 35)
-              (while (and (< i n) (not (= (asm-byte-at text n i) 10)))
-                (set! i (+ i 1)))]
-            [(or (asm-digit? byte) (= byte 45))
-              (let
-                [negative : bool (= byte 45)]
-                [value : i64 0]
-                (begin
-                  (when negative (set! i (+ i 1)))
-                  (while (asm-digit? (asm-byte-at text n i))
-                    (begin
-                      (set!
-                        value
-                        (+ (* value 10) (- (asm-byte-at text n i) 48)))
-                      (set! i (+ i 1))))
-                  (i64vec.set-ref!
-                    out
-                    count
-                    (if negative
-                      (- 0 value)
-                      value))
-                  (set! count (+ count 1))))]
-            [else (set! i (+ i 1))])))
-      count)))
+    (while (< i n)
+      (let
+        [byte : i64 (asm-byte-at text n i)]
+        (cond
+          [(= byte 35)
+            (while (and (< i n) (not (= (asm-byte-at text n i) 10)))
+              (set! i (+ i 1)))]
+          [(or (asm-digit? byte) (= byte 45))
+            (let
+              [negative : bool (= byte 45)]
+              [value : i64 0]
+              (when negative (set! i (+ i 1)))
+              (while (asm-digit? (asm-byte-at text n i))
+                (set! value (+ (* value 10) (- (asm-byte-at text n i) 48)))
+                (set! i (+ i 1)))
+              (i64vec.set-ref!
+                out
+                count
+                (if negative
+                  (- 0 value)
+                  value))
+              (set! count (+ count 1)))]
+          [else (set! i (+ i 1))])))
+    count))
 
 (define (asm-tok-next) : i64
   (let
     [value : i64 (asm-ref asm-tokens asm-cursor)]
-    (begin
-      (set! asm-cursor (+ asm-cursor 1))
-      value)))
+    (set! asm-cursor (+ asm-cursor 1))
+    value))
 
 ;; compiler-backend-global-array-element-shared-view / text-buf-store-entry-at:
 ;; a String element of a module-global table is read as a shared view, not moved
@@ -192,15 +186,14 @@
         needed
         doubled)]
     [bigger : (MutPtr u8) (string.string-runtime-alloc capacity)]
-    (begin
-      (string.str-copy-bytes-into
-        (unsafe
-          (ptr-cast buf.data : (Ptr u8)))
-        bigger
-        0
-        buf.len)
-      (set! buf.data bigger)
-      (set! buf.cap capacity))))
+    (string.str-copy-bytes-into
+      (unsafe
+        (ptr-cast buf.data : (Ptr u8)))
+      bigger
+      0
+      buf.len)
+    (set! buf.data bigger)
+    (set! buf.cap capacity)))
 
 (define (asm-buf-reserve! [buf : (&mut buf AsmBuf)] [total : i64]) : unit
   (if (> total buf.cap)
@@ -228,22 +221,19 @@
         (ptr-cast (ptr-offset ,dst ,off) : (MutPtr i64)))]
     [asm-copy-w : i64 0]
     [asm-copy-b : i64 (* asm-copy-words 8)]
-    (begin
-      (while (< asm-copy-w asm-copy-words)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset asm-copy-dst64 asm-copy-w)
-              (ptr-read (ptr-offset asm-copy-src64 asm-copy-w))))
-          (set! asm-copy-w (+ asm-copy-w 1))))
-      (while (< asm-copy-b ,n)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset ,dst (+ ,off asm-copy-b))
-              (ptr-read (ptr-offset asm-copy-src asm-copy-b))))
-          (set! asm-copy-b (+ asm-copy-b 1))))
-      unit)))
+    (while (< asm-copy-w asm-copy-words)
+      (unsafe
+        (ptr-write!
+          (ptr-offset asm-copy-dst64 asm-copy-w)
+          (ptr-read (ptr-offset asm-copy-src64 asm-copy-w))))
+      (set! asm-copy-w (+ asm-copy-w 1)))
+    (while (< asm-copy-b ,n)
+      (unsafe
+        (ptr-write!
+          (ptr-offset ,dst (+ ,off asm-copy-b))
+          (ptr-read (ptr-offset asm-copy-src asm-copy-b))))
+      (set! asm-copy-b (+ asm-copy-b 1)))
+    unit))
 
 (define (asm-append [buf : (&mut buf AsmBuf)] [part : String]) : unit
   (let
@@ -252,12 +242,11 @@
       unit
       (let
         [off : i64 buf.len]
-        (begin
-          (asm-buf-reserve! buf (+ off n))
-          (let
-            [dst : (MutPtr u8) buf.data]
-            (asm-copy-part! dst off part n))
-          (set! buf.len (+ off n)))))))
+        (asm-buf-reserve! buf (+ off n))
+        (let
+          [dst : (MutPtr u8) buf.data]
+          (asm-copy-part! dst off part n))
+        (set! buf.len (+ off n))))))
 
 (define (asm-append2 [buf : (&mut buf AsmBuf)] [a : String] [b : String]) : unit
   (let
@@ -265,15 +254,13 @@
     [nb : i64 (string.string-length b)]
     [total : i64 (+ na nb)]
     [off : i64 buf.len]
-    (begin
-      (asm-buf-reserve! buf (+ off total))
-      (let
-        [dst : (MutPtr u8) buf.data]
-        [ob : i64 (+ off na)]
-        (begin
-          (asm-copy-part! dst off a na)
-          (asm-copy-part! dst ob b nb)))
-      (set! buf.len (+ off total)))))
+    (asm-buf-reserve! buf (+ off total))
+    (let
+      [dst : (MutPtr u8) buf.data]
+      [ob : i64 (+ off na)]
+      (asm-copy-part! dst off a na)
+      (asm-copy-part! dst ob b nb))
+    (set! buf.len (+ off total))))
 
 (define (asm-append4
   [buf : (&mut buf AsmBuf)]
@@ -288,19 +275,17 @@
     [nd : i64 (string.string-length d)]
     [total : i64 (+ na (+ nb (+ nc nd)))]
     [off : i64 buf.len]
-    (begin
-      (asm-buf-reserve! buf (+ off total))
-      (let
-        [dst : (MutPtr u8) buf.data]
-        [ob : i64 (+ off na)]
-        [oc : i64 (+ ob nb)]
-        [od : i64 (+ oc nc)]
-        (begin
-          (asm-copy-part! dst off a na)
-          (asm-copy-part! dst ob b nb)
-          (asm-copy-part! dst oc c nc)
-          (asm-copy-part! dst od d nd)))
-      (set! buf.len (+ off total)))))
+    (asm-buf-reserve! buf (+ off total))
+    (let
+      [dst : (MutPtr u8) buf.data]
+      [ob : i64 (+ off na)]
+      [oc : i64 (+ ob nb)]
+      [od : i64 (+ oc nc)]
+      (asm-copy-part! dst off a na)
+      (asm-copy-part! dst ob b nb)
+      (asm-copy-part! dst oc c nc)
+      (asm-copy-part! dst od d nd))
+    (set! buf.len (+ off total))))
 
 (define (asm-append5
   [buf : (&mut buf AsmBuf)]
@@ -317,21 +302,19 @@
     [ne : i64 (string.string-length e)]
     [total : i64 (+ na (+ nb (+ nc (+ nd ne))))]
     [off : i64 buf.len]
-    (begin
-      (asm-buf-reserve! buf (+ off total))
-      (let
-        [dst : (MutPtr u8) buf.data]
-        [ob : i64 (+ off na)]
-        [oc : i64 (+ ob nb)]
-        [od : i64 (+ oc nc)]
-        [oe : i64 (+ od nd)]
-        (begin
-          (asm-copy-part! dst off a na)
-          (asm-copy-part! dst ob b nb)
-          (asm-copy-part! dst oc c nc)
-          (asm-copy-part! dst od d nd)
-          (asm-copy-part! dst oe e ne)))
-      (set! buf.len (+ off total)))))
+    (asm-buf-reserve! buf (+ off total))
+    (let
+      [dst : (MutPtr u8) buf.data]
+      [ob : i64 (+ off na)]
+      [oc : i64 (+ ob nb)]
+      [od : i64 (+ oc nc)]
+      [oe : i64 (+ od nd)]
+      (asm-copy-part! dst off a na)
+      (asm-copy-part! dst ob b nb)
+      (asm-copy-part! dst oc c nc)
+      (asm-copy-part! dst od d nd)
+      (asm-copy-part! dst oe e ne))
+    (set! buf.len (+ off total))))
 
 ;; Hand the live prefix out as a String aliasing this buffer's storage. The
 ;; buffer is dead after this call.
@@ -472,60 +455,59 @@
 (define (asm-render-line [buf : (&mut buf AsmBuf)]) : i64
   (let
     [kind : i64 (asm-tok-next)]
-    (begin
-      (cond
-        [(= kind 0) (asm-append buf "\n")]
-        [(= kind 1)
-          (let
-            [text : String (asm-name (asm-tok-next))]
-            (asm-append2 buf text "\n"))]
-        [(= kind 2)
-          (let
-            [label : String (asm-name (asm-tok-next))]
-            (asm-append2 buf label ":\n"))]
-        [(= kind 3)
-          (let
-            [head : String (asm-name (asm-tok-next))]
-            [nops : i64 (asm-tok-next)]
-            (cond
-              [(= nops 0) (asm-append buf (str_cat.str-cat head "\n" ""))]
-              [(= nops 1)
-                (let
-                  [a : String (asm-next-operand)]
-                  (asm-append buf (str_cat.str-cat head a "\n")))]
-              [(= nops 2)
-                (let
-                  [a : String (asm-next-operand)]
-                  [b : String (asm-next-operand)]
-                  (asm-append buf (str_cat.str-cat head a ", " b "\n")))]
-              [else
-                (let
-                  [a : String (asm-next-operand)]
-                  [b : String (asm-next-operand)]
-                  [c : String (asm-next-operand)]
-                  (asm-append buf (str_cat.str-cat head a ", " b ", " c "\n")))]))]
-        [else
-          (let
-            [head : String (asm-name (asm-tok-next))]
-            [nops : i64 (asm-tok-next)]
-            (cond
-              [(= nops 0) (asm-append2 buf head "\n")]
-              [(= nops 1)
-                (let
-                  [a : String (asm-next-operand)]
-                  (asm-append4 buf head a "\n" ""))]
-              [(= nops 2)
-                (let
-                  [a : String (asm-next-operand)]
-                  [b : String (asm-next-operand)]
-                  (asm-append5 buf head a ", " b "\n"))]
-              [else
-                (let
-                  [a : String (asm-next-operand)]
-                  [b : String (asm-next-operand)]
-                  [c : String (asm-next-operand)]
-                  (asm-append buf (str_cat.str-cat head a ", " b ", " c "\n")))]))])
-      kind)))
+    (cond
+      [(= kind 0) (asm-append buf "\n")]
+      [(= kind 1)
+        (let
+          [text : String (asm-name (asm-tok-next))]
+          (asm-append2 buf text "\n"))]
+      [(= kind 2)
+        (let
+          [label : String (asm-name (asm-tok-next))]
+          (asm-append2 buf label ":\n"))]
+      [(= kind 3)
+        (let
+          [head : String (asm-name (asm-tok-next))]
+          [nops : i64 (asm-tok-next)]
+          (cond
+            [(= nops 0) (asm-append buf (str_cat.str-cat head "\n" ""))]
+            [(= nops 1)
+              (let
+                [a : String (asm-next-operand)]
+                (asm-append buf (str_cat.str-cat head a "\n")))]
+            [(= nops 2)
+              (let
+                [a : String (asm-next-operand)]
+                [b : String (asm-next-operand)]
+                (asm-append buf (str_cat.str-cat head a ", " b "\n")))]
+            [else
+              (let
+                [a : String (asm-next-operand)]
+                [b : String (asm-next-operand)]
+                [c : String (asm-next-operand)]
+                (asm-append buf (str_cat.str-cat head a ", " b ", " c "\n")))]))]
+      [else
+        (let
+          [head : String (asm-name (asm-tok-next))]
+          [nops : i64 (asm-tok-next)]
+          (cond
+            [(= nops 0) (asm-append2 buf head "\n")]
+            [(= nops 1)
+              (let
+                [a : String (asm-next-operand)]
+                (asm-append4 buf head a "\n" ""))]
+            [(= nops 2)
+              (let
+                [a : String (asm-next-operand)]
+                [b : String (asm-next-operand)]
+                (asm-append5 buf head a ", " b "\n"))]
+            [else
+              (let
+                [a : String (asm-next-operand)]
+                [b : String (asm-next-operand)]
+                [c : String (asm-next-operand)]
+                (asm-append buf (str_cat.str-cat head a ", " b ", " c "\n")))]))])
+    kind))
 
 ;; One function chunk: a fresh body buffer sized at the backend's bytes-per-
 ;; instruction budget, every line appended into it, and the finished body handed
@@ -535,27 +517,23 @@
     [lines : i64 (asm-ref asm-chunk-lines chunk)]
     [buf : AsmBuf (asm-buf-with-capacity (* lines asm-bytes-per-line))]
     [i : i64 0]
-    (begin
-      (set! asm-cursor (asm-ref asm-chunk-off chunk))
-      (while (< i lines)
-        (let
-          [kind : i64 (asm-render-line (&mut buf))]
-          (begin
-            (asm-set! asm-kind-counts kind (+ (asm-ref asm-kind-counts kind) 1))
-            (set! i (+ i 1)))))
-      (text_buf.append out (asm-buf-finish (& buf))))))
+    (set! asm-cursor (asm-ref asm-chunk-off chunk))
+    (while (< i lines)
+      (let
+        [kind : i64 (asm-render-line (&mut buf))]
+        (asm-set! asm-kind-counts kind (+ (asm-ref asm-kind-counts kind) 1))
+        (set! i (+ i 1))))
+    (text_buf.append out (asm-buf-finish (& buf)))))
 
 (define (asm-fold-text [hash : i64] [text : (& text str)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [h : i64 hash]
-    (begin
-      (while (< i n)
-        (begin
-          (set! h (asm-mix h (cast (string.string-ref text i) : i64)))
-          (set! i (+ i 1))))
-      h)))
+    (while (< i n)
+      (set! h (asm-mix h (cast (string.string-ref text i) : i64)))
+      (set! i (+ i 1)))
+    h))
 
 ;; One pass over every function chunk, starting at `start` and wrapping. The
 ;; unrotated pass must reproduce the corpus slice byte for byte.
@@ -566,35 +544,29 @@
     [index : i64 0]
     [kind : i64 0]
     [hash : i64 asm-hash-basis]
-    (begin
+    (while (< kind 8)
+      (asm-set! asm-kind-counts kind 0)
+      (set! kind (+ kind 1)))
+    (while (< step asm-chunks)
+      (set! index (+ start step))
+      (when (>= index asm-chunks) (set! index (- index asm-chunks)))
+      (set! out (asm-render-chunk index out))
+      (set! step (+ step 1)))
+    (let
+      [text : String (text_buf.render out)]
+      [n : i64 (string.string-length (& text))]
+      (set! hash (asm-fold-text hash (& text)))
+      (when
+        (and
+          (= start 0)
+          (or (not (= n asm-slice-bytes)) (not (= hash asm-slice-fnv))))
+        (io.panic "asm_render: re-rendered text differs from the corpus slice"))
+      (set! hash (asm-mix hash n))
+      (set! kind 0)
       (while (< kind 8)
-        (begin
-          (asm-set! asm-kind-counts kind 0)
-          (set! kind (+ kind 1))))
-      (while (< step asm-chunks)
-        (begin
-          (set! index (+ start step))
-          (when (>= index asm-chunks) (set! index (- index asm-chunks)))
-          (set! out (asm-render-chunk index out))
-          (set! step (+ step 1))))
-      (let
-        [text : String (text_buf.render out)]
-        [n : i64 (string.string-length (& text))]
-        (begin
-          (set! hash (asm-fold-text hash (& text)))
-          (when
-            (and
-              (= start 0)
-              (or (not (= n asm-slice-bytes)) (not (= hash asm-slice-fnv))))
-            (io.panic
-              "asm_render: re-rendered text differs from the corpus slice"))
-          (set! hash (asm-mix hash n))
-          (set! kind 0)
-          (while (< kind 8)
-            (begin
-              (set! hash (asm-mix hash (asm-ref asm-kind-counts kind)))
-              (set! kind (+ kind 1))))
-          hash)))))
+        (set! hash (asm-mix hash (asm-ref asm-kind-counts kind)))
+        (set! kind (+ kind 1)))
+      hash)))
 
 ;; ---------------------------------------------------------------------------
 ;; Corpus loading.
@@ -613,38 +585,31 @@
           [nops : i64 (asm-ref asm-tokens (+ at 2))]
           [width : i64 3]
           [k : i64 0]
-          (begin
-            (while (< k nops)
-              (begin
-                (set!
-                  width
-                  (+
-                    width
-                    (asm-operand-width (asm-ref asm-tokens (+ at width)))))
-                (set! k (+ k 1))))
-            width))])))
+          (while (< k nops)
+            (set!
+              width
+              (+ width (asm-operand-width (asm-ref asm-tokens (+ at width)))))
+            (set! k (+ k 1)))
+          width)])))
 
 (define (asm-index-chunks) : unit
   (let
     [cursor : i64 5]
     [chunk : i64 0]
-    (begin
-      (set! asm-chunk-off (asm-zero-vec (+ asm-chunks 1)))
-      (set! asm-chunk-lines (asm-zero-vec (+ asm-chunks 1)))
-      (while (< chunk asm-chunks)
-        (let
-          [lines : i64 (asm-ref asm-tokens cursor)]
-          [i : i64 0]
-          (begin
-            (set! cursor (+ cursor 1))
-            (asm-set! asm-chunk-off chunk cursor)
-            (asm-set! asm-chunk-lines chunk lines)
-            (while (< i lines)
-              (begin
-                (set! cursor (+ cursor (asm-row-width cursor)))
-                (set! i (+ i 1))))
-            (set! chunk (+ chunk 1)))))
-      unit)))
+    (set! asm-chunk-off (asm-zero-vec (+ asm-chunks 1)))
+    (set! asm-chunk-lines (asm-zero-vec (+ asm-chunks 1)))
+    (while (< chunk asm-chunks)
+      (let
+        [lines : i64 (asm-ref asm-tokens cursor)]
+        [i : i64 0]
+        (set! cursor (+ cursor 1))
+        (asm-set! asm-chunk-off chunk cursor)
+        (asm-set! asm-chunk-lines chunk lines)
+        (while (< i lines)
+          (set! cursor (+ cursor (asm-row-width cursor)))
+          (set! i (+ i 1)))
+        (set! chunk (+ chunk 1))))
+    unit))
 
 ;; The names live beside the tape: same directory, fixed file name.
 (define (asm-names-path [path : (& path str)]) : String
@@ -652,14 +617,12 @@
     [n : i64 (string.string-length path)]
     [cut : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (when (= (asm-byte-at path n i) 47) (set! cut (+ i 1)))
-          (set! i (+ i 1))))
-      (let
-        [directory : String (string.substring path 0 cut)]
-        (str_cat.str-cat directory "asm-names.txt")))))
+    (while (< i n)
+      (when (= (asm-byte-at path n i) 47) (set! cut (+ i 1)))
+      (set! i (+ i 1)))
+    (let
+      [directory : String (string.substring path 0 cut)]
+      (str_cat.str-cat directory "asm-names.txt"))))
 
 ;; Two header lines, then one name per line in id order.
 (define (asm-load-names [text : (& text str)]) : unit
@@ -668,22 +631,19 @@
     [i : i64 0]
     [line : i64 0]
     [start : i64 0]
-    (begin
-      (set! asm-names (__tl_make-array String asm-names-count))
-      (while (< i n)
-        (begin
-          (when
-            (= (asm-byte-at text n i) 10)
-            (begin
-              (when
-                (and (>= line 2) (< (- line 2) asm-names-count))
-                (set!
-                  (array-ref asm-names (- line 2))
-                  (string.substring text start (- i start))))
-              (set! line (+ line 1))
-              (set! start (+ i 1))))
-          (set! i (+ i 1))))
-      unit)))
+    (set! asm-names (__tl_make-array String asm-names-count))
+    (while (< i n)
+      (when
+        (= (asm-byte-at text n i) 10)
+        (when
+          (and (>= line 2) (< (- line 2) asm-names-count))
+          (set!
+            (array-ref asm-names (- line 2))
+            (string.substring text start (- i start))))
+        (set! line (+ line 1))
+        (set! start (+ i 1)))
+      (set! i (+ i 1)))
+    unit))
 
 (define (asm-bench [path : String] [rounds : i64]) : i64
   (let
@@ -693,33 +653,30 @@
     [round : i64 0]
     [start : i64 0]
     [acc : i64 asm-hash-basis]
-    (begin
-      (set! asm-tokens (asm-zero-vec capacity))
-      (set! acc (asm-mix acc (asm-scan-ints (& text) (&mut asm-tokens))))
-      (set! asm-names-count (asm-ref asm-tokens 0))
-      (set! asm-chunks (asm-ref asm-tokens 1))
-      (set! asm-lines (asm-ref asm-tokens 2))
-      (set! asm-slice-bytes (asm-ref asm-tokens 3))
-      (set! asm-slice-fnv (asm-ref asm-tokens 4))
-      (let
-        [names-text : String (byte_buf.to-string (io.read-file names-path))]
-        (asm-load-names (& names-text)))
-      (asm-index-chunks)
-      (set! acc (asm-mix acc asm-lines))
-      (while (< round rounds)
-        (begin
-          (set! acc (asm-mix acc round))
-          (set! acc (asm-mix acc start))
-          (set! acc (asm-mix acc (with-arena round-arena (asm-round start))))
-          (set! start (+ start 1))
-          (when (>= start asm-chunks) (set! start 0))
-          (set! round (+ round 1))))
-      acc)))
+    (set! asm-tokens (asm-zero-vec capacity))
+    (set! acc (asm-mix acc (asm-scan-ints (& text) (&mut asm-tokens))))
+    (set! asm-names-count (asm-ref asm-tokens 0))
+    (set! asm-chunks (asm-ref asm-tokens 1))
+    (set! asm-lines (asm-ref asm-tokens 2))
+    (set! asm-slice-bytes (asm-ref asm-tokens 3))
+    (set! asm-slice-fnv (asm-ref asm-tokens 4))
+    (let
+      [names-text : String (byte_buf.to-string (io.read-file names-path))]
+      (asm-load-names (& names-text)))
+    (asm-index-chunks)
+    (set! acc (asm-mix acc asm-lines))
+    (while (< round rounds)
+      (set! acc (asm-mix acc round))
+      (set! acc (asm-mix acc start))
+      (set! acc (asm-mix acc (with-arena round-arena (asm-round start))))
+      (set! start (+ start 1))
+      (when (>= start asm-chunks) (set! start 0))
+      (set! round (+ round 1)))
+    acc))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (asm-bench path rounds))
-      0)))
+    (io.println "{}" (asm-bench path rounds))
+    0))

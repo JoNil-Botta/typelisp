@@ -37,13 +37,12 @@
     [expected-kept : String "kept:7"]
     [expected-noise : String "kept:99"]
     [expected-one-shot : String "oneshot:11"]
-    (begin
-      (test.assert-i64-eq score 12 "scratch-only score")
-      (test.assert-true (string.eq kept expected-kept) "clone-out kept result")
-      (test.assert-true
-        (string.eq noise expected-noise)
-        "clone-out reused scratch")
-      (test.assert-true
-        (string.eq one-shot expected-one-shot)
-        "one-shot clone-out result")
-      42)))
+    (test.assert-i64-eq score 12 "scratch-only score")
+    (test.assert-true (string.eq kept expected-kept) "clone-out kept result")
+    (test.assert-true
+      (string.eq noise expected-noise)
+      "clone-out reused scratch")
+    (test.assert-true
+      (string.eq one-shot expected-one-shot)
+      "one-shot clone-out result")
+    42))

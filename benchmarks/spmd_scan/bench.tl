@@ -23,20 +23,17 @@
   (let
     [out : i64v.Vec (i64v.with-capacity capacity)]
     [i : i64 0]
-    (begin
-      (while (< i capacity)
-        (begin
-          (i64v.push-ref! (&mut out) 0)
-          (set! i (+ i 1))))
-      out)))
+    (while (< i capacity)
+      (i64v.push-ref! (&mut out) 0)
+      (set! i (+ i 1)))
+    out))
 
 (define (init [a : (&mut a (Slice i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref a i) (+ i 1))
-        (set! i (+ i 1))))))
+      (set! (array-ref a i) (+ i 1))
+      (set! i (+ i 1)))))
 
 (define (scan-kernel
   [a : (& a (Slice i64))]
@@ -55,21 +52,16 @@
     [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (let
-        [init-view : (&mut a (Slice i64)) (i64v.view-mut (&mut a))]
-        (init init-view array-len))
-      (let
-        [a-view : (& a (Slice i64)) (i64v.view (& a))]
-        [out-view : (&mut out (Slice i64)) (i64v.view-mut (&mut out))]
-        [kernel : (-> (& a (Slice i64)) (&mut out (Slice i64)) i64 unit)
-          scan-kernel]
-        (begin
-          (while (< r reps)
-            (begin
-              (kernel a-view out-view r)
-              (set!
-                acc
-                (+ acc (array-ref out-view (bit-and r (- array-len 1)))))
-              (set! r (+ r 1))))
-          (bit-and acc 255))))))
+    (let
+      [init-view : (&mut a (Slice i64)) (i64v.view-mut (&mut a))]
+      (init init-view array-len))
+    (let
+      [a-view : (& a (Slice i64)) (i64v.view (& a))]
+      [out-view : (&mut out (Slice i64)) (i64v.view-mut (&mut out))]
+      [kernel : (-> (& a (Slice i64)) (&mut out (Slice i64)) i64 unit)
+        scan-kernel]
+      (while (< r reps)
+        (kernel a-view out-view r)
+        (set! acc (+ acc (array-ref out-view (bit-and r (- array-len 1)))))
+        (set! r (+ r 1)))
+      (bit-and acc 255))))

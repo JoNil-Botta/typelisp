@@ -49,33 +49,29 @@
   (let
     [ok-v : result_struct_enum.Result (result_struct_enum.ok (ResApiPoint 1 2))]
     [err-v : result_struct_enum.Result (result_struct_enum.err (ResApiTagA 5))]
-    (begin
-      (test.assert-true
-        (result_struct_enum.is-ok? (& ok-v))
-        "struct/enum result ok predicate")
-      (test.assert-true
-        (result_struct_enum.is-err? (& err-v))
-        "struct/enum result err predicate"))))
+    (test.assert-true
+      (result_struct_enum.is-ok? (& ok-v))
+      "struct/enum result ok predicate")
+    (test.assert-true
+      (result_struct_enum.is-err? (& err-v))
+      "struct/enum result err predicate")))
 
 (define (assert-result-macro-i64-string-api) : unit
   (let
     [hit : result_i64_string.Result (result_i64_string.ok 41)]
     [miss : result_i64_string.Result (result_i64_string.err "no")]
-    (begin
-      (test.assert-true
-        (result_i64_string.is-ok? (& hit))
-        "result ok predicate")
-      (test.assert-true
-        (result_i64_string.is-err? (& miss))
-        "result err predicate")
-      (test.assert-i64-eq
-        (result_i64_string.value-or hit 0)
-        41
-        "result value-or returns ok payload")
-      (test.assert-i64-eq
-        (result_i64_string.value-or miss 7)
-        7
-        "result value-or returns fallback"))))
+    (test.assert-true (result_i64_string.is-ok? (& hit)) "result ok predicate")
+    (test.assert-true
+      (result_i64_string.is-err? (& miss))
+      "result err predicate")
+    (test.assert-i64-eq
+      (result_i64_string.value-or hit 0)
+      41
+      "result value-or returns ok payload")
+    (test.assert-i64-eq
+      (result_i64_string.value-or miss 7)
+      7
+      "result value-or returns fallback")))
 
 (define (assert-result-macro-map-and-duplicate-import) : unit
   (let
@@ -83,23 +79,22 @@
       (result_i64_string.map (result_i64_string.ok 41) result-test-inc)]
     [mapped-err : result_i64_string.Result
       (result_i64_string.map (result_i64_string.err "bad") result-test-inc)]
-    (begin
-      (test.assert-i64-eq
-        (result_i64_string.value-or mapped 0)
-        42
-        "result map transforms ok payload")
-      (test.assert-i64-eq
-        (result_i64_string.value-or mapped-err 5)
-        5
-        "result map preserves err shape")
-      (test.assert-i64-eq
-        (result-test-duplicate-import-score (result_i64_string.ok 9))
-        9
-        "duplicate result imports share the same generated type")
-      (test.assert-i64-eq
-        (result_i64_string_user.value-or (result_i64_string.ok 12) 0)
-        12
-        "generated module result imports share the same generated type"))))
+    (test.assert-i64-eq
+      (result_i64_string.value-or mapped 0)
+      42
+      "result map transforms ok payload")
+    (test.assert-i64-eq
+      (result_i64_string.value-or mapped-err 5)
+      5
+      "result map preserves err shape")
+    (test.assert-i64-eq
+      (result-test-duplicate-import-score (result_i64_string.ok 9))
+      9
+      "duplicate result imports share the same generated type")
+    (test.assert-i64-eq
+      (result_i64_string_user.value-or (result_i64_string.ok 12) 0)
+      12
+      "generated module result imports share the same generated type")))
 
 (define (assert-result-macro-string-i64-api) : unit
   (let
@@ -107,24 +102,22 @@
     [miss : result_string_i64.Result (result_string_i64.err 4)]
     [expected-hit : String "bee"]
     [expected-miss : String "fallback"]
-    (begin
-      (let
-        [actual-hit : String (result_string_i64.value-or hit "bad")]
-        (test.assert-string-eq
-          (& actual-hit)
-          (& expected-hit)
-          "string result value-or returns ok payload"))
-      (let
-        [actual-miss : String (result_string_i64.value-or miss "fallback")]
-        (test.assert-string-eq
-          (& actual-miss)
-          (& expected-miss)
-          "string result value-or returns fallback")))))
+    (let
+      [actual-hit : String (result_string_i64.value-or hit "bad")]
+      (test.assert-string-eq
+        (& actual-hit)
+        (& expected-hit)
+        "string result value-or returns ok payload"))
+    (let
+      [actual-miss : String (result_string_i64.value-or miss "fallback")]
+      (test.assert-string-eq
+        (& actual-miss)
+        (& expected-miss)
+        "string result value-or returns fallback"))))
 
 (define (main) : i64
-  (begin
-    (assert-result-macro-struct-and-enum-element-kinds)
-    (assert-result-macro-i64-string-api)
-    (assert-result-macro-map-and-duplicate-import)
-    (assert-result-macro-string-i64-api)
-    42))
+  (assert-result-macro-struct-and-enum-element-kinds)
+  (assert-result-macro-i64-string-api)
+  (assert-result-macro-map-and-duplicate-import)
+  (assert-result-macro-string-i64-api)
+  42)

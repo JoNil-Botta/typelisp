@@ -39,11 +39,10 @@
     [out-addr : i64 (test-read-i64 ctx 0)]
     [value : i64 (test-read-i64 ctx 1)]
     [sem-handle : i64 (test-read-i64 ctx 2)]
-    (begin
-      (test-write-i64! out-addr 0 value)
-      (unsafe
-        (thread.semaphore-post (thread.ThreadSemaphore sem-handle)))
-      value)))
+    (test-write-i64! out-addr 0 value)
+    (unsafe
+      (thread.semaphore-post (thread.ThreadSemaphore sem-handle)))
+    value))
 
 (define (thread-api-join-code [result : thread.ThreadJoinResult]) : i64
   (thread.join-result-value-or result -1))
@@ -89,12 +88,11 @@
 (define (thread-api-i64-vec-build [base : i64]) : i64-vec.Vec
   (let
     [items : i64-vec.Vec (i64-vec.with-capacity 4)]
-    (begin
-      (i64-vec.push-ref! (&mut items) base)
-      (i64-vec.push-ref! (&mut items) (+ base 10))
-      (i64-vec.push-ref! (&mut items) (+ base 20))
-      (i64-vec.push-ref! (&mut items) (+ base 30))
-      items)))
+    (i64-vec.push-ref! (&mut items) base)
+    (i64-vec.push-ref! (&mut items) (+ base 10))
+    (i64-vec.push-ref! (&mut items) (+ base 20))
+    (i64-vec.push-ref! (&mut items) (+ base 30))
+    items))
 
 (define (thread-api-safe-i64-vec-run) : i64
   42)
@@ -109,23 +107,22 @@
   (let
     [base : i64 40]
     [delta : i64 2]
-    (begin
-      (thread_i64.spawn
-        (lambda () : i64
-          17))
-      (thread_i64.spawn
-        (lambda () : i64
-          (+ base delta)))
-      (thread.spawn-string
-        (lambda () : String
-          (str_cat.str-cat "thread:" (string.int->string (+ base 2)))))
-      (thread.spawn-i64-vec
-        (lambda () : i64-vec.Vec
-          (thread-api-i64-vec-build 10)))
-      (thread.spawn-box-i64
-        (lambda () : (Box i64)
-          (box 42)))
-      unit)))
+    (thread_i64.spawn
+      (lambda () : i64
+        17))
+    (thread_i64.spawn
+      (lambda () : i64
+        (+ base delta)))
+    (thread.spawn-string
+      (lambda () : String
+        (str_cat.str-cat "thread:" (string.int->string (+ base 2)))))
+    (thread.spawn-i64-vec
+      (lambda () : i64-vec.Vec
+        (thread-api-i64-vec-build 10)))
+    (thread.spawn-box-i64
+      (lambda () : (Box i64)
+        (box 42)))
+    unit))
 
 (define (thread-api-negative-semaphore-rejected?) : bool
   (=
@@ -154,76 +151,75 @@
         [result : i64 42]
         [released : bool false]
         [join-code : i64 -1]
-        (begin
-          (if (not
-            (thread-api-negative-wait-rejected?
-              (unsafe
-                (thread.wait-for (& worker) -1))))
-            (set! result 15)
-            unit)
-          (if (and
-            (= result 42)
-            (not
-              (thread-api-wait-timed-out?
-                (unsafe
-                  (thread.wait-for (& worker) 0)))))
-            (set! result 16)
-            unit)
-          (if (and
-            (= result 42)
-            (not
-              (thread-api-wait-timed-out?
-                (unsafe
-                  (thread.wait-for (& worker) 1)))))
-            (set! result 17)
-            unit)
-          (if (and
-            (= result 42)
-            (not
-              (thread-api-wait-timed-out?
-                (unsafe
-                  (thread.wait-for (& worker) 0)))))
-            (set! result 18)
-            unit)
-          (set!
-            released
+        (if (not
+          (thread-api-negative-wait-rejected?
             (unsafe
-              (thread.semaphore-post sem)))
-          (if (not released)
-            (set! result 19)
-            (begin
-              (if (and
-                (= result 42)
-                (not
-                  (thread-api-wait-ready?
-                    (unsafe
-                      (thread.wait-for (& worker) 5000)))))
-                (set! result 20)
-                unit)
-              (if (and
-                (= result 42)
-                (not
-                  (thread-api-wait-ready?
-                    (unsafe
-                      (thread.wait-for (& worker) 0)))))
-                (set! result 21)
-                unit)
-              (set!
-                join-code
-                (thread-api-join-code
+              (thread.wait-for (& worker) -1))))
+          (set! result 15)
+          unit)
+        (if (and
+          (= result 42)
+          (not
+            (thread-api-wait-timed-out?
+              (unsafe
+                (thread.wait-for (& worker) 0)))))
+          (set! result 16)
+          unit)
+        (if (and
+          (= result 42)
+          (not
+            (thread-api-wait-timed-out?
+              (unsafe
+                (thread.wait-for (& worker) 1)))))
+          (set! result 17)
+          unit)
+        (if (and
+          (= result 42)
+          (not
+            (thread-api-wait-timed-out?
+              (unsafe
+                (thread.wait-for (& worker) 0)))))
+          (set! result 18)
+          unit)
+        (set!
+          released
+          (unsafe
+            (thread.semaphore-post sem)))
+        (if (not released)
+          (set! result 19)
+          (begin
+            (if (and
+              (= result 42)
+              (not
+                (thread-api-wait-ready?
                   (unsafe
-                    (thread.join worker))))
-              (if (and (= result 42) (not (= join-code 42)))
-                (set! result 22)
-                unit)
-              (if (and
-                (= result 42)
-                (not
+                    (thread.wait-for (& worker) 5000)))))
+              (set! result 20)
+              unit)
+            (if (and
+              (= result 42)
+              (not
+                (thread-api-wait-ready?
                   (unsafe
-                    (thread.semaphore-close sem))))
-                (set! result 23)
-                unit)))
-          result))]))
+                    (thread.wait-for (& worker) 0)))))
+              (set! result 21)
+              unit)
+            (set!
+              join-code
+              (thread-api-join-code
+                (unsafe
+                  (thread.join worker))))
+            (if (and (= result 42) (not (= join-code 42)))
+              (set! result 22)
+              unit)
+            (if (and
+              (= result 42)
+              (not
+                (unsafe
+                  (thread.semaphore-close sem))))
+              (set! result 23)
+              unit)))
+        result)]))
 
 (define (thread-api-finish-run
   [sem : thread.ThreadSemaphore]
@@ -235,49 +231,48 @@
     [result : i64 42]
     [a-code : i64 -1]
     [b-code : i64 -1]
-    (begin
-      (if (not
+    (if (not
+      (unsafe
+        (thread.semaphore-wait sem)))
+      (set! result 4)
+      unit)
+    (if (and
+      (= result 42)
+      (not
         (unsafe
-          (thread.semaphore-wait sem)))
-        (set! result 4)
-        unit)
-      (if (and
-        (= result 42)
-        (not
-          (unsafe
-            (thread.semaphore-wait sem))))
-        (set! result 5)
-        unit)
-      (set!
-        a-code
-        (thread-api-join-code
-          (unsafe
-            (thread.join a))))
-      (set!
-        b-code
-        (thread-api-join-code
-          (unsafe
-            (thread.join b))))
-      (if (and
-        (= result 42)
-        (not
-          (unsafe
-            (thread.semaphore-close sem))))
-        (set! result 6)
-        unit)
-      (if (and (= result 42) (not (= (array-ref out-a 0) 11)))
-        (set! result 7)
-        unit)
-      (if (and (= result 42) (not (= (array-ref out-b 0) 31)))
-        (set! result 8)
-        unit)
-      (if (and (= result 42) (not (= a-code 11)))
-        (set! result 9)
-        unit)
-      (if (and (= result 42) (not (= b-code 31)))
-        (set! result 10)
-        unit)
-      result)))
+          (thread.semaphore-wait sem))))
+      (set! result 5)
+      unit)
+    (set!
+      a-code
+      (thread-api-join-code
+        (unsafe
+          (thread.join a))))
+    (set!
+      b-code
+      (thread-api-join-code
+        (unsafe
+          (thread.join b))))
+    (if (and
+      (= result 42)
+      (not
+        (unsafe
+          (thread.semaphore-close sem))))
+      (set! result 6)
+      unit)
+    (if (and (= result 42) (not (= (array-ref out-a 0) 11)))
+      (set! result 7)
+      unit)
+    (if (and (= result 42) (not (= (array-ref out-b 0) 31)))
+      (set! result 8)
+      unit)
+    (if (and (= result 42) (not (= a-code 11)))
+      (set! result 9)
+      unit)
+    (if (and (= result 42) (not (= b-code 31)))
+      (set! result 10)
+      unit)
+    result))
 
 (define (thread-api-run-with-semaphore [sem : thread.ThreadSemaphore]) : i64
   (let
@@ -286,32 +281,31 @@
     [ctx-a : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [sem-handle : i64 sem.handle]
-    (begin
-      (set! (array-ref ctx-a 0) (test-array-i64-addr (& out-a)))
-      (set! (array-ref ctx-a 1) 11)
-      (set! (array-ref ctx-a 2) sem-handle)
-      (set! (array-ref ctx-b 0) (test-array-i64-addr (& out-b)))
-      (set! (array-ref ctx-b 1) 31)
-      (set! (array-ref ctx-b 2) sem-handle)
-      (let
-        [a-spawn : thread.ThreadSpawnResult
-          (unsafe
-            (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-a))))]
-        (if (not (thread.spawn-result-ok? (& a-spawn)))
-          2
-          (let
-            [a : thread.Thread (thread-api-thread-or a-spawn)]
-            [b-spawn : thread.ThreadSpawnResult
-              (unsafe
-                (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-b))))]
-            (if (not (thread.spawn-result-ok? (& b-spawn)))
-              3
-              (thread-api-finish-run
-                sem
-                a
-                (thread-api-thread-or b-spawn)
-                out-a
-                out-b))))))))
+    (set! (array-ref ctx-a 0) (test-array-i64-addr (& out-a)))
+    (set! (array-ref ctx-a 1) 11)
+    (set! (array-ref ctx-a 2) sem-handle)
+    (set! (array-ref ctx-b 0) (test-array-i64-addr (& out-b)))
+    (set! (array-ref ctx-b 1) 31)
+    (set! (array-ref ctx-b 2) sem-handle)
+    (let
+      [a-spawn : thread.ThreadSpawnResult
+        (unsafe
+          (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-a))))]
+      (if (not (thread.spawn-result-ok? (& a-spawn)))
+        2
+        (let
+          [a : thread.Thread (thread-api-thread-or a-spawn)]
+          [b-spawn : thread.ThreadSpawnResult
+            (unsafe
+              (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-b))))]
+          (if (not (thread.spawn-result-ok? (& b-spawn)))
+            3
+            (thread-api-finish-run
+              sem
+              a
+              (thread-api-thread-or b-spawn)
+              out-a
+              out-b)))))))
 
 (define (main) : i64
   (let

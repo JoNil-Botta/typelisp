@@ -41,19 +41,18 @@
     [raw-len : i64 (array-length raw)]
     [compressed-len : i64
       (array-length compressed_payload.embedded-stdlib-tlci-bytes)]
-    (begin
-      (io.print-error
-        (str_cat.str-cat
-          "embedded stdlib tlci payload: raw="
-          (string.int->string raw-len)
-          " compressed="
-          (string.int->string compressed-len)
-          "\n"))
-      (and
-        (> raw-len 0)
-        (> compressed-len 0)
-        (<= (* compressed-len 100) (* raw-len 40))
-        (tlci_core.tlci-bytes-eq? (& raw) (& expanded))))))
+    (io.print-error
+      (str_cat.str-cat
+        "embedded stdlib tlci payload: raw="
+        (string.int->string raw-len)
+        " compressed="
+        (string.int->string compressed-len)
+        "\n"))
+    (and
+      (> raw-len 0)
+      (> compressed-len 0)
+      (<= (* compressed-len 100) (* raw-len 40))
+      (tlci_core.tlci-bytes-eq? (& raw) (& expanded)))))
 
 ;; The expansion carries the template's `Spanned` wrappers, the way the
 ;; interpreted quote leaves them, so the shape probe reads through them.
@@ -106,36 +105,34 @@
             (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
-        (begin
-          (set!
-            (array-ref operands 0)
-            (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
-          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-            operands
-            1
-            32
-            embedded-verify-cookie
-            (compiler_ctfe.ctfe-reflect-info-list-empty))
-          (let
-            [ok : bool
-              (match (tlci_loader.tlci-loader-dispatch-macro
-                (& loaded)
-                "stdlib.core_macros/__tl-box-place"
-                embedded-verify-cookie
-                (__tl_make-array i64 0)
-                0)
-                [(Err _) false]
-                [(Ok dispatch)
-                  (and
-                    (= dispatch.status 0)
-                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
-                    (embedded-verify-result-shape-ok? pools operand-node))])]
-            (begin
-              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-              (match (tlci_loader.tlci-loader-release loaded)
-                [(Ok) ok]
-                [(Err _) false])))))]))
+        (set!
+          (array-ref operands 0)
+          (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+          (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+          operands
+          1
+          32
+          embedded-verify-cookie
+          (compiler_ctfe.ctfe-reflect-info-list-empty))
+        (let
+          [ok : bool
+            (match (tlci_loader.tlci-loader-dispatch-macro
+              (& loaded)
+              "stdlib.core_macros/__tl-box-place"
+              embedded-verify-cookie
+              (__tl_make-array i64 0)
+              0)
+              [(Err _) false]
+              [(Ok dispatch)
+                (and
+                  (= dispatch.status 0)
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                  (embedded-verify-result-shape-ok? pools operand-node))])]
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (match (tlci_loader.tlci-loader-release loaded)
+            [(Ok) ok]
+            [(Err _) false])))]))
 
 (define (embedded-verify-native-array-length-error-ok?
   [fuel : i64]
@@ -155,44 +152,41 @@
             (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
-        (begin
-          (set!
-            (array-ref operands 0)
-            (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
-          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            pools
-            operands
-            operand-count
-            fuel
-            embedded-verify-cookie
-            (compiler_ctfe.ctfe-reflect-info-list-empty))
-          (let
-            [ok : bool
-              (match (tlci_loader.tlci-loader-dispatch-macro
-                (& loaded)
-                "stdlib.core_macros/__tl-box-place"
-                embedded-verify-cookie
-                (__tl_make-array i64 0)
-                0)
-                [(Err _) false]
-                [(Ok dispatch)
-                  (and
-                    (= dispatch.status expected-status)
-                    (not
-                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))])]
-            (begin
-              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-              (match (tlci_loader.tlci-loader-release loaded)
-                [(Ok) ok]
-                [(Err _) false])))))]))
+        (set!
+          (array-ref operands 0)
+          (compiler_ctfe.CompilerCtfeValue.Expr operand-node (Expr)))
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+          pools
+          operands
+          operand-count
+          fuel
+          embedded-verify-cookie
+          (compiler_ctfe.ctfe-reflect-info-list-empty))
+        (let
+          [ok : bool
+            (match (tlci_loader.tlci-loader-dispatch-macro
+              (& loaded)
+              "stdlib.core_macros/__tl-box-place"
+              embedded-verify-cookie
+              (__tl_make-array i64 0)
+              0)
+              [(Err _) false]
+              [(Ok dispatch)
+                (and
+                  (= dispatch.status expected-status)
+                  (not
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))])]
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (match (tlci_loader.tlci-loader-release loaded)
+            [(Ok) ok]
+            [(Err _) false])))]))
 
 (define (main) : i64
   (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
     [(Err message)
-      (begin
-        (io.print-error
-          (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
-        1)]
+      (io.print-error
+        (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
+      1]
     [(Ok count)
       (if (= count 159)
         (if (and

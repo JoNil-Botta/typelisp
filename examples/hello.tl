@@ -9,8 +9,7 @@
 (define (main) : i64
   (let
     [result : i64 (factorial 5)]
-    (begin
-      (io.print-format "{}" "Hello, TypeLisp!\n")
-      (io.print-format "{}" "factorial(5) = ")
-      (io.println "{}" result)
-      0)))
+    (io.print-format "{}" "Hello, TypeLisp!\n")
+    (io.print-format "{}" "factorial(5) = ")
+    (io.println "{}" result)
+    0))

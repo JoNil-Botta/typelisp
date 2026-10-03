@@ -12,18 +12,16 @@
           (= (cast (string.string-ref text 1) : i64) 120)
           false)
         false)]
-    (begin
-      (while (and ok (< index len))
-        (let
-          [code : i64 (cast (string.string-ref text index) : i64)]
-          (begin
-            (set!
-              ok
-              (if (and (>= code 48) (<= code 57))
-                true
-                (and (>= code 97) (<= code 102))))
-            (set! index (+ index 1)))))
-      ok)))
+    (while (and ok (< index len))
+      (let
+        [code : i64 (cast (string.string-ref text index) : i64)]
+        (set!
+          ok
+          (if (and (>= code 48) (<= code 57))
+            true
+            (and (>= code 97) (<= code 102))))
+        (set! index (+ index 1))))
+    ok))
 
 (define (format-borrowed-pointer [pointer : (& pointer (Ptr i64))]) : String
   (unsafe
@@ -104,34 +102,33 @@
     [borrowed-nonnull : String (format-borrowed-pointer (& pointer))]
     [borrowed-mut-nonnull : String
       (format-borrowed-mut-pointer (& mut-pointer))]
-    (begin
-      ;; The stdout macro and direct stderr String path share format.format.
-      (unsafe
-        (io.print-format "{:p}\n" null))
-      (io.print-error alternate)
-      (if (and
-        (string.eq plain "0x0")
-        (string.eq mut-plain "0x0")
-        (string.eq alternate "0x0000000000000000")
-        (string.eq width "                 0x0")
-        (string.eq alternate-short-width "0x00000000")
-        (string.eq alternate-wide "0x000000000000000000")
-        (string.eq zero "0x000000000000000000")
-        (string.eq left "0x0                 ")
-        (string.eq center "        0x0         ")
-        (string.eq fill-right "*****************0x0")
-        (string.eq zero-fill-right "000000000000000000x0")
-        (string.eq alternate-aligned "0x000000000000000000")
-        (string.eq plus "+0x0")
-        (string.eq plus-alternate "+0x000000000000000")
-        (string.eq precision-ignored "0x0")
-        (string.eq dynamic-width "   0x0")
-        (string.eq dynamic-alternate-width "0x000000000000000000")
-        (not (string.eq direct-nonnull "0x0"))
-        (pointer-shape? (& direct-nonnull))
-        (pointer-shape? (& mut-nonnull))
-        (string.eq direct-nonnull mut-nonnull)
-        (string.eq direct-nonnull borrowed-nonnull)
-        (string.eq direct-nonnull borrowed-mut-nonnull))
-        42
-        1))))
+    ;; The stdout macro and direct stderr String path share format.format.
+    (unsafe
+      (io.print-format "{:p}\n" null))
+    (io.print-error alternate)
+    (if (and
+      (string.eq plain "0x0")
+      (string.eq mut-plain "0x0")
+      (string.eq alternate "0x0000000000000000")
+      (string.eq width "                 0x0")
+      (string.eq alternate-short-width "0x00000000")
+      (string.eq alternate-wide "0x000000000000000000")
+      (string.eq zero "0x000000000000000000")
+      (string.eq left "0x0                 ")
+      (string.eq center "        0x0         ")
+      (string.eq fill-right "*****************0x0")
+      (string.eq zero-fill-right "000000000000000000x0")
+      (string.eq alternate-aligned "0x000000000000000000")
+      (string.eq plus "+0x0")
+      (string.eq plus-alternate "+0x000000000000000")
+      (string.eq precision-ignored "0x0")
+      (string.eq dynamic-width "   0x0")
+      (string.eq dynamic-alternate-width "0x000000000000000000")
+      (not (string.eq direct-nonnull "0x0"))
+      (pointer-shape? (& direct-nonnull))
+      (pointer-shape? (& mut-nonnull))
+      (string.eq direct-nonnull mut-nonnull)
+      (string.eq direct-nonnull borrowed-nonnull)
+      (string.eq direct-nonnull borrowed-mut-nonnull))
+      42
+      1)))

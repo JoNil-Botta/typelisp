@@ -20,7 +20,6 @@
   (let
     [result : i64
       (+ (code ' ') (+ (code '\n') (+ (code '\t') (+ (code '\r') (code '\0')))))]
-    (begin
-      (io.print-format "{}" "character literal code sum: ")
-      (io.println "{}" result)
-      result)))
+    (io.print-format "{}" "character literal code sum: ")
+    (io.println "{}" result)
+    result))

@@ -5,6 +5,5 @@
 (define (main) : i64
   (let
     [template : String "value={}"]
-    (begin
-      (io.eprintln template 7)
-      42)))
+    (io.eprintln template 7)
+    42))

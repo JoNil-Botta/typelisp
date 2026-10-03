@@ -118,35 +118,31 @@
     [state : i64 20250727]
     [cursor : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r routes)
-        (begin
+    (while (< r routes)
+      (set! state (rt-next-state state))
+      (let
+        [length : i64 (+ 2 (% (rt-draw state) 3))]
+        [k : i64 0]
+        (set! (array-ref route-start r) cursor)
+        (set! (array-ref route-length r) length)
+        (while (< k length)
           (set! state (rt-next-state state))
-          (let
-            [length : i64 (+ 2 (% (rt-draw state) 3))]
-            [k : i64 0]
+          (if (= (% (rt-draw state) 5) 0)
             (begin
-              (set! (array-ref route-start r) cursor)
-              (set! (array-ref route-length r) length)
-              (while (< k length)
-                (begin
-                  (set! state (rt-next-state state))
-                  (if (= (% (rt-draw state) 5) 0)
-                    (begin
-                      (set! (array-ref segment-kind (+ cursor k)) 1)
-                      (set! (array-ref segment-word (+ cursor k)) 0))
-                    (begin
-                      (set! (array-ref segment-kind (+ cursor k)) 0)
-                      (set!
-                        (array-ref segment-word (+ cursor k))
-                        (% (rt-draw state) rt-vocabulary-count))))
-                  (set! k (+ k 1))))
-              (set! cursor (+ cursor length))))
-          (set! state (rt-next-state state))
-          (set! (array-ref route-mask r) (+ 1 (% (rt-draw state) 15)))
-          (set! (array-ref route-handler r) (+ (* r 7) 13))
-          (set! r (+ r 1))))
-      unit)))
+              (set! (array-ref segment-kind (+ cursor k)) 1)
+              (set! (array-ref segment-word (+ cursor k)) 0))
+            (begin
+              (set! (array-ref segment-kind (+ cursor k)) 0)
+              (set!
+                (array-ref segment-word (+ cursor k))
+                (% (rt-draw state) rt-vocabulary-count))))
+          (set! k (+ k 1)))
+        (set! cursor (+ cursor length)))
+      (set! state (rt-next-state state))
+      (set! (array-ref route-mask r) (+ 1 (% (rt-draw state) 15)))
+      (set! (array-ref route-handler r) (+ (* r 7) 13))
+      (set! r (+ r 1)))
+    unit))
 
 ;; Match one route against `path[0, path-end)`. Returns the rolling hash of the
 ;; wildcard captures on success and -1 on failure. The whole path must be
@@ -164,54 +160,46 @@
     [k : i64 0]
     [ok : bool true]
     [hash : i64 0]
-    (begin
-      (while (and (< k length) ok)
-        (begin
-          (if (or (>= pos path-end) (not (= (string.string-ref path pos) '/')))
-            (set! ok false)
-            (let
-              [start : i64 (+ pos 1)]
-              (begin
-                (set! pos start)
-                (while (and
-                  (< pos path-end)
-                  (not (= (string.string-ref path pos) '/')))
-                  (set! pos (+ pos 1)))
+    (while (and (< k length) ok)
+      (if (or (>= pos path-end) (not (= (string.string-ref path pos) '/')))
+        (set! ok false)
+        (let
+          [start : i64 (+ pos 1)]
+          (set! pos start)
+          (while (and
+            (< pos path-end)
+            (not (= (string.string-ref path pos) '/')))
+            (set! pos (+ pos 1)))
+          (let
+            [span : i64 (- pos start)]
+            (if (= (array-ref segment-kind (+ base k)) 1)
+              (if (= span 0)
+                (set! ok false)
                 (let
-                  [span : i64 (- pos start)]
-                  (if (= (array-ref segment-kind (+ base k)) 1)
-                    (if (= span 0)
-                      (set! ok false)
-                      (let
-                        [b : i64 start]
-                        (while (< b pos)
-                          (begin
-                            (set!
-                              hash
-                              (%
-                                (+
-                                  (* hash 131)
-                                  (cast (string.string-ref path b) : i64))
-                                rt-modulus))
-                            (set! b (+ b 1))))))
-                    (let
-                      [word : i64 (array-ref segment-word (+ base k))]
-                      (if (!=
-                        span
-                        (string.string-length (array-ref words word)))
-                        (set! ok false)
-                        (let
-                          [b : i64 0]
-                          (while (and (< b span) ok)
-                            (if (=
-                              (string.string-ref path (+ start b))
-                              (string.string-ref (array-ref words word) b))
-                              (set! b (+ b 1))
-                              (set! ok false)))))))))))
-          (set! k (+ k 1))))
-      (if (and ok (= pos path-end))
-        hash
-        -1))))
+                  [b : i64 start]
+                  (while (< b pos)
+                    (set!
+                      hash
+                      (%
+                        (+ (* hash 131) (cast (string.string-ref path b) : i64))
+                        rt-modulus))
+                    (set! b (+ b 1)))))
+              (let
+                [word : i64 (array-ref segment-word (+ base k))]
+                (if (!= span (string.string-length (array-ref words word)))
+                  (set! ok false)
+                  (let
+                    [b : i64 0]
+                    (while (and (< b span) ok)
+                      (if (=
+                        (string.string-ref path (+ start b))
+                        (string.string-ref (array-ref words word) b))
+                        (set! b (+ b 1))
+                        (set! ok false))))))))))
+      (set! k (+ k 1)))
+    (if (and ok (= pos path-end))
+      hash
+      -1)))
 
 (define (rt-route-request
   [path : (& path str)]
@@ -231,36 +219,33 @@
     [r : i64 0]
     [captures : i64 -1]
     [handler : i64 0]
-    (begin
-      (while (and (< scan path-end) scanning)
-        (if (= (string.string-ref path scan) '?')
-          (begin
-            (set! path-end scan)
-            (set! scanning false))
-          (set! scan (+ scan 1))))
-      (while (and (< r routes) (< captures 0))
+    (while (and (< scan path-end) scanning)
+      (if (= (string.string-ref path scan) '?')
         (begin
+          (set! path-end scan)
+          (set! scanning false))
+        (set! scan (+ scan 1))))
+    (while (and (< r routes) (< captures 0))
+      (when
+        (!= (bit-and (array-ref route-mask r) method) 0)
+        (let
+          [hash : i64
+            (rt-match-route
+              path
+              path-end
+              words
+              segment-kind
+              segment-word
+              (array-ref route-start r)
+              (array-ref route-length r))]
           (when
-            (!= (bit-and (array-ref route-mask r) method) 0)
-            (let
-              [hash : i64
-                (rt-match-route
-                  path
-                  path-end
-                  words
-                  segment-kind
-                  segment-word
-                  (array-ref route-start r)
-                  (array-ref route-length r))]
-              (when
-                (>= hash 0)
-                (begin
-                  (set! captures hash)
-                  (set! handler (array-ref route-handler r))))))
-          (set! r (+ r 1))))
-      (if (< captures 0)
-        rt-miss-mark
-        (% (+ (* handler 1000003) (* captures 31) method) rt-modulus)))))
+            (>= hash 0)
+            (set! captures hash)
+            (set! handler (array-ref route-handler r)))))
+      (set! r (+ r 1)))
+    (if (< captures 0)
+      rt-miss-mark
+      (% (+ (* handler 1000003) (* captures 31) method) rt-modulus))))
 
 (define (rt-build-path
   [tokens : (& tokens (Array String 24))]
@@ -320,99 +305,83 @@
       (i64vec.view-mut (&mut route-mask))]
     [route-handler-slots : (&mut route-handler (Slice i64))
       (i64vec.view-mut (&mut route-handler))]
-    (begin
-      (rt-build-table
-        segment-kind-slots
-        segment-word-slots
-        route-start-slots
-        route-length-slots
-        route-mask-slots
-        route-handler-slots
-        routes)
-      (while (< round rounds)
-        (begin
-          (set! i 0)
-          (while (< i requests)
-            (begin
-              (set! state (rt-next-state state))
-              (if (< (% (rt-draw state) 10) 7)
+    (rt-build-table
+      segment-kind-slots
+      segment-word-slots
+      route-start-slots
+      route-length-slots
+      route-mask-slots
+      route-handler-slots
+      routes)
+    (while (< round rounds)
+      (set! i 0)
+      (while (< i requests)
+        (set! state (rt-next-state state))
+        (if (< (% (rt-draw state) 10) 7)
+          (begin
+            (set! state (rt-next-state state))
+            (set! route (% (rt-draw state) routes))
+            (set! base (array-ref route-start-slots route))
+            (set! segments (array-ref route-length-slots route))
+            (set! k 0)
+            (while (< k segments)
+              (if (= (array-ref segment-kind-slots (+ base k)) 1)
                 (begin
                   (set! state (rt-next-state state))
-                  (set! route (% (rt-draw state) routes))
-                  (set! base (array-ref route-start-slots route))
-                  (set! segments (array-ref route-length-slots route))
-                  (set! k 0)
-                  (while (< k segments)
-                    (begin
-                      (if (= (array-ref segment-kind-slots (+ base k)) 1)
-                        (begin
-                          (set! state (rt-next-state state))
-                          (set!
-                            (array-ref choice k)
-                            (+ rt-junk-base (% (rt-draw state) rt-junk-count))))
-                        (set!
-                          (array-ref choice k)
-                          (array-ref segment-word-slots (+ base k))))
-                      (set! k (+ k 1))))
-                  (set! state (rt-next-state state))
-                  (set! method (shl 1 (% (rt-draw state) 4)))
-                  (while (=
-                    (bit-and (array-ref route-mask-slots route) method)
-                    0)
-                    (begin
-                      (set! method (shl method 1))
-                      (when (> method 8) (set! method 1)))))
-                (begin
-                  (set! state (rt-next-state state))
-                  (set! segments (+ 2 (% (rt-draw state) 3)))
-                  (set! k 0)
-                  (while (< k segments)
-                    (begin
-                      (set! state (rt-next-state state))
-                      (set!
-                        (array-ref choice k)
-                        (% (rt-draw state) rt-token-count))
-                      (set! k (+ k 1))))
-                  (set! state (rt-next-state state))
-                  (set! method (shl 1 (% (rt-draw state) 4)))))
-              (set! state (rt-next-state state))
-              (if (< (% (rt-draw state) 10) 2)
-                (set! query 1)
-                (set! query 0))
-              (let
-                [path : String
-                  (rt-build-path
-                    (& tokens)
-                    (& queries)
-                    (& choice)
-                    segments
-                    query)]
+                  (set!
+                    (array-ref choice k)
+                    (+ rt-junk-base (% (rt-draw state) rt-junk-count))))
                 (set!
-                  acc
-                  (%
-                    (+
-                      (* acc 131)
-                      (rt-route-request
-                        path
-                        method
-                        (& words)
-                        segment-kind-slots
-                        segment-word-slots
-                        route-start-slots
-                        route-length-slots
-                        route-mask-slots
-                        route-handler-slots
-                        routes))
-                    rt-modulus)))
-              (set! i (+ i 1))))
-          (set! round (+ round 1))))
-      acc)))
+                  (array-ref choice k)
+                  (array-ref segment-word-slots (+ base k))))
+              (set! k (+ k 1)))
+            (set! state (rt-next-state state))
+            (set! method (shl 1 (% (rt-draw state) 4)))
+            (while (= (bit-and (array-ref route-mask-slots route) method) 0)
+              (set! method (shl method 1))
+              (when (> method 8) (set! method 1))))
+          (begin
+            (set! state (rt-next-state state))
+            (set! segments (+ 2 (% (rt-draw state) 3)))
+            (set! k 0)
+            (while (< k segments)
+              (set! state (rt-next-state state))
+              (set! (array-ref choice k) (% (rt-draw state) rt-token-count))
+              (set! k (+ k 1)))
+            (set! state (rt-next-state state))
+            (set! method (shl 1 (% (rt-draw state) 4)))))
+        (set! state (rt-next-state state))
+        (if (< (% (rt-draw state) 10) 2)
+          (set! query 1)
+          (set! query 0))
+        (let
+          [path : String
+            (rt-build-path (& tokens) (& queries) (& choice) segments query)]
+          (set!
+            acc
+            (%
+              (+
+                (* acc 131)
+                (rt-route-request
+                  path
+                  method
+                  (& words)
+                  segment-kind-slots
+                  segment-word-slots
+                  route-start-slots
+                  route-length-slots
+                  route-mask-slots
+                  route-handler-slots
+                  routes))
+              rt-modulus)))
+        (set! i (+ i 1)))
+      (set! round (+ round 1)))
+    acc))
 
 (define (main) : i64
   (let
     [routes : i64 (string.>int (io.arg 1))]
     [requests : i64 (string.>int (io.arg 2))]
     [rounds : i64 (string.>int (io.arg 3))]
-    (begin
-      (io.println "{}" (rt-bench routes requests rounds))
-      0)))
+    (io.println "{}" (rt-bench routes requests rounds))
+    0))

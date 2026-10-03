@@ -143,12 +143,10 @@
   (let
     [value : u64 (cast byte : u64)]
     [bits : i64 0]
-    (begin
-      (while (> value (cast 0 : u64))
-        (begin
-          (set! bits (+ bits 1))
-          (set! value (shr value 1))))
-      bits)))
+    (while (> value (cast 0 : u64))
+      (set! bits (+ bits 1))
+      (set! value (shr value 1)))
+    bits))
 
 ;: Exact bit length of a canonical nonempty big-endian magnitude.
 (define (canonical-byte-bit-length [bytes : (& bytes bytes)]) : i64
@@ -162,14 +160,12 @@
     [value : u64 (cast 0 : u64)]
     [index : i64 0]
     [length : i64 (byte_buf.bytes-length bytes)]
-    (begin
-      (while (< index length)
-        (begin
-          (set!
-            value
-            (bit-or (shl value 8) (cast (byte_buf.bytes-ref bytes index) : u64)))
-          (set! index (+ index 1))))
-      value)))
+    (while (< index length)
+      (set!
+        value
+        (bit-or (shl value 8) (cast (byte_buf.bytes-ref bytes index) : u64)))
+      (set! index (+ index 1)))
+    value))
 
 ;: Allocate a zero public integer in an already validated capacity class.
 (define (zero-integer [capacity : i64] [octet-width : i64]) : RsaPublicInteger
@@ -181,10 +177,9 @@
   [limit : i64]) : i64
   (let
     [count : i64 limit]
-    (begin
-      (while (and (> count 0) (= (array-ref limbs (- count 1)) (cast 0 : u32)))
-        (set! count (- count 1)))
-      count)))
+    (while (and (> count 0) (= (array-ref limbs (- count 1)) (cast 0 : u32)))
+      (set! count (- count 1)))
+    count))
 
 ;: Decode a bounded big-endian magnitude into base-2^32 little-endian limbs.
 (define (integer-from-bytes-in-class
@@ -195,33 +190,30 @@
     [out : RsaPublicInteger (zero-integer capacity octet-width)]
     [length : i64 (byte_buf.bytes-length bytes)]
     [from-end : i64 0]
-    (begin
-      (while (< from-end length)
-        (let
-          [limb-index : i64 (/ from-end 4)]
-          [shift : i64 (* (% from-end 4) 8)]
-          [source-index : i64 (- (- length 1) from-end)]
-          [part : u64
-            (shl (cast (byte_buf.bytes-ref bytes source-index) : u64) shift)]
-          [current : u64 (cast (array-ref out.limbs limb-index) : u64)]
-          (begin
-            (set!
-              (array-ref out.limbs limb-index)
-              (cast (bit-or current part) : u32))
-            (set! from-end (+ from-end 1)))))
-      (set!
-        out.limb-count
-        (normalized-limb-count (& out.limbs) (/ (+ length 3) 4)))
-      out)))
+    (while (< from-end length)
+      (let
+        [limb-index : i64 (/ from-end 4)]
+        [shift : i64 (* (% from-end 4) 8)]
+        [source-index : i64 (- (- length 1) from-end)]
+        [part : u64
+          (shl (cast (byte_buf.bytes-ref bytes source-index) : u64) shift)]
+        [current : u64 (cast (array-ref out.limbs limb-index) : u64)]
+        (set!
+          (array-ref out.limbs limb-index)
+          (cast (bit-or current part) : u32))
+        (set! from-end (+ from-end 1))))
+    (set!
+      out.limb-count
+      (normalized-limb-count (& out.limbs) (/ (+ length 3) 4)))
+    out))
 
 ;: Return a same-class integer containing one.
 (define (one-like [value : (& value RsaPublicInteger)]) : RsaPublicInteger
   (let
     [out : RsaPublicInteger (zero-integer value.capacity value.octet-width)]
-    (begin
-      (set! (array-ref out.limbs 0) (cast 1 : u32))
-      (set! out.limb-count 1)
-      out)))
+    (set! (array-ref out.limbs 0) (cast 1 : u32))
+    (set! out.limb-count 1)
+    out))
 
 ;: Compare exactly `count` low limbs, returning -1, 0, or 1.
 (define (compare-limbs
@@ -232,24 +224,20 @@
     [index : i64 (- count 1)]
     [result : i64 0]
     [done : bool false]
-    (begin
-      (while (and (>= index 0) (not done))
-        (let
-          [a : u32 (array-ref left index)]
-          [b : u32 (array-ref right index)]
-          (begin
-            (cond
-              [(> a b)
-                (begin
-                  (set! result 1)
-                  (set! done true))]
-              [(< a b)
-                (begin
-                  (set! result -1)
-                  (set! done true))]
-              [else unit])
-            (set! index (- index 1)))))
-      result)))
+    (while (and (>= index 0) (not done))
+      (let
+        [a : u32 (array-ref left index)]
+        [b : u32 (array-ref right index)]
+        (cond
+          [(> a b)
+            (set! result 1)
+            (set! done true)]
+          [(< a b)
+            (set! result -1)
+            (set! done true)]
+          [else unit])
+        (set! index (- index 1))))
+    result))
 
 ;: Subtract `modulus` once from the low limbs of `value`. The caller proves
 ;: that its optional implicit top limb and the final borrow cancel exactly:
@@ -262,26 +250,24 @@
   (let
     [borrow : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [a : u64 (cast (array-ref value.limbs index) : u64)]
-          [subtrahend : u64
-            (+ (cast (array-ref modulus.limbs index) : u64) borrow)]
-          [underflow : bool (< a subtrahend)]
-          [difference : u64
-            (if underflow
-              (- (+ rsa-limb-radix a) subtrahend)
-              (- a subtrahend))]
-          (begin
-            (set! (array-ref value.limbs index) (cast difference : u32))
-            (set!
-              borrow
-              (if underflow
-                (cast 1 : u64)
-                (cast 0 : u64)))
-            (set! index (+ index 1)))))
-      unit)))
+    (while (< index count)
+      (let
+        [a : u64 (cast (array-ref value.limbs index) : u64)]
+        [subtrahend : u64
+          (+ (cast (array-ref modulus.limbs index) : u64) borrow)]
+        [underflow : bool (< a subtrahend)]
+        [difference : u64
+          (if underflow
+            (- (+ rsa-limb-radix a) subtrahend)
+            (- a subtrahend))]
+        (set! (array-ref value.limbs index) (cast difference : u32))
+        (set!
+          borrow
+          (if underflow
+            (cast 1 : u64)
+            (cast 0 : u64)))
+        (set! index (+ index 1))))
+    unit))
 
 ;: Double one value below `modulus` and reduce it with at most one subtraction.
 (define (double-modulus!
@@ -291,24 +277,21 @@
     [count : i64 modulus.limb-count]
     [carry : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [twice : u64
-            (+ (* (cast (array-ref value.limbs index) : u64) 2) carry)]
-          (begin
-            (set!
-              (array-ref value.limbs index)
-              (cast (bit-and twice rsa-limb-mask) : u32))
-            (set! carry (shr twice 32))
-            (set! index (+ index 1)))))
-      (if (or
-        (> carry (cast 0 : u64))
-        (>= (compare-limbs (& value.limbs) (& modulus.limbs) count) 0))
-        (subtract-modulus-once! value modulus count)
-        unit)
-      (set! value.limb-count (normalized-limb-count (& value.limbs) count))
-      unit)))
+    (while (< index count)
+      (let
+        [twice : u64 (+ (* (cast (array-ref value.limbs index) : u64) 2) carry)]
+        (set!
+          (array-ref value.limbs index)
+          (cast (bit-and twice rsa-limb-mask) : u32))
+        (set! carry (shr twice 32))
+        (set! index (+ index 1))))
+    (if (or
+      (> carry (cast 0 : u64))
+      (>= (compare-limbs (& value.limbs) (& modulus.limbs) count) 0))
+      (subtract-modulus-once! value modulus count)
+      unit)
+    (set! value.limb-count (normalized-limb-count (& value.limbs) count))
+    unit))
 
 ;: Add two checked values below `modulus` and reduce the first in place. The
 ;: n-limb sum is below 2n, so its explicit carry is consumed by at most one
@@ -321,28 +304,26 @@
     [count : i64 modulus.limb-count]
     [carry : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [sum : u64
+    (while (< index count)
+      (let
+        [sum : u64
+          (+
             (+
-              (+
-                (cast (array-ref left.limbs index) : u64)
-                (cast (array-ref right.limbs index) : u64))
-              carry)]
-          (begin
-            (set!
-              (array-ref left.limbs index)
-              (cast (bit-and sum rsa-limb-mask) : u32))
-            (set! carry (shr sum 32))
-            (set! index (+ index 1)))))
-      (if (or
-        (> carry (cast 0 : u64))
-        (>= (compare-limbs (& left.limbs) (& modulus.limbs) count) 0))
-        (subtract-modulus-once! left modulus count)
-        unit)
-      (set! left.limb-count (normalized-limb-count (& left.limbs) count))
-      unit)))
+              (cast (array-ref left.limbs index) : u64)
+              (cast (array-ref right.limbs index) : u64))
+            carry)]
+        (set!
+          (array-ref left.limbs index)
+          (cast (bit-and sum rsa-limb-mask) : u32))
+        (set! carry (shr sum 32))
+        (set! index (+ index 1))))
+    (if (or
+      (> carry (cast 0 : u64))
+      (>= (compare-limbs (& left.limbs) (& modulus.limbs) count) 0))
+      (subtract-modulus-once! left modulus count)
+      unit)
+    (set! left.limb-count (normalized-limb-count (& left.limbs) count))
+    unit))
 
 ;: Compute -n[0]^-1 modulo 2^32 for one odd low limb.
 (define (montgomery-n0-inverse [low-limb : u32]) : u64
@@ -350,16 +331,14 @@
     [n : u64 (cast low-limb : u64)]
     [inverse : u64 (cast 1 : u64)]
     [round : i64 0]
-    (begin
-      ;; Each Newton round doubles the number of correct low bits.
-      (while (< round 5)
-        (let
-          [product-low : u64 (bit-and (* n inverse) rsa-limb-mask)]
-          [factor : u64 (bit-and (- (cast 2 : u64) product-low) rsa-limb-mask)]
-          (begin
-            (set! inverse (bit-and (* inverse factor) rsa-limb-mask))
-            (set! round (+ round 1)))))
-      (bit-and (- rsa-limb-radix inverse) rsa-limb-mask))))
+    ;; Each Newton round doubles the number of correct low bits.
+    (while (< round 5)
+      (let
+        [product-low : u64 (bit-and (* n inverse) rsa-limb-mask)]
+        [factor : u64 (bit-and (- (cast 2 : u64) product-low) rsa-limb-mask)]
+        (set! inverse (bit-and (* inverse factor) rsa-limb-mask))
+        (set! round (+ round 1))))
+    (bit-and (- rsa-limb-radix inverse) rsa-limb-mask)))
 
 ;: Compute R^2 mod n by 64*n checked modular doublings.
 (define (montgomery-r-squared [modulus : (& modulus RsaPublicInteger)]) : RsaPublicInteger
@@ -367,12 +346,10 @@
     [value : RsaPublicInteger (one-like modulus)]
     [rounds : i64 (* modulus.limb-count 64)]
     [round : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
-          (double-modulus! (&mut value) modulus)
-          (set! round (+ round 1))))
-      value)))
+    (while (< round rounds)
+      (double-modulus! (&mut value) modulus)
+      (set! round (+ round 1)))
+    value))
 
 ;: Multiply two n-limb inputs into a zeroed 2n+2-limb u64 scratch. Scratch
 ;: slots always contain one low 32-bit limb after each committed inner step.
@@ -383,31 +360,26 @@
   (let
     [wide : (__tl_dyn-array u64) (__tl_make-array u64 (+ (* count 2) 2))]
     [left-index : i64 0]
-    (begin
-      (while (< left-index count)
-        (let
-          [left-limb : u64 (cast (array-ref left.limbs left-index) : u64)]
-          [right-index : i64 0]
-          [carry : u64 (cast 0 : u64)]
-          (begin
-            (while (< right-index count)
-              (let
-                [wide-index : i64 (+ left-index right-index)]
-                [sum : u64
-                  (+
-                    (+
-                      (array-ref wide wide-index)
-                      (*
-                        left-limb
-                        (cast (array-ref right.limbs right-index) : u64)))
-                    carry)]
-                (begin
-                  (set! (array-ref wide wide-index) (bit-and sum rsa-limb-mask))
-                  (set! carry (shr sum 32))
-                  (set! right-index (+ right-index 1)))))
-            (set! (array-ref wide (+ left-index count)) carry)
-            (set! left-index (+ left-index 1)))))
-      wide)))
+    (while (< left-index count)
+      (let
+        [left-limb : u64 (cast (array-ref left.limbs left-index) : u64)]
+        [right-index : i64 0]
+        [carry : u64 (cast 0 : u64)]
+        (while (< right-index count)
+          (let
+            [wide-index : i64 (+ left-index right-index)]
+            [sum : u64
+              (+
+                (+
+                  (array-ref wide wide-index)
+                  (* left-limb (cast (array-ref right.limbs right-index) : u64)))
+                carry)]
+            (set! (array-ref wide wide-index) (bit-and sum rsa-limb-mask))
+            (set! carry (shr sum 32))
+            (set! right-index (+ right-index 1))))
+        (set! (array-ref wide (+ left-index count)) carry)
+        (set! left-index (+ left-index 1))))
+    wide))
 
 ;: Montgomery product `left * right * R^-1 mod modulus` using classic REDC.
 ;: All operands are public and below `modulus`.
@@ -420,59 +392,51 @@
     [count : i64 modulus.limb-count]
     [wide : (__tl_dyn-array u64) (schoolbook-product left right count)]
     [outer : i64 0]
-    (begin
-      (while (< outer count)
-        (let
-          [factor : u64
-            (bit-and (* (array-ref wide outer) n0-inverse) rsa-limb-mask)]
-          [inner : i64 0]
-          [carry : u64 (cast 0 : u64)]
-          (begin
-            (while (< inner count)
-              (let
-                [index : i64 (+ outer inner)]
-                [sum : u64
-                  (+
-                    (+
-                      (array-ref wide index)
-                      (* factor (cast (array-ref modulus.limbs inner) : u64)))
-                    carry)]
-                (begin
-                  (set! (array-ref wide index) (bit-and sum rsa-limb-mask))
-                  (set! carry (shr sum 32))
-                  (set! inner (+ inner 1)))))
-            (let
-              [carry-index : i64 (+ outer count)]
-              (while (> carry (cast 0 : u64))
-                (let
-                  [sum : u64 (+ (array-ref wide carry-index) carry)]
-                  (begin
-                    (set!
-                      (array-ref wide carry-index)
-                      (bit-and sum rsa-limb-mask))
-                    (set! carry (shr sum 32))
-                    (set! carry-index (+ carry-index 1))))))
-            (set! outer (+ outer 1)))))
+    (while (< outer count)
       (let
-        [out : RsaPublicInteger
-          (zero-integer modulus.capacity modulus.octet-width)]
-        [copy-index : i64 0]
-        (begin
-          (while (< copy-index count)
-            (begin
-              (set!
-                (array-ref out.limbs copy-index)
-                (cast (array-ref wide (+ count copy-index)) : u32))
-              (set! copy-index (+ copy-index 1))))
+        [factor : u64
+          (bit-and (* (array-ref wide outer) n0-inverse) rsa-limb-mask)]
+        [inner : i64 0]
+        [carry : u64 (cast 0 : u64)]
+        (while (< inner count)
           (let
-            [top : u64 (array-ref wide (* count 2))]
-            (if (or
-              (> top (cast 0 : u64))
-              (>= (compare-limbs (& out.limbs) (& modulus.limbs) count) 0))
-              (subtract-modulus-once! (&mut out) modulus count)
-              unit))
-          (set! out.limb-count (normalized-limb-count (& out.limbs) count))
-          out)))))
+            [index : i64 (+ outer inner)]
+            [sum : u64
+              (+
+                (+
+                  (array-ref wide index)
+                  (* factor (cast (array-ref modulus.limbs inner) : u64)))
+                carry)]
+            (set! (array-ref wide index) (bit-and sum rsa-limb-mask))
+            (set! carry (shr sum 32))
+            (set! inner (+ inner 1))))
+        (let
+          [carry-index : i64 (+ outer count)]
+          (while (> carry (cast 0 : u64))
+            (let
+              [sum : u64 (+ (array-ref wide carry-index) carry)]
+              (set! (array-ref wide carry-index) (bit-and sum rsa-limb-mask))
+              (set! carry (shr sum 32))
+              (set! carry-index (+ carry-index 1)))))
+        (set! outer (+ outer 1))))
+    (let
+      [out : RsaPublicInteger
+        (zero-integer modulus.capacity modulus.octet-width)]
+      [copy-index : i64 0]
+      (while (< copy-index count)
+        (set!
+          (array-ref out.limbs copy-index)
+          (cast (array-ref wide (+ count copy-index)) : u32))
+        (set! copy-index (+ copy-index 1)))
+      (let
+        [top : u64 (array-ref wide (* count 2))]
+        (if (or
+          (> top (cast 0 : u64))
+          (>= (compare-limbs (& out.limbs) (& modulus.limbs) count) 0))
+          (subtract-modulus-once! (&mut out) modulus count)
+          unit))
+      (set! out.limb-count (normalized-limb-count (& out.limbs) count))
+      out)))
 
 ;: Convert a normal representative into the Montgomery domain.
 (define (to-montgomery
@@ -493,12 +457,10 @@
   (let
     [value : u64 exponent]
     [bits : i64 0]
-    (begin
-      (while (> value (cast 0 : u64))
-        (begin
-          (set! bits (+ bits 1))
-          (set! value (shr value 1))))
-      bits)))
+    (while (> value (cast 0 : u64))
+      (set! bits (+ bits 1))
+      (set! value (shr value 1)))
+    bits))
 
 ;: Number of Montgomery multiplications performed by exponentiation,
 ;: including conversion in/out but excluding key setup.
@@ -508,16 +470,12 @@
     [bits : i64 (exponent-bit-length key.exponent)]
     [ones : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index bits)
-        (begin
-          (if (!=
-            (bit-and (shr key.exponent index) (cast 1 : u64))
-            (cast 0 : u64))
-            (set! ones (+ ones 1))
-            unit)
-          (set! index (+ index 1))))
-      (+ (+ bits ones) 3))))
+    (while (< index bits)
+      (if (!= (bit-and (shr key.exponent index) (cast 1 : u64)) (cast 0 : u64))
+        (set! ones (+ ones 1))
+        unit)
+      (set! index (+ index 1)))
+    (+ (+ bits ones) 3)))
 
 ;: Conservative active-arena bytes retained by one exponentiation. Each
 ;: Montgomery multiply allocates one result and one 2n+2 u64 scratch. The
@@ -692,22 +650,20 @@
   (let
     [out : byte_buf.ByteBuf (byte_buf.with-capacity value.octet-width)]
     [output-index : i64 0]
-    (begin
-      (while (< output-index value.octet-width)
-        (let
-          [from-end : i64 (- (- value.octet-width 1) output-index)]
-          [limb-index : i64 (/ from-end 4)]
-          [shift : i64 (* (% from-end 4) 8)]
-          [byte : u8
-            (cast
-              (bit-and
-                (shr (cast (array-ref value.limbs limb-index) : u64) shift)
-                (cast 255 : u64))
-              : u8)]
-          (begin
-            (set! out (byte_buf.push out byte))
-            (set! output-index (+ output-index 1)))))
-      out)))
+    (while (< output-index value.octet-width)
+      (let
+        [from-end : i64 (- (- value.octet-width 1) output-index)]
+        [limb-index : i64 (/ from-end 4)]
+        [shift : i64 (* (% from-end 4) 8)]
+        [byte : u8
+          (cast
+            (bit-and
+              (shr (cast (array-ref value.limbs limb-index) : u64) shift)
+              (cast 255 : u64))
+            : u8)]
+        (set! out (byte_buf.push out byte))
+        (set! output-index (+ output-index 1))))
+    out))
 
 ;: Raise one exact-width public representative to the checked public exponent.
 (define (public-exponentiate
@@ -737,31 +693,29 @@
               [one : RsaPublicInteger (one-like (& key.modulus))]
               [result : RsaPublicInteger (to-montgomery (& one) key)]
               [bit : i64 (- (exponent-bit-length key.exponent) 1)]
-              (begin
-                (while (>= bit 0)
-                  (begin
-                    (set!
-                      result
-                      (montgomery-multiply
-                        (& result)
-                        (& result)
-                        (& key.modulus)
-                        key.n0-inverse))
-                    (if (!=
-                      (bit-and (shr key.exponent bit) (cast 1 : u64))
-                      (cast 0 : u64))
-                      (set!
-                        result
-                        (montgomery-multiply
-                          (& result)
-                          (& base)
-                          (& key.modulus)
-                          key.n0-inverse))
-                      unit)
-                    (set! bit (- bit 1))))
-                (let
-                  [finished : RsaPublicInteger (from-montgomery (& result) key)]
-                  (OkRsaPublicBytes (integer-to-bytes (& finished))))))))))))
+              (while (>= bit 0)
+                (set!
+                  result
+                  (montgomery-multiply
+                    (& result)
+                    (& result)
+                    (& key.modulus)
+                    key.n0-inverse))
+                (if (!=
+                  (bit-and (shr key.exponent bit) (cast 1 : u64))
+                  (cast 0 : u64))
+                  (set!
+                    result
+                    (montgomery-multiply
+                      (& result)
+                      (& base)
+                      (& key.modulus)
+                      key.n0-inverse))
+                  unit)
+                (set! bit (- bit 1)))
+              (let
+                [finished : RsaPublicInteger (from-montgomery (& result) key)]
+                (OkRsaPublicBytes (integer-to-bytes (& finished)))))))))))
 
 (test
   crypto-rsa-core-small-montgomery
@@ -770,43 +724,41 @@
     [left : RsaPublicInteger (zero-integer 64 256)]
     [right : RsaPublicInteger (zero-integer 64 256)]
     [sum : RsaPublicInteger (zero-integer 64 256)]
-    (begin
-      (set! (array-ref modulus.limbs 0) (cast 17 : u32))
-      (set! modulus.limb-count 1)
-      (set! (array-ref left.limbs 0) (cast 5 : u32))
-      (set! left.limb-count 1)
-      (set! (array-ref right.limbs 0) (cast 7 : u32))
-      (set! right.limb-count 1)
-      (set! (array-ref sum.limbs 0) (cast 13 : u32))
-      (set! sum.limb-count 1)
-      (add-modulus! (&mut sum) (& right) (& modulus))
+    (set! (array-ref modulus.limbs 0) (cast 17 : u32))
+    (set! modulus.limb-count 1)
+    (set! (array-ref left.limbs 0) (cast 5 : u32))
+    (set! left.limb-count 1)
+    (set! (array-ref right.limbs 0) (cast 7 : u32))
+    (set! right.limb-count 1)
+    (set! (array-ref sum.limbs 0) (cast 13 : u32))
+    (set! sum.limb-count 1)
+    (add-modulus! (&mut sum) (& right) (& modulus))
+    (test.assert-i64-eq
+      (cast (array-ref sum.limbs 0) : i64)
+      3
+      "RSA bounded add and conditional subtract")
+    (let
+      [inverse : u64 (montgomery-n0-inverse (cast 17 : u32))]
+      [r-squared : RsaPublicInteger (montgomery-r-squared (& modulus))]
+      [key : RsaPublicKey
+        (RsaPublicKey modulus r-squared (cast 3 : u64) 2048 2048 inverse)]
+      [left-mont : RsaPublicInteger (to-montgomery (& left) (& key))]
+      [right-mont : RsaPublicInteger (to-montgomery (& right) (& key))]
+      [product-mont : RsaPublicInteger
+        (montgomery-multiply
+          (& left-mont)
+          (& right-mont)
+          (& key.modulus)
+          key.n0-inverse)]
+      [product : RsaPublicInteger (from-montgomery (& product-mont) (& key))]
       (test.assert-i64-eq
-        (cast (array-ref sum.limbs 0) : i64)
-        3
-        "RSA bounded add and conditional subtract")
-      (let
-        [inverse : u64 (montgomery-n0-inverse (cast 17 : u32))]
-        [r-squared : RsaPublicInteger (montgomery-r-squared (& modulus))]
-        [key : RsaPublicKey
-          (RsaPublicKey modulus r-squared (cast 3 : u64) 2048 2048 inverse)]
-        [left-mont : RsaPublicInteger (to-montgomery (& left) (& key))]
-        [right-mont : RsaPublicInteger (to-montgomery (& right) (& key))]
-        [product-mont : RsaPublicInteger
-          (montgomery-multiply
-            (& left-mont)
-            (& right-mont)
-            (& key.modulus)
-            key.n0-inverse)]
-        [product : RsaPublicInteger (from-montgomery (& product-mont) (& key))]
-        (begin
-          (test.assert-i64-eq
-            (cast (array-ref product.limbs 0) : i64)
-            1
-            "RSA small Montgomery product")
-          (test.assert-true
-            (=
-              (bit-and
-                (* (cast (array-ref key.modulus.limbs 0) : u64) key.n0-inverse)
-                rsa-limb-mask)
-              rsa-limb-mask)
-            "RSA Montgomery inverse"))))))
+        (cast (array-ref product.limbs 0) : i64)
+        1
+        "RSA small Montgomery product")
+      (test.assert-true
+        (=
+          (bit-and
+            (* (cast (array-ref key.modulus.limbs 0) : u64) key.n0-inverse)
+            rsa-limb-mask)
+          rsa-limb-mask)
+        "RSA Montgomery inverse"))))

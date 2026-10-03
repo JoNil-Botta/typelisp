@@ -54,24 +54,20 @@
   (let
     [index : i64 0]
     [total : i64 0]
-    (begin
-      (while (< index (string.string-length text))
-        (begin
-          (set! total (+ total (cast (string.string-ref text index) : i64)))
-          (set! index (+ index 1))))
-      total)))
+    (while (< index (string.string-length text))
+      (set! total (+ total (cast (string.string-ref text index) : i64)))
+      (set! index (+ index 1)))
+    total))
 
 ;; Sum of the first `count` bytes of `buffer`.
 (define (prefix-sum [buffer : (& buffer byte_buf.ByteBuf)] [count : i64]) : i64
   (let
     [index : i64 0]
     [total : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! total (+ total (cast (byte_buf.ref buffer index) : i64)))
-          (set! index (+ index 1))))
-      total)))
+    (while (< index count)
+      (set! total (+ total (cast (byte_buf.ref buffer index) : i64)))
+      (set! index (+ index 1)))
+    total))
 
 (define (byte-at [buffer : (& buffer byte_buf.ByteBuf)] [index : i64]) : i64
   (cast (byte_buf.ref buffer index) : i64))
@@ -81,12 +77,10 @@
   (let
     [slots : (__tl_dyn-array u8) (__tl_make-array u8 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) (cast (+ index 1) : u8))
-          (set! index (+ index 1))))
-      (byte_buf.from-array slots))))
+    (while (< index count)
+      (set! (array-ref slots index) (cast (+ index 1) : u8))
+      (set! index (+ index 1)))
+    (byte_buf.from-array slots)))
 
 (define (zero-buf [count : i64]) : byte_buf.ByteBuf
   (byte_buf.from-array (__tl_make-array u8 count)))
@@ -95,26 +89,23 @@
   (let
     [slots : (__tl_dyn-array u8) (__tl_make-array u8 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) (cast 97 : u8))
-          (set! index (+ index 1))))
-      (let
-        [buffer : byte_buf.ByteBuf (byte_buf.from-array slots)]
-        (byte_buf.bytes-to-string (byte_buf.as-bytes (& buffer)))))))
+    (while (< index count)
+      (set! (array-ref slots index) (cast 97 : u8))
+      (set! index (+ index 1)))
+    (let
+      [buffer : byte_buf.ByteBuf (byte_buf.from-array slots)]
+      (byte_buf.bytes-to-string (byte_buf.as-bytes (& buffer))))))
 
 (define (text-with-nul) : String
   (let
     [slots : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-    (begin
-      (set! (array-ref slots 0) (cast 47 : u8))
-      (set! (array-ref slots 1) (cast 97 : u8))
-      (set! (array-ref slots 2) (cast 0 : u8))
-      (set! (array-ref slots 3) (cast 98 : u8))
-      (let
-        [buffer : byte_buf.ByteBuf (byte_buf.from-array slots)]
-        (byte_buf.bytes-to-string (byte_buf.as-bytes (& buffer)))))))
+    (set! (array-ref slots 0) (cast 47 : u8))
+    (set! (array-ref slots 1) (cast 97 : u8))
+    (set! (array-ref slots 2) (cast 0 : u8))
+    (set! (array-ref slots 3) (cast 98 : u8))
+    (let
+      [buffer : byte_buf.ByteBuf (byte_buf.from-array slots)]
+      (byte_buf.bytes-to-string (byte_buf.as-bytes (& buffer))))))
 
 (define (reject-peer [_peer : local_ipc.LocalIpcPeer]) : bool
   false)
@@ -188,21 +179,20 @@
     ([connection (open context) local_ipc.cleanup-local-ipc-connection])
     (let
       [buffer : byte_buf.ByteBuf (zero-buf 8)]
-      (begin
-        (if close-first
-          (begin
-            (local_ipc.close! (&mut connection))
-            unit)
+      (if close-first
+        (begin
+          (local_ipc.close! (&mut connection))
           unit)
-        (local_ipc.read-wait!
-          (&mut connection)
-          (byte_buf.as-mut-bytes (&mut buffer))
-          0
-          8
-          deadline-ms
-          (lambda () : bool
-            (fake.canceled? context))
-          work-budget)))))
+        unit)
+      (local_ipc.read-wait!
+        (&mut connection)
+        (byte_buf.as-mut-bytes (&mut buffer))
+        0
+        8
+        deadline-ms
+        (lambda () : bool
+          (fake.canceled? context))
+        work-budget))))
 
 ;; One 10-byte write-all of the bytes 1..10 on a fresh connection.
 (define (write-all-case [context : i64] [deadline-ms : i64] [work-budget : i64]) : local_ipc.LocalIpcTransfer
@@ -240,136 +230,130 @@
     [pipe-long-ok : String (str_cat.str-cat "\\\\.\\pipe\\" (repeat-char 247))]
     [pipe-long-bad : String (str_cat.str-cat "\\\\.\\pipe\\" (repeat-char 248))]
     [with-nul : String (text-with-nul)]
-    (begin
-      (set!
+    (set!
+      failed
+      (first-failure failed (local_ipc.unix-path-valid? "/run/agent.sock") 1))
+    (set! failed (first-failure failed (not (local_ipc.unix-path-valid? "")) 2))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (local_ipc.unix-path-valid? "/run/agent.sock") 1))
-      (set!
+        (not (local_ipc.unix-path-valid? "run/agent.sock"))
+        3))
+    (set!
+      failed
+      (first-failure failed (local_ipc.unix-path-valid? (& long-ok)) 4))
+    (set!
+      failed
+      (first-failure failed (not (local_ipc.unix-path-valid? (& long-bad))) 5))
+    (set!
+      failed
+      (first-failure failed (not (local_ipc.unix-path-valid? (& with-nul))) 6))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (not (local_ipc.unix-path-valid? "")) 2))
-      (set!
+        (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent")
+        7))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.unix-path-valid? "run/agent.sock"))
-          3))
-      (set!
+        (local_ipc.windows-pipe-valid? "\\\\.\\PIPE\\agent")
+        8))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (local_ipc.unix-path-valid? (& long-ok)) 4))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\server\\pipe\\agent"))
+        9))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (not (local_ipc.unix-path-valid? (& long-bad))) 5))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\"))
+        10))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (not (local_ipc.unix-path-valid? (& with-nul))) 6))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a\\b"))
+        11))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent")
-          7))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "//./pipe/agent"))
+        12))
+    (set!
+      failed
+      (first-failure failed (not (local_ipc.windows-pipe-valid? "")) 13))
+    (set!
+      failed
+      (first-failure failed (local_ipc.windows-pipe-valid? (& pipe-long-ok)) 14))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? "\\\\.\\PIPE\\agent")
-          8))
-      (set!
+        (not (local_ipc.windows-pipe-valid? (& pipe-long-bad)))
+        15))
+    ;; Win32 rewrites these names before opening them, so they are rejected.
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\server\\pipe\\agent"))
-          9))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a/b"))
+        16))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\"))
-          10))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent."))
+        17))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a\\b"))
-          11))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent "))
+        18))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "//./pipe/agent"))
-          12))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\."))
+        19))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (not (local_ipc.windows-pipe-valid? "")) 13))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.."))
+        24))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? (& pipe-long-ok))
-          14))
-      (set!
+        (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\/agent"))
+        25))
+    ;; Inner and leading dots and inner spaces are ordinary name bytes.
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? (& pipe-long-bad)))
-          15))
-      ;; Win32 rewrites these names before opening them, so they are rejected.
-      (set!
+        (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\openssh-ssh-agent")
+        26))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a/b"))
-          16))
-      (set!
+        (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a.b c")
+        27))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent."))
-          17))
-      (set!
-        failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\agent "))
-          18))
-      (set!
-        failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\."))
-          19))
-      (set!
-        failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.."))
-          24))
-      (set!
-        failed
-        (first-failure
-          failed
-          (not (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\/agent"))
-          25))
-      ;; Inner and leading dots and inner spaces are ordinary name bytes.
-      (set!
-        failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\openssh-ssh-agent")
-          26))
-      (set!
-        failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\a.b c")
-          27))
-      (set!
-        failed
-        (first-failure
-          failed
-          (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.agent")
-          28))
-      failed)))
+        (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.agent")
+        28))
+    failed))
 
 (define (unix-path-row
   [failed : i64]
@@ -396,36 +380,35 @@
             local_ipc.never-canceled
             16)
           local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (set! failed (unix-path-row failed "/" false 250))
-        (set! failed (unix-path-row failed "//run/agent.sock" false 251))
-        (set! failed (unix-path-row failed "/run//agent.sock" false 252))
-        (set! failed (unix-path-row failed "/run/agent.sock/" false 253))
-        (set! failed (unix-path-row failed "/run/./agent.sock" false 254))
-        (set! failed (unix-path-row failed "/run/../agent.sock" false 255))
-        (set! failed (unix-path-row failed "/run/agent.sock/." false 256))
-        (set! failed (unix-path-row failed "/run/agent.sock/.." false 257))
-        (set! failed (unix-path-row failed "/." false 258))
-        (set! failed (unix-path-row failed "/.." false 259))
-        (set! failed (unix-path-row failed "/a" true 260))
-        (set! failed (unix-path-row failed "/run/.agent" true 261))
-        (set! failed (unix-path-row failed "/run/..agent" true 262))
-        (set! failed (unix-path-row failed "/run/agent." true 263))
-        (set! failed (unix-path-row failed "/..." true 264))
-        (set! failed (unix-path-row failed "/run/a..b/c.d" true 265))
-        (set!
+      (set! failed (unix-path-row failed "/" false 250))
+      (set! failed (unix-path-row failed "//run/agent.sock" false 251))
+      (set! failed (unix-path-row failed "/run//agent.sock" false 252))
+      (set! failed (unix-path-row failed "/run/agent.sock/" false 253))
+      (set! failed (unix-path-row failed "/run/./agent.sock" false 254))
+      (set! failed (unix-path-row failed "/run/../agent.sock" false 255))
+      (set! failed (unix-path-row failed "/run/agent.sock/." false 256))
+      (set! failed (unix-path-row failed "/run/agent.sock/.." false 257))
+      (set! failed (unix-path-row failed "/." false 258))
+      (set! failed (unix-path-row failed "/.." false 259))
+      (set! failed (unix-path-row failed "/a" true 260))
+      (set! failed (unix-path-row failed "/run/.agent" true 261))
+      (set! failed (unix-path-row failed "/run/..agent" true 262))
+      (set! failed (unix-path-row failed "/run/agent." true 263))
+      (set! failed (unix-path-row failed "/..." true 264))
+      (set! failed (unix-path-row failed "/run/a..b/c.d" true 265))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (kind-of (local_ipc.connection-result (& connection))) 1)
-            266))
-        (set!
+          (= (kind-of (local_ipc.connection-result (& connection))) 1)
+          266))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (fake.get context fake.slot-connect-calls) 0)
-            267))
-        failed))))
+          (= (fake.get context fake.slot-connect-calls) 0)
+          267))
+      failed)))
 
 ;; An invalid endpoint never reaches the adapter.
 (define (case-invalid-endpoint-no-dispatch) : i64
@@ -442,29 +425,28 @@
             local_ipc.never-canceled
             16)
           local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (set!
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (kind-of (local_ipc.connection-result (& connection))) 1)
-            20))
-        (set!
+          (= (kind-of (local_ipc.connection-result (& connection))) 1)
+          20))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (not (local_ipc.connection-open? (& connection)))
-            21))
-        (set!
+          (not (local_ipc.connection-open? (& connection)))
+          21))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (fake.get context fake.slot-connect-calls) 0)
-            22))
-        (set!
-          failed
-          (first-failure failed (= (fake.get context fake.slot-now-calls) 0) 23))
-        failed))))
+          (= (fake.get context fake.slot-connect-calls) 0)
+          22))
+      (set!
+        failed
+        (first-failure failed (= (fake.get context fake.slot-now-calls) 0) 23))
+      failed)))
 
 (define (case-connect-and-close) : i64
   (let
@@ -476,126 +458,122 @@
       (let
         [peer : local_ipc.LocalIpcPeer
           (local_ipc.connection-peer (& connection))]
-        (begin
-          (set!
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (kind-of (local_ipc.connection-result (& connection))) 0)
-              30))
-          (set!
+            (= (kind-of (local_ipc.connection-result (& connection))) 0)
+            30))
+        (set!
+          failed
+          (first-failure failed (local_ipc.connection-open? (& connection)) 31))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (local_ipc.connection-open? (& connection))
-              31))
-          (set!
+            (= (fake.get context fake.slot-connect-calls) 1)
+            32))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-connect-calls) 1)
-              32))
-          (set!
+            (= (fake.get context fake.slot-peer-calls) 1)
+            33))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-peer-calls) 1)
-              33))
-          (set!
+            (= (fake.get context fake.slot-last-family) 0)
+            34))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-last-family) 0)
-              34))
-          (set!
+            (= (fake.get context fake.slot-last-name-len) 15)
+            35))
+        ;; The adapter received exactly the endpoint bytes.
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-last-name-len) 15)
-              35))
-          ;; The adapter received exactly the endpoint bytes.
-          (set!
+            (=
+              (fake.get context fake.slot-last-name-sum)
+              (text-byte-sum "/run/agent.sock"))
+            47))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (=
-                (fake.get context fake.slot-last-name-sum)
-                (text-byte-sum "/run/agent.sock"))
-              47))
-          (set!
+            (and
+              (= peer.process-id 41)
+              (= peer.user-id 42)
+              (= peer.group-id 43)
+              (= peer.session-id 44))
+            36))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and
-                (= peer.process-id 41)
-                (= peer.user-id 42)
-                (= peer.group-id 43)
-                (= peer.session-id 44))
-              36))
-          (set!
+            (= (kind-of (local_ipc.close! (&mut connection))) 0)
+            37))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (kind-of (local_ipc.close! (&mut connection))) 0)
-              37))
-          (set!
+            (= (fake.get context fake.slot-close-calls) 1)
+            38))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-close-calls) 1)
-              38))
-          (set!
+            (= (fake.get context fake.slot-last-closed-handle) 7)
+            39))
+        ;; Closing again, and any use after close, fails before dispatch.
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-last-closed-handle) 7)
-              39))
-          ;; Closing again, and any use after close, fails before dispatch.
-          (set!
+            (= (kind-of (local_ipc.close! (&mut connection))) 11)
+            40))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (kind-of (local_ipc.close! (&mut connection))) 11)
-              40))
-          (set!
+            (= (fake.get context fake.slot-close-calls) 1)
+            41))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-close-calls) 1)
-              41))
-          (set!
+            (=
+              (io-kind
+                (local_ipc.read-some!
+                  (&mut connection)
+                  (byte_buf.as-mut-bytes (&mut buffer))
+                  0
+                  8))
+              11)
+            43))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (=
-                (io-kind
-                  (local_ipc.read-some!
-                    (&mut connection)
-                    (byte_buf.as-mut-bytes (&mut buffer))
-                    0
-                    8))
-                11)
-              43))
-          (set!
+            (= (fake.get context fake.slot-read-calls) 0)
+            44))
+        ;; The construction result does not change when the connection closes.
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-read-calls) 0)
-              44))
-          ;; The construction result does not change when the connection closes.
-          (set!
+            (= (kind-of (local_ipc.connection-result (& connection))) 0)
+            45))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (kind-of (local_ipc.connection-result (& connection))) 0)
-              45))
-          (set!
-            failed
-            (first-failure
-              failed
-              (not (local_ipc.connection-open? (& connection)))
-              46))
-          failed)))))
+            (not (local_ipc.connection-open? (& connection)))
+            46))
+        failed))))
 
 ;; A reported close failure is returned once; the handle is still released.
 (define (case-close-failure) : i64
@@ -605,26 +583,22 @@
     [failed : i64 0]
     (with
       ([connection (open context) local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (set!
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (kind-of (local_ipc.close! (&mut connection))) 15)
-            50))
-        (set!
+          (= (kind-of (local_ipc.close! (&mut connection))) 15)
+          50))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (kind-of (local_ipc.close! (&mut connection))) 11)
-            51))
-        (set!
-          failed
-          (first-failure
-            failed
-            (= (fake.get context fake.slot-close-calls) 1)
-            52))
-        failed))))
+          (= (kind-of (local_ipc.close! (&mut connection))) 11)
+          51))
+      (set!
+        failed
+        (first-failure failed (= (fake.get context fake.slot-close-calls) 1) 52))
+      failed)))
 
 (define (scoped-connection [context : i64]) : bool
   (with
@@ -644,16 +618,15 @@
     [was-open : bool (scoped-connection first)]
     [was-closed : bool (scoped-closed-connection second)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed was-open 55))
-      (set!
-        failed
-        (first-failure failed (= (fake.get first fake.slot-close-calls) 1) 56))
-      (set! failed (first-failure failed was-closed 57))
-      (set!
-        failed
-        (first-failure failed (= (fake.get second fake.slot-close-calls) 1) 58))
-      failed)))
+    (set! failed (first-failure failed was-open 55))
+    (set!
+      failed
+      (first-failure failed (= (fake.get first fake.slot-close-calls) 1) 56))
+    (set! failed (first-failure failed was-closed 57))
+    (set!
+      failed
+      (first-failure failed (= (fake.get second fake.slot-close-calls) 1) 58))
+    failed))
 
 (define (case-windows-family) : i64
   (let
@@ -669,31 +642,27 @@
             local_ipc.never-canceled
             16)
           local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (set!
+      (set!
+        failed
+        (first-failure failed (local_ipc.connection-open? (& connection)) 60))
+      (set!
+        failed
+        (first-failure failed (= (fake.get context fake.slot-last-family) 1) 61))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure failed (local_ipc.connection-open? (& connection)) 60))
-        (set!
+          (= (fake.get context fake.slot-last-name-len) 14)
+          62))
+      (set!
+        failed
+        (first-failure
           failed
-          (first-failure
-            failed
-            (= (fake.get context fake.slot-last-family) 1)
-            61))
-        (set!
-          failed
-          (first-failure
-            failed
-            (= (fake.get context fake.slot-last-name-len) 14)
-            62))
-        (set!
-          failed
-          (first-failure
-            failed
-            (=
-              (fake.get context fake.slot-last-name-sum)
-              (text-byte-sum "\\\\.\\pipe\\agent"))
-            63))
-        failed))))
+          (=
+            (fake.get context fake.slot-last-name-sum)
+            (text-byte-sum "\\\\.\\pipe\\agent"))
+          63))
+      failed)))
 
 ;; RetryConnect publishes nothing, pauses one bounded slice and tries afresh.
 (define (case-connect-retry) : i64
@@ -704,25 +673,21 @@
     [_c : unit (fake.push! context fake.queue-connect 0)]
     [kind : i64 (connect-kind context far-deadline 16)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= kind 0) 65))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-connect-calls) 3)
-          66))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-delay-calls) 2) 67))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 68))
-      ;; The published connection is closed once, by its scope.
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-close-calls) 1) 69))
-      failed)))
+    (set! failed (first-failure failed (= kind 0) 65))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-connect-calls) 3) 66))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-delay-calls) 2) 67))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 68))
+    ;; The published connection is closed once, by its scope.
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-close-calls) 1) 69))
+    failed))
 
 ;; A busy endpoint is retried in slices that shrink to the deadline.
 (define (case-connect-timeout) : i64
@@ -731,27 +696,23 @@
     [_a : unit (fake.push! context fake.queue-connect 1)]
     [kind : i64 (connect-kind context 1250 64)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= kind 5) 70))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-connect-calls) 3)
-          71))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-delay-calls) 3) 72))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 73))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-min-slice) 50) 74))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-close-calls) 0) 75))
-      failed)))
+    (set! failed (first-failure failed (= kind 5) 70))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-connect-calls) 3) 71))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-delay-calls) 3) 72))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 73))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-min-slice) 50) 74))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-close-calls) 0) 75))
+    failed))
 
 (define (case-connect-cancel-between-attempts) : i64
   (let
@@ -760,15 +721,11 @@
     [_b : unit (fake.put! context fake.slot-cancel-after-now-calls 2)]
     [kind : i64 (connect-kind context far-deadline 64)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= kind 6) 80))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-connect-calls) 1)
-          81))
-      failed)))
+    (set! failed (first-failure failed (= kind 6) 80))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-connect-calls) 1) 81))
+    failed))
 
 ;; Cancellation beats an expired deadline; an expired deadline beats an attempt.
 (define (case-connect-precedence) : i64
@@ -782,29 +739,25 @@
     [_b : unit (fake.put! no-clock fake.slot-clock -1)]
     [third : i64 (connect-kind no-clock far-deadline 64)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= first 6) 85))
-      (set!
+    (set! failed (first-failure failed (= first 6) 85))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get canceled fake.slot-connect-calls) 0)
-          86))
-      (set! failed (first-failure failed (= second 5) 87))
-      (set!
+        (= (fake.get canceled fake.slot-connect-calls) 0)
+        86))
+    (set! failed (first-failure failed (= second 5) 87))
+    (set!
+      failed
+      (first-failure failed (= (fake.get expired fake.slot-connect-calls) 0) 88))
+    (set! failed (first-failure failed (= third 9) 89))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get expired fake.slot-connect-calls) 0)
-          88))
-      (set! failed (first-failure failed (= third 9) 89))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get no-clock fake.slot-connect-calls) 0)
-          90))
-      failed)))
+        (= (fake.get no-clock fake.slot-connect-calls) 0)
+        90))
+    failed))
 
 (define (case-connect-budget) : i64
   (let
@@ -812,18 +765,14 @@
     [_a : unit (fake.push! context fake.queue-connect 1)]
     [kind : i64 (connect-kind context far-deadline 2)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= kind 13) 95))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-connect-calls) 2)
-          96))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-delay-calls) 1) 97))
-      failed)))
+    (set! failed (first-failure failed (= kind 13) 95))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-connect-calls) 2) 96))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-delay-calls) 1) 97))
+    failed))
 
 ;; Failures after the kernel connected close the handle exactly once.
 (define (case-connect-rejections) : i64
@@ -848,38 +797,37 @@
     [selective : i64 (fake.new)]
     [sixth : i64 (connect-kind-with-policy selective only-user-42)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= first 3) 100))
-      (set!
+    (set! failed (first-failure failed (= first 3) 100))
+    (set!
+      failed
+      (first-failure failed (= (fake.get denied fake.slot-close-calls) 0) 101))
+    (set! failed (first-failure failed (= second 14) 102))
+    (set!
+      failed
+      (first-failure failed (= (fake.get policy fake.slot-close-calls) 1) 103))
+    (set! failed (first-failure failed (= third 2) 105))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (fake.get denied fake.slot-close-calls) 0) 101))
-      (set! failed (first-failure failed (= second 14) 102))
-      (set!
+        (= (fake.get peer-failed fake.slot-close-calls) 1)
+        106))
+    (set! failed (first-failure failed (= fourth 10) 107))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (fake.get policy fake.slot-close-calls) 1) 103))
-      (set! failed (first-failure failed (= third 2) 105))
-      (set!
+        (= (fake.get peer-corrupt fake.slot-close-calls) 1)
+        108))
+    (set! failed (first-failure failed (= fifth 10) 109))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get peer-failed fake.slot-close-calls) 1)
-          106))
-      (set! failed (first-failure failed (= fourth 10) 107))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get peer-corrupt fake.slot-close-calls) 1)
-          108))
-      (set! failed (first-failure failed (= fifth 10) 109))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get bad-handle fake.slot-close-calls) 0)
-          110))
-      (set! failed (first-failure failed (= sixth 0) 111))
-      failed)))
+        (= (fake.get bad-handle fake.slot-close-calls) 0)
+        110))
+    (set! failed (first-failure failed (= sixth 0) 111))
+    failed))
 
 ;; A pause the adapter reports failed ends the connect with that error,
 ;; re-bounded, after one attempt and one pause and with nothing to close.
@@ -895,31 +843,24 @@
     [_e : unit (fake.put! big fake.slot-host-code 70000)]
     [code : i64 (connect-host-code big)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= kind 10) 270))
-      (set!
+    (set! failed (first-failure failed (= kind 10) 270))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-connect-calls) 1)
-          271))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-delay-calls) 1)
-          272))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-close-calls) 0)
-          273))
-      (set! failed (first-failure failed (= code 0) 274))
-      (set!
-        failed
-        (first-failure failed (= (fake.get big fake.slot-connect-calls) 1) 275))
-      failed)))
+        (= (fake.get context fake.slot-connect-calls) 1)
+        271))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-delay-calls) 1) 272))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-close-calls) 0) 273))
+    (set! failed (first-failure failed (= code 0) 274))
+    (set!
+      failed
+      (first-failure failed (= (fake.get big fake.slot-connect-calls) 1) 275))
+    failed))
 
 (define (case-primitive-read) : i64
   (let
@@ -1004,43 +945,36 @@
             (byte_buf.as-mut-bytes (&mut buffer))
             0
             8)]
-        (begin
-          (set! failed (first-failure failed (= (io-done partial) 3) 120))
-          (set!
+        (set! failed (first-failure failed (= (io-done partial) 3) 120))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and
-                (= (cast (byte_buf.ref (& buffer) 1) : i64) 0)
-                (= (cast (byte_buf.ref (& buffer) 2) : i64) 1)
-                (= (cast (byte_buf.ref (& buffer) 4) : i64) 3)
-                (= (cast (byte_buf.ref (& buffer) 5) : i64) 0))
-              121))
-          (set! failed (first-failure failed (io-would-block? blocked) 122))
-          (set! failed (first-failure failed (io-interrupted? interrupted) 123))
-          (set! failed (first-failure failed (io-eof? eof) 124))
-          (set!
+            (and
+              (= (cast (byte_buf.ref (& buffer) 1) : i64) 0)
+              (= (cast (byte_buf.ref (& buffer) 2) : i64) 1)
+              (= (cast (byte_buf.ref (& buffer) 4) : i64) 3)
+              (= (cast (byte_buf.ref (& buffer) 5) : i64) 0))
+            121))
+        (set! failed (first-failure failed (io-would-block? blocked) 122))
+        (set! failed (first-failure failed (io-interrupted? interrupted) 123))
+        (set! failed (first-failure failed (io-eof? eof) 124))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and (= (io-kind host) 8) (= (io-host-code host) 222))
-              125))
-          (set! failed (first-failure failed (= (io-kind too-many) 10) 126))
-          (set! failed (first-failure failed (= (io-done empty) 0) 128))
-          (set!
-            failed
-            (first-failure failed (= (io-kind negative-start) 12) 129))
-          (set!
-            failed
-            (first-failure failed (= (io-kind negative-count) 12) 130))
-          (set! failed (first-failure failed (= (io-kind past-end) 12) 131))
-          ;; The zero-length and rejected ranges made no host call.
-          (set! failed (first-failure failed (= calls-before-zero 6) 132))
-          (set! failed (first-failure failed (= calls-after-rejected 6) 133))
-          (set!
-            failed
-            (first-failure failed (= (io-kind zero-progress) 10) 127))
-          failed)))))
+            (and (= (io-kind host) 8) (= (io-host-code host) 222))
+            125))
+        (set! failed (first-failure failed (= (io-kind too-many) 10) 126))
+        (set! failed (first-failure failed (= (io-done empty) 0) 128))
+        (set! failed (first-failure failed (= (io-kind negative-start) 12) 129))
+        (set! failed (first-failure failed (= (io-kind negative-count) 12) 130))
+        (set! failed (first-failure failed (= (io-kind past-end) 12) 131))
+        ;; The zero-length and rejected ranges made no host call.
+        (set! failed (first-failure failed (= calls-before-zero 6) 132))
+        (set! failed (first-failure failed (= calls-after-rejected 6) 133))
+        (set! failed (first-failure failed (= (io-kind zero-progress) 10) 127))
+        failed))))
 
 (define (case-primitive-write) : i64
   (let
@@ -1063,23 +997,22 @@
             (byte_buf.as-bytes (& buffer))
             6
             1)]
-        (begin
-          (set! failed (first-failure failed (= (io-done written) 2) 135))
-          ;; Bytes 4 and 5 of 1..6 were handed to the adapter.
-          (set!
+        (set! failed (first-failure failed (= (io-done written) 2) 135))
+        ;; Bytes 4 and 5 of 1..6 were handed to the adapter.
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-written-sum) 9)
-              136))
-          (set! failed (first-failure failed (= (io-kind past-end) 12) 137))
-          (set!
+            (= (fake.get context fake.slot-written-sum) 9)
+            136))
+        (set! failed (first-failure failed (= (io-kind past-end) 12) 137))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-write-calls) 1)
-              138))
-          failed)))))
+            (= (fake.get context fake.slot-write-calls) 1)
+            138))
+        failed))))
 
 ;; A pending operation stays in flight until its terminal completion: the
 ;; contract requests cancellation, then drains in bounded slices and issues no
@@ -1106,33 +1039,32 @@
     [_k : unit (fake.push! oversized fake.queue-pending 9)]
     [too-many : local_ipc.LocalIpcIoResult (pending-read oversized)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-done progress) 5) 140))
-      (set!
+    (set! failed (first-failure failed (= (io-done progress) 5) 140))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get wins fake.slot-cancel-pending-calls) 1)
-          141))
-      (set!
+        (= (fake.get wins fake.slot-cancel-pending-calls) 1)
+        141))
+    (set!
+      failed
+      (first-failure failed (= (fake.get wins fake.slot-poll-calls) 3) 142))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (fake.get wins fake.slot-poll-calls) 3) 142))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get wins fake.slot-calls-while-pending) 0)
-          143))
-      (set!
-        failed
-        (first-failure failed (<= (fake.get wins fake.slot-max-slice) 100) 144))
-      (set! failed (first-failure failed (= (io-kind canceled) 6) 145))
-      (set! failed (first-failure failed (= (io-kind errored) 15) 146))
-      (set!
-        failed
-        (first-failure failed (= (fake.get other fake.slot-poll-calls) 2) 147))
-      (set! failed (first-failure failed (= (io-kind too-many) 10) 148))
-      failed)))
+        (= (fake.get wins fake.slot-calls-while-pending) 0)
+        143))
+    (set!
+      failed
+      (first-failure failed (<= (fake.get wins fake.slot-max-slice) 100) 144))
+    (set! failed (first-failure failed (= (io-kind canceled) 6) 145))
+    (set! failed (first-failure failed (= (io-kind errored) 15) 146))
+    (set!
+      failed
+      (first-failure failed (= (fake.get other fake.slot-poll-calls) 2) 147))
+    (set! failed (first-failure failed (= (io-kind too-many) 10) 148))
+    failed))
 
 ;; An operation that never completes ends with a forced close, not a return
 ;; that would leave it in flight.
@@ -1151,33 +1083,32 @@
             (byte_buf.as-mut-bytes (&mut buffer))
             0
             8)]
-        (begin
-          (set! failed (first-failure failed (= (io-kind result) 10) 150))
-          (set!
+        (set! failed (first-failure failed (= (io-kind result) 10) 150))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-poll-calls) 600)
-              151))
-          (set!
+            (= (fake.get context fake.slot-poll-calls) 600)
+            151))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-close-calls) 1)
-              152))
-          (set!
+            (= (fake.get context fake.slot-close-calls) 1)
+            152))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (not (local_ipc.connection-open? (& connection)))
-              153))
-          (set!
+            (not (local_ipc.connection-open? (& connection)))
+            153))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-calls-while-pending) 0)
-              154))
-          failed)))))
+            (= (fake.get context fake.slot-calls-while-pending) 0)
+            154))
+        failed))))
 
 (define (case-wait-retries) : i64
   (let
@@ -1188,21 +1119,17 @@
     [result : local_ipc.LocalIpcIoResult
       (read-wait-case context far-deadline 16 false)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-done result) 4) 160))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-read-calls) 3) 161))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-wait-calls) 1) 162))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-max-slice) 100)
-          163))
-      failed)))
+    (set! failed (first-failure failed (= (io-done result) 4) 160))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-read-calls) 3) 161))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-wait-calls) 1) 162))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 163))
+    failed))
 
 ;; Waits are at most 100 ms and are recomputed after every wake.
 (define (case-wait-timeout-slices) : i64
@@ -1212,24 +1139,20 @@
     [_b : unit (fake.push! context fake.queue-wait 1)]
     [result : local_ipc.LocalIpcIoResult (read-wait-case context 1130 64 false)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-kind result) 5) 165))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-read-calls) 2) 166))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-wait-calls) 2) 167))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-max-slice) 100)
-          168))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-min-slice) 30) 169))
-      failed)))
+    (set! failed (first-failure failed (= (io-kind result) 5) 165))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-read-calls) 2) 166))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-wait-calls) 2) 167))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-max-slice) 100) 168))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-min-slice) 30) 169))
+    failed))
 
 (define (case-wait-precedence) : i64
   (let
@@ -1247,18 +1170,17 @@
     [kept : local_ipc.LocalIpcIoResult
       (read-wait-case late far-deadline 16 false)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-kind timed-out) 5) 170))
-      (set!
-        failed
-        (first-failure failed (= (fake.get expired fake.slot-read-calls) 0) 171))
-      (set! failed (first-failure failed (= (io-kind canceled) 6) 172))
-      (set!
-        failed
-        (first-failure failed (= (fake.get both fake.slot-read-calls) 0) 173))
-      (set! failed (first-failure failed (= (io-done kept) 2) 174))
-      (set! failed (first-failure failed (fake.canceled? late) 175))
-      failed)))
+    (set! failed (first-failure failed (= (io-kind timed-out) 5) 170))
+    (set!
+      failed
+      (first-failure failed (= (fake.get expired fake.slot-read-calls) 0) 171))
+    (set! failed (first-failure failed (= (io-kind canceled) 6) 172))
+    (set!
+      failed
+      (first-failure failed (= (fake.get both fake.slot-read-calls) 0) 173))
+    (set! failed (first-failure failed (= (io-done kept) 2) 174))
+    (set! failed (first-failure failed (fake.canceled? late) 175))
+    failed))
 
 ;; A wait-capable helper waits for a pending operation in bounded slices. It
 ;; requests cancellation only once a stop reason appears, then drains, and the
@@ -1286,54 +1208,47 @@
     [_l : unit (fake.push! raced fake.queue-pending 5)]
     [won : local_ipc.LocalIpcIoResult (read-wait-case raced 1150 16 false)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-done done) 6) 225))
-      (set!
+    (set! failed (first-failure failed (= (io-done done) 6) 225))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get completes fake.slot-cancel-pending-calls) 0)
-          226))
-      (set!
+        (= (fake.get completes fake.slot-cancel-pending-calls) 0)
+        226))
+    (set!
+      failed
+      (first-failure failed (= (fake.get completes fake.slot-poll-calls) 3) 227))
+    (set!
+      failed
+      (first-failure failed (= (fake.get completes fake.slot-read-calls) 1) 228))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get completes fake.slot-poll-calls) 3)
-          227))
-      (set!
+        (= (fake.get completes fake.slot-calls-while-pending) 0)
+        229))
+    ;; Polls of 100 ms and 50 ms reach the 1150 deadline; the third poll is the drain.
+    (set! failed (first-failure failed (= (io-kind timed-out) 5) 230))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get completes fake.slot-read-calls) 1)
-          228))
-      (set!
+        (= (fake.get stopped fake.slot-cancel-pending-calls) 1)
+        231))
+    (set!
+      failed
+      (first-failure failed (= (fake.get stopped fake.slot-poll-calls) 3) 232))
+    (set!
+      failed
+      (first-failure failed (= (fake.get stopped fake.slot-read-calls) 1) 233))
+    (set! failed (first-failure failed (= (io-done won) 5) 234))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get completes fake.slot-calls-while-pending) 0)
-          229))
-      ;; Polls of 100 ms and 50 ms reach the 1150 deadline; the third poll is the drain.
-      (set! failed (first-failure failed (= (io-kind timed-out) 5) 230))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get stopped fake.slot-cancel-pending-calls) 1)
-          231))
-      (set!
-        failed
-        (first-failure failed (= (fake.get stopped fake.slot-poll-calls) 3) 232))
-      (set!
-        failed
-        (first-failure failed (= (fake.get stopped fake.slot-read-calls) 1) 233))
-      (set! failed (first-failure failed (= (io-done won) 5) 234))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get raced fake.slot-cancel-pending-calls) 1)
-          235))
-      failed)))
+        (= (fake.get raced fake.slot-cancel-pending-calls) 1)
+        235))
+    failed))
 
 ;; An interrupted readiness wait is retried like a not-ready one.
 (define (case-wait-interrupted) : i64
@@ -1347,15 +1262,14 @@
     [result : local_ipc.LocalIpcIoResult
       (read-wait-case context far-deadline 16 false)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-done result) 4) 236))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-read-calls) 3) 237))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-wait-calls) 2) 238))
-      failed)))
+    (set! failed (first-failure failed (= (io-done result) 4) 236))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-read-calls) 3) 237))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-wait-calls) 2) 238))
+    failed))
 
 (define (case-wait-budget-and-failures) : i64
   (let
@@ -1372,25 +1286,24 @@
     [after-close : local_ipc.LocalIpcIoResult
       (read-wait-case closed far-deadline 16 true)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= (io-kind exhausted) 13) 180))
-      (set!
+    (set! failed (first-failure failed (= (io-kind exhausted) 13) 180))
+    (set!
+      failed
+      (first-failure failed (= (fake.get budget fake.slot-read-calls) 2) 181))
+    (set!
+      failed
+      (first-failure failed (= (fake.get budget fake.slot-wait-calls) 1) 182))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (fake.get budget fake.slot-read-calls) 2) 181))
-      (set!
-        failed
-        (first-failure failed (= (fake.get budget fake.slot-wait-calls) 1) 182))
-      (set!
-        failed
-        (first-failure
-          failed
-          (and (= (io-kind wait-failed) 3) (= (io-host-code wait-failed) 333))
-          183))
-      (set! failed (first-failure failed (= (io-kind after-close) 11) 184))
-      (set!
-        failed
-        (first-failure failed (= (fake.get closed fake.slot-read-calls) 0) 185))
-      failed)))
+        (and (= (io-kind wait-failed) 3) (= (io-host-code wait-failed) 333))
+        183))
+    (set! failed (first-failure failed (= (io-kind after-close) 11) 184))
+    (set!
+      failed
+      (first-failure failed (= (fake.get closed fake.slot-read-calls) 0) 185))
+    failed))
 
 (define (case-write-all) : i64
   (let
@@ -1403,25 +1316,18 @@
     [transfer : local_ipc.LocalIpcTransfer
       (write-all-case context far-deadline 32)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= transfer.count 10) 190))
-      (set! failed (first-failure failed (= (kind-of transfer.status) 0) 191))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-written-sum) 55)
-          192))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get context fake.slot-write-calls) 5)
-          193))
-      (set!
-        failed
-        (first-failure failed (= (fake.get context fake.slot-wait-calls) 1) 194))
-      failed)))
+    (set! failed (first-failure failed (= transfer.count 10) 190))
+    (set! failed (first-failure failed (= (kind-of transfer.status) 0) 191))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-written-sum) 55) 192))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-write-calls) 5) 193))
+    (set!
+      failed
+      (first-failure failed (= (fake.get context fake.slot-wait-calls) 1) 194))
+    failed))
 
 ;; Whole-buffer helpers keep the completed count whatever stops them.
 (define (case-transfer-stops) : i64
@@ -1451,38 +1357,37 @@
     [at-cancel : local_ipc.LocalIpcTransfer
       (write-all-case cancel far-deadline 32)]
     [failed : i64 0]
-    (begin
-      (set!
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= at-eof.count 4) (= (kind-of at-eof.status) 7))
-          200))
-      (set!
+        (and (= at-eof.count 4) (= (kind-of at-eof.status) 7))
+        200))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= at-timeout.count 4) (= (kind-of at-timeout.status) 5))
-          201))
-      (set!
+        (and (= at-timeout.count 4) (= (kind-of at-timeout.status) 5))
+        201))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= at-budget.count 3) (= (kind-of at-budget.status) 13))
-          202))
-      (set!
+        (and (= at-budget.count 3) (= (kind-of at-budget.status) 13))
+        202))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= at-error.count 2) (= (kind-of at-error.status) 8))
-          203))
-      (set!
+        (and (= at-error.count 2) (= (kind-of at-error.status) 8))
+        203))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= at-cancel.count 4) (= (kind-of at-cancel.status) 6))
-          204))
-      failed)))
+        (and (= at-cancel.count 4) (= (kind-of at-cancel.status) 6))
+        204))
+    failed))
 
 (define (case-read-exact-and-ranges) : i64
   (let
@@ -1522,44 +1427,43 @@
             far-deadline
             local_ipc.never-canceled
             16)]
-        (begin
-          (set!
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and (= exact.count 6) (= (kind-of exact.status) 0))
-              210))
-          ;; The second attempt continued at offset 2 + 3 and was clamped to 3 bytes.
-          (set!
+            (and (= exact.count 6) (= (kind-of exact.status) 0))
+            210))
+        ;; The second attempt continued at offset 2 + 3 and was clamped to 3 bytes.
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and
-                (= (cast (byte_buf.ref (& buffer) 2) : i64) 1)
-                (= (cast (byte_buf.ref (& buffer) 4) : i64) 3)
-                (= (cast (byte_buf.ref (& buffer) 5) : i64) 1)
-                (= (cast (byte_buf.ref (& buffer) 7) : i64) 3))
-              211))
-          (set! failed (first-failure failed (= calls 2) 212))
-          (set!
+            (and
+              (= (cast (byte_buf.ref (& buffer) 2) : i64) 1)
+              (= (cast (byte_buf.ref (& buffer) 4) : i64) 3)
+              (= (cast (byte_buf.ref (& buffer) 5) : i64) 1)
+              (= (cast (byte_buf.ref (& buffer) 7) : i64) 3))
+            211))
+        (set! failed (first-failure failed (= calls 2) 212))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and (= empty.count 0) (= (kind-of empty.status) 0))
-              213))
-          (set!
+            (and (= empty.count 0) (= (kind-of empty.status) 0))
+            213))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and (= invalid.count 0) (= (kind-of invalid.status) 12))
-              214))
-          (set!
+            (and (= invalid.count 0) (= (kind-of invalid.status) 12))
+            214))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (= (fake.get context fake.slot-read-calls) 2)
-              215))
-          failed)))))
+            (= (fake.get context fake.slot-read-calls) 2)
+            215))
+        failed))))
 
 ;; Errors carry a kind and a bounded host code, never text.
 (define (case-stable-errors) : i64
@@ -1570,32 +1474,30 @@
     [code : i64 1]
     [names-ok : bool true]
     [failed : i64 0]
-    (begin
-      (while (<= code 15)
-        (begin
-          (set!
-            names-ok
-            (and
-              names-ok
-              (= (local_ipc.error-kind-code (fake.kind-from-code code)) code)
-              (>
-                (string.string-length
-                  (local_ipc.error-kind-name (fake.kind-from-code code)))
-                3)))
-          (set! code (+ code 1))))
-      (set! failed (first-failure failed (= kept.host-code 65535) 220))
-      (set! failed (first-failure failed (= too-large.host-code 0) 221))
-      (set! failed (first-failure failed (= negative.host-code 0) 222))
-      (set! failed (first-failure failed names-ok 223))
+    (while (<= code 15)
       (set!
+        names-ok
+        (and
+          names-ok
+          (= (local_ipc.error-kind-code (fake.kind-from-code code)) code)
+          (>
+            (string.string-length
+              (local_ipc.error-kind-name (fake.kind-from-code code)))
+            3)))
+      (set! code (+ code 1)))
+    (set! failed (first-failure failed (= kept.host-code 65535) 220))
+    (set! failed (first-failure failed (= too-large.host-code 0) 221))
+    (set! failed (first-failure failed (= negative.host-code 0) 222))
+    (set! failed (first-failure failed names-ok 223))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (string.eq
-            (local_ipc.error-kind-name (PermissionDenied))
-            "permission-denied")
-          224))
-      failed)))
+        (string.eq
+          (local_ipc.error-kind-name (PermissionDenied))
+          "permission-denied")
+        224))
+    failed))
 
 ;; Every attempt hands the adapter exactly the validated name, even after an
 ;; attempt handed back a damaged buffer. A buffer too short for the name is
@@ -1611,33 +1513,26 @@
     [_d : unit (fake.push! emptied fake.queue-connect 0)]
     [second : i64 (connect-kind emptied far-deadline 16)]
     [failed : i64 0]
-    (begin
-      (set! failed (first-failure failed (= first 0) 49))
-      (set!
+    (set! failed (first-failure failed (= first 0) 49))
+    (set!
+      failed
+      (first-failure failed (= (fake.get zeroed fake.slot-connect-calls) 2) 53))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (= (fake.get zeroed fake.slot-connect-calls) 2)
-          53))
-      (set!
-        failed
-        (first-failure
-          failed
-          (=
-            (fake.get zeroed fake.slot-last-name-sum)
-            (text-byte-sum "/run/agent.sock"))
-          54))
-      (set! failed (first-failure failed (= second 10) 59))
-      (set!
-        failed
-        (first-failure
-          failed
-          (= (fake.get emptied fake.slot-connect-calls) 1)
-          64))
-      (set!
-        failed
-        (first-failure failed (= (fake.get emptied fake.slot-close-calls) 0) 76))
-      failed)))
+        (=
+          (fake.get zeroed fake.slot-last-name-sum)
+          (text-byte-sum "/run/agent.sock"))
+        54))
+    (set! failed (first-failure failed (= second 10) 59))
+    (set!
+      failed
+      (first-failure failed (= (fake.get emptied fake.slot-connect-calls) 1) 64))
+    (set!
+      failed
+      (first-failure failed (= (fake.get emptied fake.slot-close-calls) 0) 76))
+    failed))
 
 (define (connect-host-code [context : i64]) : i64
   (with
@@ -1683,41 +1578,40 @@
     [_p : unit (fake.put! close-big fake.slot-host-code 1099511627776)]
     [closed : local_ipc.LocalIpcStatus (close-status close-big)]
     [failed : i64 0]
-    (begin
-      (set!
+    (set!
+      failed
+      (first-failure failed (= (connect-host-code connect-big) 0) 239))
+    (set!
+      failed
+      (first-failure failed (= (connect-host-code connect-max) 65535) 240))
+    (set!
+      failed
+      (first-failure failed (= (connect-host-code peer-negative) 0) 241))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (connect-host-code connect-big) 0) 239))
-      (set!
+        (and (= (io-kind read-result) 8) (= (io-host-code read-result) 0))
+        242))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (connect-host-code connect-max) 65535) 240))
-      (set!
+        (and (= (io-kind poll-result) 15) (= (io-host-code poll-result) 0))
+        243))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure failed (= (connect-host-code peer-negative) 0) 241))
-      (set!
+        (and (= (io-kind wait-result) 3) (= (io-host-code wait-result) 0))
+        244))
+    (set!
+      failed
+      (first-failure
         failed
-        (first-failure
-          failed
-          (and (= (io-kind read-result) 8) (= (io-host-code read-result) 0))
-          242))
-      (set!
-        failed
-        (first-failure
-          failed
-          (and (= (io-kind poll-result) 15) (= (io-host-code poll-result) 0))
-          243))
-      (set!
-        failed
-        (first-failure
-          failed
-          (and (= (io-kind wait-result) 3) (= (io-host-code wait-result) 0))
-          244))
-      (set!
-        failed
-        (first-failure
-          failed
-          (and (= (kind-of closed) 15) (= (status-host-code closed) 0))
-          245))
-      failed)))
+        (and (= (kind-of closed) 15) (= (status-host-code closed) 0))
+        245))
+    failed))
 
 ;; One attempt moves at most `transfer-max` bytes, the size of the connection's
 ;; transfer array; a longer range moves in several attempts. The bytes cross in
@@ -1733,109 +1627,92 @@
     [_c : unit (fake.push! exact fake.queue-data 1000000)]
     [buffer : byte_buf.ByteBuf (zero-buf size)]
     [failed : i64 0]
-    (begin
-      (with
-        ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
-        (let
-          [result : local_ipc.LocalIpcIoResult
-            (local_ipc.read-some!
-              (&mut connection)
-              (byte_buf.as-mut-bytes (&mut buffer))
-              0
-              size)]
-          (begin
-            (set!
-              failed
-              (first-failure
-                failed
-                (= (io-done result) local_ipc.transfer-max)
-                112))
-            (set!
-              failed
-              (first-failure
-                failed
-                (=
-                  (fake.get reader fake.slot-last-request)
-                  local_ipc.transfer-max)
-                113))
-            ;; The fake fills 1, 2, 3, ... as bytes; nothing lands past the bound.
-            (set!
-              failed
-              (first-failure
-                failed
-                (and
-                  (= (byte-at (& buffer) 0) 1)
-                  (= (byte-at (& buffer) (- local_ipc.transfer-max 2)) 255)
-                  (= (byte-at (& buffer) local_ipc.transfer-max) 0))
-                114)))))
-      (with
-        ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
-        (let
-          [result : local_ipc.LocalIpcIoResult
-            (local_ipc.write-some!
-              (&mut connection)
-              (byte_buf.as-bytes (& buffer))
-              0
-              size)]
-          (begin
-            (set!
-              failed
-              (first-failure
-                failed
-                (= (io-done result) local_ipc.transfer-max)
-                115))
-            (set!
-              failed
-              (first-failure
-                failed
-                (=
-                  (fake.get writer fake.slot-last-request)
-                  local_ipc.transfer-max)
-                116))
-            (set!
-              failed
-              (first-failure
-                failed
-                (=
-                  (fake.get writer fake.slot-written-sum)
-                  (prefix-sum (& buffer) local_ipc.transfer-max))
-                98)))))
-      (with
-        ([connection (open exact) local_ipc.cleanup-local-ipc-connection])
-        (let
-          [transfer : local_ipc.LocalIpcTransfer
-            (local_ipc.read-exact!
-              (&mut connection)
-              (byte_buf.as-mut-bytes (&mut buffer))
-              0
-              size
-              far-deadline
-              local_ipc.never-canceled
-              16)]
-          (begin
-            (set!
-              failed
-              (first-failure
-                failed
-                (and (= transfer.count size) (= (kind-of transfer.status) 0))
-                117))
-            (set!
-              failed
-              (first-failure
-                failed
-                (= (fake.get exact fake.slot-read-calls) 2)
-                118))
-            ;; The second attempt continued after the bound with the last 5 bytes.
-            (set!
-              failed
-              (first-failure
-                failed
-                (and
-                  (= (fake.get exact fake.slot-last-request) 5)
-                  (= (byte-at (& buffer) local_ipc.transfer-max) 1)
-                  (= (byte-at (& buffer) (- size 1)) 5))
-                119)))))
-      failed)))
+    (with
+      ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [result : local_ipc.LocalIpcIoResult
+          (local_ipc.read-some!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            0
+            size)]
+        (set!
+          failed
+          (first-failure failed (= (io-done result) local_ipc.transfer-max) 112))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (fake.get reader fake.slot-last-request) local_ipc.transfer-max)
+            113))
+        ;; The fake fills 1, 2, 3, ... as bytes; nothing lands past the bound.
+        (set!
+          failed
+          (first-failure
+            failed
+            (and
+              (= (byte-at (& buffer) 0) 1)
+              (= (byte-at (& buffer) (- local_ipc.transfer-max 2)) 255)
+              (= (byte-at (& buffer) local_ipc.transfer-max) 0))
+            114))))
+    (with
+      ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [result : local_ipc.LocalIpcIoResult
+          (local_ipc.write-some!
+            (&mut connection)
+            (byte_buf.as-bytes (& buffer))
+            0
+            size)]
+        (set!
+          failed
+          (first-failure failed (= (io-done result) local_ipc.transfer-max) 115))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (fake.get writer fake.slot-last-request) local_ipc.transfer-max)
+            116))
+        (set!
+          failed
+          (first-failure
+            failed
+            (=
+              (fake.get writer fake.slot-written-sum)
+              (prefix-sum (& buffer) local_ipc.transfer-max))
+            98))))
+    (with
+      ([connection (open exact) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [transfer : local_ipc.LocalIpcTransfer
+          (local_ipc.read-exact!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            0
+            size
+            far-deadline
+            local_ipc.never-canceled
+            16)]
+        (set!
+          failed
+          (first-failure
+            failed
+            (and (= transfer.count size) (= (kind-of transfer.status) 0))
+            117))
+        (set!
+          failed
+          (first-failure failed (= (fake.get exact fake.slot-read-calls) 2) 118))
+        ;; The second attempt continued after the bound with the last 5 bytes.
+        (set!
+          failed
+          (first-failure
+            failed
+            (and
+              (= (fake.get exact fake.slot-last-request) 5)
+              (= (byte-at (& buffer) local_ipc.transfer-max) 1)
+              (= (byte-at (& buffer) (- size 1)) 5))
+            119))))
+    failed))
 
 ;; A pending operation runs on adapter storage. A read's bytes arrive with the
 ;; terminal poll, which is handed the same range as the original request; a
@@ -1852,58 +1729,56 @@
     [buffer : byte_buf.ByteBuf (zero-buf 8)]
     [source : byte_buf.ByteBuf (counted-buf 6)]
     [failed : i64 0]
-    (begin
-      (with
-        ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
-        (let
-          [result : local_ipc.LocalIpcIoResult
-            (local_ipc.read-some!
-              (&mut connection)
-              (byte_buf.as-mut-bytes (&mut buffer))
-              2
-              6)]
-          (begin
-            (set! failed (first-failure failed (= (io-done result) 5) 155))
-            (set!
-              failed
-              (first-failure
-                failed
-                (and
-                  (= (byte-at (& buffer) 1) 0)
-                  (= (byte-at (& buffer) 2) 1)
-                  (= (byte-at (& buffer) 6) 5)
-                  (= (byte-at (& buffer) 7) 0))
-                156))
-            (set!
-              failed
-              (first-failure
-                failed
-                (= (fake.get reader fake.slot-last-poll-request) 6)
-                157))
-            (set!
-              failed
-              (first-failure
-                failed
-                (= (fake.get reader fake.slot-calls-while-pending) 0)
-                158)))))
-      (with
-        ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
-        (let
-          [result : local_ipc.LocalIpcIoResult
-            (local_ipc.write-some!
-              (&mut connection)
-              (byte_buf.as-bytes (& source))
-              0
-              6)]
-          (set!
+    (with
+      ([connection (open reader) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [result : local_ipc.LocalIpcIoResult
+          (local_ipc.read-some!
+            (&mut connection)
+            (byte_buf.as-mut-bytes (&mut buffer))
+            2
+            6)]
+        (set! failed (first-failure failed (= (io-done result) 5) 155))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and
-                (= (io-done result) 3)
-                (= (fake.get writer fake.slot-written-sum) 6))
-              159))))
-      failed)))
+            (and
+              (= (byte-at (& buffer) 1) 0)
+              (= (byte-at (& buffer) 2) 1)
+              (= (byte-at (& buffer) 6) 5)
+              (= (byte-at (& buffer) 7) 0))
+            156))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (fake.get reader fake.slot-last-poll-request) 6)
+            157))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (fake.get reader fake.slot-calls-while-pending) 0)
+            158))))
+    (with
+      ([connection (open writer) local_ipc.cleanup-local-ipc-connection])
+      (let
+        [result : local_ipc.LocalIpcIoResult
+          (local_ipc.write-some!
+            (&mut connection)
+            (byte_buf.as-bytes (& source))
+            0
+            6)]
+        (set!
+          failed
+          (first-failure
+            failed
+            (and
+              (= (io-done result) 3)
+              (= (fake.get writer fake.slot-written-sum) 6))
+            159))))
+    failed))
 
 ;; An adapter that hands back a buffer too small for its count is corrupt:
 ;; nothing is copied, and with the transfer array gone no later attempt reaches
@@ -1940,20 +1815,19 @@
             far-deadline
             local_ipc.never-canceled
             8)]
-        (begin
-          (set! failed (first-failure failed (= (io-kind first) 10) 176))
-          (set! failed (first-failure failed (= calls 1) 177))
-          (set! failed (first-failure failed (= (io-kind second) 10) 178))
-          (set!
+        (set! failed (first-failure failed (= (io-kind first) 10) 176))
+        (set! failed (first-failure failed (= calls 1) 177))
+        (set! failed (first-failure failed (= (io-kind second) 10) 178))
+        (set!
+          failed
+          (first-failure
             failed
-            (first-failure
-              failed
-              (and
-                (= (io-kind waited) 10)
-                (= (fake.get context fake.slot-read-calls) 1))
-              179))
-          (set! failed (first-failure failed (= (byte-at (& buffer) 0) 0) 186))
-          failed)))))
+            (and
+              (= (io-kind waited) 10)
+              (= (fake.get context fake.slot-read-calls) 1))
+            179))
+        (set! failed (first-failure failed (= (byte-at (& buffer) 0) 0) 186))
+        failed))))
 
 (define (first-nonzero [current : i64] [next : i64]) : i64
   (if (= current 0)
@@ -1963,42 +1837,39 @@
 (define (main) : i64
   (let
     [failed : i64 0]
-    (begin
-      (set! failed (first-nonzero failed (case-endpoints)))
-      (set! failed (first-nonzero failed (case-unix-canonical)))
-      (set! failed (first-nonzero failed (case-invalid-endpoint-no-dispatch)))
-      (set! failed (first-nonzero failed (case-connect-and-close)))
-      (set! failed (first-nonzero failed (case-close-failure)))
-      (set! failed (first-nonzero failed (case-lexical-cleanup)))
-      (set! failed (first-nonzero failed (case-windows-family)))
-      (set! failed (first-nonzero failed (case-connect-retry)))
-      (set! failed (first-nonzero failed (case-connect-timeout)))
-      (set!
-        failed
-        (first-nonzero failed (case-connect-cancel-between-attempts)))
-      (set! failed (first-nonzero failed (case-connect-precedence)))
-      (set! failed (first-nonzero failed (case-connect-budget)))
-      (set! failed (first-nonzero failed (case-connect-rejections)))
-      (set! failed (first-nonzero failed (case-connect-delay-failure)))
-      (set! failed (first-nonzero failed (case-primitive-read)))
-      (set! failed (first-nonzero failed (case-primitive-write)))
-      (set! failed (first-nonzero failed (case-pending)))
-      (set! failed (first-nonzero failed (case-pending-never-completes)))
-      (set! failed (first-nonzero failed (case-wait-retries)))
-      (set! failed (first-nonzero failed (case-wait-timeout-slices)))
-      (set! failed (first-nonzero failed (case-wait-precedence)))
-      (set! failed (first-nonzero failed (case-wait-pending)))
-      (set! failed (first-nonzero failed (case-wait-interrupted)))
-      (set! failed (first-nonzero failed (case-wait-budget-and-failures)))
-      (set! failed (first-nonzero failed (case-write-all)))
-      (set! failed (first-nonzero failed (case-transfer-stops)))
-      (set! failed (first-nonzero failed (case-read-exact-and-ranges)))
-      (set! failed (first-nonzero failed (case-stable-errors)))
-      (set! failed (first-nonzero failed (case-connect-name-handback)))
-      (set! failed (first-nonzero failed (case-host-codes)))
-      (set! failed (first-nonzero failed (case-transfer-bound)))
-      (set! failed (first-nonzero failed (case-pending-delivers)))
-      (set! failed (first-nonzero failed (case-corrupt-reply)))
-      (if (= failed 0)
-        42
-        failed))))
+    (set! failed (first-nonzero failed (case-endpoints)))
+    (set! failed (first-nonzero failed (case-unix-canonical)))
+    (set! failed (first-nonzero failed (case-invalid-endpoint-no-dispatch)))
+    (set! failed (first-nonzero failed (case-connect-and-close)))
+    (set! failed (first-nonzero failed (case-close-failure)))
+    (set! failed (first-nonzero failed (case-lexical-cleanup)))
+    (set! failed (first-nonzero failed (case-windows-family)))
+    (set! failed (first-nonzero failed (case-connect-retry)))
+    (set! failed (first-nonzero failed (case-connect-timeout)))
+    (set! failed (first-nonzero failed (case-connect-cancel-between-attempts)))
+    (set! failed (first-nonzero failed (case-connect-precedence)))
+    (set! failed (first-nonzero failed (case-connect-budget)))
+    (set! failed (first-nonzero failed (case-connect-rejections)))
+    (set! failed (first-nonzero failed (case-connect-delay-failure)))
+    (set! failed (first-nonzero failed (case-primitive-read)))
+    (set! failed (first-nonzero failed (case-primitive-write)))
+    (set! failed (first-nonzero failed (case-pending)))
+    (set! failed (first-nonzero failed (case-pending-never-completes)))
+    (set! failed (first-nonzero failed (case-wait-retries)))
+    (set! failed (first-nonzero failed (case-wait-timeout-slices)))
+    (set! failed (first-nonzero failed (case-wait-precedence)))
+    (set! failed (first-nonzero failed (case-wait-pending)))
+    (set! failed (first-nonzero failed (case-wait-interrupted)))
+    (set! failed (first-nonzero failed (case-wait-budget-and-failures)))
+    (set! failed (first-nonzero failed (case-write-all)))
+    (set! failed (first-nonzero failed (case-transfer-stops)))
+    (set! failed (first-nonzero failed (case-read-exact-and-ranges)))
+    (set! failed (first-nonzero failed (case-stable-errors)))
+    (set! failed (first-nonzero failed (case-connect-name-handback)))
+    (set! failed (first-nonzero failed (case-host-codes)))
+    (set! failed (first-nonzero failed (case-transfer-bound)))
+    (set! failed (first-nonzero failed (case-pending-delivers)))
+    (set! failed (first-nonzero failed (case-corrupt-reply)))
+    (if (= failed 0)
+      42
+      failed)))

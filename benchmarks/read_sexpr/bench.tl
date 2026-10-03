@@ -131,33 +131,30 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [byte : i64 (rs-byte-at text n i)]
-          (cond
-            [(= byte 35)
-              (while (and (< i n) (not (= (rs-byte-at text n i) 10)))
-                (set! i (+ i 1)))]
-            [(or (rs-digit? byte) (= byte 45))
-              (let
-                [negative : bool (= byte 45)]
-                [value : i64 0]
-                (begin
-                  (when negative (set! i (+ i 1)))
-                  (while (rs-digit? (rs-byte-at text n i))
-                    (begin
-                      (set! value (+ (* value 10) (- (rs-byte-at text n i) 48)))
-                      (set! i (+ i 1))))
-                  (i64vec.set-ref!
-                    out
-                    count
-                    (if negative
-                      (- 0 value)
-                      value))
-                  (set! count (+ count 1))))]
-            [else (set! i (+ i 1))])))
-      count)))
+    (while (< i n)
+      (let
+        [byte : i64 (rs-byte-at text n i)]
+        (cond
+          [(= byte 35)
+            (while (and (< i n) (not (= (rs-byte-at text n i) 10)))
+              (set! i (+ i 1)))]
+          [(or (rs-digit? byte) (= byte 45))
+            (let
+              [negative : bool (= byte 45)]
+              [value : i64 0]
+              (when negative (set! i (+ i 1)))
+              (while (rs-digit? (rs-byte-at text n i))
+                (set! value (+ (* value 10) (- (rs-byte-at text n i) 48)))
+                (set! i (+ i 1)))
+              (i64vec.set-ref!
+                out
+                count
+                (if negative
+                  (- 0 value)
+                  value))
+              (set! count (+ count 1)))]
+          [else (set! i (+ i 1))])))
+    count))
 
 ;; --------------------------------------------------------------------------
 ;; src/token.tl token-kind tags, and the flattened token record.
@@ -314,12 +311,10 @@
     [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
     [len : i64 sexpr-node-pool-count]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
-          (set! i (+ i 1))))
-      (set! sexpr-node-pool-slots new-slots))))
+    (while (< i len)
+      (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
+      (set! i (+ i 1)))
+    (set! sexpr-node-pool-slots new-slots)))
 
 (define (sexpr-builder-grow!) : unit
   (let
@@ -330,24 +325,20 @@
         (* old-cap 2))]
     [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
     [i : i64 0]
-    (begin
-      (while (< i sexpr-builder-count)
-        (begin
-          (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
-          (set! i (+ i 1))))
-      (set! sexpr-builder-slots new-slots))))
+    (while (< i sexpr-builder-count)
+      (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
+      (set! i (+ i 1)))
+    (set! sexpr-builder-slots new-slots)))
 
 (define (sexpr-node-push [node : Sexpr]) : i64
-  (begin
-    (if (>= sexpr-node-pool-count (array-length sexpr-node-pool-slots))
-      (sexpr-node-pool-grow!)
-      unit)
-    (let
-      [id : i64 sexpr-node-pool-count]
-      (begin
-        (set! (array-ref sexpr-node-pool-slots id) node)
-        (set! sexpr-node-pool-count (+ id 1))
-        id))))
+  (if (>= sexpr-node-pool-count (array-length sexpr-node-pool-slots))
+    (sexpr-node-pool-grow!)
+    unit)
+  (let
+    [id : i64 sexpr-node-pool-count]
+    (set! (array-ref sexpr-node-pool-slots id) node)
+    (set! sexpr-node-pool-count (+ id 1))
+    id))
 
 (define (sexpr-node-get [id : i64]) : Sexpr
   (array-ref sexpr-node-pool-slots id))
@@ -359,21 +350,19 @@
   (set! sexpr-node-pool-count mark))
 
 (define (sexpr-node-pool-reset!) : unit
-  (begin
-    (sexpr-node-pool-truncate! 0)
-    (set! sexpr-builder-count 0)))
+  (sexpr-node-pool-truncate! 0)
+  (set! sexpr-builder-count 0))
 
 (define (sexpr-builder-new) : SexprBuilder
   (SexprBuilder sexpr-builder-count))
 
 (define (sexpr-builder-push [builder : SexprBuilder] [item : Sexpr]) : SexprBuilder
-  (begin
-    (if (>= sexpr-builder-count (array-length sexpr-builder-slots))
-      (sexpr-builder-grow!)
-      unit)
-    (set! (array-ref sexpr-builder-slots sexpr-builder-count) item)
-    (set! sexpr-builder-count (+ sexpr-builder-count 1))
-    builder))
+  (if (>= sexpr-builder-count (array-length sexpr-builder-slots))
+    (sexpr-builder-grow!)
+    unit)
+  (set! (array-ref sexpr-builder-slots sexpr-builder-count) item)
+  (set! sexpr-builder-count (+ sexpr-builder-count 1))
+  builder)
 
 (define (sexpr-list-from-builder [builder : SexprBuilder]) : Sexpr
   (let
@@ -381,13 +370,11 @@
     [builder-start : i64 builder.start]
     [len : i64 (- sexpr-builder-count builder-start)]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (sexpr-node-push (sexpr-builder-get (+ builder-start i)))
-          (set! i (+ i 1))))
-      (set! sexpr-builder-count builder-start)
-      (List start len))))
+    (while (< i len)
+      (sexpr-node-push (sexpr-builder-get (+ builder-start i)))
+      (set! i (+ i 1)))
+    (set! sexpr-builder-count builder-start)
+    (List start len)))
 
 (define (sexpr-builder-discard! [builder : SexprBuilder]) : unit
   (set! sexpr-builder-count builder.start))
@@ -457,41 +444,33 @@
     [t : i64 (peek-tag toks cur)]
     (cond
       [(= t (tag-int))
-        (begin
-          (advance cur)
-          (Ok (Int tok.payload)))]
+        (advance cur)
+        (Ok (Int tok.payload))]
       [(= t (tag-float))
-        (begin
-          (advance cur)
-          (Ok (Float tok.payload)))]
+        (advance cur)
+        (Ok (Float tok.payload))]
       [(= t (tag-sym))
-        (begin
-          (advance cur)
-          (Ok (Sym (intern-syntax-id-from-renderable tok.payload))))]
+        (advance cur)
+        (Ok (Sym (intern-syntax-id-from-renderable tok.payload)))]
       [(= t (tag-str))
-        (begin
-          (advance cur)
-          (Ok (Str tok.payload)))]
+        (advance cur)
+        (Ok (Str tok.payload))]
       [(= t (tag-char))
-        (begin
-          (advance cur)
-          (Ok (Char tok.payload)))]
+        (advance cur)
+        (Ok (Char tok.payload))]
       [(= t (tag-lparen))
-        (begin
-          (advance cur)
-          (list-result toks cur))]
+        (advance cur)
+        (list-result toks cur)]
       [(= t (tag-lbracket))
-        (begin
-          (advance cur)
-          (bracket-list-result toks cur))]
+        (advance cur)
+        (bracket-list-result toks cur)]
       [(prefix-tag? t)
         (let
           [name : i64 (prefix-symbol t)]
-          (begin
-            (advance cur)
-            (match (form-result toks cur)
-              [(Ok form) (Ok (prefix-form name form))]
-              [(Err message) (Err message)])))]
+          (advance cur)
+          (match (form-result toks cur)
+            [(Ok form) (Ok (prefix-form name form))]
+            [(Err message) (Err message)]))]
       [(= t (tag-rparen)) (Err rs-err-unexpected-rparen)]
       [(= t (tag-rbracket)) (Err rs-err-unexpected-rbracket)]
       [else (Err rs-err-unexpected-end)])))
@@ -545,10 +524,9 @@
     (match result
       [(Ok form) (Ok form)]
       [(Err message)
-        (begin
-          (sexpr-builder-discard! builder)
-          (sexpr-node-pool-truncate! pool-mark)
-          (Err message))])))
+        (sexpr-builder-discard! builder)
+        (sexpr-node-pool-truncate! pool-mark)
+        (Err message)])))
 
 (define (bracket-list-result
   [toks : (& toks (__tl_dyn-array Token))]
@@ -566,10 +544,9 @@
     (match result
       [(Ok form) (Ok form)]
       [(Err message)
-        (begin
-          (sexpr-builder-discard! builder)
-          (sexpr-node-pool-truncate! pool-mark)
-          (Err message))])))
+        (sexpr-builder-discard! builder)
+        (sexpr-node-pool-truncate! pool-mark)
+        (Err message)])))
 
 ;; `read.result`: reset the pool, then read one top-level form. The compiler's
 ;; `result` also rewinds the cursor to zero because it reads a single datum; the
@@ -577,9 +554,8 @@
 ;; a whole file and bounds the pool to a single form, which is what the driver
 ;; below does.
 (define (rs-result) : ResultSexpr
-  (begin
-    (sexpr-node-pool-reset!)
-    (form-result (& rs-toks) (&mut rs-cur))))
+  (sexpr-node-pool-reset!)
+  (form-result (& rs-toks) (&mut rs-cur)))
 
 ;; `read`: the panicking wrapper the loader's non-diagnostic path uses.
 (define (rs-read) : Sexpr
@@ -591,18 +567,17 @@
 ;; The consumer: the recursive `sexpr-view` walk a parser performs.
 ;; --------------------------------------------------------------------------
 (define (sexpr-walk [s : Sexpr] [depth : i64] [hash : i64]) : i64
-  (begin
-    (set! rs-walk-nodes (+ rs-walk-nodes 1))
-    (when (> depth rs-walk-depth) (set! rs-walk-depth depth))
-    (match (sexpr-view s)
-      [(Int value) (rs-mix hash value)]
-      [(Sym name) (rs-mix hash name)]
-      [(Nil) (rs-mix hash depth)]
-      [(Cons head tail)
-        (sexpr-walk tail depth (sexpr-walk head (+ depth 1) hash))]
-      [(Str text) (rs-mix hash text)]
-      [(Char c) (rs-mix hash c)]
-      [(Float text) (rs-mix hash text)])))
+  (set! rs-walk-nodes (+ rs-walk-nodes 1))
+  (when (> depth rs-walk-depth) (set! rs-walk-depth depth))
+  (match (sexpr-view s)
+    [(Int value) (rs-mix hash value)]
+    [(Sym name) (rs-mix hash name)]
+    [(Nil) (rs-mix hash depth)]
+    [(Cons head tail)
+      (sexpr-walk tail depth (sexpr-walk head (+ depth 1) hash))]
+    [(Str text) (rs-mix hash text)]
+    [(Char c) (rs-mix hash c)]
+    [(Float text) (rs-mix hash text)]))
 
 ;; --------------------------------------------------------------------------
 ;; Driver.
@@ -613,16 +588,14 @@
 (define (rs-file [start : i64] [hash : i64]) : i64
   (let
     [acc : i64 hash]
-    (begin
-      (set! (array-ref rs-cur 0) start)
-      (while (not (= (peek-tag (& rs-toks) (& rs-cur)) (tag-end)))
-        (let
-          [form : Sexpr (rs-read)]
-          (begin
-            (set! rs-forms (+ rs-forms 1))
-            (set! rs-nodes (+ rs-nodes (sexpr-node-pool-len)))
-            (set! acc (sexpr-walk form 0 acc)))))
-      acc)))
+    (set! (array-ref rs-cur 0) start)
+    (while (not (= (peek-tag (& rs-toks) (& rs-cur)) (tag-end)))
+      (let
+        [form : Sexpr (rs-read)]
+        (set! rs-forms (+ rs-forms 1))
+        (set! rs-nodes (+ rs-nodes (sexpr-node-pool-len)))
+        (set! acc (sexpr-walk form 0 acc))))
+    acc))
 
 ;; Per-pass self-check counters.
 (define rs-forms : i64
@@ -650,66 +623,58 @@
     [round : i64 0]
     [start : i64 0]
     [acc : i64 rs-hash-basis]
-    (begin
-      (set! scanned (rs-scan-ints (& text) (&mut tokens)))
-      (set! acc (rs-mix acc scanned))
-      (set! ntokens (rs-ref tokens 0))
-      (set! nfiles (rs-ref tokens 1))
-      (set! rs-file-start (rs-zero-vec (+ nfiles 1)))
-      (set! rs-toks (__tl_make-array Token ntokens))
-      (let
-        [i : i64 0]
-        [files : i64 0]
-        (begin
-          (rs-set! rs-file-start 0 0)
-          (set! files 1)
-          (while (< i ntokens)
-            (let
-              [tag : i64 (rs-ref tokens (+ 2 (* i 2)))]
-              (begin
-                (set!
-                  (array-ref rs-toks i)
-                  (Token tag (rs-ref tokens (+ 3 (* i 2)))))
-                (when
-                  (and (= tag (tag-end)) (< files nfiles))
-                  (begin
-                    (rs-set! rs-file-start files (+ i 1))
-                    (set! files (+ files 1))))
-                (set! i (+ i 1)))))))
-      (while (< round rounds)
+    (set! scanned (rs-scan-ints (& text) (&mut tokens)))
+    (set! acc (rs-mix acc scanned))
+    (set! ntokens (rs-ref tokens 0))
+    (set! nfiles (rs-ref tokens 1))
+    (set! rs-file-start (rs-zero-vec (+ nfiles 1)))
+    (set! rs-toks (__tl_make-array Token ntokens))
+    (let
+      [i : i64 0]
+      [files : i64 0]
+      (rs-set! rs-file-start 0 0)
+      (set! files 1)
+      (while (< i ntokens)
         (let
-          [step : i64 0]
-          [index : i64 0]
-          (begin
-            (set! acc (rs-mix acc round))
-            (set! rs-forms 0)
-            (set! rs-nodes 0)
-            (set! rs-walk-nodes 0)
-            (set! rs-walk-depth 0)
-            (while (< step nfiles)
-              (begin
-                (set! index (+ start step))
-                (when (>= index nfiles) (set! index (- index nfiles)))
-                (set! acc (rs-file (rs-ref rs-file-start index) acc))
-                (set! step (+ step 1))))
-            (when
-              (or
-                (not (= rs-forms rs-expect-forms))
-                (not (= rs-nodes rs-expect-nodes)))
-              (io.panic "read_sexpr: self-check failed"))
-            (set! acc (rs-mix acc rs-forms))
-            (set! acc (rs-mix acc rs-nodes))
-            (set! acc (rs-mix acc rs-walk-nodes))
-            (set! acc (rs-mix acc rs-walk-depth))
-            (set! start (+ start 1))
-            (when (>= start nfiles) (set! start 0))
-            (set! round (+ round 1)))))
-      acc)))
+          [tag : i64 (rs-ref tokens (+ 2 (* i 2)))]
+          (set! (array-ref rs-toks i) (Token tag (rs-ref tokens (+ 3 (* i 2)))))
+          (when
+            (and (= tag (tag-end)) (< files nfiles))
+            (begin
+              (rs-set! rs-file-start files (+ i 1))
+              (set! files (+ files 1))))
+          (set! i (+ i 1)))))
+    (while (< round rounds)
+      (let
+        [step : i64 0]
+        [index : i64 0]
+        (set! acc (rs-mix acc round))
+        (set! rs-forms 0)
+        (set! rs-nodes 0)
+        (set! rs-walk-nodes 0)
+        (set! rs-walk-depth 0)
+        (while (< step nfiles)
+          (set! index (+ start step))
+          (when (>= index nfiles) (set! index (- index nfiles)))
+          (set! acc (rs-file (rs-ref rs-file-start index) acc))
+          (set! step (+ step 1)))
+        (when
+          (or
+            (not (= rs-forms rs-expect-forms))
+            (not (= rs-nodes rs-expect-nodes)))
+          (io.panic "read_sexpr: self-check failed"))
+        (set! acc (rs-mix acc rs-forms))
+        (set! acc (rs-mix acc rs-nodes))
+        (set! acc (rs-mix acc rs-walk-nodes))
+        (set! acc (rs-mix acc rs-walk-depth))
+        (set! start (+ start 1))
+        (when (>= start nfiles) (set! start 0))
+        (set! round (+ round 1))))
+    acc))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (rs-bench path rounds))
-      0)))
+    (io.println "{}" (rs-bench path rounds))
+    0))

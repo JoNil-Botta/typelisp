@@ -217,32 +217,30 @@
 (define (md-vector-core-test-row [first : String] [second : String]) : MdTableRow
   (let
     [cells : svec.Vec (svec.with-capacity 2)]
-    (begin
-      (svec.push-ref! (&mut cells) first)
-      (svec.push-ref! (&mut cells) second)
-      (Row cells))))
+    (svec.push-ref! (&mut cells) first)
+    (svec.push-ref! (&mut cells) second)
+    (Row cells)))
 
 (define (md-vector-core-growth-order?) : bool
   (let
     [rows : md_table_rows.Vec (md_table_rows.with-capacity 1)]
     [blocks : md_blocks.Vec (md_blocks.with-capacity 1)]
-    (begin
-      (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r0" "a"))
-      (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r1" "b"))
-      (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r2" "c"))
-      (md_blocks.push-ref! (&mut blocks) (Paragraph "first"))
-      (md_blocks.push-ref! (&mut blocks) Blank)
-      (md_blocks.push-ref! (&mut blocks) (Heading 2 "third"))
-      (and
-        (= (md_table_rows.len (& rows)) 3)
-        (= (md_table_rows.capacity (& rows)) 4)
-        (md-table-row-eq2? (md-table-row-list-ref rows 0) "r0" "a")
-        (md-table-row-eq2? (md-table-row-list-ref rows 2) "r2" "c")
-        (= (md_blocks.len (& blocks)) 3)
-        (= (md_blocks.capacity (& blocks)) 4)
-        (md-check-paragraph? blocks 0 "first")
-        (md-check-blank? blocks 1)
-        (md-check-heading? blocks 2 2 "third")))))
+    (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r0" "a"))
+    (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r1" "b"))
+    (md_table_rows.push-ref! (&mut rows) (md-vector-core-test-row "r2" "c"))
+    (md_blocks.push-ref! (&mut blocks) (Paragraph "first"))
+    (md_blocks.push-ref! (&mut blocks) Blank)
+    (md_blocks.push-ref! (&mut blocks) (Heading 2 "third"))
+    (and
+      (= (md_table_rows.len (& rows)) 3)
+      (= (md_table_rows.capacity (& rows)) 4)
+      (md-table-row-eq2? (md-table-row-list-ref rows 0) "r0" "a")
+      (md-table-row-eq2? (md-table-row-list-ref rows 2) "r2" "c")
+      (= (md_blocks.len (& blocks)) 3)
+      (= (md_blocks.capacity (& blocks)) 4)
+      (md-check-paragraph? blocks 0 "first")
+      (md-check-blank? blocks 1)
+      (md-check-heading? blocks 2 2 "third"))))
 
 (define (md-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -258,23 +256,21 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (md-inline-space? (string.string-ref text i))
-          (set! i (+ i 1))
-          (set! done true)))
-      (string.substring text i (- n i)))))
+    (while (and (not done) (< i n))
+      (if (md-inline-space? (string.string-ref text i))
+        (set! i (+ i 1))
+        (set! done true)))
+    (string.substring text i (- n i))))
 
 (define (md-trim-right [text : String]) : String
   (let
     [end : i64 (string.string-length (& text))]
     [done : bool false]
-    (begin
-      (while (and (not done) (> end 0))
-        (if (md-inline-space? (string.string-ref (& text) (- end 1)))
-          (set! end (- end 1))
-          (set! done true)))
-      (string.substring (& text) 0 end))))
+    (while (and (not done) (> end 0))
+      (if (md-inline-space? (string.string-ref (& text) (- end 1)))
+        (set! end (- end 1))
+        (set! done true)))
+    (string.substring (& text) 0 end)))
 
 (define (md-trim [text : (& text str)]) : String
   (md-trim-right (md-trim-left text)))
@@ -290,14 +286,13 @@
         (let
           [i : i64 0]
           [ok : bool true]
-          (begin
-            (while (and ok (< i prefix-len))
-              (if (=
-                (string.string-ref (& text) (+ start i))
-                (string.string-ref (& prefix) i))
-                (set! i (+ i 1))
-                (set! ok false)))
-            ok))))))
+          (while (and ok (< i prefix-len))
+            (if (=
+              (string.string-ref (& text) (+ start i))
+              (string.string-ref (& prefix) i))
+              (set! i (+ i 1))
+              (set! ok false)))
+          ok)))))
 
 (define (md-string-prefix? [text : String] [prefix : String]) : bool
   (md-string-prefix-at? text prefix 0))
@@ -306,24 +301,21 @@
   (let
     [i : i64 start]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (md-newline? (string.string-ref src i))
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
+    (while (and (not done) (< i n))
+      (if (md-newline? (string.string-ref src i))
+        (set! done true)
+        (set! i (+ i 1))))
+    i))
 
 (define (md-next-line-start [src : (& src str)] [line-end : i64] [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref src line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref src (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
+  (unless (< line-end n) (return line-end))
+  (let
+    [c : char (string.string-ref src line-end)]
+    (unless (= c '\r') (return (+ line-end 1)))
+    (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+    (if (= (string.string-ref src (+ line-end 1)) '\n')
+      (+ line-end 2)
+      (+ line-end 1))))
 
 (define (md-line-at [src : (& src str)] [pos : i64] [n : i64]) : String
   (let
@@ -338,14 +330,13 @@
     [trimmed : String (md-trim-left line)]
     [n : i64 (string.string-length (& trimmed))]
     [i : i64 0]
-    (begin
-      (while (and (< i n) (= (string.string-ref (& trimmed) i) '#'))
-        (set! i (+ i 1)))
-      (unless (and (>= i 1) (<= i 6)) (return 0))
-      (unless (< i n) (return 0))
-      (if (md-inline-space? (string.string-ref (& trimmed) i))
-        i
-        0))))
+    (while (and (< i n) (= (string.string-ref (& trimmed) i) '#'))
+      (set! i (+ i 1)))
+    (unless (and (>= i 1) (<= i 6)) (return 0))
+    (unless (< i n) (return 0))
+    (if (md-inline-space? (string.string-ref (& trimmed) i))
+      i
+      0)))
 
 (define (md-heading-text [line : String] [level : i64]) : String
   (let
@@ -401,16 +392,15 @@
     [trimmed : String (md-trim-left line)]
     [n : i64 (string.string-length (& trimmed))]
     [i : i64 0]
-    (begin
-      (while (and (< i n) (md-decimal-digit? (string.string-ref (& trimmed) i)))
-        (set! i (+ i 1)))
-      (unless (> i 0) (return (- 0 1)))
-      (unless (< (+ i 1) n) (return (- 0 1)))
-      (if (and
-        (= (string.string-ref (& trimmed) i) '.')
-        (md-inline-space? (string.string-ref (& trimmed) (+ i 1))))
-        (+ i 2)
-        (- 0 1)))))
+    (while (and (< i n) (md-decimal-digit? (string.string-ref (& trimmed) i)))
+      (set! i (+ i 1)))
+    (unless (> i 0) (return (- 0 1)))
+    (unless (< (+ i 1) n) (return (- 0 1)))
+    (if (and
+      (= (string.string-ref (& trimmed) i) '.')
+      (md-inline-space? (string.string-ref (& trimmed) (+ i 1))))
+      (+ i 2)
+      (- 0 1))))
 
 (define (md-numbered-start? [line : (& line str)]) : bool
   (>= (md-numbered-marker-end line) 0))
@@ -439,12 +429,11 @@
     [n : i64 (string.string-length (& info))]
     [i : i64 0]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (md-inline-space? (string.string-ref (& info) i))
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
+    (while (and (not done) (< i n))
+      (if (md-inline-space? (string.string-ref (& info) i))
+        (set! done true)
+        (set! i (+ i 1))))
+    i))
 
 (define (md-code-info-lang [info : (& info str)]) : String
   (let
@@ -469,12 +458,11 @@
       (let
         [i : i64 1]
         [found : bool false]
-        (begin
-          (while (and (not found) (< i n))
-            (if (= (string.string-ref (& trimmed) i) '|')
-              (set! found true)
-              (set! i (+ i 1))))
-          found))
+        (while (and (not found) (< i n))
+          (if (= (string.string-ref (& trimmed) i) '|')
+            (set! found true)
+            (set! i (+ i 1))))
+        found)
       false)))
 
 (define (md-table-delimiter-char? [c : char]) : bool
@@ -487,18 +475,16 @@
     [i : i64 0]
     [ok : bool (> n 0)]
     [has-dash : bool false]
-    (begin
-      (while (and ok (< i n))
-        (let
-          [c : char (string.string-ref (& trimmed) i)]
-          (begin
-            (if (= c '-')
-              (set! has-dash true)
-              (set! has-dash has-dash))
-            (if (md-table-delimiter-char? c)
-              (set! i (+ i 1))
-              (set! ok false)))))
-      (and ok has-dash))))
+    (while (and ok (< i n))
+      (let
+        [c : char (string.string-ref (& trimmed) i)]
+        (if (= c '-')
+          (set! has-dash true)
+          (set! has-dash has-dash))
+        (if (md-table-delimiter-char? c)
+          (set! i (+ i 1))
+          (set! ok false))))
+    (and ok has-dash)))
 
 (define (md-table-start-at? [src : (& src str)] [pos : i64] [n : i64]) : bool
   (let
@@ -517,14 +503,13 @@
     [trimmed : String (md-trim line)]
     [start : i64 0]
     [end : i64 (string.string-length (md-trim line))]
-    (begin
-      (if (and (> end 0) (= (string.string-ref (& trimmed) 0) '|'))
-        (set! start 1)
-        (set! start start))
-      (if (and (> end start) (= (string.string-ref (& trimmed) (- end 1)) '|'))
-        (set! end (- end 1))
-        (set! end end))
-      (string.substring (& trimmed) start (- end start)))))
+    (if (and (> end 0) (= (string.string-ref (& trimmed) 0) '|'))
+      (set! start 1)
+      (set! start start))
+    (if (and (> end start) (= (string.string-ref (& trimmed) (- end 1)) '|'))
+      (set! end (- end 1))
+      (set! end end))
+    (string.substring (& trimmed) start (- end start))))
 
 (define (md-split-pipe-row [line : String]) : svec.Vec
   (let
@@ -533,21 +518,20 @@
     [i : i64 0]
     [segment-start : i64 0]
     [items : svec.Vec (svec.new)]
-    (begin
-      (while (< i n)
-        (if (= (string.string-ref (& body) i) '|')
-          (begin
-            (svec.push-ref!
-              (&mut items)
-              (md-trim
-                (string.substring (& body) segment-start (- i segment-start))))
-            (set! segment-start (+ i 1))
-            (set! i (+ i 1)))
-          (set! i (+ i 1))))
-      (svec.push-ref!
-        (&mut items)
-        (md-trim (string.substring (& body) segment-start (- n segment-start))))
-      items)))
+    (while (< i n)
+      (if (= (string.string-ref (& body) i) '|')
+        (begin
+          (svec.push-ref!
+            (&mut items)
+            (md-trim
+              (string.substring (& body) segment-start (- i segment-start))))
+          (set! segment-start (+ i 1))
+          (set! i (+ i 1)))
+        (set! i (+ i 1))))
+    (svec.push-ref!
+      (&mut items)
+      (md-trim (string.substring (& body) segment-start (- n segment-start))))
+    items))
 
 (define (md-block-start-at? [src : (& src str)] [pos : i64] [n : i64]) : bool
   (let
@@ -569,97 +553,90 @@
     [scan-pos : i64 (md-next-line-start src line-end n)]
     [body : String ""]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [body-end : i64 (md-line-end src scan-pos n)]
-          [body-line : String
-            (string.substring src scan-pos (- body-end scan-pos))]
-          [body-next : i64 (md-next-line-start src body-end n)]
-          (if (md-code-fence-start? body-line)
-            (begin
-              (set! scan-pos body-next)
-              (set! done true))
-            (begin
-              (set! body (string.concat3 body body-line "\n"))
-              (set! scan-pos body-next)))))
-      (Block
-        scan-pos
-        (CodeFence (md-code-info-lang info) (md-code-info-meta info) body)))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [body-end : i64 (md-line-end src scan-pos n)]
+        [body-line : String
+          (string.substring src scan-pos (- body-end scan-pos))]
+        [body-next : i64 (md-next-line-start src body-end n)]
+        (if (md-code-fence-start? body-line)
+          (begin
+            (set! scan-pos body-next)
+            (set! done true))
+          (begin
+            (set! body (string.concat3 body body-line "\n"))
+            (set! scan-pos body-next)))))
+    (Block
+      scan-pos
+      (CodeFence (md-code-info-lang info) (md-code-info-meta info) body))))
 
 (define (md-scan-blockquote [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String (string.substring src scan-pos (- line-end scan-pos))]
-          [next : i64 (md-next-line-start src line-end n)]
-          (if (md-blockquote-start? line)
-            (begin
-              (svec.push-ref! (&mut items) (md-blockquote-text line))
-              (set! scan-pos next))
-            (set! done true))))
-      (Block scan-pos (Blockquote items)))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [line-end : i64 (md-line-end src scan-pos n)]
+        [line : String (string.substring src scan-pos (- line-end scan-pos))]
+        [next : i64 (md-next-line-start src line-end n)]
+        (if (md-blockquote-start? line)
+          (begin
+            (svec.push-ref! (&mut items) (md-blockquote-text line))
+            (set! scan-pos next))
+          (set! done true))))
+    (Block scan-pos (Blockquote items))))
 
 (define (md-scan-bullet-list [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String (string.substring src scan-pos (- line-end scan-pos))]
-          [next : i64 (md-next-line-start src line-end n)]
-          (if (md-bullet-start? line)
-            (begin
-              (svec.push-ref! (&mut items) (md-bullet-text line))
-              (set! scan-pos next))
-            (set! done true))))
-      (Block scan-pos (BulletList items)))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [line-end : i64 (md-line-end src scan-pos n)]
+        [line : String (string.substring src scan-pos (- line-end scan-pos))]
+        [next : i64 (md-next-line-start src line-end n)]
+        (if (md-bullet-start? line)
+          (begin
+            (svec.push-ref! (&mut items) (md-bullet-text line))
+            (set! scan-pos next))
+          (set! done true))))
+    (Block scan-pos (BulletList items))))
 
 (define (md-scan-numbered-list [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String (string.substring src scan-pos (- line-end scan-pos))]
-          [next : i64 (md-next-line-start src line-end n)]
-          (if (md-numbered-start? line)
-            (begin
-              (svec.push-ref! (&mut items) (md-numbered-text line))
-              (set! scan-pos next))
-            (set! done true))))
-      (Block scan-pos (NumberedList items)))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [line-end : i64 (md-line-end src scan-pos n)]
+        [line : String (string.substring src scan-pos (- line-end scan-pos))]
+        [next : i64 (md-next-line-start src line-end n)]
+        (if (md-numbered-start? line)
+          (begin
+            (svec.push-ref! (&mut items) (md-numbered-text line))
+            (set! scan-pos next))
+          (set! done true))))
+    (Block scan-pos (NumberedList items))))
 
 (define (md-scan-table-rows [src : (& src str)] [pos : i64] [n : i64]) : MdScanRows
   (let
     [scan-pos : i64 pos]
     [rows : md_table_rows.Vec (md-table-row-list-empty)]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String (string.substring src scan-pos (- line-end scan-pos))]
-          [next : i64 (md-next-line-start src line-end n)]
-          (if (md-pipe-row-line? line)
-            (begin
-              (md_table_rows.push-ref!
-                (&mut rows)
-                (Row (md-split-pipe-row line)))
-              (set! scan-pos next))
-            (set! done true))))
-      (Rows scan-pos rows))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [line-end : i64 (md-line-end src scan-pos n)]
+        [line : String (string.substring src scan-pos (- line-end scan-pos))]
+        [next : i64 (md-next-line-start src line-end n)]
+        (if (md-pipe-row-line? line)
+          (begin
+            (md_table_rows.push-ref! (&mut rows) (Row (md-split-pipe-row line)))
+            (set! scan-pos next))
+          (set! done true))))
+    (Rows scan-pos rows)))
 
 (define (md-scan-table [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -677,22 +654,21 @@
     [scan-pos : i64 pos]
     [text : String ""]
     [done : bool false]
-    (begin
-      (while (and (not done) (< scan-pos n))
-        (let
-          [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String (string.substring src scan-pos (- line-end scan-pos))]
-          [next : i64 (md-next-line-start src line-end n)]
-          (if (md-block-start-at? src scan-pos n)
-            (set! done true)
-            (begin
-              (set!
-                text
-                (if (= (string.string-length (& text)) 0)
-                  (md-trim line)
-                  (str_cat.str-cat text " " (md-trim line))))
-              (set! scan-pos next)))))
-      (Block scan-pos (Paragraph text)))))
+    (while (and (not done) (< scan-pos n))
+      (let
+        [line-end : i64 (md-line-end src scan-pos n)]
+        [line : String (string.substring src scan-pos (- line-end scan-pos))]
+        [next : i64 (md-next-line-start src line-end n)]
+        (if (md-block-start-at? src scan-pos n)
+          (set! done true)
+          (begin
+            (set!
+              text
+              (if (= (string.string-length (& text)) 0)
+                (md-trim line)
+                (str_cat.str-cat text " " (md-trim line))))
+            (set! scan-pos next)))))
+    (Block scan-pos (Paragraph text))))
 
 (define (md-scan-block-at [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -715,14 +691,12 @@
     [n : i64 (string.string-length src)]
     [pos : i64 0]
     [blocks : md_blocks.Vec (md-block-list-empty)]
-    (begin
-      (while (< pos n)
-        (match (md-scan-block-at src pos n)
-          [(Block next block)
-            (begin
-              (md_blocks.push-ref! (&mut blocks) block)
-              (set! pos next))]))
-      blocks)))
+    (while (< pos n)
+      (match (md-scan-block-at src pos n)
+        [(Block next block)
+          (md_blocks.push-ref! (&mut blocks) block)
+          (set! pos next)]))
+    blocks))
 
 ;: Index of the first `target` char at or after `from`; returns the string
 ;: length (a never-an-index sentinel) when there is no such character.
@@ -731,16 +705,14 @@
     [i : i64 from]
     [n : i64 (string.string-length text)]
     [found : i64 (string.string-length text)]
-    (begin
-      (while (and (< i n) (= found n))
-        (begin
-          (set!
-            found
-            (if (= (string.string-ref text i) target)
-              i
-              found))
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (= found n))
+      (set!
+        found
+        (if (= (string.string-ref text i) target)
+          i
+          found))
+      (set! i (+ i 1)))
+    found))
 
 ;: HTML-escape the single character at `idx` (reuses the doc_html entity escaper).
 (define (md-escape-char [text : (& text str)] [idx : i64]) : String
@@ -769,83 +741,79 @@
     [i : i64 0]
     [n : i64 (string.string-length (& text))]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref (& text) i)]
-          (cond
-            [(= c '`')
-              (let
-                [j : i64 (md-find-char text (+ i 1) '`')]
-                (if (< j n)
-                  (begin
-                    (set!
+    (while (< i n)
+      (let
+        [c : char (string.string-ref (& text) i)]
+        (cond
+          [(= c '`')
+            (let
+              [j : i64 (md-find-char text (+ i 1) '`')]
+              (if (< j n)
+                (begin
+                  (set!
+                    out
+                    (str_cat.str-cat
                       out
-                      (str_cat.str-cat
-                        out
-                        "<code>"
-                        (doc_bridge.bridge-doc-html-escape
-                          (string.substring (& text) (+ i 1) (- j (+ i 1))))
-                        "</code>"))
-                    (set! i (+ j 1)))
-                  (begin
-                    (set! out (string.concat3 out (md-escape-char text i) ""))
-                    (set! i (+ i 1)))))]
-            [(or (= c '*') (= c '_'))
-              (let
-                [j : i64 (md-find-char text (+ i 1) c)]
-                (if (< j n)
-                  (begin
-                    (set!
+                      "<code>"
+                      (doc_bridge.bridge-doc-html-escape
+                        (string.substring (& text) (+ i 1) (- j (+ i 1))))
+                      "</code>"))
+                  (set! i (+ j 1)))
+                (begin
+                  (set! out (string.concat3 out (md-escape-char text i) ""))
+                  (set! i (+ i 1)))))]
+          [(or (= c '*') (= c '_'))
+            (let
+              [j : i64 (md-find-char text (+ i 1) c)]
+              (if (< j n)
+                (begin
+                  (set!
+                    out
+                    (str_cat.str-cat
                       out
-                      (str_cat.str-cat
-                        out
-                        "<em>"
-                        (doc_bridge.bridge-doc-html-escape
-                          (string.substring (& text) (+ i 1) (- j (+ i 1))))
-                        "</em>"))
-                    (set! i (+ j 1)))
-                  (begin
-                    (set! out (string.concat3 out (md-escape-char text i) ""))
-                    (set! i (+ i 1)))))]
-            [(= c '[')
-              (let
-                [jclose : i64 (md-find-char text (+ i 1) ']')]
-                (if (< jclose n)
-                  (if (< (+ jclose 1) n)
-                    (if (= (string.string-ref (& text) (+ jclose 1)) '(')
-                      (let
-                        [kclose : i64 (md-find-char text (+ jclose 2) ')')]
-                        (if (< kclose n)
-                          (begin
-                            (set!
+                      "<em>"
+                      (doc_bridge.bridge-doc-html-escape
+                        (string.substring (& text) (+ i 1) (- j (+ i 1))))
+                      "</em>"))
+                  (set! i (+ j 1)))
+                (begin
+                  (set! out (string.concat3 out (md-escape-char text i) ""))
+                  (set! i (+ i 1)))))]
+          [(= c '[')
+            (let
+              [jclose : i64 (md-find-char text (+ i 1) ']')]
+              (if (< jclose n)
+                (if (< (+ jclose 1) n)
+                  (if (= (string.string-ref (& text) (+ jclose 1)) '(')
+                    (let
+                      [kclose : i64 (md-find-char text (+ jclose 2) ')')]
+                      (if (< kclose n)
+                        (begin
+                          (set!
+                            out
+                            (string.concat3
                               out
-                              (string.concat3
-                                out
-                                (md-render-link text i jclose kclose)
-                                ""))
-                            (set! i (+ kclose 1)))
-                          (begin
-                            (set!
-                              out
-                              (string.concat3 out (md-escape-char text i) ""))
-                            (set! i (+ i 1)))))
-                      (begin
-                        (set!
-                          out
-                          (string.concat3 out (md-escape-char text i) ""))
-                        (set! i (+ i 1))))
+                              (md-render-link text i jclose kclose)
+                              ""))
+                          (set! i (+ kclose 1)))
+                        (begin
+                          (set!
+                            out
+                            (string.concat3 out (md-escape-char text i) ""))
+                          (set! i (+ i 1)))))
                     (begin
                       (set! out (string.concat3 out (md-escape-char text i) ""))
                       (set! i (+ i 1))))
                   (begin
                     (set! out (string.concat3 out (md-escape-char text i) ""))
-                    (set! i (+ i 1)))))]
-            [else
-              (begin
-                (set! out (string.concat3 out (md-escape-char text i) ""))
-                (set! i (+ i 1)))])))
-      out)))
+                    (set! i (+ i 1))))
+                (begin
+                  (set! out (string.concat3 out (md-escape-char text i) ""))
+                  (set! i (+ i 1)))))]
+          [else
+            (set! out (string.concat3 out (md-escape-char text i) ""))
+            (set! i (+ i 1))])))
+    out))
 
 ;: Render a heading with the same deterministic anchor scheme used by API docs.
 (define (md-render-heading [level : i64] [text : String]) : String
@@ -1023,50 +991,49 @@
   [blocks : md_blocks.Vec]) : i64
   (let
     [html : String (md-render-blocks blocks)]
-    (begin
-      (unless
-        (md-string-contains?
-          html
-          (str_cat.str-cat
-            "<h1 id=\""
-            (doc_bridge.bridge-doc-render-anchor "Title `x`")
-            "\">Title <code>x</code></h1>\n"
-            ""
-            ""))
-        (return 109))
-      (unless
-        (md-string-contains?
-          (md-render-block (Heading 6 "Deep Heading"))
-          "<h6 id=\"tl-Deep_20Heading\">Deep Heading</h6>\n")
-        (return 110))
-      (unless
-        (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")
-        (return 111))
-      (unless
-        (md-string-contains?
-          html
-          "<blockquote>\n<p>quote <a href=\"b\">a</a><br>\nsecond</p>\n</blockquote>\n")
-        (return 112))
-      (unless
-        (md-string-contains? html "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n")
-        (return 113))
-      (unless
-        (md-string-contains?
-          html
-          "<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n")
-        (return 114))
-      (unless
-        (md-string-contains?
-          html
-          "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">x</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">1</span>)\n<span class=\"tl-syn-comment\">; &lt;tag&gt; &amp; value</span>\n</code></pre>\n")
-        (return 115))
-      (unless
-        (md-string-contains?
-          html
-          "<table>\n<thead>\n<tr><th>Name</th><th>Type</th></tr>\n</thead>\n<tbody>\n<tr><td>x</td><td>i64</td></tr>\n</tbody>\n</table>\n")
-        (return 116))
-      (unless (string.eq (md-render-html fixture) html) (return 117))
-      42)))
+    (unless
+      (md-string-contains?
+        html
+        (str_cat.str-cat
+          "<h1 id=\""
+          (doc_bridge.bridge-doc-render-anchor "Title `x`")
+          "\">Title <code>x</code></h1>\n"
+          ""
+          ""))
+      (return 109))
+    (unless
+      (md-string-contains?
+        (md-render-block (Heading 6 "Deep Heading"))
+        "<h6 id=\"tl-Deep_20Heading\">Deep Heading</h6>\n")
+      (return 110))
+    (unless
+      (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")
+      (return 111))
+    (unless
+      (md-string-contains?
+        html
+        "<blockquote>\n<p>quote <a href=\"b\">a</a><br>\nsecond</p>\n</blockquote>\n")
+      (return 112))
+    (unless
+      (md-string-contains? html "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n")
+      (return 113))
+    (unless
+      (md-string-contains?
+        html
+        "<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n")
+      (return 114))
+    (unless
+      (md-string-contains?
+        html
+        "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">x</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">1</span>)\n<span class=\"tl-syn-comment\">; &lt;tag&gt; &amp; value</span>\n</code></pre>\n")
+      (return 115))
+    (unless
+      (md-string-contains?
+        html
+        "<table>\n<thead>\n<tr><th>Name</th><th>Type</th></tr>\n</thead>\n<tbody>\n<tr><td>x</td><td>i64</td></tr>\n</tbody>\n</table>\n")
+      (return 116))
+    (unless (string.eq (md-render-html fixture) html) (return 117))
+    42))
 
 ;; ---- self-test (driven by doc_md_smoke.tl) ----
 (define (compiler-doc-md-block-self-test) : i64
@@ -1081,50 +1048,44 @@
         "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
         "| Name | Type |\n| --- | --- |\n| x | i64 |\n")]
     [blocks : md_blocks.Vec (md-scan-blocks fixture)]
-    (begin
-      (unless (= (md-block-list-count blocks) 8) (return 100))
-      (unless (md-check-heading? blocks 0 1 "Title `x`") (return 101))
-      (unless (md-check-blank? blocks 1) (return 102))
-      (unless (md-check-paragraph? blocks 2 "Paragraph with *em*") (return 103))
-      (unless
-        (md-check-blockquote2? blocks 3 "quote [a](b)" "second")
-        (return 104))
-      (unless (md-check-bullet-list2? blocks 4 "one" "two") (return 105))
-      (unless (md-check-numbered-list2? blocks 5 "first" "second") (return 106))
-      (unless
-        (md-check-code-fence?
-          blocks
-          6
-          "typelisp"
-          "run expect=42"
-          "(define x : i64 1)\n; <tag> & value\n")
-        (return 107))
-      (unless (md-check-table1? blocks 7 "Name" "Type" "x" "i64") (return 108))
-      (unless (md-vector-core-growth-order?) (return 118))
-      (md-render-block-smoke-result fixture blocks))))
+    (unless (= (md-block-list-count blocks) 8) (return 100))
+    (unless (md-check-heading? blocks 0 1 "Title `x`") (return 101))
+    (unless (md-check-blank? blocks 1) (return 102))
+    (unless (md-check-paragraph? blocks 2 "Paragraph with *em*") (return 103))
+    (unless
+      (md-check-blockquote2? blocks 3 "quote [a](b)" "second")
+      (return 104))
+    (unless (md-check-bullet-list2? blocks 4 "one" "two") (return 105))
+    (unless (md-check-numbered-list2? blocks 5 "first" "second") (return 106))
+    (unless
+      (md-check-code-fence?
+        blocks
+        6
+        "typelisp"
+        "run expect=42"
+        "(define x : i64 1)\n; <tag> & value\n")
+      (return 107))
+    (unless (md-check-table1? blocks 7 "Name" "Type" "x" "i64") (return 108))
+    (unless (md-vector-core-growth-order?) (return 118))
+    (md-render-block-smoke-result fixture blocks)))
 
 (define (compiler-doc-md-self-test) : i64
-  (begin
-    (unless (string.eq (md-render-inline "plain text") "plain text") (return 0))
-    (unless
-      (string.eq (md-render-inline "a `b` c") "a <code>b</code> c")
-      (return 1))
-    (unless
-      (string.eq (md-render-inline "x *y* z") "x <em>y</em> z")
-      (return 2))
-    (unless
-      (string.eq (md-render-inline "u _v_ w") "u <em>v</em> w")
-      (return 3))
-    (unless
-      (string.eq
-        (md-render-inline "see [docs](https://x/y)")
-        "see <a href=\"https://x/y\">docs</a>")
-      (return 4))
-    (unless
-      (string.eq (md-render-inline "1 < 2 & 3 > 0") "1 &lt; 2 &amp; 3 &gt; 0")
-      (return 5))
-    (unless
-      (string.eq (md-render-inline "code `a<b`") "code <code>a&lt;b</code>")
-      (return 6))
-    (unless (string.eq (md-render-inline "bare [link") "bare [link") (return 7))
-    (compiler-doc-md-block-self-test)))
+  (unless (string.eq (md-render-inline "plain text") "plain text") (return 0))
+  (unless
+    (string.eq (md-render-inline "a `b` c") "a <code>b</code> c")
+    (return 1))
+  (unless (string.eq (md-render-inline "x *y* z") "x <em>y</em> z") (return 2))
+  (unless (string.eq (md-render-inline "u _v_ w") "u <em>v</em> w") (return 3))
+  (unless
+    (string.eq
+      (md-render-inline "see [docs](https://x/y)")
+      "see <a href=\"https://x/y\">docs</a>")
+    (return 4))
+  (unless
+    (string.eq (md-render-inline "1 < 2 & 3 > 0") "1 &lt; 2 &amp; 3 &gt; 0")
+    (return 5))
+  (unless
+    (string.eq (md-render-inline "code `a<b`") "code <code>a&lt;b</code>")
+    (return 6))
+  (unless (string.eq (md-render-inline "bare [link") "bare [link") (return 7))
+  (compiler-doc-md-block-self-test))

@@ -6,10 +6,9 @@
 (define (debug-one-byte-string [code : i64]) : String
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 1)]
-    (begin
-      (set! (array-ref bytes 0) (cast code : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 1)))))
+    (set! (array-ref bytes 0) (cast code : u8))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 1))))
 
 (define (debug-expected-hex-digit [value : i64]) : String
   (string.substring "0123456789abcdef" value 1))
@@ -52,12 +51,10 @@
     [index : i64 0]
     [ok : bool true]
     [len : i64 (string.string-length rendered)]
-    (begin
-      (while (and ok (< index len))
-        (begin
-          (set! ok (<= (cast (string.string-ref rendered index) : i64) 127))
-          (set! index (+ index 1))))
-      ok)))
+    (while (and ok (< index len))
+      (set! ok (<= (cast (string.string-ref rendered index) : i64) 127))
+      (set! index (+ index 1)))
+    ok))
 
 (define (debug-expected-runtime-bytes [rendered : (& rendered str)]) : i64
   ;; One aligned backing-byte allocation plus the normal 16-byte String handle.
@@ -67,57 +64,54 @@
   (let
     [code : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< code 256))
-        (let
-          [text : String (debug-one-byte-string code)]
-          [expected-text : String (debug-expected-one-byte code 34)]
-          [before-text : i64 (profile.alloc-total)]
-          [rendered-text : String (format.format-debug-string-core (& text))]
-          [text-allocated-bytes : i64 (- (profile.alloc-total) before-text)]
-          [char-value : char (cast code : char)]
-          [expected-char : String (debug-expected-one-byte code 39)]
-          [before-char : i64 (profile.alloc-total)]
-          [rendered-char : String (format.format-debug-char-core char-value)]
-          [char-allocated-bytes : i64 (- (profile.alloc-total) before-char)]
-          (begin
-            (set!
-              ok
-              (and
-                (=
-                  text-allocated-bytes
-                  (debug-expected-runtime-bytes (& rendered-text)))
-                (=
-                  char-allocated-bytes
-                  (debug-expected-runtime-bytes (& rendered-char)))
-                (string.eq (& rendered-text) (& expected-text))
-                (string.eq (& rendered-char) (& expected-char))
-                (debug-ascii-only? (& rendered-text))
-                (debug-ascii-only? (& rendered-char))
-                (= (string.string-length (& text)) 1)
-                (= (cast (string.string-ref (& text) 0) : i64) code)
-                (= (cast char-value : i64) code)))
-            (set! code (+ code 1)))))
-      ok)))
+    (while (and ok (< code 256))
+      (let
+        [text : String (debug-one-byte-string code)]
+        [expected-text : String (debug-expected-one-byte code 34)]
+        [before-text : i64 (profile.alloc-total)]
+        [rendered-text : String (format.format-debug-string-core (& text))]
+        [text-allocated-bytes : i64 (- (profile.alloc-total) before-text)]
+        [char-value : char (cast code : char)]
+        [expected-char : String (debug-expected-one-byte code 39)]
+        [before-char : i64 (profile.alloc-total)]
+        [rendered-char : String (format.format-debug-char-core char-value)]
+        [char-allocated-bytes : i64 (- (profile.alloc-total) before-char)]
+        (set!
+          ok
+          (and
+            (=
+              text-allocated-bytes
+              (debug-expected-runtime-bytes (& rendered-text)))
+            (=
+              char-allocated-bytes
+              (debug-expected-runtime-bytes (& rendered-char)))
+            (string.eq (& rendered-text) (& expected-text))
+            (string.eq (& rendered-char) (& expected-char))
+            (debug-ascii-only? (& rendered-text))
+            (debug-ascii-only? (& rendered-char))
+            (= (string.string-length (& text)) 1)
+            (= (cast (string.string-ref (& text) 0) : i64) code)
+            (= (cast char-value : i64) code)))
+        (set! code (+ code 1))))
+    ok))
 
 (define (debug-heavy-source) : String
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 12)]
-    (begin
-      (set! (array-ref bytes 0) (cast 0 : u8))
-      (set! (array-ref bytes 1) (cast 9 : u8))
-      (set! (array-ref bytes 2) (cast 10 : u8))
-      (set! (array-ref bytes 3) (cast 13 : u8))
-      (set! (array-ref bytes 4) (cast 31 : u8))
-      (set! (array-ref bytes 5) (cast 32 : u8))
-      (set! (array-ref bytes 6) (cast 34 : u8))
-      (set! (array-ref bytes 7) (cast 39 : u8))
-      (set! (array-ref bytes 8) (cast 92 : u8))
-      (set! (array-ref bytes 9) (cast 126 : u8))
-      (set! (array-ref bytes 10) (cast 127 : u8))
-      (set! (array-ref bytes 11) (cast 255 : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 12)))))
+    (set! (array-ref bytes 0) (cast 0 : u8))
+    (set! (array-ref bytes 1) (cast 9 : u8))
+    (set! (array-ref bytes 2) (cast 10 : u8))
+    (set! (array-ref bytes 3) (cast 13 : u8))
+    (set! (array-ref bytes 4) (cast 31 : u8))
+    (set! (array-ref bytes 5) (cast 32 : u8))
+    (set! (array-ref bytes 6) (cast 34 : u8))
+    (set! (array-ref bytes 7) (cast 39 : u8))
+    (set! (array-ref bytes 8) (cast 92 : u8))
+    (set! (array-ref bytes 9) (cast 126 : u8))
+    (set! (array-ref bytes 10) (cast 127 : u8))
+    (set! (array-ref bytes 11) (cast 255 : u8))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 12))))
 
 (define (debug-focused-goldens-ok?) : bool
   (let

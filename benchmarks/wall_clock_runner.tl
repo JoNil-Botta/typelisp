@@ -94,13 +94,12 @@
   [exec-write : i64]
   [error-buffer : (&mut error-buffer (__tl_dyn-array i64))]
   [status : i64]) : never
-  (begin
-    (set! (array-ref error-buffer 0) (positive-errno status))
-    (unsafe
-      (syscall 1 exec-write (array-i64-addr error-buffer) 8))
-    (unsafe
-      (syscall 60 127))
-    (child-fail exec-write error-buffer status)))
+  (set! (array-ref error-buffer 0) (positive-errno status))
+  (unsafe
+    (syscall 1 exec-write (array-i64-addr error-buffer) 8))
+  (unsafe
+    (syscall 60 127))
+  (child-fail exec-write error-buffer status))
 
 (define (close-redirect-fd [fd : i64]) : unit
   (if (> fd 2)
@@ -116,49 +115,48 @@
   [exec-addr : i64]
   [argv-addr : i64]
   [envp-addr : i64]) : never
-  (begin
-    (close-fd exec-read)
-    (let
-      [stdout-fd : i64
-        (unsafe
-          (syscall 2 stdout-path-addr open-output-flags open-output-mode))]
-      (if (< stdout-fd 0)
-        (child-fail exec-write (&mut error-buffer) stdout-fd)
-        (let
-          [stderr-fd : i64
-            (unsafe
-              (syscall 2 stderr-path-addr open-output-flags open-output-mode))]
-          (if (< stderr-fd 0)
-            (begin
-              (close-redirect-fd stdout-fd)
-              (child-fail exec-write (&mut error-buffer) stderr-fd))
-            (let
-              [stdout-status : i64
-                (unsafe
-                  (syscall 33 stdout-fd 1))]
-              (if (< stdout-status 0)
-                (begin
-                  (close-redirect-fd stdout-fd)
-                  (close-redirect-fd stderr-fd)
-                  (child-fail exec-write (&mut error-buffer) stdout-status))
-                (let
-                  [stderr-status : i64
-                    (unsafe
-                      (syscall 33 stderr-fd 2))]
-                  (if (< stderr-status 0)
-                    (begin
-                      (close-redirect-fd stdout-fd)
-                      (close-redirect-fd stderr-fd)
-                      (child-fail exec-write (&mut error-buffer) stderr-status))
-                    (begin
-                      (close-redirect-fd stdout-fd)
-                      (close-redirect-fd stderr-fd)
-                      (let
-                        [exec-status : i64
-                          (unsafe
-                            (syscall 59 exec-addr argv-addr envp-addr))]
-                        (child-fail exec-write (&mut error-buffer) exec-status)))))))))))
-    (child-fail exec-write (&mut error-buffer) -1)))
+  (close-fd exec-read)
+  (let
+    [stdout-fd : i64
+      (unsafe
+        (syscall 2 stdout-path-addr open-output-flags open-output-mode))]
+    (if (< stdout-fd 0)
+      (child-fail exec-write (&mut error-buffer) stdout-fd)
+      (let
+        [stderr-fd : i64
+          (unsafe
+            (syscall 2 stderr-path-addr open-output-flags open-output-mode))]
+        (if (< stderr-fd 0)
+          (begin
+            (close-redirect-fd stdout-fd)
+            (child-fail exec-write (&mut error-buffer) stderr-fd))
+          (let
+            [stdout-status : i64
+              (unsafe
+                (syscall 33 stdout-fd 1))]
+            (if (< stdout-status 0)
+              (begin
+                (close-redirect-fd stdout-fd)
+                (close-redirect-fd stderr-fd)
+                (child-fail exec-write (&mut error-buffer) stdout-status))
+              (let
+                [stderr-status : i64
+                  (unsafe
+                    (syscall 33 stderr-fd 2))]
+                (if (< stderr-status 0)
+                  (begin
+                    (close-redirect-fd stdout-fd)
+                    (close-redirect-fd stderr-fd)
+                    (child-fail exec-write (&mut error-buffer) stderr-status))
+                  (begin
+                    (close-redirect-fd stdout-fd)
+                    (close-redirect-fd stderr-fd)
+                    (let
+                      [exec-status : i64
+                        (unsafe
+                          (syscall 59 exec-addr argv-addr envp-addr))]
+                      (child-fail exec-write (&mut error-buffer) exec-status)))))))))))
+  (child-fail exec-write (&mut error-buffer) -1))
 
 (define (read-launch-error
   [fd : i64]
@@ -166,34 +164,31 @@
   (let
     [total : i64 0]
     [done : bool false]
-    (begin
-      (while (and (not done) (< total 8))
-        (let
-          [count : i64
-            (unsafe
-              (syscall 0 fd (+ (array-i64-addr error-buffer) total) (- 8 total)))]
-          (cond
-            [(= count 0) (set! done true)]
-            [(= count -4) unit]
-            [(< count 0)
-              (begin
-                (set! total -1)
-                (set! done true))]
-            [else (set! total (+ total count))])))
-      total)))
+    (while (and (not done) (< total 8))
+      (let
+        [count : i64
+          (unsafe
+            (syscall 0 fd (+ (array-i64-addr error-buffer) total) (- 8 total)))]
+        (cond
+          [(= count 0) (set! done true)]
+          [(= count -4) unit]
+          [(< count 0)
+            (set! total -1)
+            (set! done true)]
+          [else (set! total (+ total count))])))
+    total))
 
 (define (wait-child
   [pid : i64]
   [status-buffer : (&mut status-buffer (__tl_dyn-array i32))]) : i64
   (let
     [waited : i64 -4]
-    (begin
-      (while (= waited -4)
-        (set!
-          waited
-          (unsafe
-            (syscall 61 pid (array-i32-addr status-buffer) 0 0))))
-      waited)))
+    (while (= waited -4)
+      (set!
+        waited
+        (unsafe
+          (syscall 61 pid (array-i32-addr status-buffer) 0 0))))
+    waited))
 
 (define (decode-signal [status : i32]) : i64
   (bit-and (cast status : i64) 0x7f))
@@ -206,10 +201,9 @@
 (define (pad-nanoseconds [value : i64]) : String
   (let
     [text : String (string.int->string value)]
-    (begin
-      (while (< (string.string-length text) 9)
-        (set! text (str_cat.str-cat "0" text)))
-      text)))
+    (while (< (string.string-length text) 9)
+      (set! text (str_cat.str-cat "0" text)))
+    text))
 
 (define (render-result
   [elapsed-nanoseconds : i64]
@@ -273,52 +267,45 @@
                   (read-launch-error exec-read (&mut error-buffer))]
                 [waited : i64 (wait-child pid (&mut status-buffer))]
                 [end : i64 (profile.now-ticks)]
-                (begin
-                  (close-fd exec-read)
-                  (cond
-                    [(< launch-bytes 0)
-                      (begin
-                        (io.print-error
-                          "wall-clock-runner: launch-status read failed\n")
-                        1)]
-                    [(and (not (= launch-bytes 0)) (not (= launch-bytes 8)))
-                      (begin
-                        (io.print-error
-                          "wall-clock-runner: incomplete launch status\n")
-                        1)]
-                    [(< waited 0)
-                      (begin
-                        (io.print-error "wall-clock-runner: wait4 failed\n")
-                        1)]
-                    [(or (= start 0) (= end 0) (< end start))
-                      (begin
-                        (io.print-error
-                          "wall-clock-runner: monotonic clock failed\n")
-                        1)]
-                    [else
-                      (let
-                        [raw-status : i32 (array-ref status-buffer 0)]
-                        [signal : i64 (decode-signal raw-status)]
-                        [exit-status : i64 (decode-exit raw-status)]
-                        [launch-errno : i64
-                          (if (= launch-bytes 8)
-                            (array-ref error-buffer 0)
-                            0)]
-                        [line : String
-                          (render-result
-                            (- end start)
-                            exit-status
-                            signal
-                            launch-errno)]
-                        (begin
-                          (io.print-format "{}" line)
-                          0))]))))))))))
+                (close-fd exec-read)
+                (cond
+                  [(< launch-bytes 0)
+                    (io.print-error
+                      "wall-clock-runner: launch-status read failed\n")
+                    1]
+                  [(and (not (= launch-bytes 0)) (not (= launch-bytes 8)))
+                    (io.print-error
+                      "wall-clock-runner: incomplete launch status\n")
+                    1]
+                  [(< waited 0)
+                    (io.print-error "wall-clock-runner: wait4 failed\n")
+                    1]
+                  [(or (= start 0) (= end 0) (< end start))
+                    (io.print-error
+                      "wall-clock-runner: monotonic clock failed\n")
+                    1]
+                  [else
+                    (let
+                      [raw-status : i32 (array-ref status-buffer 0)]
+                      [signal : i64 (decode-signal raw-status)]
+                      [exit-status : i64 (decode-exit raw-status)]
+                      [launch-errno : i64
+                        (if (= launch-bytes 8)
+                          (array-ref error-buffer 0)
+                          0)]
+                      [line : String
+                        (render-result
+                          (- end start)
+                          exit-status
+                          signal
+                          launch-errno)]
+                      (io.print-format "{}" line)
+                      0)])))))))))
 
 (define (usage-error) : i64
-  (begin
-    (io.print-error
-      "usage: wall-clock-runner STDOUT_FILE STDERR_FILE -- PROGRAM [ARG ...]\n")
-    2))
+  (io.print-error
+    "usage: wall-clock-runner STDOUT_FILE STDERR_FILE -- PROGRAM [ARG ...]\n")
+  2)
 
 (define (main) : i64
   (if (and (>= (io.arg-count) 5) (string.eq (io.arg 3) "--"))
@@ -334,11 +321,10 @@
 
 (test
   wall-clock-runner-pure-helpers
-  (begin
-    (test-assert (= (decode-exit (cast (shl 172 8) : i32)) 172))
-    (test-assert (= (decode-signal (cast (shl 172 8) : i32)) 0))
-    (test-assert (= (decode-exit (cast 15 : i32)) -1))
-    (test-assert (= (decode-signal (cast 15 : i32)) 15))
-    (test-assert (string.eq (pad-nanoseconds 42) "000000042"))
-    (test-assert
-      (string.eq (render-result 1234567890 172 0 0) "1.234567890\t172\t0\t0\n"))))
+  (test-assert (= (decode-exit (cast (shl 172 8) : i32)) 172))
+  (test-assert (= (decode-signal (cast (shl 172 8) : i32)) 0))
+  (test-assert (= (decode-exit (cast 15 : i32)) -1))
+  (test-assert (= (decode-signal (cast 15 : i32)) 15))
+  (test-assert (string.eq (pad-nanoseconds 42) "000000042"))
+  (test-assert
+    (string.eq (render-result 1234567890 172 0 0) "1.234567890\t172\t0\t0\n")))

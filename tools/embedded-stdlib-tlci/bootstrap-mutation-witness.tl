@@ -2,6 +2,5 @@
 ;; sentinel in an isolated stdlib tree. Both the source and newly embedded
 ;; native routes must surface that changed expansion here.
 (define (main) : i64
-  (begin
-    (when true)
-    42))
+  (when true)
+  42)

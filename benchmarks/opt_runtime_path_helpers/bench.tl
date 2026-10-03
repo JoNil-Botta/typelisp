@@ -34,14 +34,12 @@
     [i : i64 0]
     [n : i64 (string.string-length path)]
     [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (path-separator? (string.string-ref path i))
-            (set! last i)
-            (set! last last))
-          (set! i (+ i 1))))
-      last)))
+    (while (< i n)
+      (if (path-separator? (string.string-ref path i))
+        (set! last i)
+        (set! last last))
+      (set! i (+ i 1)))
+    last))
 
 (define (dirname [path : (& path str)]) : String
   (let
@@ -66,16 +64,14 @@
     [i : i64 0]
     [dot : i64 -1]
     [n : i64 (string.string-length base)]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (string.string-ref base i) '.')
-            (set! dot i)
-            (set! dot dot))
-          (set! i (+ i 1))))
-      (if (<= dot 0)
-        ""
-        (string.substring base (+ dot 1) (- n (+ dot 1)))))))
+    (while (< i n)
+      (if (= (string.string-ref base i) '.')
+        (set! dot i)
+        (set! dot dot))
+      (set! i (+ i 1)))
+    (if (<= dot 0)
+      ""
+      (string.substring base (+ dot 1) (- n (+ dot 1))))))
 
 (define (path-helper-round [root : (& root str)] [leaf : (& leaf str)]) : i64
   (let
@@ -97,18 +93,15 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! acc (+ acc (path-helper-round root leaf)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i rounds)
+      (set! acc (+ acc (path-helper-round root leaf)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [root : String (io.arg 1)]
     [leaf : String (io.arg 2)]
     [rounds : i64 (string.>int (io.arg 3))]
-    (begin
-      (io.println "{}" (path-helper-repeat root leaf rounds))
-      0)))
+    (io.println "{}" (path-helper-repeat root leaf rounds))
+    0))

@@ -3,6 +3,5 @@
 (import stdlib.env)
 
 (define (main) : i64
-  (begin
-    (env.linux-unlock!)
-    42))
+  (env.linux-unlock!)
+  42)

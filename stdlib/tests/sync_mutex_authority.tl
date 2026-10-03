@@ -28,25 +28,23 @@
     [(Shared alias)
       (let
         [token : (Box i64) alias.authority.token]
-        (begin
-          (set! alias.authority.token (box 0))
-          (with
-            ([guard (mutex_i64.lock mutex) mutex_i64.unlock])
-            (let
-              [before : i64 (leases)]
-              [_forged : unit
-                (with ([forged (mutex_i64.Guard token) mutex_i64.unlock]) unit)]
-              [after : i64 (leases)]
-              (and (= before after) (= (mutex_i64.add! guard 1) 43))))))]))
+        (set! alias.authority.token (box 0))
+        (with
+          ([guard (mutex_i64.lock mutex) mutex_i64.unlock])
+          (let
+            [before : i64 (leases)]
+            [_forged : unit
+              (with ([forged (mutex_i64.Guard token) mutex_i64.unlock]) unit)]
+            [after : i64 (leases)]
+            (and (= before after) (= (mutex_i64.add! guard 1) 43)))))]))
 
 (define (run [mutex : (& mutex mutex_i64.Mutex)]) : i64
   (let
     [first : i64
       (with
         ([guard (mutex_i64.lock mutex) mutex_i64.unlock])
-        (begin
-          (mutex_i64.set! guard 17)
-          (mutex_i64.add! guard 25)))]
+        (mutex_i64.set! guard 17)
+        (mutex_i64.add! guard 25))]
     [blocked : bool
       (with
         ([guard (mutex_i64.lock mutex) mutex_i64.unlock])
@@ -55,9 +53,8 @@
     [forged-guard : i64
       (with
         ([guard (mutex_i64.lock mutex) mutex_i64.unlock])
-        (begin
-          (with ([forged (mutex_i64.Guard (box 99)) mutex_i64.unlock]) unit)
-          (mutex_i64.get guard)))]
+        (with ([forged (mutex_i64.Guard (box 99)) mutex_i64.unlock]) unit)
+        (mutex_i64.get guard))]
     [stolen : bool (stolen-token-cleanup-is-inert? mutex)]
     [forged-close : bool
       (with
@@ -106,9 +103,8 @@
     [shared : bool
       (match (mutex_i64.share mutex)
         [(Shared other)
-          (begin
-            (mutex_i64.release other)
-            true)]
+          (mutex_i64.release other)
+          true]
         [(ShareErr) false])]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [stored : bool

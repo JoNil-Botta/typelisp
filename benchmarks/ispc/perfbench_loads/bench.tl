@@ -17,12 +17,10 @@
   (let
     [sum : f32 (cast 0.0 : f32)]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! sum (+ sum (array-ref values i)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i count)
+      (set! sum (+ sum (array-ref values i)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (loads-case-count [case-id : i64]) : i64
   (cond
@@ -53,20 +51,17 @@
   (let
     [i : i64 0]
     (while (< i count)
-      (begin
-        (set! (array-ref values i) (loads-case-value case-id i))
-        (set! i (+ i 1))))))
+      (set! (array-ref values i) (loads-case-value case-id i))
+      (set! i (+ i 1)))))
 
 (define (loads-buffer [capacity : i64]) : f32v.Vec
   (let
     [out : f32v.Vec (f32v.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (while (< index capacity)
-        (begin
-          (f32v.push! out (cast 0.0 : f32))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index capacity)
+      (f32v.push! out (cast 0.0 : f32))
+      (set! index (+ index 1)))
+    out))
 
 (define (loads-case-expected-bits [case-id : i64]) : u32
   (cond
@@ -86,26 +81,23 @@
     [kernel : (-> (&mut values (Slice f32)) i64 f32) loads]
     [case-id : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< case-id 7))
-        (let
-          [count : i64 (loads-case-count case-id)]
-          [result : f32 (cast 0.0 : f32)]
-          [repetition : i64 0]
-          (begin
-            (loads-fill-case! values-view case-id count)
-            (while (< repetition 100)
-              (begin
-                (set! result (kernel values-view count))
-                (set! repetition (+ repetition 1))))
-            (if (and
-              (=
-                (io.float-f32-bits (loads-scalar values-view count))
-                (loads-case-expected-bits case-id))
-              (= (io.float-f32-bits result) (loads-case-expected-bits case-id)))
-              unit
-              (set! ok false))
-            (set! case-id (+ case-id 1)))))
-      (if ok
-        42
-        1))))
+    (while (and ok (< case-id 7))
+      (let
+        [count : i64 (loads-case-count case-id)]
+        [result : f32 (cast 0.0 : f32)]
+        [repetition : i64 0]
+        (loads-fill-case! values-view case-id count)
+        (while (< repetition 100)
+          (set! result (kernel values-view count))
+          (set! repetition (+ repetition 1)))
+        (if (and
+          (=
+            (io.float-f32-bits (loads-scalar values-view count))
+            (loads-case-expected-bits case-id))
+          (= (io.float-f32-bits result) (loads-case-expected-bits case-id)))
+          unit
+          (set! ok false))
+        (set! case-id (+ case-id 1))))
+    (if ok
+      42
+      1)))

@@ -192,7 +192,7 @@
   [seen : (&mut seen doc_path_map.Map)]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
   (match (ast.ast-decl-path-list-step paths)
-    [(Nil) (doc_expand.ResultDocExpandedModules.Ok (doc_module_vec.new))]
+    [(Nil) (Ok (doc_module_vec.new))]
     [(Cons path rest)
       (let
         [rest : ast.AstDeclPathList rest]
@@ -222,7 +222,7 @@
                   seen
                   stdlib-roots)
                   [(Ok tail-modules)
-                    (doc_expand.ResultDocExpandedModules.Ok
+                    (Ok
                       (doc_render.doc-module-list-append
                         head-modules
                         tail-modules))]
@@ -640,8 +640,7 @@
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
     [(OkIoBytes contents)
-      (ResultDocTestBatchPaths.Ok
-        (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
+      (Ok (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
     [(ErrIoBytes error)
       (Err
         (str_cat.str-cat
@@ -664,7 +663,7 @@
             [(Ok paths)
               (if (doc_svec.is-empty? (& paths))
                 (Err "doc: --batch list is empty")
-                (Ok (DocTestCliConfig.File paths stdlib-roots)))]
+                (Ok (File paths stdlib-roots)))]
             [(Err message) (Err message)])))]
     [(No)
       (cond
@@ -675,7 +674,7 @@
             (DocTestCliConfig.Package manifest-path has-manifest stdlib-roots))]
         [has-manifest
           (Err "doc: cannot combine input paths with --manifest-path")]
-        [else (Ok (DocTestCliConfig.File input-paths stdlib-roots))])]))
+        [else (Ok (File input-paths stdlib-roots))])]))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (let

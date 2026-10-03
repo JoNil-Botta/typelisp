@@ -96,7 +96,7 @@
                 (&mut out-errors)
                 (DocTestError.Error line (string.copy message)))])
           (set! index (+ index 1)))
-        (DocTestExtraction.Extraction out-examples out-errors))]))
+        (Extraction out-examples out-errors))]))
 
 ;; Package discovery tolerates a path disappearing before checking.
 ;; The source bytes and line/fence scanner are disposable; only extracted code,
@@ -107,11 +107,7 @@
     (with-scratch
       (match (io.try-read-file (& path))
         [(ErrIoBytes _)
-          (in-arena
-            home
-            (DocTestExtraction.Extraction
-              (doc_example_vec.new)
-              (doc_error_vec.new)))]
+          (in-arena home (Extraction (doc_example_vec.new) (doc_error_vec.new)))]
         [(OkIoBytes contents)
           (let
             [extraction : DocTestExtraction
@@ -537,18 +533,14 @@
   [code : String]
   [collected : doc_line_vec.Vec]) : DocTestCodeCollect
   (if (>= index (doc_line_vec.len (& lines)))
-    (DocTestCodeCollect.Collect
-      (doc_line_vec.len (& lines))
-      code
-      collected
-      false)
+    (Collect (doc_line_vec.len (& lines)) code collected false)
     (let
       [line : DocTestLine (doc_line_vec.get (& lines) index (Line 0 ""))]
       (if (source_text.starts-with?
         (doc-test-trim-left
           (doc-test-line-text (owned_view.compiler-owned-shared-view line)))
         "```")
-        (DocTestCodeCollect.Collect (+ index 1) code collected true)
+        (Collect (+ index 1) code collected true)
         (let
           [out : doc_line_vec.Vec collected]
           (doc_line_vec.push-ref!
@@ -594,7 +586,7 @@
         has-stderr
         expected-stderr
         errors)
-      (DocTestRunMetadata.Metadata
+      (Metadata
         has-exit
         expected-exit
         has-stdout
@@ -622,7 +614,7 @@
           (Error (doc-test-line-number line) "duplicate doctest-exit metadata"))
         (match (doc-test-parse-i64 text)
           [(Some parsed)
-            (DocTestRunMetadata.Metadata
+            (Metadata
               true
               parsed
               has-stdout
@@ -632,7 +624,7 @@
               errors)]
           [None
             (doc-test-run-metadata-append-error
-              (DocTestRunMetadata.Metadata
+              (Metadata
                 true
                 expected-exit
                 has-stdout
@@ -665,7 +657,7 @@
             "duplicate doctest-stdout metadata"))
         (match (doc-test-parse-output-spec text)
           [(Some parsed)
-            (DocTestRunMetadata.Metadata
+            (Metadata
               has-exit
               expected-exit
               true
@@ -699,7 +691,7 @@
             "duplicate doctest-stderr metadata"))
         (match (doc-test-parse-output-spec text)
           [(Some parsed)
-            (DocTestRunMetadata.Metadata
+            (Metadata
               has-exit
               expected-exit
               has-stdout
@@ -763,14 +755,7 @@
   [lines : doc_line_vec.Vec]) : DocTestRunMetadataParse
   (match (doc-test-run-metadata-parse-lines
     lines
-    (DocTestRunMetadata.Metadata
-      false
-      0
-      false
-      ""
-      false
-      ""
-      (doc-test-error-list-empty)))
+    (Metadata false 0 false "" false "" (doc-test-error-list-empty)))
     [(Metadata
         has-exit
         expected-exit
@@ -790,7 +775,7 @@
                 "runnable TypeLisp doctest requires doctest-exit metadata")))]
         (if (= (doc-test-error-list-count all-errors) 0)
           (Ok (Run expected-exit expected-stdout expected-stderr))
-          (DocTestRunMetadataParse.Err all-errors)))]))
+          (Err all-errors)))]))
 
 (define (doc-test-scan-type-lisp-fence
   [lines : (& lines doc_line_vec.Vec)]
@@ -807,7 +792,7 @@
               (doc-test-scan-doc-block-from
                 lines
                 remaining
-                (DocTestScanState.State
+                (State
                   examples
                   (doc-test-error-list-append
                     errors
@@ -818,7 +803,7 @@
                 remaining
                 (match mode
                   [(Check expectation)
-                    (DocTestScanState.State
+                    (State
                       (doc-test-example-list-append
                         examples
                         (Example next-index source-line expectation code))
@@ -827,20 +812,20 @@
                   [(Run)
                     (match (doc-test-parse-run-metadata source-line code-lines)
                       [(Ok expectation)
-                        (DocTestScanState.State
+                        (State
                           (doc-test-example-list-append
                             examples
                             (Example next-index source-line expectation code))
                           errors
                           (+ next-index 1))]
                       [(Err metadata-errors)
-                        (DocTestScanState.State
+                        (State
                           examples
                           (doc-test-error-list-append-all
                             errors
                             metadata-errors)
                           next-index)])])))
-            (DocTestScanState.State
+            (State
               examples
               (doc-test-error-list-append
                 errors
@@ -876,7 +861,7 @@
                   (doc-test-scan-doc-block-from
                     lines
                     (doc-test-skip-ignored-fence-from lines (+ index 1))
-                    (DocTestScanState.State
+                    (State
                       examples
                       (doc-test-error-list-append errors err)
                       next-index))])]
@@ -902,10 +887,7 @@
     [module-lines : doc_line_vec.Vec (doc_line_vec.new)]
     [pending-lines : doc_line_vec.Vec (doc_line_vec.new)]
     [state : DocTestScanState
-      (DocTestScanState.State
-        (doc-test-example-list-empty)
-        (doc-test-error-list-empty)
-        1)]
+      (State (doc-test-example-list-empty) (doc-test-error-list-empty) 1)]
     (while (< pos n)
       (let
         [line-end : i64 (source_text.line-end src pos)]
@@ -936,7 +918,7 @@
         (set! line-number (+ line-number 1))))
     (set! state (doc-test-scan-doc-block module-lines state))
     (match state
-      [(State examples errors _) (DocTestExtraction.Extraction examples errors)])))
+      [(State examples errors _) (Extraction examples errors)])))
 
 ;; --- runner --------------------------------------------------------------------
 ;; A single doctest failure: the doc'd source path, the fence's 1-based source
@@ -986,7 +968,7 @@
 (define (doc-test-run-report-add-prefix-count
   [prefix-count : i64]
   [report : DocTestRunReport]) : DocTestRunReport
-  (DocTestRunReport.Report
+  (Report
     (+
       prefix-count
       (doc-test-run-report-count (owned_view.compiler-owned-shared-view report)))
@@ -1650,7 +1632,7 @@
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(Extraction examples errors)
-      (DocTestRunReport.Report
+      (Report
         (doc-test-example-list-count examples)
         (doc-test-run-examples-with-roots
           (owned_view.compiler-owned-shared-view path)
@@ -1686,7 +1668,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(Extraction examples errors)
-      (DocTestRunReport.Report
+      (Report
         (doc-test-example-list-count examples)
         (doc-test-typecheck-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
@@ -1707,7 +1689,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match extraction
     [(Extraction examples errors)
-      (DocTestRunReport.Report
+      (Report
         (doc-test-example-list-count examples)
         (doc-test-typecheck-package-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
@@ -1776,7 +1758,7 @@
   [last-path : String]
   [count : i64]) : DocTestRunReport
   (match (ast.ast-decl-path-list-step paths)
-    [(Nil) (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
+    [(Nil) (Report count (doc-test-run-failure-list-empty))]
     [(Cons path rest)
       (let
         [rest : ast.AstDeclPathList rest]

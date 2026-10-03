@@ -198,7 +198,7 @@
       (if args.failed
         (Err args.error)
         (Ok
-          (RunCliConfig.Config
+          (Config
             source
             target
             mode

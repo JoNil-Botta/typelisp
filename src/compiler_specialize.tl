@@ -5052,11 +5052,7 @@
                                   generated-name-id)
                                 (let
                                   [cached-state : SpecState
-                                    (SpecState.State
-                                      generated
-                                      next-cache
-                                      ctfe-env
-                                      pools)]
+                                    (State generated next-cache ctfe-env pools)]
                                   [body-templates : SpecTemplateEnv
                                     (spec-template-env-shadow-params
                                       templates
@@ -5075,7 +5071,7 @@
                                             rewritten-pools)
                                           (Ok
                                             generated-name-id
-                                            (SpecState.State
+                                            (State
                                               (spec-decl-list-append-one
                                                 rewritten-generated
                                                 (ast.ast-decl-def-fn-id
@@ -6947,7 +6943,7 @@
               owner
               decls
               template-env
-              (SpecState.State
+              (State
                 (ast.ast-decl-list-new)
                 (spec_id_i64_map.with-capacity 64)
                 ctfe-env
@@ -7004,7 +7000,7 @@
                   normalized-paths
                   (spec-place-shared-view fallback-path)
                   template-env
-                  (SpecState.State
+                  (State
                     (ast.ast-decl-list-new)
                     (spec_id_i64_map.with-capacity 64)
                     ctfe-env

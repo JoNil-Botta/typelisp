@@ -437,7 +437,7 @@
                             start.column))))])))])))
     (if failed
       (Err failure)
-      (ResultTokens.Ok tokens))))
+      (Ok tokens))))
 
 ;; --- commands ---------------------------------------------------------------
 ;; GNU ld commands and constructs outside the subset, named in the diagnostic so

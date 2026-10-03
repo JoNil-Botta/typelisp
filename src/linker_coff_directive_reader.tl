@@ -560,7 +560,7 @@
                     (set! failed true)])])])))
     (if failed
       (Err failure)
-      (ResultCoffDirectives.Ok records))))
+      (Ok records))))
 
 ;: Read the directives in `data[start, start + size)`, the raw data of
 ;: `section`. The caller's object reader has already bounds-checked the

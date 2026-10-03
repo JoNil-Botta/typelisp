@@ -365,8 +365,7 @@
 (define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
   (match (io.try-read-file (& list-path))
     [(OkIoBytes contents)
-      (ResultTestBatchPaths.Ok
-        (tltest-batch-paths-from-text (byte_buf.to-string contents)))]
+      (Ok (tltest-batch-paths-from-text (byte_buf.to-string contents)))]
     [(ErrIoBytes error)
       (Err
         (str_cat.str-cat
@@ -399,14 +398,7 @@
               [(Ok paths)
                 (if (cli_svec.is-empty? (& paths))
                   (Err "test: --batch list is empty")
-                  (Ok
-                    (TestConfig.Batch
-                      paths
-                      target
-                      mode
-                      roots
-                      opt-level
-                      test-mode)))]
+                  (Ok (Batch paths target mode roots opt-level test-mode)))]
               [(Err message) (Err message)])])]
       [(No)
         (if tltest-prefix-cache-stats
@@ -414,10 +406,9 @@
           (if has-source
             (if has-manifest
               (Err "test: cannot combine source path with --manifest-path")
-              (Ok
-                (TestConfig.File source target mode roots opt-level test-mode)))
+              (Ok (File source target mode roots opt-level test-mode)))
             (Ok
-              (TestConfig.Package
+              (Package
                 manifest-path
                 has-manifest
                 target

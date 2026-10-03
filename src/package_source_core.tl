@@ -565,7 +565,7 @@
         (if (or
           (io.error-not-found? (owned_view.compiler-owned-shared-view error))
           (io.error-unsupported? (owned_view.compiler-owned-shared-view error)))
-          (ResultPackageSourceList.Ok acc)
+          (Ok acc)
           (package-source-read-dir-error command dir error))]
       [(OkIoStringVector entries)
         (package-source-scan-entries
@@ -585,7 +585,7 @@
       [(ErrIoStringVector error)
         (if (io.error-unsupported?
           (owned_view.compiler-owned-shared-view error))
-          (ResultPackageSourceList.Ok (package-source-entry-list source-set))
+          (Ok (package-source-entry-list source-set))
           (package-source-read-dir-error command root error))]
       [(OkIoStringVector entries)
         (package-source-scan-entries
@@ -611,19 +611,19 @@
   (match inspected
     [(ErrFsFileKind error)
       (if (io.error-not-found? (owned_view.compiler-owned-shared-view error))
-        (ResultPackageSourceList.Ok acc)
+        (Ok acc)
         (package-source-entry-error command child-path error))]
     [(OkFsFileKind kind)
       (if (fs.file-kind-directory? kind)
         (if (package-source-dir-has-manifest? child-path)
-          (ResultPackageSourceList.Ok acc)
+          (Ok acc)
           (package-source-scan-dir command root child-relative acc))
         (if (package-source-include-kind? child-path kind)
-          (ResultPackageSourceList.Ok
+          (Ok
             (package-source-vec-insert
               acc
               (compiler_load.compiler-load-normalize-path child-path)))
-          (ResultPackageSourceList.Ok acc)))]))
+          (Ok acc)))]))
 
 ;; Names are classified before any inspection: skipped directories and lock
 ;; stage siblings (at any depth, whatever their kind) are never inspected.
@@ -636,7 +636,7 @@
   (if (or
     (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
     (package_lock_core.package-lock-stage-name? (& name)))
-    (ResultPackageSourceList.Ok acc)
+    (Ok acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
@@ -661,7 +661,7 @@
   [index : i64]
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (>= index (svec.len (& entries)))
-    (ResultPackageSourceList.Ok acc)
+    (Ok acc)
     (match (package-source-scan-one
       (owned_view.compiler-owned-shared-view command)
       root

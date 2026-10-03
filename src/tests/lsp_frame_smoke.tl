@@ -154,7 +154,7 @@
         (lsp.lsp-diagnostic-uris-empty))]
     (match (lsp.lsp-server-state-refresh-document-result
       state
-      (lsp.LspDocumentHandleResult.Continue docs)
+      (Continue docs)
       uri
       false)
       [(Continue next) next]
@@ -169,7 +169,7 @@
         (owned_view.compiler-owned-shared-view uri))]
     (match (lsp.lsp-server-state-refresh-document-result
       state
-      (lsp.LspDocumentHandleResult.Continue docs)
+      (Continue docs)
       uri
       false)
       [(Continue next) next]

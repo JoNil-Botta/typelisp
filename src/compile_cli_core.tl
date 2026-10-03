@@ -1124,7 +1124,7 @@
     [status : i64
       (compile-cli-batch-parse-entries-into! text start line n (&mut entries))]
     (if (= status 0)
-      (ResultCompileCliBatchEntryList.Ok entries)
+      (Ok entries)
       (Err status))))
 
 (define (compile-cli-windows-batch-parse-entries-into!
@@ -1248,7 +1248,7 @@
         n
         (&mut entries))]
     (if (= status 0)
-      (ResultCompileCliWindowsBatchEntryList.Ok entries)
+      (Ok entries)
       (Err status))))
 
 (define (compile-cli-run-batch-entries-from

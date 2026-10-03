@@ -331,7 +331,7 @@
       [empty-state : lvf.LspServerState (lsp.lsp-server-state-new)]
       (match (lsp.lsp-server-state-copy-document-result
         empty-state
-        (lsp.LspDocumentHandleResult.Continue docs)
+        (Continue docs)
         false)
         [(Exit unexpected)
           (lsp.lsp-server-state-destroy! unexpected)
@@ -353,7 +353,7 @@
                   true))]
             (match (lsp.lsp-server-state-copy-document-result
               first-state
-              (lsp.LspDocumentHandleResult.Continue first-docs)
+              (Continue first-docs)
               false)
               [(Exit unexpected)
                 (lsp.lsp-server-state-destroy! unexpected)

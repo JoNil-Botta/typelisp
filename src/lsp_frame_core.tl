@@ -883,7 +883,7 @@
             [_ (set! error "lsp: initializationOptions.cfg must be an array")])])
       unit)
     (if (= (string.string-length error) 0)
-      (LspInitializeLanguageConfig.Ok target cfg-names)
+      (Ok target cfg-names)
       (Err error))))
 
 (define (lsp-initialize-language-config [message : json.Json]) : LspInitializeLanguageConfig
@@ -892,16 +892,11 @@
     [options-key : String "initializationOptions"]
     [typelisp-key : String "typelisp"]
     (match (json.object-get message (& params-key))
-      [(JsonMissing)
-        (LspInitializeLanguageConfig.Ok
-          (target_cfg.compiler-target-cfg-host)
-          (lsp_svec.new))]
+      [(JsonMissing) (Ok (target_cfg.compiler-target-cfg-host) (lsp_svec.new))]
       [(JsonFound params)
         (match (json.object-get params (& options-key))
           [(JsonMissing)
-            (LspInitializeLanguageConfig.Ok
-              (target_cfg.compiler-target-cfg-host)
-              (lsp_svec.new))]
+            (Ok (target_cfg.compiler-target-cfg-host) (lsp_svec.new))]
           [(JsonFound options)
             (match (json.object-get
               (owned_view.compiler-owned-shared-view options)
@@ -2751,12 +2746,12 @@
                             version
                             analysis.semantic-index)
                           updated-docs)]
-                      (LspDocumentHandleResult.Continue semantic-docs)))]
+                      (Continue semantic-docs)))]
                 [(Err message)
                   (lsp-publish-uri-diagnostic uri message)
-                  (LspDocumentHandleResult.Continue docs)]))]
-          [(Missing) (LspDocumentHandleResult.Continue docs)])]
-      [(JsonMissing) (LspDocumentHandleResult.Continue docs)])))
+                  (Continue docs)]))]
+          [(Missing) (Continue docs)])]
+      [(JsonMissing) (Continue docs)])))
 
 (define (lsp-did-change
   [params : json.Json]
@@ -2809,15 +2804,15 @@
                                 version
                                 analysis.semantic-index)
                               updated-docs)]
-                          (LspDocumentHandleResult.Continue semantic-docs)))]
+                          (Continue semantic-docs)))]
                     [(Err message)
                       (lsp-publish-uri-diagnostic uri message)
-                      (LspDocumentHandleResult.Continue docs)])]
+                      (Continue docs)])]
                 [(Missing)
                   (let
                     [idx : i64 (lsp-documents-find-index docs uri)]
                     (if (< idx 0)
-                      (LspDocumentHandleResult.Continue docs)
+                      (Continue docs)
                       (let
                         [doc : lsp_vector_families.LspDocument
                           (lsp_document_vec.get
@@ -2844,9 +2839,9 @@
                               doc.version
                               analysis.semantic-index)
                             updated-docs)]
-                        (LspDocumentHandleResult.Continue semantic-docs))))]))]
-          [(Missing) (LspDocumentHandleResult.Continue docs)])]
-      [(JsonMissing) (LspDocumentHandleResult.Continue docs)])))
+                        (Continue semantic-docs))))]))]
+          [(Missing) (Continue docs)])]
+      [(JsonMissing) (Continue docs)])))
 
 (define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
   (let
@@ -2858,9 +2853,9 @@
             (lsp-clear-close-diagnostics
               docs
               (owned_view.compiler-owned-shared-view uri))
-            (LspDocumentHandleResult.Continue (lsp-documents-remove docs uri))]
-          [(Missing) (LspDocumentHandleResult.Continue docs)])]
-      [(JsonMissing) (LspDocumentHandleResult.Continue docs)])))
+            (Continue (lsp-documents-remove docs uri))]
+          [(Missing) (Continue docs)])]
+      [(JsonMissing) (Continue docs)])))
 
 ;; --------------------------------------------------------------------------
 ;; Quick fixes (textDocument/codeAction).
@@ -9684,7 +9679,7 @@
     [(Exit next-documents)
       (match (lsp-server-state-refresh-document-result
         state
-        (LspDocumentHandleResult.Continue next-documents)
+        (Continue next-documents)
         uri
         deleted)
         [(Continue next) (Exit next)]
@@ -9721,7 +9716,7 @@
     [(Exit next-documents)
       (match (lsp-server-state-copy-document-result
         state
-        (LspDocumentHandleResult.Continue next-documents)
+        (Continue next-documents)
         refresh-documents)
         [(Continue next) (Exit next)]
         [(Exit next) (Exit next)])]))
@@ -10522,7 +10517,7 @@
                     (lsp-document-refresh-from-disk
                       (owned_view.compiler-owned-shared-view docs)
                       idx)]
-                  (LspDocumentDeclsLookup.Found
+                  (Found
                     doc.path
                     doc.text
                     (owned_view.compiler-owned-shared-view doc.diagnostic-uris)
@@ -10763,10 +10758,10 @@
       (let
         [items : json.JsonSeq (lsp-decls-to-name-list decls 0)]
         (lsp-write-response id (lsp-json-array items))
-        (LspDocumentHandleResult.Continue docs))]
+        (Continue docs))]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/findPosition - Find the name position {line, character} of a top-level form
 (define (lsp-handle-tl-find-position
@@ -10811,16 +10806,16 @@
                     (lsp-json-number (- result-line 1))
                     "character"
                     (lsp-json-number (- result-col 1))))
-                (LspDocumentHandleResult.Continue docs))
+                (Continue docs))
               (begin
                 (lsp-write-declaration-not-found-error id decls name)
-                (LspDocumentHandleResult.Continue docs))))]
+                (Continue docs))))]
         [(Missing)
           (lsp-write-error id -32600 "Missing name parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 ;; Helper: get offset from LspDeclEntry start position
@@ -11271,7 +11266,7 @@
             [cached-uri : String (lsp-cache-string-copy uri)]
             [cached-path : String (lsp-cache-string-copy path)]
             [cached-text : String (lsp-cache-string-copy formatted)]
-            (LspSaveResult.Ok
+            (Ok
               (lsp-documents-set
                 docs
                 cached-uri
@@ -11306,10 +11301,10 @@
           (JsonString (owned_view.compiler-owned-shared-view formatted))
           "positionMap"
           (lsp-position-map-for-text formatted)))
-      (LspDocumentHandleResult.Continue next-docs)]
+      (Continue next-docs)]
     [(Err message)
       (lsp-write-error id -32600 message)
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-tl-save-and-continue
   [id : json.Json]
@@ -11339,10 +11334,10 @@
                 formatted)]
             [(Err message)
               (lsp-write-error id -32600 message)
-              (LspDocumentHandleResult.Continue docs)])])]
+              (Continue docs)])])]
     [(Missing)
       (lsp-write-error id -32600 "Missing uri in textDocument parameter")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-write-structural-edit-success
   [id : json.Json]
@@ -11370,13 +11365,13 @@
               [line : i64 (lsp-json-int-field-default position "line" 0)]
               [col : i64 (lsp-json-int-field-default position "character" 0)]
               (lsp-write-position-context-error id text line col base-message)
-              (LspDocumentHandleResult.Continue docs))]
+              (Continue docs))]
           [(JsonMissing)
             (lsp-write-error id -32600 base-message)
-            (LspDocumentHandleResult.Continue docs)]))]
+            (Continue docs)]))]
     [(Missing)
       (lsp-write-error id -32600 base-message)
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-write-declaration-context-error-from-params
   [id : json.Json]
@@ -11387,10 +11382,10 @@
       (let
         [name : String (lsp-structural-move-name-with-decls params text decls)]
         (lsp-write-declaration-not-found-error id decls name)
-        (LspDocumentHandleResult.Continue docs))]
+        (Continue docs))]
     [(Missing)
       (lsp-write-error id -32600 "Declaration not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-write-contextual-edit-error
   [id : json.Json]
@@ -11404,7 +11399,7 @@
       (lsp-write-declaration-context-error-from-params id params docs)]
     [else
       (lsp-write-error id -32600 message)
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-write-structural-edit-result
   [id : json.Json]
@@ -11425,7 +11420,7 @@
     (lsp-replace-body-validation-message
       (owned_view.compiler-owned-shared-view new-body))
     (lsp-replace-body-validation-data new-body))
-  (LspDocumentHandleResult.Continue docs))
+  (Continue docs))
 
 (define (lsp-write-read-form-success
   [id : json.Json]
@@ -11434,7 +11429,7 @@
   (lsp-write-response
     id
     (lsp-json-object2 "success" (JsonBool true) "form" (JsonString form-text)))
-  (LspDocumentHandleResult.Continue docs))
+  (Continue docs))
 
 (define (lsp-write-read-form-result
   [id : json.Json]
@@ -11462,7 +11457,7 @@
           "Could not extract function name at position")]
       [(JsonMissing)
         (lsp-write-error id -32600 "Missing name or position parameter")
-        (LspDocumentHandleResult.Continue docs)])))
+        (Continue docs)])))
 
 (define (lsp-structural-move-after-destination
   [id : json.Json]
@@ -11482,17 +11477,17 @@
       (cond
         [(string.eq message "Declaration not found")
           (lsp-write-declaration-not-found-error id decls name)
-          (LspDocumentHandleResult.Continue docs)]
+          (Continue docs)]
         [(string.eq message "Destination declaration not found")
           (lsp-write-declaration-context-error
             id
             decls
             (owned_view.compiler-owned-shared-view destination)
             (lsp-str3 "Destination declaration '" destination "' not found"))
-          (LspDocumentHandleResult.Continue docs)]
+          (Continue docs)]
         [else
           (lsp-write-error id -32600 message)
-          (LspDocumentHandleResult.Continue docs)])]))
+          (Continue docs)])]))
 
 (define (lsp-structural-move-direction
   [id : json.Json]
@@ -11512,10 +11507,10 @@
       (if (string.eq message "Declaration not found")
         (begin
           (lsp-write-declaration-not-found-error id decls name)
-          (LspDocumentHandleResult.Continue docs))
+          (Continue docs))
         (begin
           (lsp-write-error id -32600 message)
-          (LspDocumentHandleResult.Continue docs)))]))
+          (Continue docs)))]))
 
 ;; tl/move - Move a form by name or position.
 (define (lsp-handle-tl-structural-move
@@ -11558,10 +11553,10 @@
                     id
                     -32600
                     "Missing direction or destination parameter")
-                  (LspDocumentHandleResult.Continue docs)])])))]
+                  (Continue docs)])])))]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/expandMacro - Find the form at cursor position and return its text
 ;; Returns the top-level form by name.
@@ -11588,7 +11583,7 @@
             (if (= found-idx -1)
               (begin
                 (lsp-write-error id -32600 "Form not found")
-                (LspDocumentHandleResult.Continue docs))
+                (Continue docs))
               (let
                 [entry : lsp_vector_families.LspDeclEntry
                   (lsp_decl_vec.get
@@ -11614,13 +11609,13 @@
                     (JsonBool true)
                     "text"
                     (JsonString result)))
-                (LspDocumentHandleResult.Continue docs))))]
+                (Continue docs))))]
         [(Missing)
           (lsp-write-error id -32600 "Missing name parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/check - Typecheck a document and return success/error JSON response
 (define (lsp-check-cache-valid?
@@ -11695,8 +11690,7 @@
     (lsp-write-check-cache-response
       id
       (owned_view.compiler-owned-shared-view check-cache))
-    (LspDocumentHandleResult.Continue
-      (lsp-documents-set-check-cache docs uri check-cache))))
+    (Continue (lsp-documents-set-check-cache docs uri check-cache))))
 
 (define (lsp-handle-tl-check
   [id : json.Json]
@@ -11719,7 +11713,7 @@
     (if (string.eq uri "")
       (begin
         (lsp-write-error id -32600 "Missing uri parameter")
-        (LspDocumentHandleResult.Continue docs))
+        (Continue docs))
       (let
         [doc-index : i64 (lsp-documents-find-index docs uri)]
         (if (>= doc-index 0)
@@ -11731,7 +11725,7 @@
               (owned_view.compiler-owned-shared-view check-cache))
               (begin
                 (lsp-write-check-cache-response id check-cache)
-                (LspDocumentHandleResult.Continue docs))
+                (Continue docs))
               (lsp-run-check-and-respond
                 id
                 uri
@@ -11752,7 +11746,7 @@
                         (JsonBool false)
                         "error"
                         (JsonString "Could not read document")))
-                    (LspDocumentHandleResult.Continue docs))
+                    (Continue docs))
                   (lsp-run-check-and-respond id uri path text docs stdlib-roots)))]
             [(Err message)
               (lsp-write-response
@@ -11762,7 +11756,7 @@
                   (JsonBool false)
                   "error"
                   (JsonString message)))
-              (LspDocumentHandleResult.Continue docs)]))))))
+              (Continue docs)]))))))
 
 (define (lsp-nearest-inlay-hint-index
   [inlay-state : tc.TcInlayHintState]
@@ -11863,7 +11857,7 @@
                             (JsonBool false)
                             "error"
                             (JsonString "No type information at this position")))
-                        (LspDocumentHandleResult.Continue docs))
+                        (Continue docs))
                       (begin
                         (lsp-write-response
                           id
@@ -11872,7 +11866,7 @@
                             (JsonBool true)
                             "type"
                             (JsonString bind-type)))
-                        (LspDocumentHandleResult.Continue docs))))
+                        (Continue docs))))
                   (let
                     [found-type : String
                       (tc.tc-inlay-hint-type-at-for-state inlay-state found-idx)]
@@ -11883,13 +11877,13 @@
                         (JsonBool true)
                         "type"
                         (JsonString found-type)))
-                    (LspDocumentHandleResult.Continue docs)))))]
+                    (Continue docs)))))]
           [(JsonMissing)
             (lsp-write-error id -32600 "Missing position parameter")
-            (LspDocumentHandleResult.Continue docs)]))]
+            (Continue docs)]))]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-quoted-datum-end [text : (& text str)] [start : i64] [limit : i64]) : i64
   (let
@@ -12579,7 +12573,7 @@
                 (lsp-str2
                   "newText is not valid form(s): "
                   (lsp-validate-forms-error new-text)))
-              (LspDocumentHandleResult.Continue docs))
+              (Continue docs))
             (let
               [n : i64 (lsp_decl_vec.len (& decls))]
               [result : String ""]
@@ -12603,10 +12597,10 @@
               (lsp-write-structural-edit-success id params docs result)))]
         [(Missing)
           (lsp-write-error id -32600 "Missing newText parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; Document/provider dispatch. The production wrapper below owns workspace
 ;; state and adapts these existing document-only handlers.
@@ -12620,8 +12614,7 @@
       (let
         [handled : bool false]
         [result : LspDocumentHandleResult
-          (LspDocumentHandleResult.Continue
-            (owned_view.compiler-owned-shared-view docs))]
+          (Continue (owned_view.compiler-owned-shared-view docs))]
         (when
           (and (not handled) (string.eq method "initialize"))
           (set! handled true)
@@ -12642,17 +12635,11 @@
                     (lsp-write-response id (lsp-initialize-result))]
                   [(Err config-error) (lsp-write-error id -32602 config-error)])]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "initialized"))
           (set! handled true)
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "shutdown"))
           (set! handled true)
@@ -12663,10 +12650,7 @@
               (& key))
               [(JsonFound id) (lsp-write-response id JsonNull)]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "exit"))
           (set! handled true)
@@ -12689,8 +12673,7 @@
               [(JsonMissing)
                 (set!
                   result
-                  (LspDocumentHandleResult.Continue
-                    (owned_view.compiler-owned-shared-view docs)))])))
+                  (Continue (owned_view.compiler-owned-shared-view docs)))])))
         (when
           (and (not handled) (string.eq method "textDocument/didChange"))
           (set! handled true)
@@ -12709,8 +12692,7 @@
               [(JsonMissing)
                 (set!
                   result
-                  (LspDocumentHandleResult.Continue
-                    (owned_view.compiler-owned-shared-view docs)))])))
+                  (Continue (owned_view.compiler-owned-shared-view docs)))])))
         (when
           (and (not handled) (string.eq method "textDocument/didClose"))
           (set! handled true)
@@ -12728,8 +12710,7 @@
               [(JsonMissing)
                 (set!
                   result
-                  (LspDocumentHandleResult.Continue
-                    (owned_view.compiler-owned-shared-view docs)))])))
+                  (Continue (owned_view.compiler-owned-shared-view docs)))])))
         (when
           (and (not handled) (string.eq method "textDocument/codeAction"))
           (set! handled true)
@@ -12753,10 +12734,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/definition"))
           (set! handled true)
@@ -12779,10 +12757,7 @@
                         (owned_view.compiler-owned-shared-view stdlib-roots))]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/documentSymbol"))
           (set! handled true)
@@ -12805,10 +12780,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and
             (not handled)
@@ -12833,10 +12805,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/signatureHelp"))
           (set! handled true)
@@ -12855,10 +12824,7 @@
                       (lsp-signature-help-respond id params docs)]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/inlayHint"))
           (set! handled true)
@@ -12883,10 +12849,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/formatting"))
           (set! handled true)
@@ -12905,10 +12868,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/hover"))
           (set! handled true)
@@ -12926,10 +12886,7 @@
                     [(JsonFound params) (lsp-handle-hover id params docs)]
                     [(JsonMissing) (lsp-write-response id JsonNull)]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/documentLink"))
           (set! handled true)
@@ -12953,10 +12910,7 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (when
           (and (not handled) (string.eq method "textDocument/foldingRange"))
           (set! handled true)
@@ -12979,18 +12933,14 @@
                     [(JsonMissing)
                       (lsp-write-response id (lsp-json-array (json.list-empty)))]))]
               [(JsonMissing) unit]))
-          (set!
-            result
-            (LspDocumentHandleResult.Continue
-              (owned_view.compiler-owned-shared-view docs))))
+          (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
         (if (not handled)
           (let
             [enclosing : i64 (arena.tl_arena_current)]
             [scratch : i64 (arena.tl_arena_make)]
             [old-cache-arena : i64 lsp-document-cache-arena]
             [tool-result : LspDocumentHandleResult
-              (LspDocumentHandleResult.Continue
-                (owned_view.compiler-owned-shared-view docs))]
+              (Continue (owned_view.compiler-owned-shared-view docs))]
             (set!
               lsp-document-cache-arena
               (if (> old-cache-arena 0)
@@ -13014,7 +12964,7 @@
             (set! result tool-result))
           unit)
         result)]
-    [(Missing) (LspDocumentHandleResult.Continue docs)]))
+    [(Missing) (Continue docs)]))
 
 (define (lsp-tool-method-mutates-document? [method : (& method str)]) : bool
   (or
@@ -13696,8 +13646,7 @@
     [(string.eq method "tl/getType")
       (let
         [tool-result : LspDocumentHandleResult
-          (LspDocumentHandleResult.Continue
-            (owned_view.compiler-owned-shared-view docs))]
+          (Continue (owned_view.compiler-owned-shared-view docs))]
         (lsp-typecheck-tool-session-before!)
         (set!
           tool-result
@@ -13718,7 +13667,7 @@
     [(string.eq method "tl/read") (lsp-handle-tl-read-form-at id params docs)]
     [else
       (lsp-maybe-write-method-not-found message)
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-handle-tool-message!
   [method : String]
@@ -13748,12 +13697,12 @@
                 job-state)]
             [(JsonMissing)
               (lsp-handle-tool-missing-params! method message id)
-              (LspDocumentHandleResult.Continue docs)]))]
+              (Continue docs)]))]
       [(JsonMissing)
         (if (not (lsp-known-tool-method? method))
           (lsp-maybe-write-method-not-found message)
           unit)
-        (LspDocumentHandleResult.Continue docs)])))
+        (Continue docs)])))
 
 (define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : lsp_svec.Vec
   (let
@@ -14448,16 +14397,16 @@
                   (lsp-write-structural-edit-success id params docs replaced)]
                 [(Err message)
                   (lsp-write-error id -32600 message)
-                  (LspDocumentHandleResult.Continue docs)])]
+                  (Continue docs)])]
             [(Missing)
               (lsp-write-error id -32600 "Missing newText parameter")
-              (LspDocumentHandleResult.Continue docs)])]
+              (Continue docs)])]
         [(Missing)
           (lsp-write-error id -32600 "Missing oldText parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; Position-based editing helpers
 ;; Find start index of innermost form containing offset. Returns -1 if not found.
@@ -14571,7 +14520,7 @@
                     decls))]
               [(Err message)
                 (lsp-write-error id -32600 message)
-                (LspDocumentHandleResult.Continue docs)])
+                (Continue docs)])
             (match (lsp-json-string-field params "name")
               [(Ok name)
                 (if (= (string.string-length name) 0)
@@ -14605,10 +14554,10 @@
                     new-text))]))]
         [(Missing)
           (lsp-write-error id -32600 "Missing newText parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; Find the start of the outer form enclosing the form at start.
 ;; outer = 0 means return start itself.
@@ -15112,7 +15061,7 @@
               params))])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/insertAfter - Insert a new form after the form at a given position
 (define (lsp-handle-tl-insert-after
@@ -15130,10 +15079,10 @@
             (lsp-insert-after-text-with-decls text params new-text decls))]
         [(Missing)
           (lsp-write-error id -32600 "Missing newText parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/replaceBody - Replace body of a function by name, with position fallback
 (define (lsp-handle-tl-replace-body
@@ -15165,7 +15114,7 @@
                       decls))]
                 [(Err message)
                   (lsp-write-error id -32600 message)
-                  (LspDocumentHandleResult.Continue docs)])
+                  (Continue docs)])
               (let
                 [name : String
                   (lsp-structural-move-name-with-decls
@@ -15181,10 +15130,10 @@
                     (lsp-replace-body-text-with-decls text name new-body decls))))))]
         [(Missing)
           (lsp-write-error id -32600 "Missing newBody parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/replacePattern - Replace a pattern in a function by name, with position fallback
 (define (lsp-handle-tl-replace-pattern-at
@@ -15217,13 +15166,13 @@
                       decls))))]
             [(Missing)
               (lsp-write-error id -32600 "Missing newPattern parameter")
-              (LspDocumentHandleResult.Continue docs)])]
+              (Continue docs)])]
         [(Missing)
           (lsp-write-error id -32600 "Missing oldPattern parameter")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 ;; tl/read - Read a top-level declaration by name, with position fallback
 (define (lsp-handle-tl-read-form-at
@@ -15253,7 +15202,7 @@
             docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-structural-move-after-destination-text
   [text : String]
@@ -15666,15 +15615,15 @@
         (owned_view.compiler-owned-shared-view formatted))
         [(Ok next-docs)
           (lsp-write-response id (lsp-batch-success-json formatted results))
-          (LspDocumentHandleResult.Continue next-docs)]
+          (Continue next-docs)]
         [(Err message)
           (lsp-write-error id -32600 message)
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Err message)
       (lsp-write-response
         id
         (lsp-batch-failure-json message -1 edited-text JsonNull))
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))
 
 (define (lsp-handle-tl-batch
   [id : json.Json]
@@ -15716,16 +15665,16 @@
                             failed-index
                             partial-text
                             context))
-                        (LspDocumentHandleResult.Continue docs)])]
+                        (Continue docs)])]
                   [_
                     (lsp-write-error id -32600 "operations must be an array")
-                    (LspDocumentHandleResult.Continue docs)])]
+                    (Continue docs)])]
               [(JsonMissing)
                 (lsp-write-error id -32600 "Missing operations parameter")
-                (LspDocumentHandleResult.Continue docs)]))]
+                (Continue docs)]))]
         [(Missing)
           (lsp-write-error id -32600 "Document not found")
-          (LspDocumentHandleResult.Continue docs)])]
+          (Continue docs)])]
     [(Missing)
       (lsp-write-error id -32600 "Missing uri in textDocument parameter")
-      (LspDocumentHandleResult.Continue docs)]))
+      (Continue docs)]))

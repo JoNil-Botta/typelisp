@@ -603,7 +603,7 @@
       [has-output (Err "build: -o requires a source file argument")]
       [else
         (Ok
-          (BuildConfig.Package
+          (Package
             manifest
             has-manifest
             target
@@ -1788,7 +1788,7 @@
   [entries : package_lock_entry_vec.Vec]
   [maybe-entry : BuildMaybeLockEntry]) : package_lock_core.ResultPackageLockEntryList
   (match maybe-entry
-    [(No) (package_lock_core.ResultPackageLockEntryList.Ok entries)]
+    [(No) (Ok entries)]
     [(Some entry)
       (package_lock_core.package-lock-entry-list-insert entries entry)]))
 
@@ -6385,7 +6385,7 @@
   (match workers
     [(Empty)
       (if (= failed-status 0)
-        (ResultBuildPackageWait.Ok built)
+        (Ok built)
         (Err failed-status))]
     [(More worker tail)
       (let
@@ -6961,7 +6961,7 @@
       [args.failed (Err args.error)]
       [has-source
         (Ok
-          (BuildCliConfig.Config
+          (Config
             source
             has-source
             output

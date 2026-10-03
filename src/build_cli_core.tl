@@ -3033,6 +3033,7 @@
     [(Avx512) Avx512]))
 
 (define (build-package-tlci-specializations-at
+  [type-bases : i64]
   [package-name : String]
   [canonical-name : String]
   [signature : String]
@@ -3067,6 +3068,7 @@
       [index-param : i64 specialization.index-param]
       [logical-symbol : String
         (lower.lower-spmd-package-symbol
+          type-bases
           (owned_view.compiler-owned-shared-view package-name)
           (owned_view.compiler-owned-shared-view canonical-name)
           (owned_view.compiler-owned-shared-view signature)
@@ -3088,6 +3090,7 @@
           index-param
           (backend.compiler-backend-user-symbol-id logical-symbol-id))]
       (build-package-tlci-specializations-at
+        type-bases
         package-name
         canonical-name
         signature
@@ -3099,6 +3102,7 @@
         (build-package-tlci-specialization-insert item out)))))
 
 (define (build-package-tlci-callable
+  [type-bases : i64]
   [package-name : String]
   [module : String]
   [name : i64]
@@ -3115,6 +3119,7 @@
         (ci.intern-str name))]
     [signature : String
       (lower.lower-spmd-source-signature
+        type-bases
         params
         (owned_view.compiler-owned-shared-view ret))]
     [spmd-backend : ir.CompilerIrSpmdBackend (build-package-tlci-backend mode)]
@@ -3123,6 +3128,7 @@
       (owned_view.compiler-owned-shared-view canonical-name)
       (owned_view.compiler-owned-shared-view signature)
       (build-package-tlci-specializations-at
+        type-bases
         package-name
         canonical-name
         signature
@@ -3134,6 +3140,7 @@
         (tlci.tlci-spmd-specializations-empty)))))
 
 (define (build-package-tlci-collect-decl-callable
+  [type-bases : i64]
   [decl : ast.AstDecl]
   [owned-path : String]
   [module : String]
@@ -3156,6 +3163,7 @@
               (BuildPackageTlciCallableCollector
                 (build-package-tlci-callable-insert
                   (build-package-tlci-callable
+                    type-bases
                     package-name
                     module
                     name
@@ -3167,6 +3175,7 @@
                 collector.error))]))]
     [(Unsafe inner-box)
       (build-package-tlci-collect-decl-callable
+        type-bases
         (ast.ast-decl-box-shared-view inner-box)
         owned-path
         module
@@ -3372,6 +3381,7 @@
     (build-package-tlci-finish-macro-collector (&mut out) captures)))
 
 (define (build-package-tlci-collect-callables-into!
+  [type-bases : i64]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [fallback-path : String]
@@ -3405,6 +3415,7 @@
                 (set!
                   current
                   (build-package-tlci-collect-callables-into!
+                    type-bases
                     (ast.ast-decl-list-box-shared-view body-box)
                     (ast.ast-decl-path-list-new)
                     owned-path
@@ -3417,6 +3428,7 @@
                 (set!
                   current
                   (build-package-tlci-collect-decl-callable
+                    type-bases
                     decl
                     owned-path
                     (owned_view.compiler-owned-shared-view module)
@@ -3430,6 +3442,7 @@
     current))
 
 (define (build-package-tlci-callable-collector
+  [type-bases : i64]
   [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
@@ -3439,6 +3452,7 @@
     [owned-sources : build_string_i64_map.Map
       (build-package-tlci-source-map source-set.sources)]
     (build-package-tlci-collect-callables-into!
+      type-bases
       decls
       paths
       ""
@@ -3509,6 +3523,7 @@
   (Err String))
 
 (define (build-package-tlci-capture-exports
+  [type-bases : i64]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -3518,6 +3533,7 @@
     [home : arena.Arena (arena.current)]
     (with-scratch
       (match (build-package-tlci-collect-exports
+        type-bases
         manifest
         mode
         decls
@@ -3539,6 +3555,7 @@
               (Ok (string.copy metadata) copied (string.copy native-source))))]))))
 
 (define (build-package-tlci-collect-exports
+  [type-bases : i64]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -3547,6 +3564,7 @@
   (let
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
+        type-bases
         source-set
         (owned_view.compiler-owned-shared-view manifest)
         mode
@@ -5248,6 +5266,7 @@
     (let
       [exports : ResultBuildPackageTlciExports
         (build-package-tlci-capture-exports
+          (ast.ast-node-pool-context-type-segment-bases scope.home-pools)
           manifest
           mode
           (owned_view.compiler-owned-shared-view decls)

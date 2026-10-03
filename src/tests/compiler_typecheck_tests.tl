@@ -2769,11 +2769,17 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string.eq (tc_core.tc-type-render (ast.ast-ty-box (I64))) "(Box i64)")
+    (string.eq
+      (tc_core.tc-type-render
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ast.ast-ty-box (I64)))
+      "(Box i64)")
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (ast.ast-ty-box (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
       (ast.ast-ty-box (I64)))
     (tc_core.tc-type-contains-region
+      (ast.ast-node-pool-reader-type-segment-bases)
       (ast.ast-ty-box
         (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (String)))
       cbi.compiler-builtin-id-fix-n)))
@@ -3049,14 +3055,17 @@
         (tc_core.tc-result-info-err-id
           (tc_core.tc-global-shared-view return-info))))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view operand-info))
       (I64))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view return-info))
       (Bool))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (tc_core.tc-result-info-err-type operand-info)
       (tc_core.tc-result-info-err-type return-info))))
 
@@ -3084,15 +3093,23 @@
       return-id)
     (not (= operand-id return-id))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view operand-info))
       (I64))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (tc_core.tc-result-info-ok-type
         (tc_core.tc-global-shared-view return-info))
       (Bool))
-    (tc_core.tc-type-eq (tc_core.tc-result-info-err-type operand-info) (Unit))
-    (tc_core.tc-type-eq (tc_core.tc-result-info-err-type return-info) (Unit))))
+    (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (tc_core.tc-result-info-err-type operand-info)
+      (Unit))
+    (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (tc_core.tc-result-info-err-type return-info)
+      (Unit))))
 
 (define (compiler-typecheck-try-query-residual-mismatch-ok?
   [result : tc_core.TcTryQueryResult]
@@ -3121,14 +3138,21 @@
                 (io.panic
                   (str_cat.str-cat
                     "typecheck: return residual was "
-                    (tc_core.tc-type-render return-residual)))])]
+                    (tc_core.tc-type-render
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      return-residual)))])]
           [_
             (io.panic
               (str_cat.str-cat
                 "typecheck: operand residual was "
-                (tc_core.tc-type-render operand-residual)))]))]
+                (tc_core.tc-type-render
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  operand-residual)))]))]
     [(TcTryQueryIncompatible _ _ reason)
-      (io.panic (tc_core.tc-try-incompatibility-message reason))]))
+      (io.panic
+        (tc_core.tc-try-incompatibility-message
+          (ast.ast-node-pool-reader-type-segment-bases)
+          reason))]))
 
 (define (compiler-typecheck-try-query-forbidden-ok?
   [result : tc_core.TcTryQueryResult]) : bool
@@ -3935,13 +3959,27 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string.eq (tc_core.tc-type-render (ast.ast-ty-ptr (I64))) "(Ptr i64)")
     (string.eq
-      (tc_core.tc-type-render (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
+      (tc_core.tc-type-render
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ast.ast-ty-ptr (I64)))
+      "(Ptr i64)")
+    (string.eq
+      (tc_core.tc-type-render
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
       "(MutPtr (Ptr u8))")
-    (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-ptr (I64)))
-    (not (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-mut-ptr (I64))))
     (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (ast.ast-ty-ptr (I64))
+      (ast.ast-ty-ptr (I64)))
+    (not
+      (tc_core.tc-type-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ast.ast-ty-ptr (I64))
+        (ast.ast-ty-mut-ptr (I64))))
+    (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
       (ast.ast-ty-ptr (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
       (ast.ast-ty-ptr (I64)))))
 
@@ -4321,26 +4359,31 @@
     [string-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (String)))
         "(& n String)")]
     [str-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Str)))
         "(& n str)")]
     [bytes-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Bytes)))
         "(& n bytes)")]
     [bytes-mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (Bytes)))
         "(&mut n bytes)")]
     [mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-mut-ref
             cbi.compiler-builtin-id-fix-value
             (ast.ast-ty-dyn-array (I64))))
@@ -4354,6 +4397,7 @@
     [structural-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref
             (cis.intern-fresh-local-identity-raw
               (cis.intern-structural-session-fresh-local-identity
@@ -4364,7 +4408,9 @@
         "(& macro-lifetime i64)")]
     [invalid-lifetime-render-ok : bool
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref (ci.intern-capacity) (I64)))
+        (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ast-ty-ref (ci.intern-capacity) (I64)))
         (str_cat.str-cat
           "(& <id:"
           (string.int->string (ci.intern-capacity))
@@ -4372,19 +4418,39 @@
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-struct-args
             (ci.intern "RefBox")
             (ast.ast-lifetime-cons
               cbi.compiler-builtin-id-fix-n
               (ast.ast-lifetime-list-new))))
         "(RefBox n)")]
-    [str-eq-ok : bool (tc_core.tc-type-eq (Str) (Str))]
-    [str-distinct-ok : bool (not (tc_core.tc-type-eq (Str) (String)))]
-    [bytes-eq-ok : bool (tc_core.tc-type-eq (Bytes) (Bytes))]
-    [bytes-distinct-ok : bool (not (tc_core.tc-type-eq (Bytes) (Str)))]
+    [str-eq-ok : bool
+      (tc_core.tc-type-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Str)
+        (Str))]
+    [str-distinct-ok : bool
+      (not
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (Str)
+          (String)))]
+    [bytes-eq-ok : bool
+      (tc_core.tc-type-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Bytes)
+        (Bytes))]
+    [bytes-distinct-ok : bool
+      (not
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (Bytes)
+          (Str)))]
     [nominal-lifetime-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-struct-args
             (ci.intern "RefBox")
             (ast.ast-lifetime-cons
@@ -4397,6 +4463,7 @@
               (ast.ast-lifetime-list-new)))))]
     [region-erased-eq-ok : bool
       (tc_core.tc-type-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
         (ast.ast-ty-ref
           cbi.compiler-builtin-id-fix-n
           (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (I64)))
@@ -4404,19 +4471,23 @@
     [region-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-m (I64))))]
     [mut-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
           (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
           (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (I64))))]
     [region-contains-ok : bool
       (tc_core.tc-type-contains-region
+        (ast.ast-node-pool-reader-type-segment-bases)
         (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
         cbi.compiler-builtin-id-fix-n)]
     [inner-region-contains-ok : bool
       (tc_core.tc-type-contains-region
+        (ast.ast-node-pool-reader-type-segment-bases)
         (ast.ast-ty-mut-ref
           cbi.compiler-builtin-id-fix-value
           (ast.ast-ty-region cbi.compiler-builtin-id-fix-m (String)))

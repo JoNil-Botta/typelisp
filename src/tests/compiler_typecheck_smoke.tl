@@ -2463,9 +2463,8 @@
           (ast.ast-node-pool-context-type-segment-bases (& owned-pools))
           owned-parent)]
       [resolved : ast.AstType
-        (core_tests.tc-resolve-type-with-pools
+        (tc_core.tc-resolve-type
           ctx
-          (ast.ast-node-pool-context-shared-view (& owned-pools))
           (ast.ast-node-pool-context-type-get (& owned-pools) owned-parent))]
       [foreign-installed-count : i64
         (ast.ast-node-pool-context-type-len

@@ -222,6 +222,17 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Type ids belong to their `TcContext`'s type pool. Recursive type comparisons,
+predicates, rendering and substitution carry that pool's scalar segment-bases
+token; paths that can install another pool read through the context at each
+use. Lowering, semantic indexing and package export collection pass the same
+owner capability to those helpers. Resolution binds the job-owned predicate
+memo to the context's type-pool cell identity and segment table, and appends
+reconstructed child types to that pool. Macro output conversion carries both
+expression and type segment bases with its structural-name session; conversion
+finishes before parsing can install new pools. A numeric id from another pool
+cannot be interpreted through an unrelated installed reader.
+
 The serial in-memory LSP transport keeps its arena handle, input snapshot,
 cursor, EOF flag and captured output in one `LspFrameMemoryState`
 (`src/lsp_frame_core.tl`). Install and reset replace the whole value; only the

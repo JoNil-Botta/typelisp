@@ -4404,14 +4404,16 @@
     [(Cache rest-env) (lower-type-env-count rest-env)]
     [(Bind _ _ rest-env) (+ 1 (lower-type-env-count rest-env))]))
 
-(define (lower-type-env-contains-reference? [env : tc_core.TcTypeEnv]) : bool
+(define (lower-type-env-contains-reference?
+  [type-bases : i64]
+  [env : tc_core.TcTypeEnv]) : bool
   (match (tc_core.tc-type-env-spine-step env)
     [(Done) false]
-    [(Cache rest-env) (lower-type-env-contains-reference? rest-env)]
+    [(Cache rest-env) (lower-type-env-contains-reference? type-bases rest-env)]
     [(Bind _ ty rest-env)
-      (if (tc_core.tc-type-contains-reference? ty)
+      (if (tc_core.tc-type-contains-reference? type-bases ty)
         true
-        (lower-type-env-contains-reference? rest-env))]))
+        (lower-type-env-contains-reference? type-bases rest-env))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -9118,8 +9120,12 @@
 ;; type, which converts the argument as the call would and is what the SIMD
 ;; planners read; any other parameter, such as a reference whose lifetime
 ;; names the helper's own region, takes the argument's already checked type.
-(define (lower-spmd-inline-staged-type [param-ty : ast.AstType]) : ast.AstMaybeType
-  (match (tc_core.tc-type-without-regions (lower-global-shared-view param-ty))
+(define (lower-spmd-inline-staged-type
+  [type-bases : i64]
+  [param-ty : ast.AstType]) : ast.AstMaybeType
+  (match (tc_core.tc-type-without-regions
+    type-bases
+    (lower-global-shared-view param-ty))
     [(I8) (Some param-ty)]
     [(U8) (Some param-ty)]
     [(I16) (Some param-ty)]
@@ -9180,7 +9186,9 @@
                     staged
                     (ast.ast-let-binding-id
                       local
-                      (lower-spmd-inline-staged-type param-ty)
+                      (lower-spmd-inline-staged-type
+                        (tc_core.tc-context-type-bases ctx)
+                        param-ty)
                       arg-id))
                   (lower-spmd-inline-subst-cons param-name (Var local) subst)))
               staged
@@ -15219,6 +15227,7 @@
       (LowerMaybeMaskedPreheaderCache.No))))
 
 (define (lower-masked-preheader-uniform-get
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [elem-ty : ast.AstType]) : LowerMaybeIrValue
@@ -15241,6 +15250,7 @@
                 (lower-global-shared-view value)
                 (lower-global-array-element-shared-view uniform-values index))
               (tc_core.tc-type-eq
+                type-bases
                 (lower-global-shared-view elem-ty)
                 (lower-global-array-element-shared-view uniform-types index)))
             (return
@@ -15902,6 +15912,7 @@
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
   ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
     [(Struct name) (tc_core.tc-inline-aggregate-size-cached ctx name fallback)]
     [(Enum name) (tc_core.tc-inline-aggregate-size-cached ctx name fallback)]
@@ -15915,6 +15926,7 @@
   [ty : ast.AstType]
   [fallback : i64]) : i64
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
     [(Struct name) (tc_core.tc-inline-aggregate-align-cached ctx name fallback)]
     [(Enum name) (tc_core.tc-inline-aggregate-align-cached ctx name fallback)]
@@ -15929,6 +15941,7 @@
 (define (lower-fat-reference? [ctx : tc_core.TcContext] [inner : i64]) : bool
   (ast.ast-type-fat-referent?
     (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))))
 
 (define (lower-type-size [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
@@ -16488,7 +16501,9 @@
   [ty : (& ty ast.AstType)]) : bool
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx ty))
       [(Struct _) true]
       [(StructArgs _ _) true]
       [(Enum _) true]
@@ -16500,7 +16515,9 @@
 (define (lower-type-inline-struct-or-enum?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Struct _) true]
     [(StructArgs _ _) true]
     [(Enum _) true]
@@ -16518,7 +16535,9 @@
 (define (lower-type-register-resident?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Ref _ inner) (lower-fat-reference? ctx inner)]
     [(MutRef _ inner) (lower-fat-reference? ctx inner)]
     [(Struct name) (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
@@ -16549,7 +16568,9 @@
 ;; path, where excess rebuilds would overflow the per-function scratch arena
 ;; into a second chunk whose rewind leaks into later lowering.
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Ref _ inner)
       (if (lower-fat-reference? ctx inner)
         2
@@ -16565,38 +16586,48 @@
     [_ 0]))
 
 (define (lower-f64-register-word-field?
+  [type-bases : i64]
   [field-ty : ast.AstType]
   [offset : i64]
   [word-index : i64]) : bool
-  (match (tc_core.tc-type-strip-region field-ty)
+  (match (tc_core.tc-type-strip-region type-bases field-ty)
     [(F64) (and (= (/ offset 8) word-index) (= (% offset 8) 0))]
     [_ false]))
 
 (define (lower-sse-register-word-field?
+  [type-bases : i64]
   [field-ty : ast.AstType]
   [offset : i64]
   [word-index : i64]) : bool
-  (match (tc_core.tc-type-strip-region field-ty)
+  (match (tc_core.tc-type-strip-region type-bases field-ty)
     [(F64) (and (= (/ offset 8) word-index) (= (% offset 8) 0))]
     [(F32) (and (= (/ offset 8) word-index) (= (% offset 4) 0))]
     [_ false]))
 
 (define (lower-register-word-type-merge
+  [type-bases : i64]
   [current : ast.AstType]
   [field-ty : ast.AstType]
   [offset : i64]
   [word-index : i64]) : ast.AstType
-  (if (lower-sse-register-word-field? field-ty offset word-index)
+  (if (lower-sse-register-word-field? type-bases field-ty offset word-index)
     (F64)
     current))
 
 (define (lower-register-struct-word-type-fields
+  [type-bases : i64]
   [fields : tc_core.TcInlineFieldLayoutList]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
-  (lower-register-struct-word-type-fields-at fields word-index current 0))
+  (lower-register-struct-word-type-fields-at
+    type-bases
+    fields
+    word-index
+    current
+    0))
 
 (define (lower-register-struct-word-type-fields-at
+  [type-bases : i64]
   [fields : tc_core.TcInlineFieldLayoutList]
   [word-index : i64]
   [current : ast.AstType]
@@ -16607,9 +16638,11 @@
       [field : tc_core.TcInlineFieldLayout
         (tc_core.tc-inline-field-layout-list-ref fields index)]
       (lower-register-struct-word-type-fields-at
+        type-bases
         fields
         word-index
         (lower-register-word-type-merge
+          type-bases
           current
           (tc_core.tc-inline-field-layout-type (lower-global-shared-view field))
           (tc_core.tc-inline-field-layout-offset field)
@@ -16617,12 +16650,19 @@
         (+ index 1)))))
 
 (define (lower-register-payload-word-type-fields
+  [type-bases : i64]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
-  (lower-register-payload-word-type-fields-at payloads word-index current 0))
+  (lower-register-payload-word-type-fields-at
+    type-bases
+    payloads
+    word-index
+    current
+    0))
 
 (define (lower-register-payload-word-type-fields-at
+  [type-bases : i64]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [word-index : i64]
   [current : ast.AstType]
@@ -16633,9 +16673,11 @@
       [payload : tc_core.TcInlinePayloadLayout
         (tc_core.tc-inline-payload-layout-list-ref payloads index)]
       (lower-register-payload-word-type-fields-at
+        type-bases
         payloads
         word-index
         (lower-register-word-type-merge
+          type-bases
           current
           (tc_core.tc-inline-payload-layout-type
             (lower-global-shared-view payload))
@@ -16644,12 +16686,19 @@
         (+ index 1)))))
 
 (define (lower-register-enum-word-type-variants
+  [type-bases : i64]
   [variants : tc_core.TcInlineVariantLayoutList]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
-  (lower-register-enum-word-type-variants-at variants word-index current 0))
+  (lower-register-enum-word-type-variants-at
+    type-bases
+    variants
+    word-index
+    current
+    0))
 
 (define (lower-register-enum-word-type-variants-at
+  [type-bases : i64]
   [variants : tc_core.TcInlineVariantLayoutList]
   [word-index : i64]
   [current : ast.AstType]
@@ -16659,9 +16708,14 @@
     (match (tc_core.tc-inline-variant-layout-list-ref variants index)
       [(Variant _ _ _ payloads)
         (lower-register-enum-word-type-variants-at
+          type-bases
           variants
           word-index
-          (lower-register-payload-word-type-fields payloads word-index current)
+          (lower-register-payload-word-type-fields
+            type-bases
+            payloads
+            word-index
+            current)
           (+ index 1))])))
 
 ;; Register-resident aggregate word type for lowering/backend movement. INTEGER
@@ -16673,7 +16727,9 @@
   [word-index : i64]) : ast.AstType
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx ty))
       [(Ref _ inner)
         (if (lower-fat-reference? ctx inner)
           (if (= word-index 0)
@@ -16691,7 +16747,11 @@
           [(Ok layout)
             (match layout
               [(Struct _ _ fields)
-                (lower-register-struct-word-type-fields fields word-index (I64))]
+                (lower-register-struct-word-type-fields
+                  (tc_core.tc-context-type-bases ctx)
+                  fields
+                  word-index
+                  (I64))]
               [(Enum _ _ _) (I64)])]
           [(Err _) (I64)])]
       [(StructArgs name _)
@@ -16706,6 +16766,7 @@
               (match layout
                 [(Enum _ _ variants)
                   (lower-register-enum-word-type-variants
+                    (tc_core.tc-context-type-bases ctx)
                     variants
                     word-index
                     (I64))]
@@ -16723,7 +16784,9 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (& resolved)
       [(Array _ _) (U64)]
       [_
@@ -16736,13 +16799,14 @@
           (let
             [word-ty : ast.AstType (lower-register-word-type ctx resolved 0)]
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (lower-global-shared-view word-ty))
               [(F64) word-ty]
               [_ resolved]))
           resolved)])))
 
-(define (lower-type-signed? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-type-signed? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(I64) true]
     [(I32) true]
     [(I16) true]
@@ -16783,8 +16847,15 @@
       (let
         [bits : LowerExpr
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view field-ty))
-            [(F32) (lower-bitcast-value state word word-ty (U64))]
+            [(F32)
+              (lower-bitcast-value
+                (tc_core.tc-context-type-bases ctx)
+                state
+                word
+                word-ty
+                (U64))]
             [_ (Expr state word (U64))])]
         [left : i64 (- 64 (* (+ byte-offset size) 8))]
         [right : i64 (- 64 (* size 8))]
@@ -16807,14 +16878,22 @@
                     (Shr (I64))
                     shl-value
                     (I64 right)
-                    (if (lower-type-signed? (lower-global-shared-view field-ty))
+                    (if (lower-type-signed?
+                      (tc_core.tc-context-type-bases ctx)
+                      (lower-global-shared-view field-ty))
                       (I64)
                       (U64)))
                     [(Expr shr-state shr-value _)
                       (match (tc_core.tc-type-strip-region
+                        (tc_core.tc-context-type-bases ctx)
                         (lower-global-shared-view field-ty))
                         [(F32)
-                          (lower-bitcast-value shr-state shr-value (U64) (F32))]
+                          (lower-bitcast-value
+                            (tc_core.tc-context-type-bases ctx)
+                            shr-state
+                            shr-value
+                            (U64)
+                            (F32))]
                         [_ (Expr shr-state shr-value field-ty)])])]))])))))
 
 ;; OR one field value into the packed-word accumulator: mask it to its byte
@@ -16832,6 +16911,7 @@
     (if (and
       (>= size 8)
       (lower-f64-register-word-field?
+        (tc_core.tc-context-type-bases ctx)
         (lower-global-shared-view field-ty)
         byte-offset
         0))
@@ -16839,8 +16919,15 @@
       (let
         [bits : LowerExpr
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view field-ty))
-            [(F32) (lower-bitcast-value state value field-ty (U64))]
+            [(F32)
+              (lower-bitcast-value
+                (tc_core.tc-context-type-bases ctx)
+                state
+                value
+                field-ty
+                (U64))]
             [_ (Expr state value field-ty)])]
         (match bits
           [(Expr bits-state bits-value _)
@@ -16977,20 +17064,23 @@
         (Var var-id)
         word-ty)]))
 
-(define (lower-register-word-sse-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-register-word-sse-type? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(F64) true]
     [_ false]))
 
 (define (lower-materialize-register-word
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [from-ty : ast.AstType]
   [word-ty : ast.AstType]) : LowerExpr
-  (if (tc_core.tc-type-eq from-ty (lower-global-shared-view word-ty))
+  (if (tc_core.tc-type-eq type-bases from-ty (lower-global-shared-view word-ty))
     (Expr state value word-ty)
-    (if (lower-register-word-sse-type? (lower-global-shared-view word-ty))
-      (lower-bitcast-value state value (U64) word-ty)
+    (if (lower-register-word-sse-type?
+      type-bases
+      (lower-global-shared-view word-ty))
+      (lower-bitcast-value type-bases state value (U64) word-ty)
       (Expr state value word-ty))))
 
 ;; `=` / `!=` on a 2-word register-group aggregate must compare BOTH
@@ -17287,6 +17377,7 @@
     0)
     [(Ok (Expr s0 raw-word0 raw-ty0))
       (match (lower-materialize-register-word
+        (tc_core.tc-context-type-bases ctx)
         s0
         raw-word0
         raw-ty0
@@ -17303,6 +17394,7 @@
             1)
             [(Ok (Expr s1 raw-word1 raw-ty1))
               (match (lower-materialize-register-word
+                (tc_core.tc-context-type-bases ctx)
                 s1
                 raw-word1
                 raw-ty1
@@ -17386,6 +17478,7 @@
   (match (lower-pack-enum-payload-word ctx state (I64 0) (I64) 0 values fields)
     [(Ok (Expr s1 raw-word1 raw-ty1))
       (match (lower-materialize-register-word
+        (tc_core.tc-context-type-bases ctx)
         s1
         raw-word1
         raw-ty1
@@ -17750,6 +17843,7 @@
   [value : ir.CompilerIrValue]
   [ret-ty : ast.AstType]) : ResultLowerExpr
   (if (lower-internal-structural-resolved-type?
+    (tc_core.tc-context-type-bases ctx)
     (lower-global-shared-view ret-ty))
     (let
       [class : LowerCAbiAggregate
@@ -17814,25 +17908,27 @@
         [(Unsupported message) (Err (box (lower-diagnostic message)))]))
     (lower-prepare-internal-return-no ctx state env value ret-ty)))
 
-(define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
-  (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
+(define (lower-raw-pointer-ir-type [type-bases : i64] [ty : ast.AstType]) : ast.AstType
+  (match (tc_core.tc-type-strip-region type-bases (lower-global-shared-view ty))
     [(Ptr _) (U64)]
     [(MutPtr _) (U64)]
     [_ ty]))
 
 (define (lower-cast-value
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : LowerExpr
   (let
     [ir-from-ty : ast.AstType
-      (lower-raw-pointer-ir-type (lower-global-shared-view from-ty))]
+      (lower-raw-pointer-ir-type type-bases (lower-global-shared-view from-ty))]
     [ir-to-ty : ast.AstType
-      (lower-raw-pointer-ir-type (lower-global-shared-view to-ty))]
+      (lower-raw-pointer-ir-type type-bases (lower-global-shared-view to-ty))]
     (if (or
-      (tc_core.tc-type-eq from-ty (lower-global-shared-view to-ty))
+      (tc_core.tc-type-eq type-bases from-ty (lower-global-shared-view to-ty))
       (tc_core.tc-type-eq
+        type-bases
         (lower-global-shared-view ir-from-ty)
         (lower-global-shared-view ir-to-ty)))
       (Expr state value to-ty)
@@ -17844,15 +17940,16 @@
             to-ty)]))))
 
 (define (lower-literal-float-to-bits?
+  [type-bases : i64]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region from-ty)
+  (match (tc_core.tc-type-strip-region type-bases from-ty)
     [(F64)
-      (match (tc_core.tc-type-strip-region to-ty)
+      (match (tc_core.tc-type-strip-region type-bases to-ty)
         [(U64) true]
         [_ false])]
     [(F32)
-      (match (tc_core.tc-type-strip-region to-ty)
+      (match (tc_core.tc-type-strip-region type-bases to-ty)
         [(U32) true]
         [_ false])]
     [_ false]))
@@ -17872,17 +17969,20 @@
         to-ty)]))
 
 (define (lower-bitcast-value
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : LowerExpr
   (if (tc_core.tc-type-eq
+    type-bases
     (lower-global-shared-view from-ty)
     (lower-global-shared-view to-ty))
     (Expr state value to-ty)
     (match (lower-global-shared-view value)
       [(F64 bits)
         (if (lower-literal-float-to-bits?
+          type-bases
           (lower-global-shared-view from-ty)
           (lower-global-shared-view to-ty))
           (Expr state (I64 (cast bits : i64)) to-ty)
@@ -17890,6 +17990,7 @@
       [_ (lower-runtime-bitcast-value state value from-ty to-ty)])))
 
 (define (lower-coerce-value
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -17898,13 +17999,15 @@
     [(tc_core.tc-never-type? (lower-global-shared-view from-ty))
       (Expr state value from-ty)]
     [(tc_core.tc-type-eq
+        type-bases
         (lower-global-shared-view from-ty)
         (lower-global-shared-view to-ty))
       (Expr state value to-ty)]
     [(tc_core.tc-type-compatible?
+        type-bases
         (lower-global-shared-view to-ty)
         (lower-global-shared-view from-ty))
-      (lower-cast-value state value from-ty to-ty)]
+      (lower-cast-value type-bases state value from-ty to-ty)]
     [else (Expr state value to-ty)]))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
@@ -17928,23 +18031,30 @@
         [(Expr len-state len _) (Fields len-state ptr len)])]))
 
 (define (lower-str-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Ref _ inner)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
         [(Str) true]
         [_ false])]
     [_ false]))
 
 (define (lower-bytes-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Ref _ inner)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
         [(Bytes) true]
         [_ false])]
     [(MutRef _ inner)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
         [(Bytes) true]
         [_ false])]
@@ -17952,6 +18062,7 @@
 
 (define (lower-string-handle-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
     [(String) true]
     [_ (lower-str-ref-type? ctx ty)]))
@@ -18340,6 +18451,7 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-canonicalize-inferred-type ctx (tc_core.tc-resolve-type ctx ty)))
     [(I64) true]
     [(U64) true]
@@ -18377,6 +18489,7 @@
     [(DynArray elem-ty)
       (not
         (tc_core.tc-type-contains-reference?
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-context-type-get ctx elem-ty)))]
     ;; Borrowing a Box value takes the address of its one-word owning handle.
     ;; The pointee remains behind the Box and is lowered separately when the
@@ -18426,7 +18539,9 @@
   [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (if (lower-type-register-resident? ctx (lower-global-shared-view resolved))
       false
       (match resolved
@@ -18448,7 +18563,9 @@
   [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (if (lower-type-register-resident? ctx (lower-global-shared-view resolved))
       false
       (match resolved
@@ -18510,6 +18627,7 @@
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-lifetime-subst-type
+          (tc_core.tc-context-type-bases ctx)
           subst
           (tc_core.tc-context-type-get
             ctx
@@ -18550,7 +18668,10 @@
         (and
           (lower-supported-reference-type-with-stack?
             ctx
-            (tc_core.tc-lifetime-subst-type subst ty)
+            (tc_core.tc-lifetime-subst-type
+              (tc_core.tc-context-type-bases ctx)
+              subst
+              ty)
             (lower-global-shared-view stack))
           (lower-supported-reference-field-list-with-stack-at?
             ctx
@@ -18647,6 +18768,7 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-canonicalize-inferred-type
           ctx
           (tc_core.tc-resolve-type ctx ty)))]
@@ -18657,6 +18779,7 @@
       [_
         (if (not
           (tc_core.tc-type-contains-reference?
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view resolved)))
           true
           (match resolved
@@ -18761,6 +18884,7 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx referent-ty))]
     [size : i64 (lower-type-size ctx resolved)]
     (match (lower-reserve-heap-storage
@@ -18793,6 +18917,7 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx referent-ty))]
     [size : i64 (lower-type-size ctx resolved)]
     (match (lower-reserve-inline-storage
@@ -18827,7 +18952,9 @@
     load-value-reference
     (lower-borrow-place-value-reference?
       ctx
-      (tc_core.tc-borrow-referent-type (lower-global-shared-view stored-ty))))
+      (tc_core.tc-borrow-referent-type
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view stored-ty))))
     (match (lower-state-alloc-var state)
       [(Alloc allocated var-id)
         (Expr
@@ -18864,7 +18991,10 @@
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [referent-ty : ast.AstType (tc_core.tc-borrow-referent-type place-ty)]
+    [referent-ty : ast.AstType
+      (tc_core.tc-borrow-referent-type
+        (tc_core.tc-context-type-bases ctx)
+        place-ty)]
     [id : i64
       (sym_i64_env.sym-i64-lookup-id-or
         env
@@ -18876,6 +19006,7 @@
         (lower-global-shared-view referent-ty))
         (Ok (Expr state (Var id) result-ty))
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (lower-global-shared-view result-ty)))
           [(MutRef _ _)
             (Err
@@ -18911,6 +19042,7 @@
   (match (tc_core.tc-lookup-id type-env name)
     [(Ok place-ty)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))
         [(Ref _ _)
           (lower-borrow-reference-var-address state env name result-ty)]
@@ -18919,6 +19051,7 @@
         [_
           (if (and
             (tc_core.tc-type-contains-reference?
+              (tc_core.tc-context-type-bases ctx)
               (lower-global-shared-view place-ty))
             (not
               (lower-supported-reference-type?
@@ -19033,6 +19166,7 @@
     (match lowered
       [(Expr receiver-state receiver-value receiver-ty)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx receiver-ty))
           [(Struct struct-name)
             (lower-borrow-struct-field-address-named
@@ -19056,6 +19190,7 @@
               result-ty)]
           [(Ref _ referent-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
@@ -19088,6 +19223,7 @@
                       "lower: field projection borrow requires struct place")))])]
           [(MutRef _ referent-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
@@ -19140,6 +19276,7 @@
     (match lowered
       [(Expr tuple-state tuple-value tuple-ty)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx tuple-ty))
           [(Tuple elem-tys)
             (let
@@ -19151,6 +19288,7 @@
                     [(Expr ptr-state ptr _) (Ok (Expr ptr-state ptr result-ty))])]))]
           [(Ref _ referent-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
@@ -19172,6 +19310,7 @@
                       "lower: tuple-ref borrow requires tuple place")))])]
           [(MutRef _ referent-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
@@ -19223,12 +19362,14 @@
       (let
         [container-ty : ast.AstType
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view arr-ty)))
             [(Ref _ referent-ty) (tc_core.tc-context-type-get ctx referent-ty)]
             [(MutRef _ referent-ty)
               (tc_core.tc-context-type-get ctx referent-ty)]
             [_ (owned_view.compiler-owned-shared-view arr-ty)])]
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
           [(Slice elem-ty)
             (let
@@ -19263,6 +19404,7 @@
                                 idx-value
                                 idx-value-ty
                                 (tc_core.tc-type-without-regions
+                                  (tc_core.tc-context-type-bases ctx)
                                   (tc_core.tc-context-type-get ctx elem-ty)))
                                 [(Expr addr-state elem-ptr _)
                                   (Ok
@@ -19308,6 +19450,7 @@
                                 idx-value
                                 idx-value-ty
                                 (tc_core.tc-type-without-regions
+                                  (tc_core.tc-context-type-bases ctx)
                                   (tc_core.tc-context-type-get ctx elem-ty)))
                                 [(Expr addr-state elem-ptr _)
                                   (Ok
@@ -19325,6 +19468,7 @@
             (let
               [fixed-elem-ty : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-context-type-get ctx elem-ty))]
               [arr-lowered : LowerExpr
                 (try (lower-expr ctx state env type-env arr))]
@@ -19378,7 +19522,9 @@
                   (str_cat.str-cat
                     "lower: array-ref borrow requires array place, got "
                     (tc_core.tc-type-render
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-type-strip-region
+                        (tc_core.tc-context-type-bases ctx)
                         (tc_core.tc-resolve-type ctx container-ty)))))))]))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))]))
 
@@ -19486,6 +19632,7 @@
   (if (lower-str-ref-type? ctx (lower-global-shared-view expr-ty))
     (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
     (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (lower-global-shared-view expr-ty)))
       [(Ref _ referent-ty)
         (if (lower-supported-reference-referent-type?
@@ -19695,26 +19842,29 @@
     [(String _) true]
     [_ false]))
 
-(define (lower-enum-type-name-or-empty [ty : ast.AstType]) : String
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-enum-type-name-or-empty [type-bases : i64] [ty : ast.AstType]) : String
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Enum enum-name) (tc_core.tc-nominal-name-id-display enum-name)]
     [(EnumArgs enum-name _) (tc_core.tc-nominal-name-id-display enum-name)]
     [(Var enum-name) (tc_core.tc-nominal-name-id-display enum-name)]
     [(VarArgs enum-name _) (tc_core.tc-nominal-name-id-display enum-name)]
     [_ ""]))
 
-(define (lower-enum-type-name-id-or [ty : (& ty ast.AstType)] [fallback : i64]) : i64
+(define (lower-enum-type-name-id-or
+  [type-bases : i64]
+  [ty : (& ty ast.AstType)]
+  [fallback : i64]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-strip-region ty)
+    (match (tc_core.tc-type-strip-region type-bases ty)
       [(Enum enum-name) enum-name]
       [(EnumArgs enum-name _) enum-name]
       [(Var enum-name) enum-name]
       [(VarArgs enum-name _) enum-name]
       [_ fallback])))
 
-(define (lower-struct-type-name-or-empty [ty : ast.AstType]) : String
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-struct-type-name-or-empty [type-bases : i64] [ty : ast.AstType]) : String
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Struct struct-name) (tc_core.tc-nominal-name-id-display struct-name)]
     [(StructArgs struct-name _)
       (tc_core.tc-nominal-name-id-display struct-name)]
@@ -19723,11 +19873,12 @@
     [_ ""]))
 
 (define (lower-struct-type-name-id-or
+  [type-bases : i64]
   [ty : (& ty ast.AstType)]
   [fallback : i64]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-strip-region ty)
+    (match (tc_core.tc-type-strip-region type-bases ty)
       [(Struct struct-name) struct-name]
       [(StructArgs struct-name _) struct-name]
       [(Var struct-name) struct-name]
@@ -19740,7 +19891,8 @@
   [fallback : i64]) : i64
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-    [name-id : i64 (lower-struct-type-name-id-or ty -1)]
+    [name-id : i64
+      (lower-struct-type-name-id-or (tc_core.tc-context-type-bases ctx) ty -1)]
     [direct : i64
       (if (>= name-id 0)
         (csym.compiler-symbols-lookup-type-id-or symbols name-id fallback)
@@ -19807,7 +19959,9 @@
   [scrut-ty : ast.AstType]
   [variant-name-id : i64]
   [fallback : i64]) : i64
-  (match (tc_core.tc-type-strip-region scrut-ty)
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    scrut-ty)
     [(Enum enum-name-id)
       (tc_core.tc-source-variant-handle-for-enum-id-or
         ctx
@@ -19863,8 +20017,8 @@
     [(option_i64.Some name-id) name-id]
     [(option_i64.None) fallback]))
 
-(define (lower-type-debug-kind [ty : ast.AstType]) : String
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-type-debug-kind [type-bases : i64] [ty : ast.AstType]) : String
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Enum _) "enum"]
     [(EnumArgs _ _) "enum-args"]
     [(Struct _) "struct"]
@@ -19882,6 +20036,7 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))]
     (str_cat.str-cat
       "lower: unsupported match pattern "
@@ -19889,13 +20044,17 @@
       " in module "
       (tc_core.tc-context-module ctx)
       " raw "
-      (lower-type-debug-kind (lower-global-shared-view scrut-ty))
+      (lower-type-debug-kind
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view scrut-ty))
       " "
-      (tc_core.tc-type-render scrut-ty)
+      (tc_core.tc-type-render (tc_core.tc-context-type-bases ctx) scrut-ty)
       " resolved "
-      (lower-type-debug-kind (lower-global-shared-view resolved))
+      (lower-type-debug-kind
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view resolved))
       " "
-      (tc_core.tc-type-render resolved))))
+      (tc_core.tc-type-render (tc_core.tc-context-type-bases ctx) resolved))))
 
 (define (lower-member-name-base [name : String]) : String
   (let
@@ -20055,7 +20214,9 @@
             value
             (lower-global-shared-view inner-ty)
             (lower-struct-type-name-or-empty
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx inner-ty)))
             (deref args-box))
           (Err
@@ -20071,7 +20232,9 @@
   [box-value : ir.CompilerIrValue]
   [box-ty : ast.AstType]
   [args : ast.AstPatternList]) : ResultLowerEnv
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx box-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx box-ty))
     [(Box inner-node)
       (if (= args.len 1)
         (let
@@ -20123,6 +20286,7 @@
   [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view resolved)))
     [(Box _)
       (match (lower-bind-payload-value
@@ -20201,7 +20365,10 @@
         field-value
         (lower-global-shared-view resolved)
         (lower-struct-type-name-or-empty
-          (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx resolved)))
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
+            (tc_core.tc-resolve-type ctx resolved)))
         nested-args)
         [(Ok struct-state struct-env struct-type-env)
           (lower-bind-variant-payloads
@@ -20277,6 +20444,7 @@
       (let
         [ref-ty : ast.AstType
           (tc_core.tc-borrowed-field-ref-type
+            (tc_core.tc-context-type-bases ctx)
             borrow-lifetime
             (lower-global-shared-view resolved))]
         (lower-borrowed-payload-ref-expr ctx state base offset resolved ref-ty))]))
@@ -20789,9 +20957,13 @@
                                                 nested-fields
                                                 mode
                                                 (lower-enum-type-name-id-or
+                                                  (tc_core.tc-context-type-bases
+                                                    ctx)
                                                   resolved
                                                   -1)
                                                 (lower-enum-type-name-or-empty
+                                                  (tc_core.tc-context-type-bases
+                                                    ctx)
                                                   (lower-global-shared-view
                                                     resolved))
                                                 nested-name-str
@@ -20927,6 +21099,7 @@
             (ast.ast-ty-mut-ref
               lifetime
               (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
                 (lower-global-shared-view elem-ty))))
             [(Ok next-state next-env next-type-env)
               (lower-bind-slice-mut-elements-at
@@ -21099,6 +21272,7 @@
           (tc_core.tc-slice-pattern-element-count (& items) has-rest)]
         (match (if (>= array-length 0)
           (lower-slice-view-static-source-fields
+            (tc_core.tc-context-type-bases ctx)
             state
             scrut-value
             scrut-ty
@@ -21301,6 +21475,7 @@
         (if (lower-box-pattern-name? name)
           (lower-pattern-list-refutable? args)
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
             [(Struct struct-name)
               (not
@@ -21491,13 +21666,13 @@
     [(Var name) (lower-disarm-move-aware-resource-name state env name)]
     [_ state]))
 
-(define (lower-c-function-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-c-function-type? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(CFunc _ _) true]
     [_ false]))
 
-(define (lower-function-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-function-type? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(CFunc _ _) true]
     [(Func _ _) true]
     [_ false]))
@@ -21761,7 +21936,9 @@
                       ty))])])]
         [(Err message) (Err message)])]
     [(and
-        (lower-function-type? (lower-global-shared-view ty))
+        (lower-function-type?
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view ty))
         (lower-symbol-function-value-id? ctx name-id))
       (Ok
         (Expr state (Function (lower-resolve-name-symbol-id state name-id)) ty))]
@@ -21793,7 +21970,9 @@
     [(No)
       (let
         [ty : ast.AstType (try (tc_core.tc-expr ctx type-env lambda-expr))]
-        (match (tc_core.tc-type-strip-region ty)
+        (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
+          ty)
           [(Func _ ret) (Ok (tc_core.tc-context-type-get ctx ret))]
           [_ (Err "lower: lambda did not typecheck as a function")]))]))
 
@@ -21831,7 +22010,9 @@
 (define (lower-capture-support-message
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : String
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Ref _ _) (lower-reference-support-message)]
     [(MutRef _ _) (lower-reference-support-message)]
     [_ (lower-unsupported-capture-message)]))
@@ -21839,7 +22020,9 @@
 (define (lower-supported-capture-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(I64) true]
     [(U64) true]
     [(F64) true]
@@ -21875,8 +22058,8 @@
       cursor)
     8))
 
-(define (lower-capture-slot-type [ty : ast.AstType]) : ast.AstType
-  (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
+(define (lower-capture-slot-type [type-bases : i64] [ty : ast.AstType]) : ast.AstType
+  (match (tc_core.tc-type-strip-region type-bases (lower-global-shared-view ty))
     [(Func _ _) (U64)]
     [(Tuple _) (U64)]
     [(Array _ _) (U64)]
@@ -21916,6 +22099,7 @@
         state
         value
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-context-type-get ctx elem-ty))
         ty)]
     [(Tuple elem-tys)
@@ -21937,6 +22121,7 @@
         (Snapshot)
         value
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-context-type-get ctx elem-ty))
         count
         ty)]
@@ -22142,7 +22327,9 @@
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       [resolved : ast.AstType
-        (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-resolve-type ctx ty))]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
       [size : i64 (lower-type-size ctx resolved)]
       (if (> size 0)
@@ -22333,14 +22520,22 @@
   [value : ir.CompilerIrValue]
   [struct-name : String]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-struct-repr-c-id? ctx (lower-struct-type-name-id-or result-ty -1))
+  (if (lower-struct-repr-c-id?
+    ctx
+    (lower-struct-type-name-id-or
+      (tc_core.tc-context-type-bases ctx)
+      result-ty
+      -1))
     (Err
       (box
         (lower-diagnostic
           "lower: repr-c aggregate lambda captures need repr-c snapshot lowering")))
     (match (lower-struct-fields-id
       ctx
-      (lower-struct-type-name-id-or result-ty -1)
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        result-ty
+        -1)
       struct-name)
       [(Ok fields)
         (let
@@ -22524,6 +22719,7 @@
               (let
                 [capture-ty : ast.AstType
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx found-ty))]
                 (if (lower-supported-capture-type?
                   ctx
@@ -22531,6 +22727,7 @@
                   (let
                     [slot-ty : ast.AstType
                       (lower-capture-slot-type
+                        (tc_core.tc-context-type-bases ctx)
                         (lower-global-shared-view capture-ty))]
                     [offset : i64
                       (lower-align-up cursor (lower-type-align ctx slot-ty))]
@@ -22626,7 +22823,9 @@
                         env-value
                         offset
                         snap-value
-                        (lower-capture-slot-type capture-ty)))
+                        (lower-capture-slot-type
+                          (tc_core.tc-context-type-bases ctx)
+                          capture-ty)))
                     env
                     type-env
                     env-value
@@ -22735,7 +22934,9 @@
               state
               env-value
               offset
-              (lower-capture-slot-type (lower-global-shared-view capture-ty))))
+              (lower-capture-slot-type
+                (tc_core.tc-context-type-bases ctx)
+                (lower-global-shared-view capture-ty))))
             [(Expr loaded-state loaded-value _)
               (match loaded-value
                 [(Var loaded-var)
@@ -22799,7 +23000,9 @@
     (let
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
-        (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-resolve-type ctx ret))]
       [global-init? : bool
         (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
@@ -23797,7 +24000,9 @@
   [ty : ast.AstType]) : LowerExpr
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Unit) (Expr state Unit resolved)]
       ;; A Result/Option payload (offset 8 past the i64 tag) can be an
@@ -24116,7 +24321,9 @@
                     (lower-diagnostic-at-expr
                       ctx
                       origin
-                      (tc_core.tc-try-incompatibility-message reason))))])]
+                      (tc_core.tc-try-incompatibility-message
+                        (tc_core.tc-context-type-bases ctx)
+                        reason))))])]
           [(Err _)
             (Err
               (box
@@ -24346,7 +24553,12 @@
           [(Ok lowered)
             (match lowered
               [(Expr arg-state arg-value arg-ty)
-                (match (lower-cast-value arg-state arg-value arg-ty (I64))
+                (match (lower-cast-value
+                  (tc_core.tc-context-type-bases ctx)
+                  arg-state
+                  arg-value
+                  arg-ty
+                  (I64))
                   [(Expr cast-state cast-value _)
                     (lower-runtime-call-values
                       cast-state
@@ -24384,7 +24596,12 @@
         [(Ok lowered)
           (match lowered
             [(Expr arg-state arg-value arg-ty)
-              (match (lower-cast-value arg-state arg-value arg-ty (I64))
+              (match (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                arg-state
+                arg-value
+                arg-ty
+                (I64))
                 [(Expr cast-state cast-value _)
                   (lower-runtime-call-values
                     cast-state
@@ -24456,12 +24673,14 @@
           "lower: __tl_float_sqrt expects exactly one argument")))))
 
 (define (lower-float-literal-to-bits-value
+  [type-bases : i64]
   [lit : ast.AstLiteral]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : LowerMaybeIrValue
   (match lit
     [(Float text)
       (if (lower-literal-float-to-bits?
+        type-bases
         (lower-global-shared-view from-ty)
         to-ty)
         (Some (I64 (cast (lower-float-literal-bits text from-ty) : i64)))
@@ -24480,7 +24699,12 @@
         (lower-context-expr-get ctx inner-box)
         from-ty
         to-ty)]
-    [(Literal lit) (lower-float-literal-to-bits-value lit from-ty to-ty)]
+    [(Literal lit)
+      (lower-float-literal-to-bits-value
+        (tc_core.tc-context-type-bases ctx)
+        lit
+        from-ty
+        to-ty)]
     [_ (No)]))
 
 (define (lower-float-bitcast-literal-value
@@ -24498,6 +24722,7 @@
         ctx
         (lower-context-expr-get ctx inner-box)
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type
             ctx
             (tc_core.tc-context-type-get ctx from-ty-id)))
@@ -24507,14 +24732,27 @@
         ctx
         (lower-context-expr-get ctx inner-box)
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type
             ctx
             (tc_core.tc-context-type-get ctx from-ty-id)))
         to-ty)]
     [(Literal lit)
-      (match (tc_core.tc-type-strip-region (lower-global-shared-view to-ty))
-        [(U32) (lower-float-literal-to-bits-value lit (F32) to-ty)]
-        [_ (lower-float-literal-to-bits-value lit (F64) to-ty)])]
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view to-ty))
+        [(U32)
+          (lower-float-literal-to-bits-value
+            (tc_core.tc-context-type-bases ctx)
+            lit
+            (F32)
+            to-ty)]
+        [_
+          (lower-float-literal-to-bits-value
+            (tc_core.tc-context-type-bases ctx)
+            lit
+            (F64)
+            to-ty)])]
     [_ (No)]))
 
 (define (lower-float-bitcast-literal-call?
@@ -24556,7 +24794,12 @@
               (match lowered
                 [(Expr arg-state arg-value arg-ty)
                   (Ok
-                    (lower-bitcast-value arg-state arg-value arg-ty result-ty))])]
+                    (lower-bitcast-value
+                      (tc_core.tc-context-type-bases ctx)
+                      arg-state
+                      arg-value
+                      arg-ty
+                      result-ty))])]
             [(Err message) (Err message)])]))
     (Err
       (box
@@ -24677,7 +24920,9 @@
   [ty : ast.AstType]) : bool
   (let
     [clone-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view clone-ty)
       [(Struct _) (lower-type-register-resident? ctx clone-ty)]
       [(StructArgs _ _) (lower-type-register-resident? ctx clone-ty)]
@@ -25012,7 +25257,9 @@
   [ty : ast.AstType]) : ResultLowerExpr
   (let
     [clone-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view clone-ty)
       [(String) (lower-capture-snapshot-string-value state value)]
       [(Tuple elem-tys)
@@ -25034,6 +25281,7 @@
           (Clone)
           value
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-context-type-get ctx elem-ty))
           count
           clone-ty)]
@@ -25045,6 +25293,7 @@
           type-env
           value
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-context-type-get ctx elem-ty))
           clone-ty)]
       [(Box elem-ty)
@@ -25055,6 +25304,7 @@
           type-env
           value
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-context-type-get ctx elem-ty))
           clone-ty)]
       ;; A register-resident aggregate is word-class POD held in a
@@ -25091,7 +25341,9 @@
               (lower-diagnostic
                 (str_cat.str-cat
                   "lower: clone unsupported type "
-                  (tc_core.tc-type-render clone-ty))))))])))
+                  (tc_core.tc-type-render
+                    (tc_core.tc-context-type-bases ctx)
+                    clone-ty))))))])))
 
 (define (lower-clone-call
   [ctx : tc_core.TcContext]
@@ -25132,11 +25384,13 @@
   (let
     [actual-resolved : ast.AstType
       (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view actual)))]
     [array-len : i64
       (match actual-resolved
         [(Ref _ inner)
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx inner)))
@@ -25144,6 +25398,7 @@
             [_ -1])]
         [(MutRef _ inner)
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx inner)))
@@ -25163,7 +25418,9 @@
         env
         type-env
         (lower-global-shared-view arg)
-        (tc_core.tc-type-without-regions actual)
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          actual)
         arg)
         [(Ok lowered)
           (match lowered
@@ -25174,7 +25431,9 @@
                     (lower-emit-pack
                       cast-state
                       (ir.compiler-ir-value-seq2 ptr (I64 array-len))
-                      (tc_core.tc-type-without-regions expected)))])])]
+                      (tc_core.tc-type-without-regions
+                        (tc_core.tc-context-type-bases ctx)
+                        expected)))])])]
         [(Err message) (Err message)]))))
 
 (define (lower-call-arg-normal-basic
@@ -25304,12 +25563,17 @@
     [(Ok place-ty)
       (let
         [referent-ty : ast.AstType
-          (tc_core.tc-borrow-referent-type (lower-global-shared-view place-ty))]
+          (tc_core.tc-borrow-referent-type
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view place-ty))]
         [referent-ir-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view referent-ty)))]
         (if (or
-          (tc_core.tc-type-contains-reference? place-ty)
+          (tc_core.tc-type-contains-reference?
+            (tc_core.tc-context-type-bases ctx)
+            place-ty)
           (lower-borrow-place-value-reference? ctx referent-ty))
           (lower-call-arg-normal-as
             ctx
@@ -25364,6 +25628,7 @@
     expected)
     [(Ok effective-arg)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view arg-ty)))
         [(MutRef _ _)
           (match (lower-call-explicit-mut-borrow-var-id
@@ -25451,7 +25716,9 @@
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-type-strip-invalidate
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx (lower-global-shared-view expected))))]
         (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
           [(Ok lowered-arg)
@@ -25558,6 +25825,7 @@
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view expected)))]
         (match (tc_core.tc-call-effective-arg-expr
           ctx
@@ -25613,7 +25881,9 @@
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (tc_core.tc-type-strip-region (lower-global-shared-view head))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view head))
         [(MutRef _ _) true]
         [_
           (if (tc_core.tc-call-slice-ref-formal? ctx head)
@@ -25645,7 +25915,10 @@
   [struct-ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-inline-aggregate-layout-for-id
     ctx
-    (lower-struct-type-name-id-or struct-ty -1))
+    (lower-struct-type-name-id-or
+      (tc_core.tc-context-type-bases ctx)
+      struct-ty
+      -1))
     [(Ok layout)
       (match (lower-global-shared-view layout)
         [(Struct size _ _)
@@ -25654,6 +25927,7 @@
           ;; struct packs each word and combines them with
           ;; CompilerIrInstr.Pack.
           (if (tc_core.tc-inline-aggregate-layout-register-resident?
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view layout))
             (if (lower-type-register-group?
               ctx
@@ -25679,6 +25953,7 @@
                 (match packed
                   [(Expr packed-state packed-value packed-ty)
                     (match (lower-materialize-register-word
+                      (tc_core.tc-context-type-bases ctx)
                       packed-state
                       packed-value
                       packed-ty
@@ -25774,7 +26049,7 @@
   [enum-ty : ast.AstType]) : ResultLowerExpr
   (match (tc_core.tc-inline-aggregate-layout-for-id
     ctx
-    (lower-enum-type-name-id-or enum-ty -1))
+    (lower-enum-type-name-id-or (tc_core.tc-context-type-bases ctx) enum-ty -1))
     [(Ok layout)
       (match (lower-global-shared-view layout)
         [(Enum size _ _)
@@ -25782,6 +26057,7 @@
           ;; is the discriminant tag. A 2-word register-group enum packs the tag
           ;; into word0 and the variant payload into word1.
           (if (tc_core.tc-inline-aggregate-layout-register-resident?
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view layout))
             ;; A register-resident enum is 8 (nullary tag) or 16 bytes (tag
             ;; word0 + payload word1); derive the 2-word group case from the size we
@@ -25901,14 +26177,22 @@
         ctx
         enum-id
         (deref lifetimes))
-        [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst fields)]
+        [(Ok subst)
+          (tc_core.tc-lifetime-subst-type-list
+            (tc_core.tc-context-type-bases ctx)
+            subst
+            fields)]
         [(Err _) fields])]
     [(VarArgs enum-id lifetimes)
       (match (tc_core.tc-lifetime-subst-from-nominal-args-id
         ctx
         enum-id
         (deref lifetimes))
-        [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst fields)]
+        [(Ok subst)
+          (tc_core.tc-lifetime-subst-type-list
+            (tc_core.tc-context-type-bases ctx)
+            subst
+            fields)]
         [(Err _) fields])]
     [_ fields]))
 
@@ -25984,7 +26268,9 @@
   [result-ty : ast.AstType]) : ResultLowerExpr
   (let
     [enum-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result-ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx result-ty))]
     (match (lower-global-shared-view enum-ty)
       [(Enum enum-name)
         (lower-construct-enum-with-name
@@ -26059,7 +26345,10 @@
                 handle
                 values
                 resolved-fields
-                (lower-enum-type-name-id-or enum-ty -1)
+                (lower-enum-type-name-id-or
+                  (tc_core.tc-context-type-bases ctx)
+                  enum-ty
+                  -1)
                 enum-name)]
             [(Err message) (Err message)]))]
       [(Err message) (Err (box (lower-diagnostic message)))])))
@@ -26078,7 +26367,9 @@
   [result-ty : ast.AstType]) : ResultLowerState
   (let
     [enum-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result-ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx result-ty))]
     (match (lower-global-shared-view enum-ty)
       [(Enum enum-name)
         (lower-construct-enum-with-name-into
@@ -26124,14 +26415,22 @@
           ctx
           struct-id
           (deref lifetimes))
-          [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst field-types)]
+          [(Ok subst)
+            (tc_core.tc-lifetime-subst-type-list
+              (tc_core.tc-context-type-bases ctx)
+              subst
+              field-types)]
           [(Err _) field-types])]
       [(VarArgs struct-id lifetimes)
         (match (tc_core.tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-id
           (deref lifetimes))
-          [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst field-types)]
+          [(Ok subst)
+            (tc_core.tc-lifetime-subst-type-list
+              (tc_core.tc-context-type-bases ctx)
+              subst
+              field-types)]
           [(Err _) field-types])]
       [_ field-types])))
 
@@ -26184,7 +26483,11 @@
   ;; before lowering arguments or storage so a dotted imported aggregate keeps
   ;; the layout of its nested nominal fields.
   (let
-    [result-struct-id : i64 (lower-struct-type-name-id-or result-ty -1)]
+    [result-struct-id : i64
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        result-ty
+        -1)]
     [struct-id : i64
       (if (csym.compiler-symbols-handle-found? struct-handle)
         (tc_core.tc-nominal-owner-id-or ctx struct-handle result-struct-id)
@@ -26206,6 +26509,7 @@
         (let
           [struct-ty : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx result-ty))]
           [field-types : ast.AstTypeList
             (tc_core.tc-resolve-type-list
@@ -26239,7 +26543,11 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]) : ResultLowerState
   (let
-    [result-struct-id : i64 (lower-struct-type-name-id-or result-ty -1)]
+    [result-struct-id : i64
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        result-ty
+        -1)]
     [struct-id : i64
       (if (csym.compiler-symbols-handle-found? struct-handle)
         (tc_core.tc-nominal-owner-id-or ctx struct-handle result-struct-id)
@@ -26261,6 +26569,7 @@
         (let
           [struct-ty : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx result-ty))]
           [field-types : ast.AstTypeList
             (tc_core.tc-resolve-type-list
@@ -26328,16 +26637,25 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1))]
     (if (lower-struct-repr-c-id?
       field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        struct-ty
+        -1))
       (Err
         (box
           (lower-diagnostic "lower: init supports only default-layout structs")))
       (match (lower-struct-fields-id
         field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1)
         (lower-global-shared-view struct-name))
         [(Ok fields)
           (let
@@ -26373,10 +26691,16 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
+        (lower-enum-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          enum-ty
+          -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
+      (lower-enum-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        enum-ty
+        -1))
       [(Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
@@ -26443,16 +26767,25 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1))]
     (if (lower-struct-repr-c-id?
       field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        struct-ty
+        -1))
       (Err
         (box
           (lower-diagnostic "lower: init supports only default-layout structs")))
       (match (lower-struct-fields-id
         field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1)
         (lower-global-shared-view struct-name))
         [(Ok fields)
           (let
@@ -26490,10 +26823,16 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
+        (lower-enum-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          enum-ty
+          -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
+      (lower-enum-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        enum-ty
+        -1))
       [(Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
@@ -26559,7 +26898,9 @@
   [origin : ast.AstExpr]) : ResultLowerState
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Struct name)
         (lower-init-struct-into
@@ -26605,7 +26946,9 @@
               origin
               (str_cat.str-cat
                 "lower: init unsupported type "
-                (tc_core.tc-type-render resolved)))))])))
+                (tc_core.tc-type-render
+                  (tc_core.tc-context-type-bases ctx)
+                  resolved)))))])))
 
 (define (lower-init-expr
   [ctx : tc_core.TcContext]
@@ -26617,8 +26960,12 @@
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
+    (if (tc_core.tc-integer-type?
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view resolved))
       (lower-init-scalar ctx state (I64 0) expr-ty origin)
       (match (lower-global-shared-view resolved)
         [(F64)
@@ -26735,10 +27082,14 @@
                 origin
                 (str_cat.str-cat
                   "lower: init unsupported type "
-                  (tc_core.tc-type-render resolved)))))]))))
+                  (tc_core.tc-type-render
+                    (tc_core.tc-context-type-bases ctx)
+                    resolved)))))]))))
 
-(define (lower-nullary-variant-result-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-nullary-variant-result-type?
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Enum _) true]
     [(EnumArgs _ _) true]
     [_ false]))
@@ -26752,7 +27103,9 @@
   [raw-name-id : i64]
   [lookup-name-id : i64]
   [expr-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-nullary-variant-result-type? (lower-global-shared-view expr-ty))
+  (if (lower-nullary-variant-result-type?
+    (tc_core.tc-context-type-bases ctx)
+    (lower-global-shared-view expr-ty))
     (let
       [lookup-name : String
         (lower-variant-constructor-lookup-name
@@ -26900,14 +27253,20 @@
             name)
             [(Ok fn-ty)
               (match (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx (lower-global-shared-view fn-ty)))
                 [(Func _ ret)
                   (Ok
                     (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type
                         ctx
                         (tc_core.tc-context-type-get ctx ret))))]
-                [(Enum _) (Ok (tc_core.tc-type-without-regions fn-ty))]
+                [(Enum _)
+                  (Ok
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      fn-ty))]
                 [_ (Err "lower: call result type is not fast-pathable")])]
             [(Err message)
               (if (lower-builtin-call-available-id? ctx env source-id)
@@ -26947,6 +27306,7 @@
               [(Func _ ret)
                 (Ok
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type
                       ctx
                       (tc_core.tc-context-type-get ctx ret))))]
@@ -26966,6 +27326,7 @@
       [(TcBinOpTypes _ _ result-ty)
         (Ok
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx result-ty)))])))
 
 (define (lower-binop-types-with-result
@@ -26978,8 +27339,12 @@
   (let
     [operand-expected : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view expr-ty)))]
-    (match (tc_core.tc-binop-contextual-operand-type op operand-expected)
+    (match (tc_core.tc-binop-contextual-operand-type
+      (tc_core.tc-context-type-bases ctx)
+      op
+      operand-expected)
       [(No) (tc_core.tc-binop-expr-types ctx type-env op left right)]
       [(Some operand-ty)
         (match (tc_core.tc-expr-with-expected-or-actual
@@ -26995,18 +27360,23 @@
               operand-ty)
               [(Ok right-ty)
                 (match (tc_core.tc-binop-type
+                  (tc_core.tc-context-type-bases ctx)
                   op
                   (lower-global-shared-view left-ty)
                   (lower-global-shared-view right-ty))
                   [(Ok result-ty)
                     (if (tc_core.tc-type-compatible?
+                      (tc_core.tc-context-type-bases ctx)
                       (lower-global-shared-view expr-ty)
                       (lower-global-shared-view result-ty))
                       (Ok
                         (TcBinOpTypes
                           left-ty
                           right-ty
-                          (tc_core.tc-contextual-result-type expr-ty result-ty)))
+                          (tc_core.tc-contextual-result-type
+                            (tc_core.tc-context-type-bases ctx)
+                            expr-ty
+                            result-ty)))
                       (tc_core.tc-binop-expr-types ctx type-env op left right))]
                   [(Err _)
                     (tc_core.tc-binop-expr-types ctx type-env op left right)])]
@@ -27022,12 +27392,16 @@
   (let
     [operand-expected : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view expr-ty)))]
-    (match (tc_core.tc-unop-contextual-operand-type op operand-expected)
+    (match (tc_core.tc-unop-contextual-operand-type
+      (tc_core.tc-context-type-bases ctx)
+      op
+      operand-expected)
       [(No)
         (let
           [inner-ty : ast.AstType (try (tc_core.tc-expr ctx type-env inner))]
-          (tc_core.tc-unop-type op inner-ty))]
+          (tc_core.tc-unop-type (tc_core.tc-context-type-bases ctx) op inner-ty))]
       [(Some operand-ty)
         (match (tc_core.tc-expr-with-expected-or-actual
           ctx
@@ -27035,18 +27409,32 @@
           (lower-global-shared-view inner)
           operand-ty)
           [(Ok inner-ty)
-            (match (tc_core.tc-unop-type op (lower-global-shared-view inner-ty))
+            (match (tc_core.tc-unop-type
+              (tc_core.tc-context-type-bases ctx)
+              op
+              (lower-global-shared-view inner-ty))
               [(Ok result-ty)
                 (if (tc_core.tc-type-compatible?
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view expr-ty)
                   (lower-global-shared-view result-ty))
-                  (Ok (tc_core.tc-contextual-result-type expr-ty result-ty))
-                  (tc_core.tc-unop-type op inner-ty))]
+                  (Ok
+                    (tc_core.tc-contextual-result-type
+                      (tc_core.tc-context-type-bases ctx)
+                      expr-ty
+                      result-ty))
+                  (tc_core.tc-unop-type
+                    (tc_core.tc-context-type-bases ctx)
+                    op
+                    inner-ty))]
               [(Err _)
                 (let
                   [actual-ty : ast.AstType
                     (try (tc_core.tc-expr ctx type-env inner))]
-                  (tc_core.tc-unop-type op actual-ty))])]
+                  (tc_core.tc-unop-type
+                    (tc_core.tc-context-type-bases ctx)
+                    op
+                    actual-ty))])]
           [(Err message) (Err message)])])))
 
 (define (lower-if-result-type-fast
@@ -27084,7 +27472,9 @@
                 (tc_core.tc-integer-literal-expr?
                   ctx
                   (lower-global-shared-view then-branch))
-                (tc_core.tc-integer-type? (lower-global-shared-view else-ty)))
+                (tc_core.tc-integer-type?
+                  (tc_core.tc-context-type-bases ctx)
+                  (lower-global-shared-view else-ty)))
                 (match (tc_core.tc-integer-literal-expr-with-expected
                   ctx
                   then-branch
@@ -27100,7 +27490,9 @@
                   (tc_core.tc-integer-literal-expr?
                     ctx
                     (lower-global-shared-view else-branch))
-                  (tc_core.tc-integer-type? (lower-global-shared-view then-ty)))
+                  (tc_core.tc-integer-type?
+                    (tc_core.tc-context-type-bases ctx)
+                    (lower-global-shared-view then-ty)))
                   (match (tc_core.tc-integer-literal-expr-with-expected
                     ctx
                     else-branch
@@ -27184,7 +27576,9 @@
   [env : sym_i64_env.SymI64Env]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : sym_i64_env.SymI64Env
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx scrut-ty))
     [(Enum _)
       (match pattern
         [(Variant _ args-box)
@@ -27307,9 +27701,13 @@
   [init : ast.AstExpr]) : tc_core.ResultTcType
   (match maybe-ty
     [(Some ty)
-      (Ok (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))]
+      (Ok
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-resolve-type ctx ty)))]
     [(No)
       (if (tc_core.tc-ref-capturing-lambda-init?
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
@@ -27425,9 +27823,13 @@
   [container-ty : ast.AstType]
   [projected-ty : ast.AstType]) : ast.AstType
   (tc_core.tc-type-without-regions
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type
       ctx
-      (tc_core.tc-project-from-region-container container-ty projected-ty))))
+      (tc_core.tc-project-from-region-container
+        (tc_core.tc-context-type-bases ctx)
+        container-ty
+        projected-ty))))
 
 (define (lower-index-result-type-fast
   [ctx : tc_core.TcContext]
@@ -27451,7 +27853,9 @@
             type-cache
             function-state
             index))]
-      (if (tc_core.tc-integer-type? (lower-global-shared-view index-ty))
+      (if (tc_core.tc-integer-type?
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view index-ty))
         (Ok index-ty)
         (Err "lower: index result type is not fast-pathable")))))
 
@@ -27473,9 +27877,13 @@
           type-cache
           function-state
           inner))]
-    [result-ty : ast.AstType (try (tc_core.tc-unop-type op inner-ty))]
+    [result-ty : ast.AstType
+      (try
+        (tc_core.tc-unop-type (tc_core.tc-context-type-bases ctx) op inner-ty))]
     (Ok
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result-ty)))))
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx result-ty)))))
 
 (define (lower-tuple-ref-result-type-fast
   [ctx : tc_core.TcContext]
@@ -27496,11 +27904,16 @@
           function-state
           tuple-expr))]
     (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (lower-global-shared-view tuple-ty)))
       [(Tuple elem-tys)
         (let
           [elem-ty : ast.AstType
-            (try (tc_core.tc-type-list-ref (deref elem-tys) index))]
+            (try
+              (tc_core.tc-type-list-ref
+                (tc_core.tc-context-type-bases ctx)
+                (deref elem-tys)
+                index))]
           (Ok (lower-projected-result-type-fast ctx tuple-ty elem-ty)))]
       [_ (Err "lower: tuple-ref result type is not fast-pathable")])))
 
@@ -27531,6 +27944,7 @@
               function-state
               array-expr))]
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (lower-global-shared-view array-ty)))
           [(Array elem-ty _)
             (Ok
@@ -27597,6 +28011,7 @@
           function-state
           receiver))]
     (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))
       [(Struct struct-name)
         (let
@@ -27633,6 +28048,7 @@
           function-state
           box-expr))]
     (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (lower-global-shared-view box-ty)))
       [(Box inner-ty)
         (Ok
@@ -27699,7 +28115,11 @@
     [(SpmdProgramCount) (Ok (I64))]
     [(Var name)
       (match (lower-lookup-type-id ctx type-cache env type-env name)
-        [(Ok expr-ty) (Ok (tc_core.tc-type-without-regions expr-ty))]
+        [(Ok expr-ty)
+          (Ok
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
+              expr-ty))]
         [(Err message) (Err message)])]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
@@ -27707,15 +28127,19 @@
         maybe-ty-id)
         [(Some ty)
           (Ok
-            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))]
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
+              (tc_core.tc-resolve-type ctx ty)))]
         [(No) (Err "lower: contextual init requires an expected type")])]
     [(Ann _ ty-id)
       (Ok
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
     [(Cast _ ty-id)
       (Ok
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
     [(Unary op inner-box)
       (let
@@ -27921,9 +28345,12 @@
         [index-ty : ast.AstType
           (try
             (tc_core.tc-expr-with-expected-or-actual ctx type-env index (I64)))]
-        (if (tc_core.tc-integer-type? (lower-global-shared-view index-ty))
+        (if (tc_core.tc-integer-type?
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view index-ty))
           (Ok
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx index-ty)))
           (Err "lower: index result type is not fast-pathable")))]))
 
@@ -27956,6 +28383,7 @@
                 state
                 (Var local-id)
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx place-ty))))
             (match (lower-state-alloc-var state)
               [(Alloc allocated var-id)
@@ -27976,6 +28404,7 @@
                       addr-state)]
                   [addr-ty : ast.AstType
                     (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type ctx place-ty))]
                   (Ok (Expr marked-state (Var var-id) addr-ty)))]))]
         [(Err message)
@@ -27996,6 +28425,7 @@
                 (Global (lower-resolve-name-symbol-id state name))
                 (GlobalAddr (lower-resolve-name-symbol-id state name)))
               (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx place-ty))))]
         [(Err message)
           (Err (box (lower-diagnostic-at-expr ctx origin message)))]))))
@@ -28017,8 +28447,11 @@
       (let
         [resolved-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx expr-ty))]
-        (if (tc_core.tc-integer-type? (lower-global-shared-view resolved-ty))
+        (if (tc_core.tc-integer-type?
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view resolved-ty))
           (lower-expr-expected
             ctx
             state
@@ -28176,6 +28609,7 @@
       expr))
     [(Ok source-ty)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx source-ty))
         [(Array _ length)
           (let
@@ -28217,7 +28651,9 @@
         type-env
         expr
         origin
-        (tc_core.tc-type-without-regions expr-ty))]
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          expr-ty))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))]))
 
 (define (lower-cast-source-expr
@@ -28295,7 +28731,9 @@
               type-env
               expr
               origin
-              (tc_core.tc-type-without-regions expr-ty))]
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
+                expr-ty))]
           [(Err message)
             (Err (box (lower-diagnostic-at-expr ctx origin message)))]))]
     [(Ann _ ty-id)
@@ -28307,6 +28745,7 @@
         expr
         origin
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
     [(Cast _ ty-id)
       (lower-expr-with-type
@@ -28317,6 +28756,7 @@
         expr
         origin
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
     [(Binary op left-box right-box)
       (let
@@ -28509,6 +28949,7 @@
       expr-ty)
       [(Ok result-ty)
         (match (match (tc_core.tc-unop-contextual-operand-type
+          (tc_core.tc-context-type-bases ctx)
           op
           (lower-global-shared-view result-ty))
           [(No) (lower-expr ctx state env type-env inner)]
@@ -28737,7 +29178,13 @@
           (try (lower-cast-source-expr ctx state env type-env inner origin))]
         (match lowered
           [(Expr inner-state value inner-ty)
-            (Ok (lower-cast-value inner-state value inner-ty expr-ty))]))]
+            (Ok
+              (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                inner-state
+                value
+                inner-ty
+                expr-ty))]))]
     [(Borrow _ _ inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -28831,6 +29278,7 @@
               (let
                 [target-ty : ast.AstType
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx store-ty))]
                 [target-ir-ty : ast.AstType
                   (lower-one-word-register-storage-type ctx target-ty)]
@@ -29203,6 +29651,7 @@
                       (str_cat.str-cat
                         "type value "
                         (tc_core.tc-type-render
+                          (tc_core.tc-context-type-bases ctx)
                           (tc_core.tc-resolve-type ctx ty))
                         " is compile-time only"))))]
               [(String _ _)
@@ -29414,6 +29863,7 @@
             (str_cat.str-cat
               "type value "
               (tc_core.tc-type-render
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type
                   ctx
                   (tc_core.tc-context-type-get ctx ty-id)))
@@ -29487,8 +29937,10 @@
                         ptr-var
                         ptr-value
                         (lower-raw-pointer-ir-type
+                          (tc_core.tc-context-type-bases ctx)
                           (lower-global-shared-view ptr-ty))))]
                   (match (tc_core.tc-mut-pointer-elem
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx ptr-ty)
                     "lower: ptr-write! requires MutPtr pointer operand")
                     [(Ok elem-ty)
@@ -29498,7 +29950,9 @@
                         env
                         type-env
                         (lower-global-shared-view value)
-                        (tc_core.tc-type-without-regions elem-ty)
+                        (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-bases ctx)
+                          elem-ty)
                         value)
                         [(Ok value-lowered)
                           (match value-lowered
@@ -29567,6 +30021,7 @@
                 (match offset-lowered
                   [(Expr offset-state offset-value _)
                     (match (tc_core.tc-type-strip-region
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type ctx ptr-ty))
                       [(Ptr elem-ty)
                         (match (lower-emit-elem-addr-gep
@@ -29600,21 +30055,39 @@
         [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
         (match lowered
           [(Expr ptr-state ptr-value ptr-ty)
-            (Ok (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))]))]
+            (Ok
+              (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                ptr-state
+                ptr-value
+                ptr-ty
+                expr-ty))]))]
     [(PtrToInt ptr-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
         [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
         (match lowered
           [(Expr ptr-state ptr-value ptr-ty)
-            (Ok (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))]))]
+            (Ok
+              (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                ptr-state
+                ptr-value
+                ptr-ty
+                expr-ty))]))]
     [(IntToPtr value-box _)
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         [lowered : LowerExpr (try (lower-expr ctx state env type-env value))]
         (match lowered
           [(Expr value-state value-ir value-ty)
-            (Ok (lower-cast-value value-state value-ir value-ty expr-ty))]))]
+            (Ok
+              (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                value-state
+                value-ir
+                value-ty
+                expr-ty))]))]
     [(StringData str-box)
       (let
         [str : ast.AstExpr (lower-context-expr-get ctx str-box)]
@@ -29701,7 +30174,13 @@
       (try (lower-expr-with-type ctx state env type-env expr origin expr-ty))]
     (match lowered
       [(Expr next-state value actual-ty)
-        (Ok (lower-coerce-value next-state value actual-ty expected-ty))])))
+        (Ok
+          (lower-coerce-value
+            (tc_core.tc-context-type-bases ctx)
+            next-state
+            value
+            actual-ty
+            expected-ty))])))
 
 (define (lower-expr-and-coerce
   [ctx : tc_core.TcContext]
@@ -29724,6 +30203,7 @@
         (lower-global-shared-view expr)
         expr
         (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx actual-ty))
         expected-ty)]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx expr message)))]))
@@ -29897,8 +30377,10 @@
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
         [expected-resolved : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view expected-ty)))]
         (if (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (lower-global-shared-view expected-resolved))
           [(Enum _) true]
           [(EnumArgs _ _) true]
@@ -29922,15 +30404,18 @@
                 name)
                 [(Ok fn-ty)
                   (match (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx fn-ty))
                     [(Func _ ret-ty)
                       (let
                         [actual-ty : ast.AstType
                           (tc_core.tc-type-without-regions
+                            (tc_core.tc-context-type-bases ctx)
                             (tc_core.tc-resolve-type
                               ctx
                               (tc_core.tc-context-type-get ctx ret-ty)))]
                         (if (tc_core.tc-type-eq
+                          (tc_core.tc-context-type-bases ctx)
                           (lower-global-shared-view actual-ty)
                           expected-resolved)
                           (lower-expr-with-type-and-coerce
@@ -29969,7 +30454,9 @@
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
 (define (lower-owned-handle-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(DynArray _) true]
     [(String) true]
     [_ false]))
@@ -30111,6 +30598,7 @@
       (match lowered
         [(Expr place-state base receiver-ty)
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx receiver-ty))
             [(Struct struct-id)
               (lower-raw-deref-field-load
@@ -30170,6 +30658,7 @@
           pointer)
           [(Ok pointer-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx pointer-ty))
               [(Ptr _) true]
               [(MutPtr _) true]
@@ -30215,7 +30704,9 @@
         (match lowered
           [(Expr pointer-state pointer-value pointer-ty)
             (match (tc_core.tc-raw-pointer-elem
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx pointer-ty))
               "lower: raw-pointer field place requires a raw pointer")
               [(Ok elem-ty)
@@ -30304,6 +30795,7 @@
         (match lowered
           [(Expr receiver-state receiver-value receiver-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx receiver-ty))
               [(Struct struct-name)
                 (lower-struct-get-named
@@ -30325,6 +30817,7 @@
                   result-ty)]
               [(Ref _ referent-ty)
                 (match (tc_core.tc-type-strip-region
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type
                     ctx
                     (tc_core.tc-context-type-get ctx referent-ty)))
@@ -30357,6 +30850,7 @@
                           "lower: field projection requires struct")))])]
               [(MutRef _ referent-ty)
                 (match (tc_core.tc-type-strip-region
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type
                     ctx
                     (tc_core.tc-context-type-get ctx referent-ty)))
@@ -30416,7 +30910,9 @@
         env
         type-env
         (lower-global-shared-view inner)
-        (tc_core.tc-type-without-regions expected-inner-ty)
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          expected-inner-ty)
         inner)
         [(Ok lowered)
           (match lowered
@@ -30520,6 +31016,7 @@
     inner)
     [(Ok receiver-ty)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))
         [(Box _)
           (lower-deref-from-expected-receiver
@@ -30574,7 +31071,9 @@
     (lower-state-function-state state)
     box-expr)
     [(Ok box-ty)
-      (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx box-ty))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx box-ty))
         [(Box _)
           (let
             [lowered : LowerExpr
@@ -31064,7 +31563,9 @@
   [values : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx result-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx result-ty))
     [(DynArray elem-ty)
       (let
         [resolved-elem : ast.AstType
@@ -31174,18 +31675,20 @@
                 (Char)))]))]))
 
 (define (lower-string-ref-load
+  [type-bases : i64]
   [state : LowerState]
   [str-value : ir.CompilerIrValue]
   [index-value : ir.CompilerIrValue]) : ResultLowerExpr
   (match (lower-string-fields state str-value)
     [(Fields fields-state data-ptr str-len)
       (match (lower-cast-value
+        type-bases
         fields-state
         (lower-global-shared-view index-value)
         (I64)
         (U64))
         [(Expr index-u-state index-u _)
-          (match (lower-cast-value index-u-state str-len (I64) (U64))
+          (match (lower-cast-value type-bases index-u-state str-len (I64) (U64))
             [(Expr len-u-state len-u _)
               (match (lower-state-fresh-label len-u-state "str_bounds_ok")
                 [(Label bounds-ok-state bounds-ok-label)
@@ -31222,12 +31725,18 @@
                     "lower: string index must be integer"))]
               (match lowered-index
                 [(Expr index-state index-raw index-ty)
-                  (match (lower-cast-value index-state index-raw index-ty (I64))
+                  (match (lower-cast-value
+                    (tc_core.tc-context-type-bases ctx)
+                    index-state
+                    index-raw
+                    index-ty
+                    (I64))
                     [(Expr index-i-state index-value _)
                       (let
                         [loaded : LowerExpr
                           (try
                             (lower-string-ref-load
+                              (tc_core.tc-context-type-bases ctx)
                               index-i-state
                               str-value
                               index-value))]
@@ -31251,6 +31760,7 @@
     [(Err message) (Err message)]))
 
 (define (lower-slice-view-static-source-fields
+  [type-bases : i64]
   [state : LowerState]
   [source-value : ir.CompilerIrValue]
   [source-ty : ast.AstType]
@@ -31259,7 +31769,7 @@
   ;; Fixed arrays and references to fixed arrays are represented as a raw
   ;; pointer to their inline storage.  Cast that pointer to the ABI's U64 word
   ;; and carry the compile-time element count as an I64 value.
-  (match (lower-cast-value state source-value source-ty (U64))
+  (match (lower-cast-value type-bases state source-value source-ty (U64))
     [(Expr ptr-state ptr _) (Ok (Fields ptr-state ptr (I64 count) elem-ty))]))
 
 (define (lower-slice-view-dynamic-source-fields
@@ -31314,6 +31824,7 @@
   (match referent
     [(Array elem count)
       (lower-slice-view-static-source-fields
+        (tc_core.tc-context-type-bases ctx)
         source-state
         source-value
         source-ty
@@ -31357,12 +31868,14 @@
           (let
             [resolved : ast.AstType
               (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type
                   ctx
                   (lower-global-shared-view source-ty)))]
             (match resolved
               [(Array elem count)
                 (lower-slice-view-static-source-fields
+                  (tc_core.tc-context-type-bases ctx)
                   source-state
                   source-value
                   source-ty
@@ -31380,6 +31893,7 @@
                   source-value
                   source-ty
                   (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type
                       ctx
                       (tc_core.tc-context-type-get ctx inner)))
@@ -31391,6 +31905,7 @@
                   source-value
                   source-ty
                   (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type
                       ctx
                       (tc_core.tc-context-type-get ctx inner)))
@@ -31465,9 +31980,15 @@
     (lower-global-shared-view start-value)
     (I64))
     [(Expr rem-state remaining _)
-      (match (lower-cast-value rem-state remaining (I64) (U64))
+      (match (lower-cast-value
+        (tc_core.tc-context-type-bases ctx)
+        rem-state
+        remaining
+        (I64)
+        (U64))
         [(Expr rem-u-state remaining-u _)
           (match (lower-cast-value
+            (tc_core.tc-context-type-bases ctx)
             rem-u-state
             (lower-global-shared-view len-value)
             (I64)
@@ -31498,13 +32019,14 @@
   (Checked LowerState i64 i64))
 
 (define (lower-range-start-checked
+  [type-bases : i64]
   [state : LowerState]
   [src-len : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
   [prefix : String]) : LowerRangeStart
-  (match (lower-cast-value state start-value (I64) (U64))
+  (match (lower-cast-value type-bases state start-value (I64) (U64))
     [(Expr start-u-state start-u _)
-      (match (lower-cast-value start-u-state src-len (I64) (U64))
+      (match (lower-cast-value type-bases start-u-state src-len (I64) (U64))
         [(Expr src-len-u-state src-len-u _)
           (match (lower-state-alloc-var src-len-u-state)
             [(Alloc start-ok-alloc start-ok-var)
@@ -31552,6 +32074,7 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-range-start-checked
+    (tc_core.tc-context-type-bases ctx)
     state
     (lower-global-shared-view src-len)
     (lower-global-shared-view start-value)
@@ -31602,6 +32125,7 @@
                   (match lowered-start
                     [(Expr start-state start-raw start-ty)
                       (match (lower-cast-value
+                        (tc_core.tc-context-type-bases ctx)
                         start-state
                         start-raw
                         start-ty
@@ -31619,6 +32143,7 @@
                               (match lowered-len
                                 [(Expr len-state len-raw len-ty)
                                   (match (lower-cast-value
+                                    (tc_core.tc-context-type-bases ctx)
                                     len-state
                                     len-raw
                                     len-ty
@@ -31780,9 +32305,15 @@
   ;; One unsigned comparison simultaneously rejects negative mids and values
   ;; above the non-negative Slice length. Pointer arithmetic happens only in
   ;; the success block.
-  (match (lower-cast-value state (lower-global-shared-view mid) (I64) (U64))
+  (match (lower-cast-value
+    (tc_core.tc-context-type-bases ctx)
+    state
+    (lower-global-shared-view mid)
+    (I64)
+    (U64))
     [(Expr mid-u-state mid-u _)
       (match (lower-cast-value
+        (tc_core.tc-context-type-bases ctx)
         mid-u-state
         (lower-global-shared-view src-len)
         (I64)
@@ -31841,7 +32372,12 @@
                 [(Ok lowered-mid)
                   (match lowered-mid
                     [(Expr mid-state mid-raw mid-ty)
-                      (match (lower-cast-value mid-state mid-raw mid-ty (I64))
+                      (match (lower-cast-value
+                        (tc_core.tc-context-type-bases ctx)
+                        mid-state
+                        mid-raw
+                        mid-ty
+                        (I64))
                         [(Expr mid-i-state mid _)
                           (match (lower-slice-split-half-type
                             ctx
@@ -31910,6 +32446,7 @@
     (lower-substring-call-runtime copy-start src-ptr start-value len-value)))
 
 (define (lower-substring-check-len
+  [type-bases : i64]
   [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
   [src-len : ir.CompilerIrValue]
@@ -31929,9 +32466,10 @@
               src-len
               (lower-global-shared-view start-value)
               (I64)))]
-        (match (lower-cast-value rem-state (Var rem-var) (I64) (U64))
+        (match (lower-cast-value type-bases rem-state (Var rem-var) (I64) (U64))
           [(Expr rem-u-state rem-u _)
             (match (lower-cast-value
+              type-bases
               rem-u-state
               (lower-global-shared-view len-value)
               (I64)
@@ -31954,18 +32492,21 @@
                         copy-label))])])]))]))
 
 (define (lower-substring-bounds-checked
+  [type-bases : i64]
   [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
   [src-len : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]) : ResultLowerExpr
   (match (lower-range-start-checked
+    type-bases
     state
     (lower-global-shared-view src-len)
     (lower-global-shared-view start-value)
     "substr")
     [(Checked rem-start fail-label copy-label)
       (lower-substring-check-len
+        type-bases
         rem-start
         src-ptr
         src-len
@@ -32003,6 +32544,7 @@
                   (match lowered-start
                     [(Expr start-state start-raw start-ty)
                       (match (lower-cast-value
+                        (tc_core.tc-context-type-bases ctx)
                         start-state
                         start-raw
                         start-ty
@@ -32022,12 +32564,14 @@
                             (match lowered-len
                               [(Expr len-state len-raw len-ty)
                                 (match (lower-cast-value
+                                  (tc_core.tc-context-type-bases ctx)
                                   len-state
                                   len-raw
                                   len-ty
                                   (I64))
                                   [(Expr len-i-state len-value _)
                                     (lower-substring-bounds-checked
+                                      (tc_core.tc-context-type-bases ctx)
                                       len-i-state
                                       src-ptr
                                       src-len
@@ -32115,7 +32659,9 @@
 (define (lower-c-abi-integer-field-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(I64) true]
     [(U64) true]
     [(I32) true]
@@ -32164,6 +32710,7 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
     [(Struct name) (lower-c-abi-win64-register-struct-id? ctx name)]
     [(StructArgs name _) (lower-c-abi-win64-register-struct-id? ctx name)]
@@ -32218,30 +32765,34 @@
     "System V aggregate structs/enums, including register-class and MEMORY-class layouts"))
 
 (define (lower-c-abi-unsupported-message
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
     "lower: unsupported "
     (lower-c-abi-target-name mode)
     " C aggregate ABI for "
-    (tc_core.tc-type-render ty)
+    (tc_core.tc-type-render type-bases ty)
     "; this slice supports "
     (lower-c-abi-aggregate-size-message mode)))
 
 (define (lower-internal-abi-unsupported-message
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
     "lower: unsupported "
     (lower-c-abi-target-name mode)
     " internal aggregate ABI for "
-    (tc_core.tc-type-render ty)
+    (tc_core.tc-type-render type-bases ty)
     "; tuple/fixed-array parameters and returns require a non-zero finite inline layout"))
 
-(define (lower-c-abi-two-register-return-message [ty : ast.AstType]) : String
+(define (lower-c-abi-two-register-return-message
+  [type-bases : i64]
+  [ty : ast.AstType]) : String
   (str_cat.str-cat
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
-    (tc_core.tc-type-render ty)))
+    (tc_core.tc-type-render type-bases ty)))
 
 (define (lower-c-abi-sysv-slot-size [size : i64] [slot-index : i64]) : i64
   (if (= slot-index 0)
@@ -32450,7 +33001,9 @@
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Struct name)
         (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
@@ -32541,6 +33094,7 @@
         [(Unsupported) (Unsupported unsupported-message)])]))
 
 (define (lower-c-abi-sysv-register-aggregate-from-slots
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [resolved : ast.AstType]
   [size : i64]
@@ -32550,9 +33104,10 @@
     size
     slots
     allow-return?
-    (lower-c-abi-unsupported-message mode resolved)))
+    (lower-c-abi-unsupported-message type-bases mode resolved)))
 
 (define (lower-internal-sysv-register-aggregate-from-slots
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [resolved : ast.AstType]
   [size : i64]
@@ -32562,7 +33117,7 @@
     size
     slots
     allow-return?
-    (lower-internal-abi-unsupported-message mode resolved)))
+    (lower-internal-abi-unsupported-message type-bases mode resolved)))
 
 (define (lower-c-abi-sysv-register-aggregate
   [ctx : tc_core.TcContext]
@@ -32572,7 +33127,12 @@
   [fields : tc_core.TcInlineFieldLayoutList]
   [allow-return? : bool]) : LowerCAbiAggregate
   (cond
-    [(<= size 0) (Unsupported (lower-c-abi-unsupported-message mode resolved))]
+    [(<= size 0)
+      (Unsupported
+        (lower-c-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]
     [(> size 16)
       (if allow-return?
         (Sret size)
@@ -32583,6 +33143,7 @@
       (Integer (lower-c-abi-integer-scalar-type size) size)]
     [else
       (lower-c-abi-sysv-register-aggregate-from-slots
+        (tc_core.tc-context-type-bases ctx)
         mode
         resolved
         size
@@ -32602,6 +33163,7 @@
     (lower-global-shared-view variants))
     (Integer (lower-c-abi-integer-scalar-type size) size)
     (lower-c-abi-sysv-register-aggregate-from-slots
+      (tc_core.tc-context-type-bases ctx)
       mode
       resolved
       size
@@ -32613,6 +33175,7 @@
       allow-return?)))
 
 (define (lower-c-abi-win64-aggregate-class
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [resolved : ast.AstType]
   [size : i64]
@@ -32625,7 +33188,8 @@
     [(and allow-sret? (> size 8)) (Sret size)]
     [(and allow-byref? (not (lower-c-abi-register-aggregate-size? mode size)))
       (ByRef size)]
-    [else (Unsupported (lower-c-abi-unsupported-message mode resolved))]))
+    [else
+      (Unsupported (lower-c-abi-unsupported-message type-bases mode resolved))]))
 
 (define (lower-c-abi-aggregate-class-from-layout
   [ctx : tc_core.TcContext]
@@ -32638,6 +33202,7 @@
     [(Struct size _ fields)
       (if (lower-mode-windows-c-abi? mode)
         (lower-c-abi-win64-aggregate-class
+          (tc_core.tc-context-type-bases ctx)
           mode
           resolved
           size
@@ -32656,6 +33221,7 @@
         ;; Model the default enum layout as a synthetic C aggregate:
         ;; int64 tag at offset 0 plus the max-sized payload union at offset 8.
         (lower-c-abi-win64-aggregate-class
+          (tc_core.tc-context-type-bases ctx)
           mode
           resolved
           size
@@ -32671,7 +33237,11 @@
             align
             variants
             allow-sret?)
-          (Unsupported (lower-c-abi-unsupported-message mode resolved))))]))
+          (Unsupported
+            (lower-c-abi-unsupported-message
+              (tc_core.tc-context-type-bases ctx)
+              mode
+              resolved))))]))
 
 (define (lower-c-abi-aggregate-class-for-nominal
   [ctx : tc_core.TcContext]
@@ -32699,7 +33269,9 @@
   [allow-byref? : bool]) : LowerCAbiAggregate
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Struct name)
         (lower-c-abi-aggregate-class-for-nominal
@@ -32818,7 +33390,9 @@
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Tuple elem-types)
         (let
@@ -32980,13 +33554,18 @@
   [allow-return? : bool]) : LowerCAbiAggregate
   (cond
     [(<= size 0)
-      (Unsupported (lower-internal-abi-unsupported-message mode resolved))]
+      (Unsupported
+        (lower-internal-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]
     [(> size 16)
       (if allow-return?
         (Sret size)
         (Memory size))]
     [else
       (lower-internal-sysv-register-aggregate-from-slots
+        (tc_core.tc-context-type-bases ctx)
         mode
         (lower-global-shared-view resolved)
         size
@@ -33013,20 +33592,37 @@
   [allow-byref? : bool]) : LowerCAbiAggregate
   (cond
     [(<= size 0)
-      (Unsupported (lower-internal-abi-unsupported-message mode resolved))]
+      (Unsupported
+        (lower-internal-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]
     [(not (lower-mode-windows-c-abi? mode))
-      (Unsupported (lower-internal-abi-unsupported-message mode resolved))]
+      (Unsupported
+        (lower-internal-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]
     [(not
         (lower-internal-win64-type-supported?
           ctx
           (lower-global-shared-view resolved)))
-      (Unsupported (lower-internal-abi-unsupported-message mode resolved))]
+      (Unsupported
+        (lower-internal-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]
     [(lower-c-abi-register-aggregate-size? mode size)
       (Integer (lower-c-abi-integer-scalar-type size) size)]
     [allow-return? (Sret size)]
     [(and allow-byref? (not (lower-c-abi-register-aggregate-size? mode size)))
       (ByRef size)]
-    [else (Unsupported (lower-internal-abi-unsupported-message mode resolved))]))
+    [else
+      (Unsupported
+        (lower-internal-abi-unsupported-message
+          (tc_core.tc-context-type-bases ctx)
+          mode
+          resolved))]))
 
 (define (lower-internal-aggregate-class-with-flags
   [ctx : tc_core.TcContext]
@@ -33036,7 +33632,9 @@
   [allow-byref? : bool]) : LowerCAbiAggregate
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Tuple _)
         (match (tc_core.tc-inline-aggregate-type-layout
@@ -33051,7 +33649,11 @@
               allow-return?
               allow-byref?)]
           [(Err _)
-            (Unsupported (lower-internal-abi-unsupported-message mode resolved))])]
+            (Unsupported
+              (lower-internal-abi-unsupported-message
+                (tc_core.tc-context-type-bases ctx)
+                mode
+                resolved))])]
       [(Array _ _)
         (match (tc_core.tc-inline-aggregate-type-layout
           ctx
@@ -33065,7 +33667,11 @@
               allow-return?
               allow-byref?)]
           [(Err _)
-            (Unsupported (lower-internal-abi-unsupported-message mode resolved))])]
+            (Unsupported
+              (lower-internal-abi-unsupported-message
+                (tc_core.tc-context-type-bases ctx)
+                mode
+                resolved))])]
       [_ (No)])))
 
 (define (lower-internal-aggregate-class-from-size
@@ -33108,7 +33714,9 @@
 (define (lower-internal-structural-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Tuple _) true]
     [(Array _ _) true]
     [_ false]))
@@ -33116,8 +33724,10 @@
 ;; Call sites pass a type list resolved by the type checker already. Keep this
 ;; root-only check free of another per-element type resolution on the scalar
 ;; fast path; regions are transparent for the ABI gate.
-(define (lower-internal-structural-resolved-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-internal-structural-resolved-type?
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Tuple _) true]
     [(Array _ _) true]
     [_ false]))
@@ -33139,7 +33749,9 @@
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       (or
-        (lower-internal-structural-resolved-type? ty)
+        (lower-internal-structural-resolved-type?
+          (tc_core.tc-context-type-bases ctx)
+          ty)
         (lower-internal-structural-resolved-type-list-at? ctx types (+ index 1))))))
 
 (define (lower-internal-structural-type-list?
@@ -33170,19 +33782,25 @@
     (ctfe.ctfe-type-key-with-reflections-and-pools
       (tc_core.tc-context-pools ctx)
       empty-infos
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty)))))
 
-(define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
+(define (lower-internal-group-mask-from-slots
+  [type-bases : i64]
+  [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count slots) 2)
     (let
       [first : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 0)]
       [second : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 1)]
       [first-sse : bool
         (match first
-          [(Slot scalar-ty _) (lower-register-word-sse-type? scalar-ty)])]
+          [(Slot scalar-ty _)
+            (lower-register-word-sse-type? type-bases scalar-ty)])]
       [second-sse : bool
         (match second
-          [(Slot scalar-ty _) (lower-register-word-sse-type? scalar-ty)])]
+          [(Slot scalar-ty _)
+            (lower-register-word-sse-type? type-bases scalar-ty)])]
       (+
         (if first-sse
           1
@@ -33207,7 +33825,10 @@
         (match (lower-c-abi-slot-list-ref slots 0)
           [(Slot scalar-ty _) scalar-ty])
         (let
-          [mask : i64 (lower-internal-group-mask-from-slots slots)]
+          [mask : i64
+            (lower-internal-group-mask-from-slots
+              (tc_core.tc-context-type-bases ctx)
+              slots)]
           [key : String (lower-internal-aggregate-key ctx resolved)]
           [encoded : String
             (str_cat.str-cat
@@ -33253,7 +33874,10 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions
-        (tc_core.tc-type-strip-invalidate (tc_core.tc-resolve-type ctx ty)))]
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-type-strip-invalidate
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-resolve-type ctx ty)))]
     (lower-internal-transport-type
       ctx
       (lower-global-shared-view resolved)
@@ -33265,7 +33889,9 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     [classification : LowerCAbiAggregate
       (lower-internal-return-class ctx mode (lower-global-shared-view resolved))]
     (match (lower-global-shared-view classification)
@@ -33281,12 +33907,20 @@
   (let
     [storage-ty : ast.AstType (lower-one-word-register-storage-type ctx agg-ty)]
     (if (and
-      (lower-register-word-sse-type? (lower-global-shared-view storage-ty))
+      (lower-register-word-sse-type?
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view storage-ty))
       (not
         (tc_core.tc-type-eq
+          (tc_core.tc-context-type-bases ctx)
           (lower-global-shared-view storage-ty)
           (lower-global-shared-view scalar-ty))))
-      (lower-bitcast-value state value storage-ty scalar-ty)
+      (lower-bitcast-value
+        (tc_core.tc-context-type-bases ctx)
+        state
+        value
+        storage-ty
+        scalar-ty)
       (Expr state value scalar-ty))))
 
 (define (lower-c-abi-scalar-to-register-resident
@@ -33298,12 +33932,20 @@
   (let
     [storage-ty : ast.AstType (lower-one-word-register-storage-type ctx agg-ty)]
     (if (and
-      (lower-register-word-sse-type? (lower-global-shared-view storage-ty))
+      (lower-register-word-sse-type?
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view storage-ty))
       (not
         (tc_core.tc-type-eq
+          (tc_core.tc-context-type-bases ctx)
           (lower-global-shared-view scalar-ty)
           (lower-global-shared-view storage-ty))))
-      (match (lower-bitcast-value state value scalar-ty storage-ty)
+      (match (lower-bitcast-value
+        (tc_core.tc-context-type-bases ctx)
+        state
+        value
+        scalar-ty
+        storage-ty)
         [(Expr bit-state bit-value _) (Expr bit-state bit-value agg-ty)])
       (Expr state value agg-ty))))
 
@@ -33338,6 +33980,7 @@
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx expected))]
         (match (lower-expr-expected
           ctx
@@ -33482,6 +34125,7 @@
                           ctx
                           arg
                           (lower-c-abi-unsupported-message
+                            (tc_core.tc-context-type-bases ctx)
                             (lower-state-mode arg-state)
                             arg-ty))))])])]
           [(Err message) (Err message)])))))
@@ -33631,6 +34275,7 @@
                   ctx
                   origin
                   (lower-c-abi-unsupported-message
+                    (tc_core.tc-context-type-bases ctx)
                     (lower-state-mode state)
                     result-ty))))]
           [else
@@ -33639,21 +34284,29 @@
                 (lower-diagnostic-at-expr
                   ctx
                   origin
-                  (lower-c-abi-two-register-return-message result-ty))))]))]
+                  (lower-c-abi-two-register-return-message
+                    (tc_core.tc-context-type-bases ctx)
+                    result-ty))))]))]
     [(ByRef _)
       (Err
         (box
           (lower-diagnostic-at-expr
             ctx
             origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
+            (lower-c-abi-unsupported-message
+              (tc_core.tc-context-type-bases ctx)
+              (lower-state-mode state)
+              result-ty))))]
     [(Memory _)
       (Err
         (box
           (lower-diagnostic-at-expr
             ctx
             origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
+            (lower-c-abi-unsupported-message
+              (tc_core.tc-context-type-bases ctx)
+              (lower-state-mode state)
+              result-ty))))]
     [(Sret _)
       ;; The C callee wrote the >8B result into the caller-provided sret
       ;; buffer, so `call-value` is the buffer pointer. A register-resident result
@@ -33829,6 +34482,7 @@
                   ctx
                   origin
                   (lower-c-abi-unsupported-message
+                    (tc_core.tc-context-type-bases ctx)
                     (lower-state-mode state)
                     result-ty))))]
           [else
@@ -33855,14 +34509,20 @@
           (lower-diagnostic-at-expr
             ctx
             origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
+            (lower-c-abi-unsupported-message
+              (tc_core.tc-context-type-bases ctx)
+              (lower-state-mode state)
+              result-ty))))]
     [(Memory _)
       (Err
         (box
           (lower-diagnostic-at-expr
             ctx
             origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
+            (lower-c-abi-unsupported-message
+              (tc_core.tc-context-type-bases ctx)
+              (lower-state-mode state)
+              result-ty))))]
     [(Sret size)
       ;; The sret buffer is caller frame storage, as for an internal sret
       ;; result. Its address is an `addr_of` value, which is a single pointer
@@ -34083,7 +34743,12 @@
                 value
                 0
                 size)]
-            (match (lower-cast-value copied copy-ptr source-ty (U64))
+            (match (lower-cast-value
+              (tc_core.tc-context-type-bases ctx)
+              copied
+              copy-ptr
+              source-ty
+              (U64))
               [(Expr cast-state pointer _)
                 (Ok cast-state (ir.compiler-ir-value-seq1 pointer))]))])]
     [(Unsupported message)
@@ -34258,6 +34923,7 @@
             (match (lower-reserve-inline-storage args-state size result-ty)
               [(Expr slot-state slot-ptr _)
                 (match (lower-cast-value
+                  (tc_core.tc-context-type-bases ctx)
                   slot-state
                   (lower-global-shared-view slot-ptr)
                   (lower-global-shared-view result-ty)
@@ -34468,6 +35134,7 @@
       lookup-id)
       [(Ok fn-ty)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (lower-global-shared-view fn-ty)))
           [(CFunc _ _)
             (match (lower-var-or-nullary-variant-id
@@ -34539,6 +35206,7 @@
                       args
                       call-param-types
                       (tc_core.tc-type-strip-region
+                        (tc_core.tc-context-type-bases ctx)
                         (tc_core.tc-resolve-type ctx fn-ty))
                       result-ty
                       origin)
@@ -34643,7 +35311,9 @@
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
   [func-ty : ast.AstType]) : ResultLowerArgs
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx func-ty))
     [(Func param-types _)
       (lower-args-as
         ctx
@@ -34661,7 +35331,9 @@
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
   [func-ty : ast.AstType]) : ResultLowerCallArgs
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx func-ty))
     [(Func param-types _)
       (lower-call-args-as-needed
         ctx
@@ -34685,7 +35357,9 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-c-function-type? (lower-global-shared-view func-ty))
+  (if (lower-c-function-type?
+    (tc_core.tc-context-type-bases ctx)
+    (lower-global-shared-view func-ty))
     (lower-indirect-c-abi-call
       ctx
       state
@@ -34705,6 +35379,7 @@
       (lower-global-shared-view func-ty))
       [(Ok args-state values writebacks)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx func-ty))
           [(Func param-types _)
             (match (lower-internal-call-values
@@ -34754,6 +35429,7 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view func-ty)))
     [(CFunc signature _)
       (let
@@ -35562,7 +36238,9 @@
         (tc_core.tc-context-structural-session ctx)
         name-id
         name-id)]
-    (match (tc_core.tc-type-strip-region result-ty)
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      result-ty)
       [(Enum enum-name)
         (let
           [enum-name-str : String
@@ -35622,7 +36300,9 @@
           fallback)
         fallback)]
     [enum-name-id : i64
-      (match (tc_core.tc-type-strip-region result-ty)
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        result-ty)
         [(Enum name) name]
         [(EnumArgs name _) name]
         [_ -1])]
@@ -35830,6 +36510,7 @@
             (lower-global-shared-view result-ty))]
         [struct-name : String
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view result-ty))
             [(Struct resolved-struct)
               (if (lower-call-name-matches-nominal?
@@ -35958,6 +36639,7 @@
           (lower-global-shared-view result-ty))]
       [struct-name : String
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (lower-global-shared-view result-ty))
           [(Struct resolved-struct)
             (if (lower-call-name-matches-nominal?
@@ -36100,11 +36782,16 @@
       (let
         [resolved-init : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))]
         [resolved-result : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx result-ty))]
-        (if (tc_core.tc-type-eq resolved-init resolved-result)
+        (if (tc_core.tc-type-eq
+          (tc_core.tc-context-type-bases ctx)
+          resolved-init
+          resolved-result)
           (lower-direct-store-result
             (lower-init-expr-into ctx state env type-env dst ty origin))
           (No)))]))
@@ -36301,6 +36988,7 @@
         (let
           [resolved-ty : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx param-ty))]
           [arg : ast.AstExpr
             (lower-context-expr-get
@@ -36318,6 +37006,7 @@
             builder
             (ir.CompilerIrSpmdCallArg.Arg
               (lower-spmd-ir-value-class
+                (tc_core.tc-context-type-bases ctx)
                 (lower-global-shared-view resolved-ty)
                 varying)
               (ir.compiler-ir-value-seq-ref values arg-index)
@@ -36391,6 +37080,7 @@
                     (lower-global-shared-view call-args))]
                 [signature : String
                   (lower-spmd-source-signature
+                    (tc_core.tc-context-type-bases ctx)
                     params
                     (lower-global-shared-view ret))]
                 [requested-index-param : i64
@@ -36728,7 +37418,9 @@
             [(Ok lowered-func)
               (match lowered-func
                 [(Expr func-state func-value func-ty)
-                  (if (lower-function-type? (lower-global-shared-view func-ty))
+                  (if (lower-function-type?
+                    (tc_core.tc-context-type-bases ctx)
+                    (lower-global-shared-view func-ty))
                     (lower-indirect-call
                       ctx
                       func-state
@@ -36755,7 +37447,9 @@
             (if (csym.compiler-symbols-handle-found? local-id)
               (match (tc_core.tc-lookup-id type-env raw-name)
                 [(Ok fn-ty)
-                  (if (lower-function-type? (lower-global-shared-view fn-ty))
+                  (if (lower-function-type?
+                    (tc_core.tc-context-type-bases ctx)
+                    (lower-global-shared-view fn-ty))
                     (lower-indirect-call
                       ctx
                       state
@@ -37195,7 +37889,9 @@
         [(Ok lowered-func)
           (match lowered-func
             [(Expr func-state func-value func-ty)
-              (if (lower-function-type? (lower-global-shared-view func-ty))
+              (if (lower-function-type?
+                (tc_core.tc-context-type-bases ctx)
+                (lower-global-shared-view func-ty))
                 (lower-indirect-call
                   ctx
                   func-state
@@ -37327,7 +38023,9 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]
   [fallback : i64]) : i64
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Array _ count) count]
     [(Ref _ inner)
       (let
@@ -37352,6 +38050,7 @@
           (let
             [resolved : ast.AstType
               (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx (lower-global-shared-view arr-ty)))]
             [fixed-count : i64
               (lower-fixed-array-length-or
@@ -37441,6 +38140,7 @@
     (match lowered
       [(Expr array-state array-value array-ty)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx (lower-global-shared-view array-ty)))
           [(DynArray _)
             (match (lower-load-at-offset
@@ -37451,7 +38151,13 @@
               [(Expr data-state data-value _)
                 (Ok (Expr data-state data-value result-ty))])]
           [(Array _ _)
-            (Ok (lower-cast-value array-state array-value array-ty result-ty))]
+            (Ok
+              (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                array-state
+                array-value
+                array-ty
+                result-ty))]
           [_
             (Err
               (box (lower-diagnostic "lower: __tl_array-data requires array")))])])))
@@ -37480,7 +38186,12 @@
                 "lower: string-from-bytes length must be integer"))]
           (match len-lowered
             [(Expr len-state len-value len-ty)
-              (match (lower-cast-value len-state len-value len-ty (I64))
+              (match (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                len-state
+                len-value
+                len-ty
+                (I64))
                 [(Expr len-i-state len-i-value _)
                   (match (let
                     [ty (ast.AstType.String)]
@@ -37493,7 +38204,9 @@
                             base-value
                             0
                             ptr-value
-                            (lower-raw-pointer-ir-type ptr-ty))]
+                            (lower-raw-pointer-ir-type
+                              (tc_core.tc-context-type-bases ctx)
+                              ptr-ty))]
                         [with-len : LowerState
                           (lower-store-at-offset
                             with-ptr
@@ -37539,7 +38252,12 @@
           "lower: cpuid leaf must be integer"))]
     (match leaf-lowered
       [(Expr leaf-state leaf-value leaf-ty)
-        (match (lower-cast-value leaf-state leaf-value leaf-ty (I64))
+        (match (lower-cast-value
+          (tc_core.tc-context-type-bases ctx)
+          leaf-state
+          leaf-value
+          leaf-ty
+          (I64))
           [(Expr leaf-i-state leaf-i-value _)
             (let
               [subleaf-lowered : LowerExpr
@@ -37555,6 +38273,7 @@
               (match subleaf-lowered
                 [(Expr subleaf-state subleaf-value subleaf-ty)
                   (match (lower-cast-value
+                    (tc_core.tc-context-type-bases ctx)
                     subleaf-state
                     subleaf-value
                     subleaf-ty
@@ -37593,7 +38312,12 @@
           "lower: xgetbv index must be integer"))]
     (match lowered
       [(Expr index-state index-value index-ty)
-        (match (lower-cast-value index-state index-value index-ty (I64))
+        (match (lower-cast-value
+          (tc_core.tc-context-type-bases ctx)
+          index-state
+          index-value
+          index-ty
+          (I64))
           [(Expr index-i-state index-i-value _)
             (match (lower-state-alloc-var index-i-state)
               [(Alloc allocated var-id)
@@ -37701,7 +38425,12 @@
         [(Ok leaf-lowered)
           (match leaf-lowered
             [(Expr leaf-state leaf-value leaf-ty)
-              (match (lower-cast-value leaf-state leaf-value leaf-ty (I64))
+              (match (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                leaf-state
+                leaf-value
+                leaf-ty
+                (I64))
                 [(Expr leaf-i-state leaf-i-value _)
                   (match (lower-integer-expr-with-expected-or-actual
                     ctx
@@ -37715,6 +38444,7 @@
                       (match subleaf-lowered
                         [(Expr subleaf-state subleaf-value subleaf-ty)
                           (match (lower-cast-value
+                            (tc_core.tc-context-type-bases ctx)
                             subleaf-state
                             subleaf-value
                             subleaf-ty
@@ -38030,9 +38760,10 @@
   (or (string.eq name "volatile-load") (string.eq name "volatile-store!")))
 
 (define (lower-atomic-pointer-width-prefix
+  [type-bases : i64]
   [name : (& name str)]
   [elem-ty : ast.AstType]) : String
-  (match (tc_core.tc-type-strip-region elem-ty)
+  (match (tc_core.tc-type-strip-region type-bases elem-ty)
     [(I32)
       (if (lower-atomic-pointer-volatile-name? name)
         "tl_volatile_i32_"
@@ -38057,11 +38788,12 @@
     [else "cas_ptr"]))
 
 (define (lower-atomic-pointer-raw-symbol
+  [type-bases : i64]
   [name : (& name str)]
   [elem-ty : ast.AstType]) : i64
   (lower-derived-symbol-id
     (str_cat.str-cat
-      (lower-atomic-pointer-width-prefix name elem-ty)
+      (lower-atomic-pointer-width-prefix type-bases name elem-ty)
       (lower-atomic-pointer-op-suffix name)
       ""
       "")))
@@ -38097,7 +38829,10 @@
             allocated
             (Call
               var-id
-              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (lower-atomic-pointer-raw-symbol
+                (tc_core.tc-context-type-bases ctx)
+                name
+                elem-ty)
               (One ptr)
               (lower-one-word-register-storage-type ctx result-ty))
             origin)
@@ -38122,7 +38857,10 @@
             allocated
             (Call
               var-id
-              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (lower-atomic-pointer-raw-symbol
+                (tc_core.tc-context-type-bases ctx)
+                name
+                elem-ty)
               (Two ptr value)
               (lower-one-word-register-storage-type ctx result-ty))
             origin)
@@ -38148,7 +38886,10 @@
             allocated
             (Call
               var-id
-              (lower-atomic-pointer-raw-symbol name elem-ty)
+              (lower-atomic-pointer-raw-symbol
+                (tc_core.tc-context-type-bases ctx)
+                name
+                elem-ty)
               (ir.compiler-ir-call-args-from-seq
                 (ir.compiler-ir-value-seq3 ptr expected new-value))
               (lower-one-word-register-storage-type ctx result-ty))
@@ -38445,6 +39186,7 @@
         (match lowered
           [(Expr storage-state storage-value storage-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx storage-ty))
               [(DynArray _) (Ok (Expr storage-state storage-value array-ty))]
               [(Ref _ referent-ty)
@@ -38452,6 +39194,7 @@
                   [referent : ast.AstType
                     (tc_core.tc-context-type-get ctx referent-ty)]
                   (match (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type
                       ctx
                       (lower-global-shared-view referent)))
@@ -38751,7 +39494,10 @@
   [struct-ty : ast.AstType]) : bool
   (match (tc_core.tc-struct-decl-id
     ctx
-    (lower-struct-type-name-id-or struct-ty -1))
+    (lower-struct-type-name-id-or
+      (tc_core.tc-context-type-bases ctx)
+      struct-ty
+      -1))
     [(Ok decl)
       (match decl
         [(TcStructDecl repr cleanup fields)
@@ -38774,7 +39520,9 @@
   [ctx : tc_core.TcContext]
   [_ : String]
   [enum-ty : ast.AstType]) : bool
-  (match (tc_core.tc-enum-decl-id ctx (lower-enum-type-name-id-or enum-ty -1))
+  (match (tc_core.tc-enum-decl-id
+    ctx
+    (lower-enum-type-name-id-or (tc_core.tc-context-type-bases ctx) enum-ty -1))
     [(Ok decl)
       (match decl
         [(TcEnumDecl cleanup variants)
@@ -38806,8 +39554,12 @@
   [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
+    (if (tc_core.tc-integer-type?
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view resolved))
       true
       (match (lower-global-shared-view resolved)
         [(F64) true]
@@ -39091,10 +39843,16 @@
   [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (and
       (= (lower-type-size ctx resolved) 8)
-      (not (tc_core.tc-type-eq (lower-global-shared-view resolved) (F64)))
+      (not
+        (tc_core.tc-type-eq
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view resolved)
+          (F64)))
       ;; Memory-resident inline aggregates are pointers to
       ;; storage, but a one-word register-resident aggregate is the word
       ;; itself, so fill8 can replicate it directly.
@@ -39108,8 +39866,12 @@
   [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
+    (if (tc_core.tc-integer-type?
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view resolved))
       true
       (match (lower-global-shared-view resolved)
         [(F64) true]
@@ -39159,16 +39921,28 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1))]
     (if (lower-struct-repr-c-id?
       field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
+      (lower-struct-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        struct-ty
+        -1))
       false
       (match (lower-struct-fields-id
         field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          struct-ty
+          -1)
         (tc_core.tc-nominal-name-id-display
-          (lower-struct-type-name-id-or struct-ty -1)))
+          (lower-struct-type-name-id-or
+            (tc_core.tc-context-type-bases ctx)
+            struct-ty
+            -1)))
         [(Ok fields)
           (lower-make-array-zero-fill-type-list-supported?
             field-ctx
@@ -39194,10 +39968,16 @@
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
         ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
+        (lower-enum-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          enum-ty
+          -1))]
     (match (tc_core.tc-enum-decl-id
       field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
+      (lower-enum-type-name-id-or
+        (tc_core.tc-context-type-bases ctx)
+        enum-ty
+        -1))
       [(Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
@@ -39424,7 +40204,12 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [resolved-elem : ast.AstType (tc_core.tc-resolve-type ctx elem-ty)]
-    (match (lower-cast-value state len-value len-ty (I64))
+    (match (lower-cast-value
+      (tc_core.tc-context-type-bases ctx)
+      state
+      len-value
+      len-ty
+      (I64))
       [(Expr len-state len-i64 _)
         (let
           [elem-size : i64 (lower-type-size ctx resolved-elem)]
@@ -39762,11 +40547,13 @@
           (match receiver
             [(TcArrayReceiver container-ty elem-ty)
               (match (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx container-ty))
                 [(DynArray _)
                   (let
                     [elem-ir-ty : ast.AstType
                       (tc_core.tc-type-without-regions
+                        (tc_core.tc-context-type-bases ctx)
                         (tc_core.tc-resolve-type ctx elem-ty))]
                     [array-lowered : LowerExpr
                       (try (lower-expr ctx state env type-env array))]
@@ -39889,7 +40676,9 @@
             [(TcArrayReceiver container-ty elem-ty)
               (let
                 [elem-ir-ty : ast.AstType
-                  (tc_core.tc-type-without-regions elem-ty)]
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    elem-ty)]
                 (match (lower-expr
                   ctx
                   state
@@ -39919,6 +40708,7 @@
                                 (match idx-lowered
                                   [(Expr idx-state idx-value idx-value-ty)
                                     (match (tc_core.tc-type-strip-region
+                                      (tc_core.tc-context-type-bases ctx)
                                       (tc_core.tc-resolve-type
                                         ctx
                                         (lower-global-shared-view container-ty)))
@@ -40074,6 +40864,7 @@
   [elem-ir-ty : ast.AstType]
   [value-ir : ir.CompilerIrValue]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
     [(DynArray _)
       (match (lower-array-element-addr
@@ -40200,6 +40991,7 @@
     (> (lower-type-size ctx elem-ir-ty) 0)
     (lower-direct-store-target? ctx (lower-global-shared-view elem-ir-ty)))
     (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
       (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
       [(DynArray _)
         (match (lower-array-element-addr
@@ -40344,6 +41136,7 @@
       (let
         [resolved : ast.AstType
           (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))]
         (match resolved
           [(MutRef _ referent-ty)
@@ -40386,6 +41179,7 @@
   [field : String]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))
     [(Struct struct-name)
       (let
@@ -40404,7 +41198,9 @@
                   (Expr
                     ptr-state
                     ptr
-                    (tc_core.tc-type-without-regions field-ty)))])]))]
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      field-ty)))])]))]
     [(StructArgs struct-name _)
       (let
         [info : LowerFieldInfo
@@ -40422,7 +41218,9 @@
                   (Expr
                     ptr-state
                     ptr
-                    (tc_core.tc-type-without-regions field-ty)))])]))]
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      field-ty)))])]))]
     [(MutRef _ referent-ty)
       (match (lower-emit-load state base receiver-ty)
         [(Expr ref-state ref-value _)
@@ -40456,6 +41254,7 @@
   [index : i64]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view tuple-ty)))
     [(Tuple elem-tys)
       (let
@@ -40466,7 +41265,12 @@
             (match (lower-gep-byte state base offset)
               [(Expr ptr-state ptr _)
                 (Ok
-                  (Expr ptr-state ptr (tc_core.tc-type-without-regions elem-ty)))])]))]
+                  (Expr
+                    ptr-state
+                    ptr
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      elem-ty)))])]))]
     [(MutRef _ referent-ty)
       (match (lower-emit-load state base tuple-ty)
         [(Expr ref-state ref-value _)
@@ -40520,7 +41324,9 @@
                 arr
                 index
                 origin
-                (tc_core.tc-type-without-regions elem-ty))])]
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  elem-ty))])]
         [(Err message)
           (Err (box (lower-diagnostic-at-expr ctx origin message)))])]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx arr message)))]))
@@ -40621,7 +41427,9 @@
                   type-env
                   box-expr
                   origin
-                  (tc_core.tc-type-without-regions inner-ty)
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    inner-ty)
                   false)]
               [(Err message)
                 (Err (box (lower-diagnostic-at-expr ctx origin message)))])]
@@ -40639,6 +41447,7 @@
           receiver)
           [(Ok receiver-ty)
             (match (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (lower-global-shared-view receiver-ty)))
@@ -40656,7 +41465,9 @@
                   type-env
                   receiver
                   origin
-                  (tc_core.tc-type-without-regions inner-ty)
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    inner-ty)
                   false)]
               [(Err message)
                 (Err (box (lower-diagnostic-at-expr ctx origin message)))])]
@@ -40774,7 +41585,9 @@
         [(Ok inner-ty)
           (let
             [inner-ir-ty : ast.AstType
-              (tc_core.tc-type-without-regions inner-ty)]
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
+                inner-ty)]
             (match (lower-box-storage-address
               ctx
               state
@@ -40824,6 +41637,7 @@
               (let
                 [resolved : ast.AstType
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx root-ty))]
                 (if (lower-type-register-resident?
                   ctx
@@ -40874,6 +41688,7 @@
           (let
             [value-ty : ast.AstType
               (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx place-ty))]
             (match (lower-expr-expected
               ctx
@@ -40975,6 +41790,7 @@
           (let
             [receiver-ir-ty : ast.AstType
               (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx receiver-ty))]
             [receiver-size : i64 (lower-type-size ctx receiver-ir-ty)]
             (match (lower-reserve-inline-storage
@@ -41054,7 +41870,10 @@
   (match (tc_core.tc-tuple-set-element-type ctx receiver-ty index)
     [(Ok elem-ty)
       (let
-        [elem-ir-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
+        [elem-ir-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            elem-ty)]
         (match (lower-mutable-place-address
           ctx
           state
@@ -41146,7 +41965,9 @@
             (let
               [field : String (tc_core.tc-env-key-name-text field-id)]
               [field-ir-ty : ast.AstType
-                (tc_core.tc-type-without-regions field-ty)]
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  field-ty)]
               (if (lower-register-resident-local-place?
                 ctx
                 env
@@ -41236,7 +42057,9 @@
             [(TcArrayReceiver container-ty elem-ty)
               (let
                 [elem-ir-ty : ast.AstType
-                  (tc_core.tc-type-without-regions elem-ty)]
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    elem-ty)]
                 (match (lower-expr
                   ctx
                   state
@@ -41578,7 +42401,9 @@
             [(TcArrayReceiver _ elem-ty)
               (let
                 [elem-ir-ty : ast.AstType
-                  (tc_core.tc-type-without-regions elem-ty)]
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    elem-ty)]
                 [arr-lowered : LowerExpr
                   (try (lower-expr ctx state env type-env arr))]
                 (match arr-lowered
@@ -41631,7 +42456,12 @@
         [(Ok lowered)
           (match lowered
             [(Expr arg-state value value-ty)
-              (match (lower-cast-value arg-state value value-ty (I64))
+              (match (lower-cast-value
+                (tc_core.tc-context-type-bases ctx)
+                arg-state
+                value
+                value-ty
+                (I64))
                 [(Expr cast-state cast-value _)
                   (match (lower-syscall-args-at
                     ctx
@@ -41706,8 +42536,13 @@
   [init-ty : ast.AstType]) : ast.AstType
   (match maybe-ty
     [(Some ty)
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    [(No) (tc_core.tc-type-without-regions init-ty)]))
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
+    [(No)
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        init-ty)]))
 
 (define (lower-let-init
   [ctx : tc_core.TcContext]
@@ -41719,6 +42554,7 @@
   (match maybe-ty
     [(Some ty)
       (if (tc_core.tc-ref-capturing-lambda-init?
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
@@ -41730,6 +42566,7 @@
                   [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
                   [expected-ty : ast.AstType
                     (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type ctx ty))]
                   (match (lower-lambda
                     ctx
@@ -41746,6 +42583,7 @@
                         [(Expr next-state value actual-ty)
                           (Ok
                             (lower-coerce-value
+                              (tc_core.tc-context-type-bases ctx)
                               next-state
                               value
                               actual-ty
@@ -41758,7 +42596,9 @@
               env
               type-env
               (lower-global-shared-view init)
-              (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
+                (tc_core.tc-resolve-type ctx ty))
               init)])
         (lower-expr-expected
           ctx
@@ -41766,10 +42606,13 @@
           env
           type-env
           (lower-global-shared-view init)
-          (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            (tc_core.tc-resolve-type ctx ty))
           init))]
     [(No)
       (if (tc_core.tc-ref-capturing-lambda-init?
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
@@ -41905,7 +42748,9 @@
                 env
                 type-env
                 (lower-global-shared-view init)
-                (tc_core.tc-type-without-regions expected-init-ty)
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  expected-init-ty)
                 init)
                 [(Ok lowered)
                   (match lowered
@@ -41915,7 +42760,9 @@
                         [(Ok cleanup-name-id)
                           (let
                             [binding-ty : ast.AstType
-                              (tc_core.tc-type-without-regions init-ty)]
+                              (tc_core.tc-type-without-regions
+                                (tc_core.tc-context-type-bases ctx)
+                                init-ty)]
                             [binding-ir-ty : ast.AstType
                               (lower-one-word-register-storage-type
                                 ctx
@@ -42182,8 +43029,12 @@
                 (tc_core.tc-resolve-type
                   ctx
                   (lower-global-shared-view arena-ty))]
-              (lower-struct-type-name-id-or ty -1))
+              (lower-struct-type-name-id-or
+                (tc_core.tc-context-type-bases ctx)
+                ty
+                -1))
             (lower-struct-type-name-or-empty
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx arena-ty))
             "handle"
             (I64))
@@ -42753,7 +43604,10 @@
     [(Ok cond-lowered)
       (match cond-lowered
         [(Expr cond-state cond-value cond-ty)
-          (if (tc_core.tc-type-compatible? (Bool) cond-ty)
+          (if (tc_core.tc-type-compatible?
+            (tc_core.tc-context-type-bases ctx)
+            (Bool)
+            cond-ty)
             (match (lower-state-fresh-label cond-state "if_then")
               [(Label then-label-state then-label)
                 (match (lower-state-fresh-label then-label-state "if_else")
@@ -43188,7 +44042,12 @@
   [index-ty : ast.AstType]
   [value : ast.AstExpr]) : LowerMaybeReduceSplit
   (if (not
-    (tc_core.tc-type-eq (tc_core.tc-type-without-regions index-ty) acc-ty))
+    (tc_core.tc-type-eq
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        index-ty)
+      acc-ty))
     (No)
     (match (lower-spmd-reduce-split-unwrap ctx (lower-global-shared-view value))
       [(Binary (Add) left-box right-box)
@@ -43409,7 +44268,10 @@
     (lower-global-shared-view value))
     [(Ok value-ty)
       (let
-        [acc-ty : ast.AstType (tc_core.tc-type-without-regions value-ty)]
+        [acc-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            value-ty)]
         [split : LowerMaybeReduceSplit
           (lower-spmd-reduce-split-addend
             ctx
@@ -43434,7 +44296,9 @@
                 (lower-context-expr-push ctx (lower-global-shared-view value)))])]
         (if (and
           (lower-mode-simd? (lower-state-mode state))
-          (lower-type-i64? (lower-global-shared-view index-ty)))
+          (lower-type-i64?
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view index-ty)))
           (let
             [plan : LowerMaybeVectorReduce
               (lower-simple-vector-reduce
@@ -43708,7 +44572,9 @@
         (lower-global-shared-view body))]
     (if (and
       (lower-mode-simd? (lower-state-mode state))
-      (lower-type-i64? (lower-global-shared-view index-ty)))
+      (lower-type-i64?
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view index-ty)))
       (match (lower-global-shared-view vector-plan)
         [(Scan _ _ _ _ _)
           (lower-simd-spmd-scan-lowered
@@ -43996,15 +44862,15 @@
 (define (lower-mode-c-abi? [mode : CompilerLowerMode]) : bool
   (or (lower-mode-linux-c-abi? mode) (lower-mode-windows-c-abi? mode)))
 
-(define (lower-type-i64? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-type-i64? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I64) true]
     [_ false]))
 
-(define (lower-type-bool? [ty : (& ty ast.AstType)]) : bool
+(define (lower-type-bool? [type-bases : i64] [ty : (& ty ast.AstType)]) : bool
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-without-regions ty)
+    (match (tc_core.tc-type-without-regions type-bases ty)
       [(Bool) true]
       [_ false])))
 
@@ -44014,11 +44880,12 @@
 ;; Lanes of one vector register for element type `ty`: the register width over
 ;; the element size, 0 in scalar mode or for a non-numeric element.
 (define (lower-simd-lanes-for-elem
+  [type-bases : i64]
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : i64
   (let
     [elem-bytes : i64
-      (match (tc_core.tc-type-without-regions ty)
+      (match (tc_core.tc-type-without-regions type-bases ty)
         [(I64) 8]
         [(U64) 8]
         [(F64) 8]
@@ -44099,19 +44966,24 @@
         (if (csym.compiler-symbols-handle-found? var-id)
           (match (tc_core.tc-lookup-id type-env name)
             [(Ok ty)
-              (match (tc_core.tc-type-strip-region ty)
+              (match (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
+                ty)
                 [(DynArray elem-ty)
                   (Some
                     var-id
                     (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-context-type-get ctx elem-ty)))]
                 [(Ref _ referent-ty)
                   (match (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-context-type-get ctx referent-ty))
                     [(DynArray elem-ty)
                       (Some
                         var-id
                         (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-bases ctx)
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     ;; Slice references are tagged here so emitters extract the
                     ;; two words from the register group instead of loading a
@@ -44120,20 +44992,24 @@
                       (Some
                         (lower-sequence-var-slice var-id)
                         (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-bases ctx)
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [_ (No)])]
                 [(MutRef _ referent-ty)
                   (match (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-context-type-get ctx referent-ty))
                     [(DynArray elem-ty)
                       (Some
                         var-id
                         (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-bases ctx)
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [(Slice elem-ty)
                       (Some
                         (lower-sequence-var-slice var-id)
                         (tc_core.tc-type-without-regions
+                          (tc_core.tc-context-type-bases ctx)
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [_ (No)])]
                 [_ (No)])]
@@ -44213,7 +45089,10 @@
           (match (tc_core.tc-lookup-id type-env name)
             [(Ok ty)
               (if (tc_core.tc-type-eq
-                (tc_core.tc-type-without-regions ty)
+                (tc_core.tc-context-type-bases ctx)
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  ty)
                 (I64))
                 (Some (Var var-id))
                 (No))]
@@ -45129,6 +46008,7 @@
               canonical-name
               (& callables)
               (lower-spmd-source-signature
+                (tc_core.tc-context-type-bases ctx)
                 params
                 (lower-global-shared-view ret))
               backend
@@ -45141,7 +46021,10 @@
               [(Ok specialization)
                 (if (or
                   (tc_core.tc-type-eq
-                    (tc_core.tc-type-without-regions ret)
+                    (tc_core.tc-context-type-bases ctx)
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      ret)
                     (Unit))
                   (lower-imported-spmd-result-varying?
                     (& imported-interns)
@@ -45290,6 +46173,7 @@
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           [target-ty : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx cast-ty-id)))]
@@ -45319,6 +46203,7 @@
                   function-state
                   mode
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx source-ty))
                   target-ty)
                   (lower-masked-vector-expr-lanes-with-locals
@@ -45340,7 +46225,10 @@
             [(LookupFound lanes) lanes]
             [(LookupMissing)
               (if (string.eq name-text index)
-                (lower-simd-lanes-for-elem mode (I64))
+                (lower-simd-lanes-for-elem
+                  (tc_core.tc-context-type-bases ctx)
+                  mode
+                  (I64))
                 0)]))]
       [(Unary op inner-box)
         (if (lower-masked-vector-unop-supported? op)
@@ -45532,9 +46420,14 @@
           (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
             (match (lower-contiguous-sequence-var ctx env type-env arr)
               [(Some _ elem-ty)
-                (if (lower-type-bool? elem-ty)
+                (if (lower-type-bool?
+                  (tc_core.tc-context-type-bases ctx)
+                  elem-ty)
                   (lower-avx512-bool-lanes mode)
-                  (lower-simd-lanes-for-elem mode elem-ty))]
+                  (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
+                    mode
+                    elem-ty))]
               [(No) -1])
             -1))]
       [(ArraySet arr-box idx-box value-box)
@@ -45545,7 +46438,9 @@
           (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
             (match (lower-contiguous-sequence-var ctx env type-env arr)
               [(Some _ elem-ty)
-                (if (lower-type-bool? elem-ty)
+                (if (lower-type-bool?
+                  (tc_core.tc-context-type-bases ctx)
+                  elem-ty)
                   (let
                     [value-lanes : i64
                       (lower-masked-vector-expr-lanes-with-locals
@@ -45563,7 +46458,10 @@
                         (lower-avx512-bool-lanes mode)
                         value-lanes)))
                   (lower-masked-vector-lanes-merge
-                    (lower-simd-lanes-for-elem mode elem-ty)
+                    (lower-simd-lanes-for-elem
+                      (tc_core.tc-context-type-bases ctx)
+                      mode
+                      elem-ty)
                     (lower-masked-vector-expr-lanes-with-locals
                       ctx
                       function-state
@@ -46162,8 +47060,8 @@
       lane-locals
       expr)))
 
-(define (lower-spmd-enum-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region ty)
+(define (lower-spmd-enum-type? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region type-bases ty)
     [(Enum _) true]
     [(EnumArgs _ _) true]
     [_ false]))
@@ -46178,7 +47076,8 @@
   (and
     (>= (lower-masked-vector-index-offset ctx index idx) 0)
     (match (lower-contiguous-sequence-var ctx env type-env arr)
-      [(Some _ elem-ty) (lower-spmd-enum-type? elem-ty)]
+      [(Some _ elem-ty)
+        (lower-spmd-enum-type? (tc_core.tc-context-type-bases ctx) elem-ty)]
       [(No) false])))
 
 (define (lower-masked-vector-expr-varying-enum-with-locals?
@@ -46654,7 +47553,8 @@
   [idx : ast.AstExpr]) : bool
   (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
     (match (lower-contiguous-sequence-var ctx env type-env arr)
-      [(Some _ elem-ty) (lower-type-bool? elem-ty)]
+      [(Some _ elem-ty)
+        (lower-type-bool? (tc_core.tc-context-type-bases ctx) elem-ty)]
       [(No) false])
     false))
 
@@ -47952,6 +48852,7 @@
             (let
               [source : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx source-ty))]
               [source-lane : spmd_numeric.CompilerSpmdNumericLane
                 (spmd_numeric.compiler-spmd-numeric-lane
@@ -47995,6 +48896,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         [destination : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx cast-ty-id)))]
@@ -48009,6 +48911,7 @@
               (let
                 [source : ast.AstType
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx source-ty))]
                 [decision : spmd_numeric.CompilerSpmdNumericDecision
                   (spmd_numeric.compiler-spmd-numeric-conversion-decision
@@ -48356,8 +49259,8 @@
     [(Unsupported) false]
     [_ true]))
 
-(define (lower-spmd-shift-lane-supported? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-spmd-shift-lane-supported? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I8) true]
     [(U8) true]
     [(I16) true]
@@ -48368,8 +49271,8 @@
     [(U64) true]
     [_ false]))
 
-(define (lower-spmd-shift-width [ty : ast.AstType]) : i64
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-spmd-shift-width [type-bases : i64] [ty : ast.AstType]) : i64
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I8) 8]
     [(U8) 8]
     [(I16) 16]
@@ -48381,6 +49284,7 @@
     [_ 0]))
 
 (define (lower-spmd-map-shift-diagnostic
+  [type-bases : i64]
   [op-name : String]
   [lane-ty : ast.AstType]
   [mode : CompilerLowerMode]) : String
@@ -48388,7 +49292,7 @@
     "lower: SPMD foreach SIMD lowering does not support shift '"
     op-name
     "' for lane type "
-    (tc_core.tc-type-render lane-ty)
+    (tc_core.tc-type-render type-bases lane-ty)
     " in "
     (if (lower-mode-avx2? mode)
       "AVX2"
@@ -48569,11 +49473,13 @@
               (if (and
                 (>
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     mode
                     (lower-global-shared-view dst-elem))
                   0)
                 (not
                   (lower-spmd-shift-lane-supported?
+                    (tc_core.tc-context-type-bases ctx)
                     (lower-global-shared-view dst-elem)))
                 (lower-spmd-expr-has-shift? ctx want-left value))
                 (Some dst-elem)
@@ -48641,9 +49547,15 @@
     [(Literal lit)
       (if (and
         (>
-          (lower-simd-lanes-for-elem mode (lower-global-shared-view target-ty))
+          (lower-simd-lanes-for-elem
+            (tc_core.tc-context-type-bases ctx)
+            mode
+            (lower-global-shared-view target-ty))
           0)
-        (tc_core.tc-type-eq (lower-global-shared-view target-ty) dst-elem))
+        (tc_core.tc-type-eq
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view target-ty)
+          dst-elem))
         (Some
           (Uniform
             (lower-literal-value-with-type
@@ -48661,7 +49573,10 @@
   [value : ast.AstExpr]) : LowerMaybeVectorMapValue
   (match (lower-array-ref-var-for-program-index ctx env type-env value)
     [(Some array-var array-elem)
-      (if (tc_core.tc-type-eq array-elem dst-elem)
+      (if (tc_core.tc-type-eq
+        (tc_core.tc-context-type-bases ctx)
+        array-elem
+        dst-elem)
         (Some (LaneArray array-var))
         (No))]
     [(No) (No)]))
@@ -48720,8 +49635,14 @@
               index)
               [(Some indexes-var indexes-elem)
                 (if (and
-                  (tc_core.tc-type-eq source-elem dst-elem)
-                  (tc_core.tc-type-eq indexes-elem (I64)))
+                  (tc_core.tc-type-eq
+                    (tc_core.tc-context-type-bases ctx)
+                    source-elem
+                    dst-elem)
+                  (tc_core.tc-type-eq
+                    (tc_core.tc-context-type-bases ctx)
+                    indexes-elem
+                    (I64)))
                   (Some (Gather source-var indexes-var))
                   (No))]
               [(No)
@@ -48733,16 +49654,22 @@
                   indexes)
                   [(Some offsets-var offsets-elem)
                     (if (and
-                      (tc_core.tc-type-eq source-elem dst-elem)
-                      (tc_core.tc-type-eq offsets-elem (I64)))
+                      (tc_core.tc-type-eq
+                        (tc_core.tc-context-type-bases ctx)
+                        source-elem
+                        dst-elem)
+                      (tc_core.tc-type-eq
+                        (tc_core.tc-context-type-bases ctx)
+                        offsets-elem
+                        (I64)))
                       (Some (GatherLaneOffset source-var offsets-var))
                       (No))]
                   [(No) (No)])])]
           [(No) (No)]))]
     [_ (No)]))
 
-(define (lower-vector-shuffle-value-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-vector-shuffle-value-type? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I32) true]
     [(U32) true]
     [(I64) true]
@@ -48834,9 +49761,11 @@
             (let
               [binding-ty : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx declared))]
               (if (or
                 (tc_core.tc-type-eq
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view binding-ty)
                   (lower-global-shared-view dst-elem))
                 (spmd_numeric.compiler-spmd-numeric-decision-supported?
@@ -48916,6 +49845,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         [target-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-context-type-get ctx cast-ty-id))]
         (match (lower-simple-vector-map-casted-literal
           ctx
@@ -48932,7 +49862,9 @@
               [(Ok source-ty)
                 (if (spmd_numeric.compiler-spmd-numeric-decision-supported?
                   (spmd_numeric.compiler-spmd-numeric-conversion-decision
-                    (tc_core.tc-type-without-regions source-ty)
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
+                      source-ty)
                     target-ty
                     numeric-context
                     (lower-spmd-numeric-backend mode)))
@@ -48956,7 +49888,10 @@
         (lower-global-shared-view value)
         index)
         [(Some array-var array-elem)
-          (if (tc_core.tc-type-eq array-elem dst-elem)
+          (if (tc_core.tc-type-eq
+            (tc_core.tc-context-type-bases ctx)
+            array-elem
+            dst-elem)
             (Some (Array array-var))
             (No))]
         [(No)
@@ -48980,9 +49915,14 @@
         [source : ast.AstExpr (lower-context-expr-get ctx value-box)]
         [selector : ast.AstExpr (lower-context-expr-get ctx lane-box)]
         (if (and
-          (lower-vector-shuffle-value-type? (lower-global-shared-view dst-elem))
+          (lower-vector-shuffle-value-type?
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view dst-elem))
           (>
-            (lower-simd-lanes-for-elem mode (lower-global-shared-view dst-elem))
+            (lower-simd-lanes-for-elem
+              (tc_core.tc-context-type-bases ctx)
+              mode
+              (lower-global-shared-view dst-elem))
             0))
           (match (lower-simple-vector-map-value
             ctx
@@ -49029,7 +49969,10 @@
               (lower-global-shared-view source)
               index)
               [(Some array-var array-elem)
-                (if (tc_core.tc-type-eq array-elem dst-elem)
+                (if (tc_core.tc-type-eq
+                  (tc_core.tc-context-type-bases ctx)
+                  array-elem
+                  dst-elem)
                   (Some (BroadcastArray array-var lane-value))
                   (No))]
               [(No)
@@ -49047,17 +49990,23 @@
     [(SpmdProgramIndex)
       (if (and
         (>
-          (lower-simd-lanes-for-elem mode (lower-global-shared-view dst-elem))
+          (lower-simd-lanes-for-elem
+            (tc_core.tc-context-type-bases ctx)
+            mode
+            (lower-global-shared-view dst-elem))
           0)
-        (tc_core.tc-type-eq dst-elem (I64)))
+        (tc_core.tc-type-eq (tc_core.tc-context-type-bases ctx) dst-elem (I64)))
         (Some (LaneIndex))
         (No))]
     [(SpmdProgramCount)
       (if (and
         (>
-          (lower-simd-lanes-for-elem mode (lower-global-shared-view dst-elem))
+          (lower-simd-lanes-for-elem
+            (tc_core.tc-context-type-bases ctx)
+            mode
+            (lower-global-shared-view dst-elem))
           0)
-        (tc_core.tc-type-eq dst-elem (I64)))
+        (tc_core.tc-type-eq (tc_core.tc-context-type-bases ctx) dst-elem (I64)))
         (Some (LaneCount))
         (No))]
     [(Var name)
@@ -49079,14 +50028,20 @@
                     [(Ok ty)
                       (let
                         [scalar-ty : ast.AstType
-                          (tc_core.tc-type-without-regions ty)]
+                          (tc_core.tc-type-without-regions
+                            (tc_core.tc-context-type-bases ctx)
+                            ty)]
                         (if (and
                           (>
                             (lower-simd-lanes-for-elem
+                              (tc_core.tc-context-type-bases ctx)
                               mode
                               (lower-global-shared-view scalar-ty))
                             0)
-                          (tc_core.tc-type-eq scalar-ty dst-elem))
+                          (tc_core.tc-type-eq
+                            (tc_core.tc-context-type-bases ctx)
+                            scalar-ty
+                            dst-elem))
                           (Some (Uniform (Var var-id)))
                           (No)))]
                     [(Err _) (No)])
@@ -49115,10 +50070,13 @@
             (if (and
               (>
                 (lower-simd-lanes-for-elem
+                  (tc_core.tc-context-type-bases ctx)
                   mode
                   (lower-global-shared-view dst-elem))
                 0)
-              (tc_core.tc-integer-type? (lower-global-shared-view dst-elem)))
+              (tc_core.tc-integer-type?
+                (tc_core.tc-context-type-bases ctx)
+                (lower-global-shared-view dst-elem)))
               (Some
                 (Uniform
                   (lower-literal-value-with-type
@@ -49130,10 +50088,14 @@
             (if (and
               (>
                 (lower-simd-lanes-for-elem
+                  (tc_core.tc-context-type-bases ctx)
                   mode
                   (lower-global-shared-view lit-ty))
                 0)
-              (tc_core.tc-type-eq lit-ty (lower-global-shared-view dst-elem)))
+              (tc_core.tc-type-eq
+                (tc_core.tc-context-type-bases ctx)
+                lit-ty
+                (lower-global-shared-view dst-elem)))
               (Some
                 (Uniform
                   (lower-literal-value-with-type
@@ -49336,6 +50298,7 @@
               (let
                 [lanes : i64
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     mode
                     (lower-global-shared-view dst-elem))]
                 (if (> lanes 0)
@@ -49419,6 +50382,7 @@
                 (or
                   (not
                     (tc_core.tc-type-eq
+                      (tc_core.tc-context-type-bases ctx)
                       elem-ty
                       (lower-global-shared-view store-elem)))
                   (not (= lanes store-lanes)))))
@@ -49589,21 +50553,33 @@
           body)
           [(Some output-var output-ty)
             (let
-              [elem-ty : ast.AstType (tc_core.tc-type-without-regions input-ty)]
+              [elem-ty : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  input-ty)]
               [lanes : i64
-                (if (lower-type-bool? elem-ty)
+                (if (lower-type-bool?
+                  (tc_core.tc-context-type-bases ctx)
+                  elem-ty)
                   (lower-avx512-bool-lanes mode)
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     mode
                     (lower-global-shared-view elem-ty)))]
               (if (and
                 (> lanes 0)
                 (tc_core.tc-type-eq
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view elem-ty)
-                  (tc_core.tc-type-without-regions output-ty))
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    output-ty))
                 (tc_core.tc-type-eq
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view elem-ty)
-                  (tc_core.tc-type-without-regions prefix-ty))
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    prefix-ty))
                 (lower-simple-vector-scan-op-supported?
                   op
                   (lower-global-shared-view elem-ty)))
@@ -49667,11 +50643,15 @@
           index)
           [(Some array-var elem-ty)
             (let
-              [elem : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
+              [elem : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  elem-ty)]
               [lanes : i64
-                (if (lower-type-bool? elem)
+                (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) elem)
                   (lower-avx512-bool-lanes mode)
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     mode
                     (lower-global-shared-view elem)))]
               (if (and
@@ -49684,11 +50664,15 @@
                 (No)))]
           [(No)
             (let
-              [elem : ast.AstType (tc_core.tc-type-without-regions value-ty)]
+              [elem : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  value-ty)]
               [lanes : i64
-                (if (lower-type-bool? elem)
+                (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) elem)
                   (lower-avx512-bool-lanes mode)
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     mode
                     (lower-global-shared-view elem)))]
               (if (and
@@ -50003,11 +50987,13 @@
 ;; Internal enum-mask and lane-stitch splats are control-flow temporaries; making
 ;; those loop-wide creates very long AVX2 live ranges through recursive matches.
 (define (lower-emit-masked-preheader-splat
+  [type-bases : i64]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
   (match (lower-masked-preheader-uniform-get
+    type-bases
     state
     (lower-global-shared-view value)
     (lower-global-shared-view elem-ty))
@@ -50114,6 +51100,7 @@
     [_ false]))
 
 (define (lower-emit-checked-vector-shift
+  [type-bases : i64]
   [state : LowerState]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
@@ -50143,13 +51130,16 @@
         (set! zero value)])
     (match (lower-emit-splat
       s
-      (I64 (lower-spmd-shift-width (lower-global-shared-view lane-ty)))
+      (I64
+        (lower-spmd-shift-width type-bases (lower-global-shared-view lane-ty)))
       lanes
       (lower-global-shared-view count-ty))
       [(Expr next-s value _)
         (set! s next-s)
         (set! width value)])
-    (match (if (lower-type-signed? (lower-global-shared-view count-ty))
+    (match (if (lower-type-signed?
+      type-bases
+      (lower-global-shared-view count-ty))
       (lower-emit-vector-compare
         s
         (Lt)
@@ -50215,6 +51205,7 @@
     (lower-emit-vector-binop s op left-value right-value lanes lane-ty)))
 
 (define (lower-emit-vector-map-binop
+  [type-bases : i64]
   [state : LowerState]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
@@ -50224,6 +51215,7 @@
   [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
   (if (lower-vector-map-binop-shift? (lower-global-shared-view op))
     (lower-emit-checked-vector-shift
+      type-bases
       state
       (match emit-mode
         [(Full) (No)]
@@ -50455,24 +51447,26 @@
     [_ (Any)]))
 
 (define (lower-spmd-reduce-chunk
+  [type-bases : i64]
   [state : LowerState]
   [op : ast.AstReduceOp]
   [vector-op : ir.CompilerIrVectorReduceOp]
   [src : ir.CompilerIrValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
-  (if (lower-type-bool? elem-ty)
+  (if (lower-type-bool? type-bases elem-ty)
     (lower-emit-mask-reduce state (lower-spmd-reduce-mask-op op) src lanes)
     (lower-emit-vector-reduce state vector-op src lanes elem-ty)))
 
 (define (lower-spmd-reduce-array-chunk
+  [type-bases : i64]
   [state : LowerState]
   [index-var : i64]
   [next-index : ir.CompilerIrValue]
   [data-ptr : ir.CompilerIrValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
-  (if (lower-type-bool? elem-ty)
+  (if (lower-type-bool? type-bases elem-ty)
     (match (lower-emit-tail-mask state (Var index-var) next-index lanes)
       [(Expr mask-state full-mask _)
         (lower-emit-predicated-load-data
@@ -50653,6 +51647,7 @@
         Unit
         (Unit)))
     (match (lower-spmd-reduce-chunk
+      (tc_core.tc-context-type-bases ctx)
       state
       op
       vector-op
@@ -50701,6 +51696,7 @@
   [elem-ty : ast.AstType]
   [lanes : i64]) : ResultLowerExpr
   (match (lower-spmd-reduce-array-chunk
+    (tc_core.tc-context-type-bases ctx)
     state
     index-var
     (lower-global-shared-view next-index)
@@ -50912,7 +51908,7 @@
     [full-mask : ir.CompilerIrValue Unit]
     [prefix-value : ir.CompilerIrValue Unit]
     [last-index : ir.CompilerIrValue Unit]
-    (if (lower-type-bool? elem-ty)
+    (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) elem-ty)
       (begin
         (match (lower-emit-tail-mask
           s
@@ -50955,7 +51951,7 @@
               lanes
               (lower-global-shared-view elem-ty))))
         (set! prefix-value (Var prefix-var))])
-    (if (lower-type-bool? elem-ty)
+    (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) elem-ty)
       (set!
         s
         (lower-emit-sequence-predicated-store
@@ -51681,6 +52677,7 @@
                     (set! s next-s)
                     (set! vector-start-ok value)])
                 (match (lower-vector-map-preheader-cache-plan
+                  (tc_core.tc-context-type-bases ctx)
                   s
                   arrays
                   lanes
@@ -52059,6 +53056,7 @@
     [_ false]))
 
 (define (lower-vector-map-binop-eq?
+  [type-bases : i64]
   [left : ir.CompilerIrBinOp]
   [right : ir.CompilerIrBinOp]) : bool
   (match left
@@ -52088,15 +53086,18 @@
         [_ false])]
     [(Shl left-count-ty)
       (match right
-        [(Shl right-count-ty) (tc_core.tc-type-eq left-count-ty right-count-ty)]
+        [(Shl right-count-ty)
+          (tc_core.tc-type-eq type-bases left-count-ty right-count-ty)]
         [_ false])]
     [(Shr left-count-ty)
       (match right
-        [(Shr right-count-ty) (tc_core.tc-type-eq left-count-ty right-count-ty)]
+        [(Shr right-count-ty)
+          (tc_core.tc-type-eq type-bases left-count-ty right-count-ty)]
         [_ false])]
     [_ false]))
 
 (define (lower-vector-map-value-key-eq?
+  [type-bases : i64]
   [left : LowerVectorMapValueKey]
   [right : LowerVectorMapValueKey]) : bool
   (match left
@@ -52146,7 +53147,7 @@
       (match right
         [(BinOp right-op right-lhs right-rhs)
           (and
-            (lower-vector-map-binop-eq? left-op right-op)
+            (lower-vector-map-binop-eq? type-bases left-op right-op)
             (lower-vector-map-ir-value-eq? left-lhs right-lhs)
             (lower-vector-map-ir-value-eq? left-rhs right-rhs))]
         [_ false])]))
@@ -52158,6 +53159,7 @@
     0))
 
 (define (lower-vector-map-value-cache-lookup
+  [type-bases : i64]
   [cache : (& cache LowerVectorMapValueCache)]
   [key : LowerVectorMapValueKey]) : LowerMaybeIrValue
   (let
@@ -52169,6 +53171,7 @@
         [(No) true]
         [(Some _) false]))
       (if (lower-vector-map-value-key-eq?
+        type-bases
         (lower-global-shared-view key)
         (lower-global-array-element-shared-view cache.keys index))
         (set!
@@ -52195,6 +53198,7 @@
 ;; mutation of bindings declared outside the body, so these materializations
 ;; dominate both the full vector loop and its masked AVX-512 tail.
 (define (lower-vector-map-preheader-cache-leaves
+  [type-bases : i64]
   [state : LowerState]
   [lanes : i64]
   [elem-ty : ast.AstType]
@@ -52203,6 +53207,7 @@
   (match plan
     [(Uniform value)
       (match (lower-vector-map-value-cache-lookup
+        type-bases
         cache
         (Uniform (lower-global-shared-view value)))
         [(Some cached) (Emit state cached cache)]
@@ -52216,7 +53221,7 @@
             (Uniform value)
             cache)])]
     [(LaneIndex)
-      (match (lower-vector-map-value-cache-lookup cache (LaneIndex))
+      (match (lower-vector-map-value-cache-lookup type-bases cache (LaneIndex))
         [(Some cached) (Emit state cached cache)]
         [(No)
           (lower-vector-map-cache-emitted
@@ -52224,7 +53229,7 @@
             (LaneIndex)
             cache)])]
     [(LaneCount)
-      (match (lower-vector-map-value-cache-lookup cache (LaneCount))
+      (match (lower-vector-map-value-cache-lookup type-bases cache (LaneCount))
         [(Some cached) (Emit state cached cache)]
         [(No)
           (lower-vector-map-cache-emitted
@@ -52237,6 +53242,7 @@
     [(Shuffle _ _) (Emit state Unit cache)]
     [(Stage staged value)
       (match (lower-vector-map-preheader-cache-leaves
+        type-bases
         state
         lanes
         (lower-global-shared-view elem-ty)
@@ -52244,6 +53250,7 @@
         cache)
         [(Emit staged-state _ staged-cache)
           (lower-vector-map-preheader-cache-leaves
+            type-bases
             staged-state
             lanes
             elem-ty
@@ -52251,6 +53258,7 @@
             staged-cache)])]
     [(BinOp _ lhs rhs)
       (match (lower-vector-map-preheader-cache-leaves
+        type-bases
         state
         lanes
         (lower-global-shared-view elem-ty)
@@ -52258,6 +53266,7 @@
         cache)
         [(Emit lhs-state _ lhs-cache)
           (lower-vector-map-preheader-cache-leaves
+            type-bases
             lhs-state
             lanes
             elem-ty
@@ -52289,6 +53298,7 @@
     (Emit s Unit next-cache)))
 
 (define (lower-vector-map-preheader-cache-plan
+  [type-bases : i64]
   [state : LowerState]
   [arrays : LowerArrayVarSet]
   [lanes : i64]
@@ -52300,6 +53310,7 @@
     (lower-vector-map-value-cache-empty))
     [(Emit data-state _ data-cache)
       (lower-vector-map-preheader-cache-leaves
+        type-bases
         data-state
         lanes
         elem-ty
@@ -52307,6 +53318,7 @@
         data-cache)]))
 
 (define (lower-vector-map-preheader-cache-stores
+  [type-bases : i64]
   [state : LowerState]
   [arrays : (& arrays LowerArrayVarSet)]
   [stores : LowerVectorMapStoreList]
@@ -52325,6 +53337,7 @@
           (match (lower-vector-map-store-list-ref stores index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-vector-map-preheader-cache-leaves
+                type-bases
                 s
                 lanes
                 (lower-global-shared-view elem-ty)
@@ -52337,6 +53350,7 @@
         (Emit s Unit cache))]))
 
 (define (lower-emit-shuffle-selector-plan
+  [type-bases : i64]
   [state : LowerState]
   [index : ir.CompilerIrValue]
   [lane-offset : i64]
@@ -52375,6 +53389,7 @@
     [(LaneCount) (lower-emit-splat state (I64 lanes) lanes (I64))]
     [(Stage staged value)
       (match (lower-emit-shuffle-selector-plan
+        type-bases
         state
         (lower-global-shared-view index)
         lane-offset
@@ -52384,6 +53399,7 @@
         (lower-global-shared-view emit-mode))
         [(Expr staged-state _ _)
           (lower-emit-shuffle-selector-plan
+            type-bases
             staged-state
             index
             lane-offset
@@ -52393,6 +53409,7 @@
             emit-mode)])]
     [(BinOp op lhs rhs)
       (match (lower-emit-shuffle-selector-plan
+        type-bases
         state
         (lower-global-shared-view index)
         lane-offset
@@ -52402,6 +53419,7 @@
         (lower-global-shared-view emit-mode))
         [(Expr lhs-state lhs-value _)
           (match (lower-emit-shuffle-selector-plan
+            type-bases
             lhs-state
             index
             lane-offset
@@ -52411,6 +53429,7 @@
             (lower-global-shared-view emit-mode))
             [(Expr rhs-state rhs-value _)
               (match (lower-emit-vector-map-binop
+                type-bases
                 rhs-state
                 op
                 lhs-value
@@ -52449,7 +53468,10 @@
   [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
   (let
     [selector-lanes : i64
-      (lower-simd-lanes-for-elem (lower-state-mode state) (I64))]
+      (lower-simd-lanes-for-elem
+        (tc_core.tc-context-type-bases ctx)
+        (lower-state-mode state)
+        (I64))]
     [index-value : ir.CompilerIrValue (Var index-var)]
     (match emit-mode
       [(Full)
@@ -52462,6 +53484,7 @@
           source-plan)
           [(Expr source-state source-value _)
             (match (lower-emit-shuffle-selector-plan
+              (tc_core.tc-context-type-bases ctx)
               source-state
               (lower-global-shared-view index-value)
               0
@@ -52479,6 +53502,7 @@
                     (I64))
                     [(Expr high-index-state high-index _)
                       (match (lower-emit-shuffle-selector-plan
+                        (tc_core.tc-context-type-bases ctx)
                         high-index-state
                         high-index
                         selector-lanes
@@ -52528,6 +53552,7 @@
                   selector-lanes)
                   [(Expr low-mask-state low-mask _)
                     (match (lower-emit-shuffle-selector-plan
+                      (tc_core.tc-context-type-bases ctx)
                       low-mask-state
                       (lower-global-shared-view index-value)
                       0
@@ -52553,6 +53578,7 @@
                                     selector-lanes)
                                     [(Expr high-mask-state high-mask _)
                                       (match (lower-emit-shuffle-selector-plan
+                                        (tc_core.tc-context-type-bases ctx)
                                         high-mask-state
                                         high-index
                                         selector-lanes
@@ -52760,6 +53786,7 @@
             (deref rhs))
             [(Expr rhs-state rhs-value _)
               (lower-emit-vector-map-binop
+                (tc_core.tc-context-type-bases ctx)
                 rhs-state
                 op
                 lhs-value
@@ -52831,10 +53858,14 @@
   [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
   (match plan
     [(Array array-var)
-      (match (lower-vector-map-value-cache-lookup cache (Array array-var))
+      (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
+        cache
+        (Array array-var))
         [(Some value) (Emit state value cache)]
         [(No)
           (match (lower-vector-map-value-cache-lookup
+            (tc_core.tc-context-type-bases ctx)
             cache
             (ArrayData array-var))
             [(Some data-ptr)
@@ -52862,6 +53893,7 @@
                 cache)])])]
     [(Gather source-var indexes-var)
       (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
         cache
         (Gather source-var indexes-var))
         [(Some value) (Emit state value cache)]
@@ -52879,6 +53911,7 @@
             cache)])]
     [(GatherLaneOffset source-var offsets-var)
       (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
         cache
         (GatherLaneOffset source-var offsets-var))
         [(Some value) (Emit state value cache)]
@@ -52895,7 +53928,10 @@
             (GatherLaneOffset source-var offsets-var)
             cache)])]
     [(LaneArray array-var)
-      (match (lower-vector-map-value-cache-lookup cache (LaneArray array-var))
+      (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
+        cache
+        (LaneArray array-var))
         [(Some value) (Emit state value cache)]
         [(No)
           (lower-vector-map-cache-emitted
@@ -52911,6 +53947,7 @@
             cache)])]
     [(Uniform uniform-value)
       (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
         cache
         (Uniform (lower-global-shared-view uniform-value)))
         [(Some value) (Emit state value cache)]
@@ -52928,6 +53965,7 @@
             cache)])]
     [(BroadcastArray array-var lane)
       (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
         cache
         (BroadcastArray array-var (lower-global-shared-view lane)))
         [(Some value) (Emit state value cache)]
@@ -52944,7 +53982,10 @@
             (BroadcastArray array-var lane)
             cache)])]
     [(LaneIndex)
-      (match (lower-vector-map-value-cache-lookup cache (LaneIndex))
+      (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
+        cache
+        (LaneIndex))
         [(Some value) (Emit state value cache)]
         [(No)
           (lower-vector-map-cache-emitted
@@ -52959,7 +54000,10 @@
             (LaneIndex)
             cache)])]
     [(LaneCount)
-      (match (lower-vector-map-value-cache-lookup cache (LaneCount))
+      (match (lower-vector-map-value-cache-lookup
+        (tc_core.tc-context-type-bases ctx)
+        cache
+        (LaneCount))
         [(Some value) (Emit state value cache)]
         [(No)
           (lower-vector-map-cache-emitted
@@ -53027,6 +54071,7 @@
             lhs-cache)
             [(Emit rhs-state rhs-value rhs-cache)
               (match (lower-vector-map-value-cache-lookup
+                (tc_core.tc-context-type-bases ctx)
                 rhs-cache
                 (BinOp
                   (lower-global-shared-view op)
@@ -53036,6 +54081,7 @@
                 [(No)
                   (lower-vector-map-cache-emitted
                     (lower-emit-vector-map-binop
+                      (tc_core.tc-context-type-bases ctx)
                       rhs-state
                       (lower-global-shared-view op)
                       (lower-global-shared-view lhs-value)
@@ -53148,6 +54194,7 @@
             (deref rhs))
             [(Expr rhs-state rhs-value _)
               (lower-emit-vector-map-binop
+                (tc_core.tc-context-type-bases ctx)
                 rhs-state
                 op
                 lhs-value
@@ -53630,6 +54677,7 @@
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array _)
               (match (lower-vector-map-value-cache-lookup
+                (tc_core.tc-context-type-bases ctx)
                 cache
                 (ArrayData dst-array))
                 [(Some data-ptr)
@@ -53793,13 +54841,14 @@
       (Expr child-state child-mask child-ty)]))
 
 (define (lower-emit-active-load
+  [type-bases : i64]
   [state : LowerState]
   [sequence-var : i64]
   [index : ir.CompilerIrValue]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
-  (if (lower-type-bool? elem-ty)
+  (if (lower-type-bool? type-bases elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(Expr mask-state mask _)
         (lower-emit-sequence-predicated-load
@@ -53822,6 +54871,7 @@
           elem-ty)])))
 
 (define (lower-emit-active-store
+  [type-bases : i64]
   [state : LowerState]
   [sequence-var : i64]
   [index : ir.CompilerIrValue]
@@ -53829,7 +54879,7 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerState
-  (if (lower-type-bool? elem-ty)
+  (if (lower-type-bool? type-bases elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(Expr mask-state mask _)
         (lower-emit-sequence-predicated-store
@@ -53912,7 +54962,13 @@
       (if (csym.compiler-symbols-handle-found? var-id)
         (match (tc_core.tc-lookup-id type-env name)
           [(Ok ty)
-            (Ok (Expr state (Var var-id) (tc_core.tc-type-without-regions ty)))]
+            (Ok
+              (Expr
+                state
+                (Var var-id)
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  ty)))]
           [(Err message)
             (Err (box (lower-diagnostic-at-expr ctx expr message)))])
         (lower-avx512-masked-unsupported ctx expr "unknown lane-local binding")))
@@ -53928,14 +54984,19 @@
           (match (tc_core.tc-lookup-id type-env name)
             [(Ok ty)
               (let
-                [lane-ty : ast.AstType (tc_core.tc-type-without-regions ty)]
+                [lane-ty : ast.AstType
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
+                    ty)]
                 (if (>
                   (lower-simd-lanes-for-elem
+                    (tc_core.tc-context-type-bases ctx)
                     (lower-state-mode state)
                     (lower-global-shared-view lane-ty))
                   0)
                   (Ok
                     (lower-emit-masked-preheader-splat
+                      (tc_core.tc-context-type-bases ctx)
                       state
                       (Var var-id)
                       lanes
@@ -53966,17 +55027,21 @@
   (match (lower-contiguous-sequence-var ctx env type-env arr)
     [(Some array-var elem-ty)
       (let
-        [lane-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
+        [lane-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            elem-ty)]
         [offset : i64
           (lower-masked-vector-index-offset
             ctx
             index
             (lower-global-shared-view idx))]
         (if (and
-          (not (lower-type-bool? lane-ty))
+          (not (lower-type-bool? (tc_core.tc-context-type-bases ctx) lane-ty))
           (not
             (=
               (lower-simd-lanes-for-elem
+                (tc_core.tc-context-type-bases ctx)
                 (lower-state-mode state)
                 (lower-global-shared-view lane-ty))
               lanes)))
@@ -54008,6 +55073,7 @@
                   (match idx-lowered
                     [(Expr idx-state idx-value _)
                       (match (lower-emit-active-load
+                        (tc_core.tc-context-type-bases ctx)
                         idx-state
                         array-var
                         idx-value
@@ -54045,8 +55111,11 @@
   (match (lower-contiguous-sequence-var ctx env type-env arr)
     [(Some array-var elem-ty)
       (let
-        [lane-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
-        (if (lower-type-bool? lane-ty)
+        [lane-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            elem-ty)]
+        (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) lane-ty)
           (let
             [idx-lowered : LowerExpr
               (try
@@ -54071,6 +55140,7 @@
                         (Ok
                           (Expr
                             (lower-emit-active-store
+                              (tc_core.tc-context-type-bases ctx)
                               value-state
                               array-var
                               idx-value
@@ -54083,6 +55153,7 @@
                   [(Err message) (Err message)])]))
           (if (=
             (lower-simd-lanes-for-elem
+              (tc_core.tc-context-type-bases ctx)
               (lower-state-mode state)
               (lower-global-shared-view lane-ty))
             lanes)
@@ -54115,6 +55186,7 @@
                           (Ok
                             (Expr
                               (lower-emit-active-store
+                                (tc_core.tc-context-type-bases ctx)
                                 value-state
                                 array-var
                                 idx-value
@@ -54186,8 +55258,11 @@
             (let
               [resolved : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx ty))]
-              (if (lower-spmd-enum-type? (lower-global-shared-view resolved))
+              (if (lower-spmd-enum-type?
+                (tc_core.tc-context-type-bases ctx)
+                (lower-global-shared-view resolved))
                 (let
                   [base-var : i64
                     (sym_i64_env.sym-i64-lookup-id-or
@@ -54215,8 +55290,11 @@
             (let
               [resolved : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx elem-ty))]
-              (if (lower-spmd-enum-type? (lower-global-shared-view resolved))
+              (if (lower-spmd-enum-type?
+                (tc_core.tc-context-type-bases ctx)
+                (lower-global-shared-view resolved))
                 (match (lower-avx512-masked-index-value
                   ctx
                   state
@@ -54444,13 +55522,15 @@
         [(Err message) (Err message)]))))
 
 (define (lower-avx512-masked-select-result-supported?
+  [type-bases : i64]
   [state : LowerState]
   [lanes : i64]
   [ty : ast.AstType]) : bool
   (=
     (lower-simd-lanes-for-elem
+      type-bases
       (lower-state-mode state)
-      (tc_core.tc-type-without-regions ty))
+      (tc_core.tc-type-without-regions type-bases ty))
     lanes))
 
 (define (lower-avx512-masked-while
@@ -54659,7 +55739,10 @@
                                               (tc_core.tc-context-pools ctx)
                                               (lower-global-shared-view then-ty)
                                               (lower-global-shared-view else-ty))
-                                            (lower-type-bool? then-ty))
+                                            (lower-type-bool?
+                                              (tc_core.tc-context-type-bases
+                                                ctx)
+                                              then-ty))
                                             (Ok
                                               (lower-emit-mask-select
                                                 else-state
@@ -54675,6 +55758,8 @@
                                                   then-ty)
                                                 else-ty)
                                               (lower-avx512-masked-select-result-supported?
+                                                (tc_core.tc-context-type-bases
+                                                  ctx)
                                                 else-state
                                                 lanes
                                                 (lower-global-shared-view
@@ -54782,7 +55867,10 @@
     expr)
     [(Ok result-ty)
       (let
-        [lane-ty : ast.AstType (tc_core.tc-type-without-regions result-ty)]
+        [lane-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            result-ty)]
         (match (lower-avx512-masked-expr-expected
           ctx
           state
@@ -54836,8 +55924,10 @@
     "AVX2"
     "AVX-512"))
 
-(define (lower-masked-shift-lane-supported? [ty : ast.AstType]) : bool
-  (lower-spmd-shift-lane-supported? ty))
+(define (lower-masked-shift-lane-supported?
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (lower-spmd-shift-lane-supported? type-bases ty))
 
 (define (lower-masked-shift-unsupported
   [ctx : tc_core.TcContext]
@@ -54852,12 +55942,13 @@
       "masked shift '"
       (lower-masked-shift-op-name op)
       "' for lane type "
-      (tc_core.tc-type-render lane-ty)
+      (tc_core.tc-type-render (tc_core.tc-context-type-bases ctx) lane-ty)
       " in "
       (lower-masked-shift-mode-name (lower-state-mode state))
       " backend mode; supported lane types are i8, u8, i16, u16, i32, u32, i64, and u64")))
 
 (define (lower-avx512-masked-shift-guard-and-emit
+  [type-bases : i64]
   [state : LowerState]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
@@ -54868,6 +55959,7 @@
   [count-ty : ast.AstType]) : ResultLowerExpr
   (Ok
     (lower-emit-checked-vector-shift
+      type-bases
       state
       active-mask
       lanes
@@ -54900,9 +55992,13 @@
     expr)
     [(Ok result-ty)
       (let
-        [lane-ty : ast.AstType (tc_core.tc-type-without-regions result-ty)]
+        [lane-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            result-ty)]
         (if (not
           (lower-masked-shift-lane-supported?
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view lane-ty)))
           (lower-masked-shift-unsupported ctx state expr ast-op lane-ty)
           (match (lower-avx512-masked-expr-expected
@@ -54937,7 +56033,9 @@
                         [(Expr right-state right-value right-ty)
                           (let
                             [count-ty : ast.AstType
-                              (tc_core.tc-type-without-regions right-ty)]
+                              (tc_core.tc-type-without-regions
+                                (tc_core.tc-context-type-bases ctx)
+                                right-ty)]
                             [typed-ir-op : ir.CompilerIrBinOp
                               (match ast-op
                                 [(Shl)
@@ -54945,13 +56043,16 @@
                                 [_ (Shr (lower-global-shared-view count-ty))])]
                             (if (and
                               (tc_core.tc-integer-type?
+                                (tc_core.tc-context-type-bases ctx)
                                 (lower-global-shared-view count-ty))
                               (=
                                 (lower-simd-lanes-for-elem
+                                  (tc_core.tc-context-type-bases ctx)
                                   (lower-state-mode state)
                                   (lower-global-shared-view count-ty))
                                 lanes))
                               (lower-avx512-masked-shift-guard-and-emit
+                                (tc_core.tc-context-type-bases ctx)
                                 right-state
                                 active-mask
                                 lanes
@@ -54967,9 +56068,13 @@
                                   "masked shift '"
                                   (lower-masked-shift-op-name ast-op)
                                   "' count lane type "
-                                  (tc_core.tc-type-render count-ty)
+                                  (tc_core.tc-type-render
+                                    (tc_core.tc-context-type-bases ctx)
+                                    count-ty)
                                   "; the count must have the same SIMD lane width as "
-                                  (tc_core.tc-type-render lane-ty)))))])]
+                                  (tc_core.tc-type-render
+                                    (tc_core.tc-context-type-bases ctx)
+                                    lane-ty)))))])]
                     [(Err message) (Err message)])])]
             [(Err message) (Err message)])))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx expr message)))]))
@@ -54997,6 +56102,7 @@
       (let
         [source : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx source-ty))]
         [decision : spmd_numeric.CompilerSpmdNumericDecision
           (spmd_numeric.compiler-spmd-numeric-binary-decision
@@ -55253,7 +56359,12 @@
             (and (lower-mode-avx512? (lower-state-mode state)) (< divisor 0)))
           (> positive-divisor 0)
           (>= index-offset 0)
-          (= lanes (lower-simd-lanes-for-elem (lower-state-mode state) (I64))))
+          (=
+            lanes
+            (lower-simd-lanes-for-elem
+              (tc_core.tc-context-type-bases ctx)
+              (lower-state-mode state)
+              (I64))))
           (lower-simd-masked-index-mod
             state
             index-var
@@ -55459,8 +56570,8 @@
       [(= lanes 16) (I16)]
       [else (I8)])))
 
-(define (lower-avx2-enum-zero-value [ty : ast.AstType]) : ir.CompilerIrValue
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-avx2-enum-zero-value [type-bases : i64] [ty : ast.AstType]) : ir.CompilerIrValue
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(F64) (F64 (cast 0 : u64))]
     [(F32) (F64 (cast 0 : u64))]
     [(Bool) (Bool false)]
@@ -55502,6 +56613,7 @@
 ;; Guard the load in scalar control flow. This is required for both masked arms
 ;; and the final partial gang: inactive lanes must not touch enum storage.
 (define (lower-avx2-enum-load-active-lane
+  [type-bases : i64]
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [offset : i64]
@@ -55514,7 +56626,9 @@
           slot-state
           (Mov
             slot-var
-            (lower-avx2-enum-zero-value (lower-global-shared-view ty))
+            (lower-avx2-enum-zero-value
+              type-bases
+              (lower-global-shared-view ty))
             (lower-global-shared-view ty)))
         "spmd_match_lane_load")
         [(Label load-label-state load-label)
@@ -55617,6 +56731,7 @@
 ;; Reconstruct one payload field as a varying vector without adding a gather
 ;; opcode: load each active lane and select its splat into a one-lane mask.
 (define (lower-avx2-enum-field-vector
+  [type-bases : i64]
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [stride : i64]
@@ -55635,7 +56750,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! lane-id value)])
-    (match (if (lower-type-bool? field-ty)
+    (match (if (lower-type-bool? type-bases field-ty)
       (lower-avx2-enum-zero-mask
         s
         (lower-global-shared-view lane-id)
@@ -55643,7 +56758,9 @@
         (lower-global-shared-view lane-ty))
       (lower-emit-splat
         s
-        (lower-avx2-enum-zero-value (lower-global-shared-view field-ty))
+        (lower-avx2-enum-zero-value
+          type-bases
+          (lower-global-shared-view field-ty))
         lanes
         (lower-global-shared-view field-ty)))
       [(Expr next-state value _)
@@ -55678,6 +56795,7 @@
             (set! s next-state)
             (set! lane-active value)])
         (match (lower-avx2-enum-load-active-lane
+          type-bases
           s
           (lower-global-shared-view base)
           (+ field-offset (* lane stride))
@@ -55686,7 +56804,7 @@
           [(Expr next-state value _)
             (set! s next-state)
             (set! loaded value)])
-        (if (lower-type-bool? field-ty)
+        (if (lower-type-bool? type-bases field-ty)
           (match (lower-avx2-enum-scalar-bool-lane-mask
             s
             loaded
@@ -55723,6 +56841,7 @@
     (Expr s result field-ty)))
 
 (define (lower-avx2-enum-tag-arm-masks
+  [type-bases : i64]
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [stride : i64]
@@ -55773,6 +56892,7 @@
             (set! s next-state)
             (set! lane-active value)])
         (match (lower-avx2-enum-load-active-lane
+          type-bases
           s
           (lower-global-shared-view base)
           (* lane stride)
@@ -55858,6 +56978,7 @@
               (csym.compiler-symbols-missing-handle))]
           (if (csym.compiler-symbols-handle-found? handle)
             (lower-avx2-enum-tag-arm-masks
+              (tc_core.tc-context-type-bases ctx)
               state
               base
               (lower-type-size ctx enum-ty)
@@ -55882,6 +57003,7 @@
               (csym.compiler-symbols-missing-handle))]
           (if (csym.compiler-symbols-handle-found? handle)
             (lower-avx2-enum-tag-arm-masks
+              (tc_core.tc-context-type-bases ctx)
               state
               base
               (lower-type-size ctx enum-ty)
@@ -55956,14 +57078,21 @@
             (ast.ast-type-id-fallback))]
         [field-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx field-node)))]
         [default-offset : i64
           (lower-align-up cursor (lower-type-align ctx field-ty))]
-        [enum-id : i64 (lower-enum-type-name-id-or enum-ty -1)]
+        [enum-id : i64
+          (lower-enum-type-name-id-or
+            (tc_core.tc-context-type-bases ctx)
+            enum-ty
+            -1)]
         [enum-name : String
-          (lower-enum-type-name-or-empty (lower-global-shared-view enum-ty))]
+          (lower-enum-type-name-or-empty
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view enum-ty))]
         [variant-name : String (tc_core.tc-env-key-name-text variant-name-id)]
         [field-offset : i64
           (lower-variant-payload-offset
@@ -56003,6 +57132,7 @@
                 expr)]
             [(Binding name)
               (match (lower-avx2-enum-field-vector
+                (tc_core.tc-context-type-bases ctx)
                 state
                 (lower-global-shared-view base)
                 (lower-type-size ctx enum-ty)
@@ -56038,6 +57168,7 @@
                             "lower: varying enum payload did not produce an IR variable")))])])]
             [(Var name _)
               (match (lower-avx2-enum-field-vector
+                (tc_core.tc-context-type-bases ctx)
                 state
                 (lower-global-shared-view base)
                 (lower-type-size ctx enum-ty)
@@ -56249,9 +57380,13 @@
                                             (if (ast.ast-type-eq-with-pools?
                                               (tc_core.tc-context-pools ctx)
                                               (tc_core.tc-type-without-regions
+                                                (tc_core.tc-context-type-bases
+                                                  ctx)
                                                 (lower-global-shared-view
                                                   body-ty))
                                               (tc_core.tc-type-without-regions
+                                                (tc_core.tc-context-type-bases
+                                                  ctx)
                                                 rest-ty))
                                               (lower-avx512-masked-match-select
                                                 ctx
@@ -56337,7 +57472,9 @@
   [scrut-ty : ast.AstType]
   [lanes : i64]
   [lit : ast.AstLiteral]) : ResultLowerExpr
-  (match (tc_core.tc-type-without-regions (lower-global-shared-view scrut-ty))
+  (match (tc_core.tc-type-without-regions
+    (tc_core.tc-context-type-bases ctx)
+    (lower-global-shared-view scrut-ty))
     [(Bool)
       (match lit
         [(Bool value)
@@ -56354,9 +57491,13 @@
         (lower-literal-value-with-type
           (tc_core.tc-context-source-names ctx)
           lit
-          (tc_core.tc-type-without-regions (lower-global-shared-view scrut-ty)))
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view scrut-ty)))
         lanes
-        (tc_core.tc-type-without-regions (lower-global-shared-view scrut-ty)))
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view scrut-ty)))
         [(Expr lit-state lit-value _)
           (Ok
             (lower-emit-vector-compare
@@ -56365,7 +57506,9 @@
               scrut-value
               lit-value
               lanes
-              (tc_core.tc-type-without-regions scrut-ty)))])]))
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
+                scrut-ty)))])]))
 
 (define (lower-avx512-masked-match-literal-arm-masks
   [ctx : tc_core.TcContext]
@@ -56423,7 +57566,7 @@
   [lanes : i64]
   [ty : ast.AstType]
   [expr : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-type-bool? ty)
+  (if (lower-type-bool? (tc_core.tc-context-type-bases ctx) ty)
     (Ok
       (lower-emit-mask-select
         state
@@ -56433,6 +57576,7 @@
         rest-value
         lanes))
     (if (lower-avx512-masked-select-result-supported?
+      (tc_core.tc-context-type-bases ctx)
       state
       lanes
       (lower-global-shared-view ty))
@@ -56443,7 +57587,9 @@
           arm-value
           rest-value
           lanes
-          (tc_core.tc-type-without-regions ty)))
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            ty)))
       (lower-avx512-masked-unsupported
         ctx
         expr
@@ -56506,8 +57652,11 @@
               (if (ast.ast-type-eq-with-pools?
                 (tc_core.tc-context-pools ctx)
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view body-ty))
-                (tc_core.tc-type-without-regions rest-ty))
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  rest-ty))
                 (lower-avx512-masked-match-select
                   ctx
                   rest-state
@@ -56722,7 +57871,8 @@
     (lower-state-type-cache state)
     (lower-state-function-state state)
     scrutinee)
-    [(Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
+    [(Ok scrut-ty)
+      (lower-spmd-enum-type? (tc_core.tc-context-type-bases ctx) scrut-ty)]
     [(Err _) false])
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(Expr mask-state mask _)
@@ -56776,9 +57926,12 @@
                   arms)])])]
       [(Err message) (Err message)])))
 
-(define (lower-spmd-ir-value-class [ty : ast.AstType] [varying : bool]) : ir.CompilerIrSpmdValueClass
+(define (lower-spmd-ir-value-class
+  [type-bases : i64]
+  [ty : ast.AstType]
+  [varying : bool]) : ir.CompilerIrSpmdValueClass
   (if varying
-    (if (lower-type-bool? ty)
+    (if (lower-type-bool? type-bases ty)
       (Mask)
       (Varying))
     (Uniform)))
@@ -56849,6 +58002,7 @@
                 (ast.ast-expr-list-get args arg-index 0))]
             [resolved-ty : ast.AstType
               (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx param-ty))]
             [arg-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
@@ -56896,6 +58050,7 @@
                         builder
                         (ir.CompilerIrSpmdCallArg.Arg
                           (lower-spmd-ir-value-class
+                            (tc_core.tc-context-type-bases ctx)
                             (lower-global-shared-view resolved-ty)
                             varying)
                           arg-value
@@ -56964,13 +58119,14 @@
     (lower-spmd-source-param-types-at params (+ index 1) out)))
 
 (define (lower-spmd-source-signature
+  [type-bases : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : String
   (let
     [types : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-param-list-len (& params)))]
     (lower-spmd-source-param-types-at (& params) 0 (&mut types))
-    (tc_core.tc-type-render (ast.ast-ty-func types ret))))
+    (tc_core.tc-type-render type-bases (ast.ast-ty-func types ret))))
 
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
@@ -57084,12 +58240,16 @@
     (= item.index-param index-param)))
 
 (define (lower-imported-spmd-result-compatible?
+  [type-bases : i64]
   [interns : (& interns ci.InternCompatState)]
   [item : ast.AstImportedSpmdSpecialization]
   [ret : ast.AstType]) : bool
   (let
     [result : String (ci.intern-compat-state-id-str interns item.result)]
-    (if (tc_core.tc-type-eq (tc_core.tc-type-without-regions ret) (Unit))
+    (if (tc_core.tc-type-eq
+      type-bases
+      (tc_core.tc-type-without-regions type-bases ret)
+      (Unit))
       (string.eq result "unit")
       (or (string.eq result "u") (string.eq result "v")))))
 
@@ -57119,6 +58279,7 @@
     (ast.ast-imported-spmd-specialization-fallback)))
 
 (define (lower-imported-spmd-selection-scan-specializations-at
+  [type-bases : i64]
   [interns : (& interns ci.InternCompatState)]
   [specializations : (& specializations ast.AstImportedSpmdSpecializationList)]
   [index : i64]
@@ -57149,6 +58310,7 @@
             args-code
             requested-index-param)
           (lower-imported-spmd-result-compatible?
+            type-bases
             interns
             item
             (lower-global-shared-view ret)))]
@@ -57177,6 +58339,7 @@
             scan.selected-count
             scan.selected))]
       (lower-imported-spmd-selection-scan-specializations-at
+        type-bases
         interns
         specializations
         (+ index 1)
@@ -57188,6 +58351,7 @@
         next))))
 
 (define (lower-imported-spmd-selection-scan-callables-at
+  [type-bases : i64]
   [interns : (& interns ci.InternCompatState)]
   [callables : (& callables ast.AstImportedSpmdCallableList)]
   [index : i64]
@@ -57225,6 +58389,7 @@
       [next : LowerImportedSpmdSelectionScan
         (if matches-signature
           (lower-imported-spmd-selection-scan-specializations-at
+            type-bases
             interns
             (& specializations)
             0
@@ -57236,6 +58401,7 @@
             signature-scan)
           signature-scan)]
       (lower-imported-spmd-selection-scan-callables-at
+        type-bases
         interns
         callables
         (+ index 1)
@@ -57268,6 +58434,7 @@
     [callable-count : i64 (ast.ast-imported-spmd-callable-list-len callables)]
     [scan : LowerImportedSpmdSelectionScan
       (lower-imported-spmd-selection-scan-callables-at
+        (ast.ast-node-pool-context-type-segment-bases pools)
         interns
         callables
         0
@@ -57436,6 +58603,7 @@
     (string.int->string index-param)))
 
 (define (lower-spmd-package-symbol
+  [type-bases : i64]
   [package-name : String]
   [canonical-name : String]
   [signature : String]
@@ -57465,7 +58633,7 @@
     (match backend
       [(Avx512)
         (if (string.eq result "v")
-          (if (lower-type-bool? result-ty)
+          (if (lower-type-bool? type-bases result-ty)
             (str_cat.str-cat "__tl_spmd_ret_mask_" stable-name)
             (str_cat.str-cat "__tl_spmd_ret_varying_" stable-name))
           (str_cat.str-cat "__tl_spmd_ret_uniform_" stable-name))]
@@ -57508,8 +58676,8 @@
 ;; the return type as its own typed lane makes identities structurally distinct
 ;; even if a future diagnostic fixture deliberately supplies equal serialized
 ;; text at the stable-hash boundary.
-(define (lower-spmd-package-type-role-tag [ty : ast.AstType]) : i64
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-spmd-package-type-role-tag [type-bases : i64] [ty : ast.AstType]) : i64
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I64) 1]
     [(U64) 2]
     [(F64) 3]
@@ -57545,10 +58713,11 @@
         rest))))
 
 (define (lower-spmd-result-wrapper-role
+  [type-bases : i64]
   [result-ty : ast.AstType]
   [varying? : bool]) : i64
   (if varying?
-    (if (lower-type-bool? result-ty)
+    (if (lower-type-bool? type-bases result-ty)
       (ci.intern-generated-symbol-role-spmd-result-mask)
       (ci.intern-generated-symbol-role-spmd-result-varying))
     (ci.intern-generated-symbol-role-spmd-result-uniform)))
@@ -57593,6 +58762,7 @@
             hash))])))
 
 (define (lower-spmd-package-structural-symbol
+  [type-bases : i64]
   [lower-state : CompilerLowerState]
   [package-name : String]
   [canonical-name : String]
@@ -57637,7 +58807,9 @@
       (ci.intern-compat-state-composite-pair-id
         (&mut intern-state)
         (lower-spmd-package-result-role-tag result)
-        (lower-spmd-package-type-role-tag (lower-global-shared-view result-ty)))]
+        (lower-spmd-package-type-role-tag
+          type-bases
+          (lower-global-shared-view result-ty)))]
     [call-components : i64
       (ci.intern-compat-state-composite-triple-id
         (&mut intern-state)
@@ -57677,6 +58849,7 @@
       (match backend
         [(Avx512)
           (lower-spmd-result-wrapper-role
+            type-bases
             result-ty
             (match result
               [(Varying) true]
@@ -57786,6 +58959,7 @@
             (let
               [resolved : ast.AstType
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx ty))]
               [class : ir.CompilerIrSpmdValueClass
                 (match (ast.ast-spmd-param-class-list-get
@@ -57794,7 +58968,9 @@
                   Uniform)
                   [(Uniform) Uniform]
                   [(Varying)
-                    (if (lower-type-bool? resolved)
+                    (if (lower-type-bool?
+                      (tc_core.tc-context-type-bases ctx)
+                      resolved)
                       Mask
                       Varying)])]
               (set!
@@ -57821,10 +58997,15 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
         (lower-type-i64?
-          (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))])))
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
+            (tc_core.tc-resolve-type ctx ty)))])))
 
-(define (lower-spmd-package-abi-type-supported? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-spmd-package-abi-type-supported?
+  [type-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I64) true]
     [(U64) true]
     [(F64) true]
@@ -57851,22 +59032,29 @@
       [(Param _ ty _)
         (let
           [resolved : ast.AstType
-            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
+              (tc_core.tc-resolve-type ctx ty))]
           [class : ast.AstSpmdParamClass
             (ast.ast-spmd-param-class-list-get classes index Uniform)]
           (cond
             [(not
                 (lower-spmd-package-abi-type-supported?
+                  (tc_core.tc-context-type-bases ctx)
                   (lower-global-shared-view resolved)))
               "lower: :spmd-callable parameter type is not supported by private ABI v1"]
             [(and
                 (match class
                   [(Varying) true]
                   [_ false])
-                (not (lower-type-bool? resolved))
+                (not
+                  (lower-type-bool?
+                    (tc_core.tc-context-type-bases ctx)
+                    resolved))
                 (not
                   (=
                     (lower-simd-lanes-for-elem
+                      (tc_core.tc-context-type-bases ctx)
                       (CompilerLowerMode.Avx512)
                       resolved)
                     lanes)))
@@ -57896,7 +59084,9 @@
     [index-name : String
       (lower-spmd-package-index-name ctx (& params) index-param)]
     [ret-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ret))]
     [param-error : String
       (lower-spmd-package-param-validation-error-at
         ctx
@@ -57941,16 +59131,18 @@
       [(not (string.eq param-error "")) param-error]
       [(not
           (lower-spmd-package-abi-type-supported?
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view ret-ty)))
         "lower: :spmd-callable return type is not supported by private ABI v1"]
       [(and
           (match specialization.result
             [(Varying) true]
             [_ false])
-          (not (lower-type-bool? ret-ty))
+          (not (lower-type-bool? (tc_core.tc-context-type-bases ctx) ret-ty))
           (not
             (=
               (lower-simd-lanes-for-elem
+                (tc_core.tc-context-type-bases ctx)
                 (CompilerLowerMode.Avx512)
                 (lower-global-shared-view ret-ty))
               specialization.lanes)))
@@ -57970,7 +59162,7 @@
         (lower-spmd-inline-recursive-message)]
       [(< body-lanes 0)
         "lower: :spmd-callable body does not support SPMD specialization"]
-      [(tc_core.tc-type-eq ret-ty (Unit))
+      [(tc_core.tc-type-eq (tc_core.tc-context-type-bases ctx) ret-ty (Unit))
         (match specialization.result
           [(Unit) ""]
           [_ "lower: :spmd-callable unit return requires result unit"])]
@@ -58101,7 +59293,9 @@
                 (let
                   [ty-arg
                     (tc_core.tc-type-without-regions
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-type-strip-invalidate
+                        (tc_core.tc-context-type-bases ctx)
                         (tc_core.tc-resolve-type ctx ty)))]
                   (lower-one-word-register-storage-type ctx ty-arg))
                 idx))
@@ -58116,17 +59310,20 @@
               builder)])])))
 
 (define (lower-spmd-private-helper-name
+  [type-bases : i64]
   [names : LowerNameCache]
   [hidden-name : i64]
   [result-ty : ast.AstType]
   [result-varying : bool]) : i64
   (lower-spmd-private-helper-symbol
+    type-bases
     (compiler-lower-state-from-name-cache names)
     hidden-name
     result-ty
     result-varying))
 
 (define (lower-spmd-private-helper-symbol
+  [type-bases : i64]
   [lower-state : CompilerLowerState]
   [hidden-name : i64]
   [result-ty : ast.AstType]
@@ -58141,7 +59338,7 @@
         hidden-name)]
     (ci.intern-compat-state-generated-role-symbol-id
       (&mut intern-state)
-      (lower-spmd-result-wrapper-role result-ty result-varying)
+      (lower-spmd-result-wrapper-role type-bases result-ty result-varying)
       private-base)))
 
 (define (lower-spmd-helper-index-param-at
@@ -58191,6 +59388,7 @@
 ;; source parameter's class and source type. The helper and every call to it
 ;; carry this one record.
 (define (lower-spmd-private-abi
+  [type-bases : i64]
   [callee : i64]
   [backend : ir.CompilerIrSpmdBackend]
   [lanes : i64]
@@ -58231,10 +59429,14 @@
       lanes
       params
       index
-      (if (tc_core.tc-type-eq (lower-global-shared-view ret-ty) (Unit))
+      (if (tc_core.tc-type-eq
+        type-bases
+        (lower-global-shared-view ret-ty)
+        (Unit))
         (Unit)
         (Value
           (lower-spmd-ir-value-class
+            type-bases
             (lower-global-shared-view ret-ty)
             result-varying)
           ret-ty)))))
@@ -58292,7 +59494,9 @@
         source-param-count
         (+ source-param-count 1))]
     [ret-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ret))]
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
@@ -58354,10 +59558,11 @@
                   [(or
                       result-varying
                       (tc_core.tc-type-eq
+                        (tc_core.tc-context-type-bases ctx)
                         (lower-global-shared-view ret-ty)
                         (Unit)))
                     lowered]
-                  [(lower-type-bool? ret-ty)
+                  [(lower-type-bool? (tc_core.tc-context-type-bases ctx) ret-ty)
                     (lower-emit-mask-reduce body-state (Any) value lanes)]
                   [else
                     (lower-emit-vector-reduce
@@ -58377,6 +59582,7 @@
                   return-state
                   (Return
                     (if (tc_core.tc-type-eq
+                      (tc_core.tc-context-type-bases ctx)
                       (lower-global-shared-view ret-ty)
                       (Unit))
                       (No)
@@ -58413,6 +59619,7 @@
                   [else (Appended source-param-count)])]
               [abi : ir.CompilerIrSpmdPrivateAbi
                 (lower-spmd-private-abi
+                  (tc_core.tc-context-type-bases ctx)
                   hidden-name
                   backend
                   lanes
@@ -58451,7 +59658,9 @@
   (let
     [param-count : i64 (+ 1 (lower-param-count params))]
     [ret-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ret))]
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
@@ -58501,6 +59710,7 @@
               (lower-param-list ctx params 1))]
           [abi : ir.CompilerIrSpmdPrivateAbi
             (lower-spmd-private-abi
+              (tc_core.tc-context-type-bases ctx)
               hidden-name
               (Scalar)
               1
@@ -58630,10 +59840,12 @@
           (lower-box-shared-view specialization.args)]
         [signature : String
           (lower-spmd-source-signature
+            (tc_core.tc-context-type-bases ctx)
             (lower-global-shared-view params)
             (lower-global-shared-view ret))]
         [resolved-ret : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx (lower-global-shared-view ret)))]
         [lanes : i64
           (match backend
@@ -58642,6 +59854,7 @@
         [index-param : i64 specialization.index-param]
         [structural-symbol : i64
           (lower-spmd-package-structural-symbol
+            (tc_core.tc-context-type-bases ctx)
             lower-state
             package-name
             canonical-name
@@ -58878,7 +60091,10 @@
   [result-varying : bool]
   [expr : ast.AstExpr]
   [origin : ir.CompilerIrSpmdCallOrigin]) : ResultLowerExpr
-  (if (tc_core.tc-type-eq (lower-global-shared-view result-ty) (Unit))
+  (if (tc_core.tc-type-eq
+    (tc_core.tc-context-type-bases ctx)
+    (lower-global-shared-view result-ty)
+    (Unit))
     (let
       [instr : ir.CompilerIrInstr
         (ir.ir-instr-spmd-call-with-origin
@@ -58895,6 +60111,7 @@
         (let
           [result-class : ir.CompilerIrSpmdValueClass
             (lower-spmd-ir-value-class
+              (tc_core.tc-context-type-bases ctx)
               (lower-global-shared-view result-ty)
               result-varying)]
           [instr : ir.CompilerIrInstr
@@ -58962,8 +60179,11 @@
     (match (lower-global-shared-view lowered)
       [(Expr call-state call-value call-ty)
         (if (or
-          (tc_core.tc-type-eq (lower-global-shared-view call-ty) (Unit))
-          (lower-type-bool? call-ty))
+          (tc_core.tc-type-eq
+            (tc_core.tc-context-type-bases ctx)
+            (lower-global-shared-view call-ty)
+            (Unit))
+          (lower-type-bool? (tc_core.tc-context-type-bases ctx) call-ty))
           (Ok lowered)
           (Ok (lower-emit-splat call-state call-value lanes call-ty)))])))
 
@@ -59048,6 +60268,7 @@
                           (lower-global-shared-view call-args))]
                       [signature : String
                         (lower-spmd-source-signature
+                          (tc_core.tc-context-type-bases ctx)
                           params
                           (lower-global-shared-view ret))]
                       [requested-index-param : i64
@@ -59209,6 +60430,7 @@
                                   Avx512)]
                               [private-name : i64
                                 (lower-spmd-private-helper-name
+                                  (tc_core.tc-context-type-bases ctx)
                                   (lower-state-names named-state)
                                   hidden-name
                                   (lower-global-shared-view result-ty)
@@ -59349,9 +60571,11 @@
         (let
           [source : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx source-ty))]
           [destination : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx cast-ty-id)))]
@@ -59414,11 +60638,13 @@
   (let
     [resolved-cast : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type
           ctx
           (tc_core.tc-context-type-get ctx cast-ty-id)))]
     [resolved-expected : ast.AstType
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx expected-ty))]
     (match (lower-simple-vector-map-casted-literal
       ctx
@@ -59431,6 +60657,7 @@
           [(Uniform value)
             (Ok
               (lower-emit-masked-preheader-splat
+                (tc_core.tc-context-type-bases ctx)
                 state
                 value
                 lanes
@@ -59546,6 +60773,7 @@
           [_
             (Ok
               (lower-emit-masked-preheader-splat
+                (tc_core.tc-context-type-bases ctx)
                 state
                 (lower-literal-value-with-type
                   (tc_core.tc-context-source-names ctx)
@@ -59555,7 +60783,13 @@
                 (tc_core.tc-literal-type lit)))])]
       [(SpmdProgramIndex) (Ok (lower-emit-lane-id state lanes (I64)))]
       [(SpmdProgramCount)
-        (Ok (lower-emit-masked-preheader-splat state (I64 lanes) lanes (I64)))]
+        (Ok
+          (lower-emit-masked-preheader-splat
+            (tc_core.tc-context-type-bases ctx)
+            state
+            (I64 lanes)
+            lanes
+            (I64)))]
       [(Var name)
         (lower-avx512-masked-var
           ctx
@@ -59897,14 +61131,18 @@
           [_
             (Ok
               (lower-emit-masked-preheader-splat
+                (tc_core.tc-context-type-bases ctx)
                 state
                 (lower-literal-value-with-type
                   (tc_core.tc-context-source-names ctx)
                   lit
                   (tc_core.tc-type-without-regions
+                    (tc_core.tc-context-type-bases ctx)
                     (lower-global-shared-view expected-ty)))
                 lanes
-                (tc_core.tc-type-without-regions expected-ty)))])]
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
+                  expected-ty)))])]
       [(If cond-box then-box else-box)
         (let
           [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
@@ -60540,6 +61778,7 @@
                 (set! s next-s)
                 (set! vector-start-ok value)])
             (match (lower-vector-map-preheader-cache-stores
+              (tc_core.tc-context-type-bases ctx)
               s
               arrays
               stores
@@ -60738,7 +61977,9 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (if (and
     (lower-mode-simd? (lower-state-mode state))
-    (lower-type-i64? (lower-global-shared-view index-ty)))
+    (lower-type-i64?
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view index-ty)))
     (match (lower-simple-vector-map
       ctx
       (lower-state-mode state)
@@ -60896,6 +62137,7 @@
                                   ctx
                                   body
                                   (lower-spmd-map-shift-diagnostic
+                                    (tc_core.tc-context-type-bases ctx)
                                     "shl"
                                     lane-ty
                                     (lower-state-mode state)))))]
@@ -60915,6 +62157,7 @@
                                       ctx
                                       body
                                       (lower-spmd-map-shift-diagnostic
+                                        (tc_core.tc-context-type-bases ctx)
                                         "shr"
                                         lane-ty
                                         (lower-state-mode state)))))]
@@ -61153,8 +62396,8 @@
             [_ unit])
           (set! index (+ index 1))))]))
 
-(define (lower-spmd-array-view-elem? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
+(define (lower-spmd-array-view-elem? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions type-bases ty)
     [(I8) true]
     [(U8) true]
     [(I16) true]
@@ -61177,12 +62420,15 @@
   [write : bool]) : ast.AstType
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     [array : ast.AstType
       (match (lower-global-shared-view resolved)
         [(Array _ _) resolved]
         [(MutRef _ inner)
           (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx inner)))]
@@ -61190,13 +62436,16 @@
           (if write
             (Unit)
             (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx inner))))]
         [_ (Unit)])]
     (match (lower-global-shared-view array)
       [(Array elem _)
-        (if (lower-spmd-array-view-elem? (tc_core.tc-context-type-get ctx elem))
+        (if (lower-spmd-array-view-elem?
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-context-type-get ctx elem))
           array
           (Unit))]
       [_ (Unit)])))
@@ -61228,6 +62477,7 @@
                     (match lowered
                       [(Expr source-state source-value source-ty)
                         (match (lower-cast-value
+                          (tc_core.tc-context-type-bases ctx)
                           source-state
                           source-value
                           source-ty
@@ -61268,7 +62518,7 @@
   [body : ast.AstExpr]) : ResultLowerSpmdArrayViews
   (if (and
     (lower-mode-simd? (lower-state-mode state))
-    (lower-type-i64? index-ty))
+    (lower-type-i64? (tc_core.tc-context-type-bases ctx) index-ty))
     (let
       [flags : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 16)]
       [_scan : unit (lower-spmd-array-view-scan! ctx (&mut flags) body)]
@@ -61356,7 +62606,9 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (if (and
     (lower-mode-simd? (lower-state-mode state))
-    (lower-type-i64? (lower-global-shared-view index-ty))
+    (lower-type-i64?
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view index-ty))
     (lower-spmd-expr-has-call?
       ctx
       (lower-state-function-state state)
@@ -61671,11 +62923,13 @@
             (lower-global-shared-view scrutinee))
             [(Ok scrut-ty)
               (match (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx scrut-ty))
                 [(Ref borrow-lifetime referent-box)
                   (let
                     [referent-ty : ast.AstType
                       (tc_core.tc-type-strip-region
+                        (tc_core.tc-context-type-bases ctx)
                         (tc_core.tc-resolve-type
                           ctx
                           (tc_core.tc-context-type-get ctx referent-box)))]
@@ -61729,7 +62983,9 @@
   [scrut-ty : ast.AstType]
   [name : i64]) : bool
   (if (lower-box-pattern-name? name)
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx scrut-ty))
       [(Box _) true]
       [_ false])
     false))
@@ -61740,7 +62996,9 @@
   [name : i64]) : bool
   (let
     [pattern-name : String (tc_core.tc-env-key-name-text name)]
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx scrut-ty))
       [(Struct struct-name)
         (tc_core.tc-struct-pattern-name-matches?
           ctx
@@ -61884,7 +63142,9 @@
                   field-value
                   (lower-global-shared-view field-ty)
                   (lower-struct-type-name-or-empty
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-type-strip-region
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type ctx field-ty)))
                   (deref args-box))])]
           [(Err message) (Err message)])
@@ -61990,12 +63250,18 @@
   [args : ast.AstPatternList]) : ResultLowerEnv
   (match (lower-struct-fields-id
     ctx
-    (lower-struct-type-name-id-or scrut-ty -1)
+    (lower-struct-type-name-id-or
+      (tc_core.tc-context-type-bases ctx)
+      scrut-ty
+      -1)
     (lower-global-shared-view struct-name))
     [(Ok fields)
       (match (tc_core.tc-struct-pattern-field-types-for-scrut
         ctx
-        (lower-struct-type-name-id-or scrut-ty -1)
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          scrut-ty
+          -1)
         (lower-global-shared-view scrut-ty)
         (lower-global-shared-view fields))
         [(Ok field-types)
@@ -62005,7 +63271,10 @@
             env
             type-env
             base
-            (lower-struct-type-name-id-or scrut-ty -1)
+            (lower-struct-type-name-id-or
+              (tc_core.tc-context-type-bases ctx)
+              scrut-ty
+              -1)
             struct-name
             args
             fields
@@ -62027,9 +63296,25 @@
   (match pattern
     [(Wildcard) (Ok state env type-env)]
     [(Binding name)
-      (lower-bind-element-name state env type-env bind-mode value name elem-ty)]
+      (lower-bind-element-name
+        (tc_core.tc-context-type-bases ctx)
+        state
+        env
+        type-env
+        bind-mode
+        value
+        name
+        elem-ty)]
     [(Var name _)
-      (lower-bind-element-name state env type-env bind-mode value name elem-ty)]
+      (lower-bind-element-name
+        (tc_core.tc-context-type-bases ctx)
+        state
+        env
+        type-env
+        bind-mode
+        value
+        name
+        elem-ty)]
     [(Tuple patterns-box)
       (lower-bind-tuple-pattern
         ctx
@@ -62077,7 +63362,9 @@
                 value
                 (lower-global-shared-view elem-ty)
                 (lower-struct-type-name-or-empty
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-type-strip-region
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx elem-ty)))
                 (deref args-box))
               (Err
@@ -62097,7 +63384,9 @@
               value
               (lower-global-shared-view elem-ty)
               (lower-struct-type-name-or-empty
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-type-strip-region
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-resolve-type ctx elem-ty)))
               (deref args-box))
             (Err
@@ -62113,6 +63402,7 @@
               [(Borrowed _) "lower: unsupported borrowed tuple element pattern"]))))]))
 
 (define (lower-bind-element-name
+  [type-bases : i64]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -62123,7 +63413,8 @@
   (match value
     [(Var value-var)
       (let
-        [bound-ty : ast.AstType (lower-bind-mode-ref-type bind-mode elem-ty)]
+        [bound-ty : ast.AstType
+          (lower-bind-mode-ref-type type-bases bind-mode elem-ty)]
         (Ok
           state
           (sym_i64_env.sym-i64-bind-id env name value-var)
@@ -62165,12 +63456,13 @@
 ;; binders build it before they skip a wildcard, so a borrowed pattern builds the
 ;; reference type (a new type node) even for a wildcard element.
 (define (lower-bind-mode-ref-type
+  [type-bases : i64]
   [bind-mode : LowerBindMode]
   [elem-ty : ast.AstType]) : ast.AstType
   (match bind-mode
     [(Owned) elem-ty]
     [(Borrowed borrow-lifetime)
-      (tc_core.tc-borrowed-field-ref-type borrow-lifetime elem-ty)]))
+      (tc_core.tc-borrowed-field-ref-type type-bases borrow-lifetime elem-ty)]))
 
 (define (lower-bind-tuple-pattern
   [ctx : tc_core.TcContext]
@@ -62226,6 +63518,7 @@
         [next-cursor : i64 (+ offset (lower-type-size ctx resolved))]
         [ref-ty : ast.AstType
           (lower-bind-mode-ref-type
+            (tc_core.tc-context-type-bases ctx)
             bind-mode
             (lower-global-shared-view elem-ty))]
         (if (match (lower-global-shared-view pattern)
@@ -62324,6 +63617,7 @@
         [offset : i64 (* index (lower-type-size ctx resolved))]
         [ref-ty : ast.AstType
           (lower-bind-mode-ref-type
+            (tc_core.tc-context-type-bases ctx)
             bind-mode
             (lower-global-shared-view elem-ty))]
         (if (match (lower-global-shared-view pattern)
@@ -62385,12 +63679,18 @@
   [patterns : ast.AstPatternList]) : ResultLowerEnv
   (match (lower-struct-fields-id
     ctx
-    (lower-struct-type-name-id-or scrut-ty -1)
+    (lower-struct-type-name-id-or
+      (tc_core.tc-context-type-bases ctx)
+      scrut-ty
+      -1)
     (lower-global-shared-view struct-name))
     [(Ok fields)
       (match (tc_core.tc-struct-pattern-field-types-for-scrut
         ctx
-        (lower-struct-type-name-id-or scrut-ty -1)
+        (lower-struct-type-name-id-or
+          (tc_core.tc-context-type-bases ctx)
+          scrut-ty
+          -1)
         (lower-global-shared-view scrut-ty)
         (lower-global-shared-view fields))
         [(Ok field-types)
@@ -62401,7 +63701,10 @@
             type-env
             borrow-lifetime
             base
-            (lower-struct-type-name-id-or scrut-ty -1)
+            (lower-struct-type-name-id-or
+              (tc_core.tc-context-type-bases ctx)
+              scrut-ty
+              -1)
             struct-name
             (& patterns)
             (& fields)
@@ -62515,6 +63818,7 @@
         (tc_core.tc-bind-id type-env name scrut-ty))]
     [(Tuple patterns-box)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
         [(Tuple _)
           (lower-bind-tuple-pattern
@@ -62531,6 +63835,7 @@
             [referent-ty : ast.AstType
               (tc_core.tc-context-type-get ctx referent-box)]
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (lower-global-shared-view referent-ty)))
@@ -62555,6 +63860,7 @@
               (lower-diagnostic "lower: tuple pattern requires Tuple scrutinee")))])]
     [(Array patterns-box)
       (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
         [(Array _ _)
           (lower-bind-array-pattern
@@ -62571,6 +63877,7 @@
             [referent-ty : ast.AstType
               (tc_core.tc-context-type-get ctx referent-box)]
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type
                 ctx
                 (lower-global-shared-view referent-ty)))
@@ -62619,7 +63926,9 @@
             (Var scrut-var)
             (lower-global-shared-view scrut-ty)
             (lower-struct-type-name-or-empty
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-type-strip-region
+                (tc_core.tc-context-type-bases ctx)
                 (tc_core.tc-resolve-type ctx scrut-ty)))
             (deref args-box))
           (Err (box (lower-diagnostic "lower: unsupported match pattern")))))]
@@ -62708,11 +64017,12 @@
   (not (sym_i64_env.sym-i64-contains-id env name)))
 
 (define (lower-tail-call-local-indirect-safe?
+  [type-bases : i64]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [name : i64]) : bool
   (if (sym_i64_env.sym-i64-contains-id env name)
-    (not (lower-type-env-contains-reference? type-env))
+    (not (lower-type-env-contains-reference? type-bases type-env))
     true))
 
 ;; How a match arm's body continues. A value match (`lower-match-value`) jumps
@@ -62816,6 +64126,7 @@
   [arms : ast.AstMatchArmList]
   [cont : LowerMatchCont]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
     (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
     [(Enum _)
       (lower-match-enum
@@ -62845,6 +64156,7 @@
       (let
         [referent-ty : ast.AstType
           (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx referent-box)))]
@@ -63528,8 +64840,13 @@
             args
             resolved-fields
             (lower-state-mode state)
-            (lower-enum-type-name-id-or resolved-scrut-ty -1)
-            (lower-enum-type-name-or-empty resolved-scrut-ty)
+            (lower-enum-type-name-id-or
+              (tc_core.tc-context-type-bases ctx)
+              resolved-scrut-ty
+              -1)
+            (lower-enum-type-name-or-empty
+              (tc_core.tc-context-type-bases ctx)
+              resolved-scrut-ty)
             variant-name
             handle-name-id
             0
@@ -63577,8 +64894,10 @@
     args
     fields
     (lower-state-mode body-start)
-    (lower-enum-type-name-id-or scrut-ty -1)
-    (lower-enum-type-name-or-empty (lower-global-shared-view scrut-ty))
+    (lower-enum-type-name-id-or (tc_core.tc-context-type-bases ctx) scrut-ty -1)
+    (lower-enum-type-name-or-empty
+      (tc_core.tc-context-type-bases ctx)
+      (lower-global-shared-view scrut-ty))
     variant-name
     variant-name-id
     0
@@ -63721,6 +65040,7 @@
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             (tc_core.tc-lambda-captures-reference?
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-context-expr-bases ctx)
               type-env
               params
@@ -63752,8 +65072,13 @@
   [callee-ret : ast.AstType]
   [ret-ty : ast.AstType]) : bool
   (tc_core.tc-type-eq
-    (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx callee-ret))
-    (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret-ty))))
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-type-without-regions
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx callee-ret))
+    (tc_core.tc-type-without-regions
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx ret-ty))))
 
 (define (lower-tail-call-direct-structural-param?
   [ctx : tc_core.TcContext]
@@ -63768,7 +65093,9 @@
     type-env
     name)
     [(Ok fn-ty)
-      (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx fn-ty))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx fn-ty))
         [(Func param-types _)
           (lower-internal-structural-type-list? ctx (deref param-types))]
         [_ false])]
@@ -63802,6 +65129,7 @@
         name)
         [(Ok fn-ty)
           (match (tc_core.tc-type-strip-region
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-resolve-type ctx fn-ty))
             [(Func param-types callee-ret)
               (lower-tail-call-compatible-return?
@@ -63826,7 +65154,9 @@
     type-env
     name)
     [(Ok fn-ty)
-      (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx fn-ty))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx fn-ty))
         [(Func param-types _)
           (lower-args-as
             ctx
@@ -63856,7 +65186,9 @@
     (lower-global-shared-view ret-ty)
     sret-var)
     false
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx func-ty))
       [(Func param-types callee-ret)
         (and
           (not (lower-internal-structural-type-list? ctx (deref param-types)))
@@ -64136,6 +65468,7 @@
       name-id)
       [(Ok fn-ty)
         (match (tc_core.tc-type-strip-region
+          (tc_core.tc-context-type-bases ctx)
           (tc_core.tc-resolve-type ctx fn-ty))
           [(Func param-types fn-ret)
             (if (not
@@ -64255,7 +65588,9 @@
         raw-name-id
         (lower-global-shared-view ret-ty))]
     [struct-name : String
-      (match (tc_core.tc-type-strip-region (lower-global-shared-view ret-ty))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view ret-ty))
         [(Struct resolved-struct)
           (if (lower-call-name-matches-nominal?
             ctx
@@ -64653,7 +65988,11 @@
               [(Err message) (Err message)])]
           [unshadowed
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
-          [(lower-tail-call-local-indirect-safe? env type-env name)
+          [(lower-tail-call-local-indirect-safe?
+              (tc_core.tc-context-type-bases ctx)
+              env
+              type-env
+              name)
             (lower-tail-call-indirect-expr
               ctx
               state
@@ -64788,7 +66127,9 @@
   (let
     [variant-name : String (tc_core.tc-env-key-name-text variant-name-id)]
     [resolved-scrut-ty : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx scrut-ty))]
     [handle : i64
       (lower-variant-constructor-handle-id-or
         ctx
@@ -64869,11 +66210,13 @@
         (match (tc_core.tc-expr ctx type-env scrutinee)
           [(Ok scrut-ty)
             (match (tc_core.tc-type-strip-region
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type ctx scrut-ty))
               [(Ref _ referent-box)
                 (let
                   [referent-ty : ast.AstType
                     (tc_core.tc-type-strip-region
+                      (tc_core.tc-context-type-bases ctx)
                       (tc_core.tc-resolve-type
                         ctx
                         (tc_core.tc-context-type-get ctx referent-box)))]
@@ -64964,7 +66307,10 @@
         (match (tc_core.tc-expr ctx type-env (lower-global-shared-view inner))
           [(Ok inner-ty)
             (if (tc_core.tc-type-eq
-              (tc_core.tc-type-without-regions inner-ty)
+              (tc_core.tc-context-type-bases ctx)
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-context-type-bases ctx)
+                inner-ty)
               (lower-global-shared-view ret-ty))
               (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
               (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
@@ -65258,7 +66604,9 @@
       [(Param name ty _)
         (let
           [source-ty : ast.AstType
-            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
+              (tc_core.tc-resolve-type ctx ty))]
           [physical-value : ir.CompilerIrValue (Var physical-index)]
           [classification : LowerCAbiAggregate
             (lower-internal-param-class
@@ -65315,12 +66663,16 @@
 (define (lower-pointer-proof-type [ctx : tc_core.TcContext] [ty : ast.AstType]) : pointer_proof.PointerProofType
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Ptr _) Pointer]
       [(MutPtr _) MutablePointer]
       [_
-        (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
+        (if (tc_core.tc-integer-type?
+          (tc_core.tc-context-type-bases ctx)
+          (lower-global-shared-view resolved))
           Integer
           NonPointer)])))
 
@@ -65715,7 +67067,9 @@
             (let
               [ty-arg
                 (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-bases ctx)
                   (tc_core.tc-type-strip-invalidate
+                    (tc_core.tc-context-type-bases ctx)
                     (tc_core.tc-resolve-type ctx ty)))]
               (lower-one-word-register-storage-type ctx ty-arg))
             idx))
@@ -65739,7 +67093,9 @@
 (define (lower-type-contains-inline-aggregate?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-resolve-type ctx ty))
     [(Struct _) true]
     [(StructArgs _ _) true]
     [(Enum _) true]
@@ -65829,7 +67185,9 @@
     (let
       [param-count : i64 (lower-param-count params)]
       [ret-ty : ast.AstType
-        (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret))]
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-bases ctx)
+          (tc_core.tc-resolve-type ctx ret))]
       [global-init? : bool
         (lower-global-init-function-symbol? names logical-name)]
       [ret-class : LowerCAbiAggregate
@@ -66066,7 +67424,7 @@
             [symbol : i64
               (lower-name-cache-ir-symbol names logical-id name display-name)]
             (Ok
-              (if (lower-function-type? ty)
+              (if (lower-function-type? (tc_core.tc-context-type-bases ctx) ty)
                 ;; Function values are closure-descriptor pointers. A plain
                 ;; Global initializer names the function's code symbol instead,
                 ;; which makes the first indirect call interpret instruction
@@ -66131,6 +67489,7 @@
             (lower-global-shared-view elem-ty))
             [(Ok value)
               (if (lower-static-array-element-kind?
+                (tc_core.tc-context-type-bases ctx)
                 (lower-global-shared-view value)
                 (lower-global-shared-view elem-ty))
                 (let
@@ -66150,10 +67509,11 @@
 ;; Whether constant `value` is data of scalar type `ty`: integer literals only
 ;; for integer elements, float bits (already in `ty`'s width) only for floats.
 (define (lower-static-array-element-kind?
+  [type-bases : i64]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : bool
   (match value
-    [(I64 _) (tc_core.tc-integer-type? ty)]
+    [(I64 _) (tc_core.tc-integer-type? type-bases ty)]
     [(F64 _)
       (match ty
         [(F64) true]
@@ -66580,7 +67940,9 @@
   [ty : ast.AstType]) : tc_core.ResultTcNameId
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-context-type-bases ctx)
+        (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
       [(Struct name) (lower-struct-cleanup-id-for-struct lower-state ctx name)]
       [(StructArgs name _)
@@ -66591,7 +67953,9 @@
         (Err
           (str_cat.str-cat
             "lower: owned cleanup field type is not a cleanup-owning aggregate "
-            (tc_core.tc-type-render resolved)))])))
+            (tc_core.tc-type-render
+              (tc_core.tc-context-type-bases ctx)
+              resolved)))])))
 
 (define (lower-struct-cleanup-call-expr
   [pools : ast.AstNodePoolContext]
@@ -67433,6 +68797,7 @@
     (ast.ast-type-list-new)
     (ast.ast-type-cons
       (tc_core.tc-type-without-regions
+        (tc_core.tc-context-type-bases ctx)
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
@@ -67848,6 +69213,7 @@
       (let
         [ret-ty : ast.AstType
           (tc_core.tc-type-without-regions
+            (tc_core.tc-context-type-bases ctx)
             (tc_core.tc-context-type-get ctx ret-box))]
         [clean-param-types : ast.AstTypeList
           (lower-dispatch-type-list-without-regions ctx (deref param-types))]
@@ -68172,6 +69538,7 @@
         (let
           [fn-ty : ast.AstType
             (tc_core.tc-type-without-regions
+              (tc_core.tc-context-type-bases ctx)
               (tc_core.tc-resolve-type decl-ctx dispatch-ty))]
           (match (lower-dispatch-lower-variants
             decl-ctx
@@ -68543,7 +69910,9 @@
                     [(Ok ty)
                       (let
                         [global-ty : ast.AstType
-                          (tc_core.tc-type-without-regions ty)]
+                          (tc_core.tc-type-without-regions
+                            (tc_core.tc-context-type-bases ctx)
+                            ty)]
                         [global-name : String
                           (lower-current-decl-logical-name-cache-id
                             decl-name-cache
@@ -68645,6 +70014,7 @@
                       logical-key-id)]
                   (if (and
                     (tc_core.tc-type-contains-reference?
+                      (tc_core.tc-context-type-bases ctx)
                       (lower-global-shared-view resolved-ty))
                     (not
                       (lower-supported-reference-extern?
@@ -68670,7 +70040,9 @@
                             (lower-box-shared-view metadata))
                           name
                           logical-name
-                          (tc_core.tc-type-without-regions resolved-ty)
+                          (tc_core.tc-type-without-regions
+                            (tc_core.tc-context-type-bases ctx)
+                            resolved-ty)
                           (ast.ast-extern-metadata-abi
                             (lower-box-shared-view metadata))
                           (ci.intern-id-value
@@ -68782,10 +70154,14 @@
                                             logical-name)
                                           (ast.ast-ty-func
                                             (tc_core.tc-type-list-without-regions
+                                              (tc_core.tc-context-type-bases
+                                                ctx)
                                               (tc_core.tc-param-type-list
                                                 decl-ctx
                                                 params))
                                             (tc_core.tc-type-without-regions
+                                              (tc_core.tc-context-type-bases
+                                                ctx)
                                               (tc_core.tc-resolve-type
                                                 decl-ctx
                                                 ret)))
@@ -69209,7 +70585,10 @@
 
 (define (lower-debug-type-resolve [ctx : tc_core.TcContext] [ty : ast.AstType]) : ast.AstType
   (tc_core.tc-type-strip-invalidate
-    (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))
+    (tc_core.tc-context-type-bases ctx)
+    (tc_core.tc-type-strip-region
+      (tc_core.tc-context-type-bases ctx)
+      (tc_core.tc-resolve-type ctx ty))))
 
 (define (lower-debug-type-layout [ctx : tc_core.TcContext] [ty : ast.AstType]) : tc_core.TcLayoutInfo
   (match (tc_core.tc-inline-aggregate-type-layout ctx ty)
@@ -69306,7 +70685,10 @@
         (lower-debug-nominal-id! ctx types name-id ty)]
       [_
         (let
-          [key : String (tc_core.tc-type-render (lower-global-shared-view ty))]
+          [key : String
+            (tc_core.tc-type-render
+              (tc_core.tc-context-type-bases ctx)
+              (lower-global-shared-view ty))]
           [found : i64 (lower-debug-type-find types (& key))]
           (if (>= found 0)
             found
@@ -69340,7 +70722,10 @@
   [size : i64]
   [align : i64]) : ir.CompilerDebugTypeNode
   (let
-    [name : String (tc_core.tc-type-render (lower-global-shared-view ty))]
+    [name : String
+      (tc_core.tc-type-render
+        (tc_core.tc-context-type-bases ctx)
+        (lower-global-shared-view ty))]
     (match ty
       [(ast.AstType.String)
         (lower-debug-node
@@ -69610,6 +70995,7 @@
   (let
     [resident : bool
       (tc_core.tc-inline-aggregate-layout-register-resident?
+        (tc_core.tc-context-type-bases ctx)
         (lower-global-shared-view layout))]
     (match layout
       [(tc_core.TcInlineAggregateLayout.Struct size align fields)

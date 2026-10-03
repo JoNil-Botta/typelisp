@@ -1023,7 +1023,9 @@
                     CompilerSemanticTryFact.Compatible]
                   [(tc.TcTryQueryResult.TcTryQueryIncompatible _ _ reason)
                     (CompilerSemanticTryFact.Incompatible
-                      (tc.tc-try-incompatibility-message reason))])])])]
+                      (tc.tc-try-incompatibility-message
+                        (tc.tc-context-type-bases ctx)
+                        reason))])])])]
       [_ CompilerSemanticTryFact.NotTry])))
 
 (define (compiler-semantic-fact-recorder-function-enter!
@@ -1645,7 +1647,9 @@
             (ast.ast-nominal-name-id-key name))
           path)
         (compiler-semantic-fact-identity-empty))]
-    (CompilerSemanticFactType (tc.tc-type-render resolved) identity)))
+    (CompilerSemanticFactType
+      (tc.tc-type-render (tc.tc-context-type-bases ctx) resolved)
+      identity)))
 
 (define (compiler-semantic-fact-recorder-expression!
   [recorder : CompilerSemanticFactRecorder]

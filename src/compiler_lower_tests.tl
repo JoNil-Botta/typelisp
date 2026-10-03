@@ -2969,7 +2969,12 @@
   [elem-ty : ast.AstType]) : i64
   (match instr
     [(Splat _ _ actual-lanes actual-ty)
-      (if (and (= actual-lanes lanes) (tc_core.tc-type-eq actual-ty elem-ty))
+      (if (and
+        (= actual-lanes lanes)
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          actual-ty
+          elem-ty))
         1
         0)]
     [_ 0]))
@@ -3298,7 +3303,12 @@
   [actual-ty : ast.AstType]
   [lanes : i64]
   [elem-ty : ast.AstType]) : bool
-  (and (= actual-lanes lanes) (tc_core.tc-type-eq actual-ty elem-ty)))
+  (and
+    (= actual-lanes lanes)
+    (tc_core.tc-type-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      actual-ty
+      elem-ty)))
 
 (define (lower-test-instr-vector-shape-count
   [instr : ir.CompilerIrInstr]
@@ -3455,11 +3465,19 @@
         [_ false])]
     [(Shl actual-count-ty)
       (match want
-        [(Shl want-count-ty) (tc_core.tc-type-eq actual-count-ty want-count-ty)]
+        [(Shl want-count-ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            actual-count-ty
+            want-count-ty)]
         [_ false])]
     [(Shr actual-count-ty)
       (match want
-        [(Shr want-count-ty) (tc_core.tc-type-eq actual-count-ty want-count-ty)]
+        [(Shr want-count-ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            actual-count-ty
+            want-count-ty)]
         [_ false])]))
 
 (define (lower-test-instr-binop-op-count
@@ -8773,7 +8791,11 @@
       mode))
     [(Some functions)
       (let
-        [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
+        [lanes : i64
+          (lower.lower-simd-lanes-for-elem
+            (ast.ast-node-pool-reader-type-segment-bases)
+            mode
+            (I64))]
         [load-count : i64 (lower-test-count functions "fill" (VectorLoad))]
         [store-count : i64 (lower-test-count functions "fill" (VectorStore))]
         [binop-count : i64 (lower-test-count functions "fill" (VectorBinop))]
@@ -8806,7 +8828,11 @@
       mode))
     [(Some functions)
       (let
-        [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
+        [lanes : i64
+          (lower.lower-simd-lanes-for-elem
+            (ast.ast-node-pool-reader-type-segment-bases)
+            mode
+            (I64))]
         [binop-count : i64 (lower-test-count functions "fill" (VectorBinop))]
         [bit-or-count : i64
           (lower-test-function-vector-binop-op-count functions "fill" (BitOr))]
@@ -8838,7 +8864,11 @@
       (match program
         [(Program _ functions _)
           (let
-            [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
+            [lanes : i64
+              (lower.lower-simd-lanes-for-elem
+                (ast.ast-node-pool-reader-type-segment-bases)
+                mode
+                (I64))]
             [shl-count : i64
               (lower-test-function-vector-binop-op-count
                 functions
@@ -8882,7 +8912,11 @@
       (match program
         [(Program _ functions _)
           (let
-            [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I16))]
+            [lanes : i64
+              (lower.lower-simd-lanes-for-elem
+                (ast.ast-node-pool-reader-type-segment-bases)
+                mode
+                (I16))]
             [shl-count : i64
               (lower-test-function-vector-binop-op-count
                 functions
@@ -12626,9 +12660,21 @@
       (lower-cleanup-stack-entry? cleanups 1 202 302)
       (= (lower.lower-c-abi-slot-list-count slots) 2)
       (match (lower.lower-c-abi-slot-list-ref slots 0)
-        [(Slot ty offset) (and (= offset 0) (tc_core.tc-type-eq ty (I64)))])
+        [(Slot ty offset)
+          (and
+            (= offset 0)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (I64)))])
       (match (lower.lower-c-abi-slot-list-ref slots 1)
-        [(Slot ty offset) (and (= offset 8) (tc_core.tc-type-eq ty (F64)))]))))
+        [(Slot ty offset)
+          (and
+            (= offset 8)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (F64)))]))))
 
 (define (compiler-lower-name-cache-intern-id-dotted-ok?) : bool
   (let
@@ -13014,13 +13060,21 @@
         (owned_view.compiler-owned-shared-view cache)
         qualified-id
         qualified-name)
-        [(Ok ty) (tc_core.tc-type-eq ty (I64))]
+        [(Ok ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            ty
+            (I64))]
         [(Err _) false])
       (match (lower.lower-type-cache-lookup-id
         (owned_view.compiler-owned-shared-view cache)
         fallback-id
         fallback-name)
-        [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
+        [(Ok ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            ty
+            (Bool))]
         [(Err _) false])
       (match (lower.lower-type-cache-lookup-id
         cache
@@ -13140,8 +13194,14 @@
             ctx
             (owned_view.compiler-owned-shared-view ref))
           2)
-        (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 0) (U64))
-        (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 1) (I64))
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (lower.lower-register-word-type ctx ref 0)
+          (U64))
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (lower.lower-register-word-type ctx ref 1)
+          (I64))
         (= (lower.lower-type-size ctx mut-ref) 16)
         (= (lower.lower-type-align ctx mut-ref) 8)
         (lower.lower-type-register-resident?
@@ -13392,7 +13452,11 @@
               (= size 1)
               (= (lower.lower-c-abi-slot-list-count slots) 1)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U8))]))]
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U8))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13403,7 +13467,12 @@
               (= size 8)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
                 [(Slot ty offset)
-                  (and (= offset 0) (tc_core.tc-type-eq ty (F64)))]))]
+                  (and
+                    (= offset 0)
+                    (tc_core.tc-type-eq
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      ty
+                      (F64)))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13414,9 +13483,17 @@
               (= size 16)
               (= (lower.lower-c-abi-slot-list-count slots) 2)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))])
               (match (lower.lower-c-abi-slot-list-ref slots 1)
-                [(Slot ty _) (tc_core.tc-type-eq ty (F64))]))]
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (F64))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13427,7 +13504,11 @@
               (= size 8)
               (= (lower.lower-c-abi-slot-list-count slots) 1)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13438,9 +13519,17 @@
               (= size 16)
               (= (lower.lower-c-abi-slot-list-count slots) 2)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))])
               (match (lower.lower-c-abi-slot-list-ref slots 1)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13470,7 +13559,13 @@
           ctx
           (lower.CompilerLowerMode.WindowsScalar)
           tuple-string)
-          [(Integer ty size) (and (= size 8) (tc_core.tc-type-eq ty (U64)))]
+          [(Integer ty size)
+            (and
+              (= size 8)
+              (tc_core.tc-type-eq
+                (ast.ast-node-pool-reader-type-segment-bases)
+                ty
+                (U64)))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -13481,9 +13576,17 @@
               (= size 16)
               (= (lower.lower-c-abi-slot-list-count slots) 2)
               (match (lower.lower-c-abi-slot-list-ref slots 0)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))])
               (match (lower.lower-c-abi-slot-list-ref slots 1)
-                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+                [(Slot ty _)
+                  (tc_core.tc-type-eq
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    ty
+                    (U64))]))]
           [_ false])
         (match (lower.lower-internal-aggregate-class
           ctx
@@ -14066,6 +14169,7 @@
         (ast.ast-spmd-param-class-list-push (&mut classes) Varying)]
       [first : i64
         (lower.lower-spmd-package-structural-symbol
+          (ast.ast-node-pool-reader-type-segment-bases)
           state
           "profile-pkg"
           "profile-pkg/helper"
@@ -14079,6 +14183,7 @@
           0)]
       [repeat : i64
         (lower.lower-spmd-package-structural-symbol
+          (ast.ast-node-pool-reader-type-segment-bases)
           state
           "profile-pkg"
           "profile-pkg/helper"
@@ -14092,6 +14197,7 @@
           0)]
       [expected : String
         (lower.lower-spmd-package-symbol
+          (ast.ast-node-pool-reader-type-segment-bases)
           "profile-pkg"
           "profile-pkg/helper"
           "(-> i64 i64)"

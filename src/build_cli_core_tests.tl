@@ -779,6 +779,7 @@
       (let
         [callable : tlci.TlciSpmdCallable
           (build.build-package-tlci-callable
+            (ast.ast-node-pool-reader-type-segment-bases)
             "pkg"
             "pkg"
             helper-id
@@ -819,6 +820,7 @@
                   (ci.intern-str
                     (ci.intern-generated-canonical-name
                       (lower.lower-spmd-package-symbol
+                        (ast.ast-node-pool-reader-type-segment-bases)
                         "pkg"
                         "pkg/helper"
                         "(-> i64 i64 i64)"
@@ -854,6 +856,7 @@
       (let
         [callable : tlci.TlciSpmdCallable
           (build.build-package-tlci-callable
+            (ast.ast-node-pool-reader-type-segment-bases)
             "pkg"
             "pkg"
             helper-id

@@ -225,6 +225,15 @@ and the canonical/sparse-view span oracle. Keep those owner and source-view chec
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
 
+The `tc-type-readers-owning-pool` inline test retains a type-table token while
+two pools grow beyond one segment, then installs a decoy with colliding ids and
+different type nodes. It checks region-transparent equality, distinct array
+lengths, rendering, inferred lifetime substitution and unresolved-type
+reconstruction through the owning context. The decoy must remain installed and
+unchanged. The typecheck smoke's resolution-isolation case uses the production
+resolver, alongside the existing job-memo collision, reset and teardown test.
+Keep those cases when changing type-reader capabilities or memo ownership.
+
 The call-argument type memo keys a body fact by the immediate payload of the
 first source view under the argument's expansion wrappers, and both the owning
 and an unrelated pool can hold a valid view at the same ID. The

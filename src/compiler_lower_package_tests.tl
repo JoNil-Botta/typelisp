@@ -186,6 +186,7 @@
     ;; linker spelling while retaining distinct identity and symbol handles.
     [identity-a : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state
         "collision_fixture"
         "collision/helper"
@@ -199,6 +200,7 @@
         -1)]
     [identity-b : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state
         "collision_fixture"
         "collision/helper"
@@ -212,6 +214,7 @@
         -1)]
     [expected-symbol : String
       (lower.lower-spmd-package-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         "collision_fixture"
         "collision/helper"
         "(-> i64)"
@@ -359,6 +362,7 @@
       (compiler-lower-spmd-package-test-classes Uniform Varying)]
     [base : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         "pkg-a"
         "pkg-a/helper"
@@ -372,6 +376,7 @@
         0)]
     [repeat : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         "pkg-a"
         "pkg-a/helper"
@@ -385,6 +390,7 @@
         0)]
     [different-lanes : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         "pkg-a"
         "pkg-a/helper"
@@ -398,6 +404,7 @@
         0)]
     [different-args : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         "pkg-a"
         "pkg-a/helper"
@@ -411,6 +418,7 @@
         0)]
     [different-result : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         "pkg-a"
         "pkg-a/helper"
@@ -424,6 +432,7 @@
         0)]
     [other-state : i64
       (lower.lower-spmd-package-structural-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-b
         "pkg-a"
         "pkg-a/helper"
@@ -462,6 +471,7 @@
         (lower.CompilerLowerMode.Avx2))]
     [private-helper : i64
       (lower.lower-spmd-private-helper-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         state-a
         (ci.intern-compat-state-intern (&mut intern-a) "__tl_lambda_fixture_0")
         (Bool)
@@ -478,6 +488,7 @@
         0)]
     [expected-symbol : String
       (lower.lower-spmd-package-symbol
+        (ast.ast-node-pool-reader-type-segment-bases)
         "pkg-a"
         "pkg-a/helper"
         "(-> i64 i64 i64)"

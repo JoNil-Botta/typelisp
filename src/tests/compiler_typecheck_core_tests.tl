@@ -100,13 +100,53 @@
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
     ;; Reused init ids and same-spelled bindings remain distinct by enclosing
     ;; body and ordinal. Re-recording the same proof does not grow the store.
-    (tc_core.tc-checked-let-binding-fact-record! a 11 0 13 17 (I64) ordinary)
-    (tc_core.tc-checked-let-binding-fact-record! a 12 0 13 17 (Bool) special)
-    (tc_core.tc-checked-let-binding-fact-record! a 11 0 13 17 (I64) ordinary)
+    (tc_core.tc-checked-let-binding-fact-record!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      a
+      11
+      0
+      13
+      17
+      (I64)
+      ordinary)
+    (tc_core.tc-checked-let-binding-fact-record!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      a
+      12
+      0
+      13
+      17
+      (Bool)
+      special)
+    (tc_core.tc-checked-let-binding-fact-record!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      a
+      11
+      0
+      13
+      17
+      (I64)
+      ordinary)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! b 7)
-    (tc_core.tc-checked-let-binding-fact-record! b 11 0 13 17 (I64) ordinary)
+    (tc_core.tc-checked-let-binding-fact-record!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      b
+      11
+      0
+      13
+      17
+      (I64)
+      ordinary)
     ;; A conflicting contextual proof fails closed without altering job A.
-    (tc_core.tc-checked-let-binding-fact-record! b 11 0 13 17 (Bool) ordinary)
+    (tc_core.tc-checked-let-binding-fact-record!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      b
+      11
+      0
+      13
+      17
+      (Bool)
+      ordinary)
     ;; Grow both retained containers while an unrelated scratch arena is
     ;; active, then destroy that scratch. Every fact and hashmap slot must
     ;; remain owned by the fact generation and storage stays one entry per
@@ -120,6 +160,7 @@
           [index : i64 0]
           (while (< index 257)
             (tc_core.tc-checked-let-binding-fact-record!
+              (ast.ast-node-pool-reader-type-segment-bases)
               c
               (+ 100 index)
               index
@@ -179,6 +220,7 @@
         (tc_core.tc-checked-let-binding-facts-begin! a)
         (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 8)
         (tc_core.tc-checked-let-binding-fact-record!
+          (ast.ast-node-pool-reader-type-segment-bases)
           a
           11
           0
@@ -1054,7 +1096,10 @@
     [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
     [call-expr : ast.AstExpr (ast.ast-expr-segment-bases-get bases-a call-a)]
     [owner : tc_core.MacroSexprOwner
-      (tc_core.macro-sexpr-owner bases-a session)]
+      (tc_core.macro-sexpr-owner
+        (ast.ast-node-pool-reader-type-segment-bases)
+        bases-a
+        session)]
     ;; The spanned name is the define's first argument, pushed second.
     [spanned-expr : ast.AstExpr
       (ast.ast-expr-segment-bases-get bases-a (- call-a 3))]
@@ -1166,6 +1211,95 @@
       typed?
       "the CTFE type-literal predicate reads the node from its owning pool, not the installed decoy")))
 
+;; Equal numeric ids in a decoy pool must not redirect type readers. The
+;; captured table remains valid across segment growth; the resolver's memo and
+;; reconstructed children must keep the same context owner.
+(test
+  tc-type-readers-owning-pool
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [from : i64 (ci.intern "type-reader/from")]
+    [to : i64 (ci.intern "type-reader/to")]
+    [scalar-a : i64 (ast.ast-node-pool-context-type-push a (I64))]
+    [scalar-b : i64 (ast.ast-node-pool-context-type-push b (Bool))]
+    [region-a : i64
+      (ast.ast-node-pool-context-type-push a (Region from scalar-a))]
+    [region-b : i64 (ast.ast-node-pool-context-type-push b (F64))]
+    [var-a : i64
+      (ast.ast-node-pool-context-type-push a (Var (ci.intern "Expr")))]
+    [var-b : i64 (ast.ast-node-pool-context-type-push b (I64))]
+    [root-a : i64 (ast.ast-node-pool-context-type-push a (Array region-a 3))]
+    [root-b : i64 (ast.ast-node-pool-context-type-push b (Array region-b 9))]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases a)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx a)]
+    [params : ast.AstLifetimeList
+      (ast.ast-lifetime-cons from (ast.ast-lifetime-list-new))]
+    [index : i64 0]
+    (while (< index 1030)
+      (ast.ast-node-pool-context-type-push a (Array scalar-a (+ index 100)))
+      (ast.ast-node-pool-context-type-push b (Array region-b (+ index 100)))
+      (set! index (+ index 1)))
+    (let
+      [b-before : i64 (ast.ast-node-pool-context-type-len b)]
+      [_decoy : unit (ast.ast-node-pool-context-install! b)]
+      [equal? : bool
+        (tc_core.tc-type-eq bases (Array region-a 3) (Array scalar-a 3))]
+      [different? : bool
+        (not (tc_core.tc-type-eq bases (Array scalar-a 3) (Array scalar-a 4)))]
+      [rendered : String (tc_core.tc-type-render bases (Array scalar-a 3))]
+      [grown : String
+        (tc_core.tc-type-render
+          bases
+          (ast.ast-type-segment-bases-get bases 1024))]
+      [substitution? : bool
+        (match (tc_core.tc-infer-lifetime-subst-from-type
+          ctx
+          (tc_core.tc-default-env-with-job-state
+            (tc_core.tc-context-job-state ctx))
+          params
+          Nil
+          (Ref from region-a)
+          (Ref to scalar-a)
+          TcVarianceCovariant)
+          [(Ok subst)
+            (match (tc_core.tc-lifetime-subst-lookup subst from)
+              [(Some actual) (= actual to)]
+              [(No) false])]
+          [(Err _) false])]
+      [resolved : ast.AstType (tc_core.tc-resolve-type ctx (Array var-a 5))]
+      [resolution? : bool
+        (match resolved
+          [(Array child count)
+            (and
+              (= count 5)
+              (< child (ast.ast-node-pool-context-type-len a))
+              (match (ast.ast-type-segment-bases-get bases child)
+                [(Expr) true]
+                [_ false]))]
+          [_ false])]
+      [ok : bool
+        (and
+          (= scalar-a scalar-b)
+          (= region-a region-b)
+          (= var-a var-b)
+          (= root-a root-b)
+          (= bases (ast.ast-node-pool-context-type-segment-bases a))
+          equal?
+          different?
+          (string.eq rendered "(Array i64 3)")
+          (string.eq grown "(Array i64 1120)")
+          substitution?
+          resolution?
+          (= b-before (ast.ast-node-pool-context-type-len b))
+          (ast.ast-node-pool-context-type-installed? b))]
+      (ast.ast-node-pool-context-install! installed)
+      (test.assert-true ok "type readers retain their owner under a decoy pool"))))
+
 ;; --- #7918: expression forms in Decls/Module macro output -------------------
 ;;
 ;; A Decls or Module macro's output reaches the declaration parser through
@@ -1266,7 +1400,10 @@
         [first-expr : ast.AstExpr
           (ast.ast-expr-segment-bases-get bases body-id)]
         [owner : tc_core.MacroSexprOwner
-          (tc_core.macro-sexpr-owner bases session)]
+          (tc_core.macro-sexpr-owner
+            (ast.ast-node-pool-reader-type-segment-bases)
+            bases
+            session)]
         (match (tc_core.macro-expr-to-spanned-sexpr
           (& owner)
           (tc_core.tc-global-shared-view first-expr)
@@ -1288,7 +1425,10 @@
                   [second-expr : ast.AstExpr
                     (ast.ast-expr-segment-bases-get second-bases second-id)]
                   [second-owner : tc_core.MacroSexprOwner
-                    (tc_core.macro-sexpr-owner second-bases session)]
+                    (tc_core.macro-sexpr-owner
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      second-bases
+                      session)]
                   (match (tc_core.macro-expr-to-spanned-sexpr
                     (& second-owner)
                     (tc_core.tc-global-shared-view second-expr)
@@ -1397,7 +1537,10 @@
         [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
         [parsed : ast.AstExpr (ast.ast-expr-segment-bases-get bases body-id)]
         [owner : tc_core.MacroSexprOwner
-          (tc_core.macro-sexpr-owner bases session)]
+          (tc_core.macro-sexpr-owner
+            (ast.ast-node-pool-reader-type-segment-bases)
+            bases
+            session)]
         (match (ast.ast-expr-unspan-with-segment-bases bases parsed)
           [(WithResource resource-box)
             (match (__tl-box-place resource-box)
@@ -1923,7 +2066,11 @@
     [want : ast.AstType]) : bool
     (match (tc_core.tc-stdlib-comptime-syntax-type-id
       (tc_core.tc-stdlib-comptime-type-key-id "" name-id))
-      [(Some ty) (tc_core.tc-type-eq ty want)]
+      [(Some ty)
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          ty
+          want)]
       [(No) false])))
 
 (cfg
@@ -2039,13 +2186,19 @@
     [named : i64 (ci.intern "named")]
     (if (and
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref hidden (I64)))
+        (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ast-ty-ref hidden (I64)))
         "(& i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-mut-ref hidden (I64)))
+        (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ast-ty-mut-ref hidden (I64)))
         "(&mut i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref named (I64)))
+        (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ast-ty-ref named (I64)))
         "(& named i64)"))
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
@@ -2084,37 +2237,6 @@
     unit
     (io.panic
       "typecheck: an elided parameter list should reserve exactly its length")))
-
-(define (tc-resolve-type-list-with-pools
-  [ctx : tc_core.TcContext]
-  [pools : ast.AstNodePoolContext]
-  [types : ast.AstTypeList]) : ast.AstTypeList
-  (let
-    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (if (tc_core.tc-type-list-needs-resolution-for-job-and-pools?
-      (tc_core.tc-context-job-state ctx)
-      pools
-      type-bases
-      (tc_core.tc-global-shared-view types))
-      (tc-resolve-type-list-at-with-pools ctx pools (& types) 0)
-      types)))
-
-(define (tc-resolve-type-list-at-with-pools
-  [ctx : tc_core.TcContext]
-  [pools : ast.AstNodePoolContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ast.AstTypeList
-  (if (>= index (ast.ast-type-list-len types))
-    (ast.ast-type-list-new)
-    (ast.ast-type-cons-with-pools
-      pools
-      (tc-resolve-type-with-pools
-        ctx
-        pools
-        (ast.ast-node-pool-context-type-get
-          pools
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1)))))
 
 ;; Standalone helpers retain their serial compatibility surface. Production
 ;; typecheck paths use the explicit job/pool or context variants below.
@@ -2556,121 +2678,6 @@
         unit
         (io.panic
           "typecheck: type-handle cache move-kind lane self-test failed")))))
-
-(define (tc-resolve-type-with-pools
-  [ctx : tc_core.TcContext]
-  [pools : ast.AstNodePoolContext]
-  [ty : ast.AstType]) : ast.AstType
-  (let
-    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (if (tc_core.tc-type-needs-resolution-for-job-and-pools?
-      (tc_core.tc-context-job-state ctx)
-      pools
-      type-bases
-      (tc_core.tc-global-shared-view ty))
-      (match (tc_core.tc-global-shared-view ty)
-        [(Func args ret)
-          (ast.ast-ty-func-with-pools
-            pools
-            (tc-resolve-type-list-with-pools
-              ctx
-              pools
-              (ast.ast-type-list-box-shared-view args))
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools ret)))]
-        [(Tuple elems)
-          (Tuple
-            (box
-              (tc-resolve-type-list-with-pools
-                ctx
-                pools
-                (ast.ast-type-list-box-shared-view elems))))]
-        [(Array elem len)
-          (ast.ast-ty-array-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem))
-            len)]
-        [(DynArray elem)
-          (ast.ast-ty-dyn-array-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
-        [(Slice elem)
-          (ast.ast-ty-slice-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
-        [(Box elem)
-          (ast.ast-ty-box-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
-        [(Ptr elem)
-          (ast.ast-ty-ptr-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
-        [(MutPtr elem)
-          (ast.ast-ty-mut-ptr-with-pools
-            pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
-        [(Ref region inner)
-          (ast.ast-ty-ref-with-pools
-            pools
-            region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
-        [(MutRef region inner)
-          (ast.ast-ty-mut-ref-with-pools
-            pools
-            region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
-        [(Region region inner)
-          (ast.ast-ty-region-with-pools
-            pools
-            region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
-        [(VarArgs name lifetimes)
-          (tc_core.tc-resolve-type-name-with-args
-            ctx
-            (tc_core.tc-hygiene-name-text-id-for-session
-              (tc_core.tc-context-structural-session ctx)
-              name)
-            name
-            (ast.ast-lifetime-list-box-shared-view lifetimes))]
-        [(Var name)
-          (tc_core.tc-resolve-type-name
-            ctx
-            (tc_core.tc-hygiene-name-text-id-for-session
-              (tc_core.tc-context-structural-session ctx)
-              name)
-            name)]
-        [_ ty])
-      ty)))
 
 (define (tc-spmd-env-pop [env : tc_core.TcSpmdEnv] [count : i64]) : tc_core.TcSpmdEnv
   (if (<= count 0)
@@ -3453,7 +3460,10 @@
     [(CFunc signature mode)
       (and
         (= (ast.ast-c-function-mode-key mode) 1)
-        (tc_core.tc-type-eq (ast.ty-node-get signature) (tc_core.tc-fn0 (I64))))]
+        (tc_core.tc-type-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ty-node-get signature)
+          (tc_core.tc-fn0 (I64))))]
     [_ false]))
 
 (define (tc-type-env-has-c-function-value?
@@ -3858,16 +3868,19 @@
       (tc_core.tc-type-env-scoped-carrier-from-marker-visible-env deep)]
     (and
       (tc_core.tc-lambda-captures-reference?
+        (ast.ast-node-pool-reader-type-segment-bases)
         expr-bases
         deep
         (ast.ast-param-list-new)
         (tc_core.tc-global-shared-view body))
       (tc_core.tc-type-env-scoped-carrier-lambda-captures-reference?
+        (ast.ast-node-pool-reader-type-segment-bases)
         expr-bases
         scoped
         (ast.ast-param-list-new)
         (tc_core.tc-global-shared-view body))
       (match (tc_core.tc-check-lambda-region-captures
+        (ast.ast-node-pool-reader-type-segment-bases)
         expr-bases
         deep
         (ast.ast-param-list-new)
@@ -3880,6 +3893,7 @@
               "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
         [_ false])
       (match (tc_core.tc-check-lambda-region-captures-allow-refs
+        (ast.ast-node-pool-reader-type-segment-bases)
         expr-bases
         deep
         (ast.ast-param-list-new)
@@ -4113,7 +4127,11 @@
     [(Ok carrier-ty)
       (match (tc_core.tc-current-return-type
         (tc_core.tc-type-env-scoped-carrier-env carrier))
-        [(Ok env-ty) (tc_core.tc-type-eq carrier-ty env-ty)]
+        [(Ok env-ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            carrier-ty
+            env-ty)]
         [_ false])]
     [(Err _)
       (match (tc_core.tc-current-return-type
@@ -5052,7 +5070,11 @@
           ctx-b
           (tc_core.tc-context-expr-get ctx-b root-b)
           (F32))
-          [(Ok ty) (tc_core.tc-type-eq ty (F32))]
+          [(Ok ty)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (F32))]
           [_ false])
         ;; Literal validation returns raw errors; the diagnostic boundary
         ;; attaches locations. Check rejection and retained provenance
@@ -5098,7 +5120,11 @@
           ctx-a
           (tc_core.tc-context-expr-get ctx-a root-a)
           (I64))
-          [(Ok ty) (tc_core.tc-type-eq ty (I64))]
+          [(Ok ty)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (I64))]
           [_ false])
         (not (tc_core.tc-integer-literal-expr? ctx-a (Literal (Bool true))))
         (not (tc_core.tc-float-literal-expr? ctx-a (Literal (Bool true))))))
@@ -5119,7 +5145,11 @@
           ctx-a
           (tc_core.tc-context-expr-get ctx-a root-b)
           (I64))
-          [(Ok ty) (tc_core.tc-type-eq ty (I64))]
+          [(Ok ty)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (I64))]
           [_ false])))
     (ast.ast-node-pool-compat-context-clear!)
     (ast.ast-node-pool-context-install! saved)
@@ -5510,6 +5540,7 @@
   (test
     tc-lifetime-substitution-rewrites-region-wrapper
     (match (tc_core.tc-lifetime-subst-type
+      (ast.ast-node-pool-reader-type-segment-bases)
       (One 101 202)
       (ast.ast-ty-region 101 (String)))
       [(Region region inner)
@@ -5608,7 +5639,7 @@
     [arg : ast.AstExpr]
     [want : ast.AstType]) : bool
     (match (tc_core.tc-call-arg-expr-type ctx env arg)
-      [(Ok ty) (tc_core.tc-type-eq ty want)]
+      [(Ok ty) (tc_core.tc-type-eq (tc_core.tc-context-type-bases ctx) ty want)]
       [(Err _) false])))
 
 (cfg
@@ -5725,7 +5756,11 @@
         (>= (tc_core.tc-body-type-fact-slot state 1) 0)
         (< (tc_core.tc-body-type-fact-slot state 0) 0)
         (match (tc_core.tc-call-arg-fact-lookup state 1)
-          [(Hit ty) (tc_core.tc-type-eq ty (I32))]
+          [(Hit ty)
+            (tc_core.tc-type-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              ty
+              (I32))]
           [(Miss) false])))
     (tc_core.tc-body-type-fact-storage-release! state)
     (ast.ast-node-pool-context-install! saved)
@@ -5834,7 +5869,9 @@
       [atomic-ty : ast.AstType
         (tc_core.tc-arena-branded-type (tc_core.tc-arena-owner-kind-atomic) 101)]
       [rendered : String
-        (tc_core.tc-type-render (tc_core.tc-global-shared-view ordinary-ty))]
+        (tc_core.tc-type-render
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (tc_core.tc-global-shared-view ordinary-ty))]
       [ordinary-prefix : String (tc_core.tc-arena-brand-ordinary-prefix)]
       [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
       (and
@@ -5847,8 +5884,15 @@
         (tc_core.tc-ordinary-arena-owner-active-id? env ordinary-a)
         (tc_core.tc-atomic-arena-owner-active-id? env atomic-a)
         (not (tc_core.tc-atomic-arena-owner-active-id? env ordinary-a))
-        (not (tc_core.tc-type-regions-all-atomic-arena-owners? env ordinary-ty))
-        (tc_core.tc-type-regions-all-atomic-arena-owners? env atomic-ty)
+        (not
+          (tc_core.tc-type-regions-all-atomic-arena-owners?
+            (ast.ast-node-pool-reader-type-segment-bases)
+            env
+            ordinary-ty))
+        (tc_core.tc-type-regions-all-atomic-arena-owners?
+          (ast.ast-node-pool-reader-type-segment-bases)
+          env
+          atomic-ty)
         (string.contains (& rendered) (& ordinary-prefix))))))
 
 (cfg
@@ -8717,12 +8761,22 @@
           (=
             (ast.ast-node-pool-context-type-len concrete-pools)
             concrete-len-before))]
+      [compatibility-ctx : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          compatibility-pools
+          (ci.intern-source-name-session-capture-active-handle)
+          job-state)]
       [_install-compatibility : unit
         (ast.ast-node-pool-context-install! compatibility-pools)]
       [compatibility-len-before : i64
         (ast.ast-node-pool-context-type-len compatibility-pools)]
       [resolved-unresolved : ast.AstType
-        (tc_core.tc-resolve-type ctx unresolved-root)]
+        (tc_core.tc-resolve-type compatibility-ctx unresolved-root)]
       [compatibility-result-ok? : bool
         (match resolved-unresolved
           [(Array child len)
@@ -9679,7 +9733,11 @@
         ctx
         env
         (tc_core.tc-context-expr-get ctx literal))
-        [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
+        [(Ok ty)
+          (tc_core.tc-type-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            ty
+            (Bool))]
         [(Err _) false])]
     [after-success : i64 (tc_core.tc-unbound-suggestion-suppress-depth env)]
     (ast.ast-node-pool-context-install! saved)

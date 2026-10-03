@@ -96,6 +96,7 @@
                     (in-arena
                       home
                       (build.build-package-tlci-capture-exports
+                        (ast.ast-node-pool-reader-type-segment-bases)
                         manifest
                         mode
                         decls

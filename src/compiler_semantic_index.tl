@@ -1773,6 +1773,7 @@
       (match decl
         [(DefMacro _ _ params ret _)
           (tc.tc-type-render
+            (tc.tc-context-type-bases ctx)
             (ast.ast-ty-func
               (tc.tc-macro-param-type-list ctx params)
               (tc.tc-resolve-type ctx ret)))]
@@ -1781,10 +1782,10 @@
         [_ "macro"])]
     [_
       (match (tc.tc-lookup-visible-id ctx env name-id)
-        [(Ok ty) (tc.tc-type-render ty)]
+        [(Ok ty) (tc.tc-type-render (tc.tc-context-type-bases ctx) ty)]
         [(Err _)
           (match (tc.tc-top-decl-type ctx decl)
-            [(Ok ty) (tc.tc-type-render ty)]
+            [(Ok ty) (tc.tc-type-render (tc.tc-context-type-bases ctx) ty)]
             [(Err _) ""])])]))
 
 (define (compiler-semantic-decl-provenance [decl : ast.AstDecl]) : CompilerSemanticProvenance
@@ -2471,7 +2472,7 @@
       (compiler-semantic-variant-display-name ctx lookup-id handle)]
     [type-text : String
       (match (tc.tc-lookup-visible-id ctx state.top-env lookup-id)
-        [(Ok ty) (tc.tc-type-render ty)]
+        [(Ok ty) (tc.tc-type-render (tc.tc-context-type-bases state.ctx) ty)]
         [(Err _) ""])]
     [symbol : CompilerSemanticSymbolId
       (compiler-semantic-member-symbol ctx owner-handle handle)]
@@ -2554,7 +2555,10 @@
                             decl-name-id)]
                         [type-text : String
                           (match (tc.tc-lookup-visible-id ctx env lookup-id)
-                            [(Ok ty) (tc.tc-type-render ty)]
+                            [(Ok ty)
+                              (tc.tc-type-render
+                                (tc.tc-context-type-bases state.ctx)
+                                ty)]
                             [(Err _)
                               (compiler-semantic-decl-type
                                 decl-ctx
@@ -3002,7 +3006,7 @@
         [(No) (Unit)])]
     [type-text : String
       (match maybe-ty
-        [(Some ty) (tc.tc-type-render ty)]
+        [(Some ty) (tc.tc-type-render (tc.tc-context-type-bases state.ctx) ty)]
         [(No) ""])]
     [local-ordinal : i64 (__tl-box-place state.next-local-ordinal)]
     [symbol : CompilerSemanticSymbolId
@@ -3844,7 +3848,8 @@
             state.ctx
             struct-name-id
             field-name-id)
-            [(Ok ty) (tc.tc-type-render ty)]
+            [(Ok ty)
+              (tc.tc-type-render (tc.tc-context-type-bases state.ctx) ty)]
             [(Err _) ""])]
         [span : CompilerSemanticSpan
           (compiler-semantic-exact-span-from-origin state origin)]
@@ -3895,7 +3900,8 @@
             state.ctx
             struct-name-id
             field-name-id)
-            [(Ok ty) (tc.tc-type-render ty)]
+            [(Ok ty)
+              (tc.tc-type-render (tc.tc-context-type-bases state.ctx) ty)]
             [(Err _) ""])]
         (compiler-semantic-record-vec-push!
           (&mut (__tl-box-place state.records))
@@ -4360,7 +4366,9 @@
                         [(Ok init-ty)
                           (let
                             [binding-ty : ast.AstType
-                              (tc.tc-type-without-regions init-ty)]
+                              (tc.tc-type-without-regions
+                                (tc.tc-context-type-bases state.ctx)
+                                init-ty)]
                             [recorded : CompilerSemanticBindResult
                               (compiler-semantic-bind-local!
                                 state
@@ -4968,7 +4976,9 @@
                 None
                 Field
                 (string.copy (& display-name))
-                (tc.tc-type-render (tc.tc-resolve-type state.ctx ty))
+                (tc.tc-type-render
+                  (tc.tc-context-type-bases state.ctx)
+                  (tc.tc-resolve-type state.ctx ty))
                 ""
                 symbol.module-id
                 (owned_view.compiler-owned-shared-view span)

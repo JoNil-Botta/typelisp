@@ -16,7 +16,7 @@
 (import (vector.vector doc_extract.DocItem core) as doc_item_vec)
 
 (define (doc-module-fallback) : DocModule
-  (DocModule.Module "" (doc_extract.doc-extraction-empty)))
+  (Module "" (doc_extract.doc-extraction-empty)))
 
 (define (doc-module-list-count [modules : doc_module_vec.Vec]) : i64
   (doc_module_vec.len (& modules)))
@@ -54,11 +54,11 @@
 
 (define (doc-module-path [module : DocModule]) : String
   (match module
-    [(DocModule.Module path _) path]))
+    [(Module path _) path]))
 
 (define (doc-module-docs [module : DocModule]) : doc_extract.DocExtraction
   (match module
-    [(DocModule.Module _ docs) docs]))
+    [(Module _ docs) docs]))
 
 (define (doc-render-code [c : char]) : i64
   (cast c : i64))

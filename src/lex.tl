@@ -244,12 +244,12 @@
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (scan-based-int-end src value-start n base)]
     (if (= end value-start)
-      (result_lex_i64.Err "lexer: malformed integer literal")
+      (Err "lexer: malformed integer literal")
       (if (if (< end n)
         (is-symbol-char (__tl_string_ref src end))
         false)
-        (result_lex_i64.Err "lexer: malformed integer literal")
-        (result_lex_i64.Ok end)))))
+        (Err "lexer: malformed integer literal")
+        (Ok end)))))
 
 (define (scan-number-end-result [src : (& src str)] [start : i64] [n : i64]) : result_lex_i64.Result
   (if (number-prefixed? src start n)
@@ -271,12 +271,12 @@
             (is-symbol-char (__tl_string_ref src end))
             false))]
       (if malformed
-        (result_lex_i64.Err
+        (Err
           (str_cat.str-cat
             (string.substring "lexer: malformed integer literal" 0 17)
             "number"
             (string.substring "lexer: malformed integer literal" 24 8)))
-        (result_lex_i64.Ok end)))))
+        (Ok end)))))
 
 (define (parse-based-int
   [src : (& src str)]
@@ -492,8 +492,8 @@
             (set! message "lexer: unterminated string literal")
             (set! keep false))))
       (if (ok? message)
-        (result_lex_i64.Ok j)
-        (result_lex_i64.Err message)))))
+        (Ok j)
+        (Err message)))))
 
 (define (string-escape-piece [src : (& src str)] [idx : i64]) : String
   (let
@@ -558,13 +558,13 @@
 
 (define (apostrophe-escaped-char-result [c : char]) : ResultLexChar
   (cond
-    [(= c 'n') (ResultLexChar.Ok '\n')]
-    [(= c 't') (ResultLexChar.Ok '\t')]
-    [(= c 'r') (ResultLexChar.Ok '\r')]
-    [(= c '0') (ResultLexChar.Ok '\0')]
-    [(= c '\\') (ResultLexChar.Ok '\\')]
-    [(= c '\'') (ResultLexChar.Ok '\'')]
-    [else (ResultLexChar.Err "lexer: unknown character escape")]))
+    [(= c 'n') (Ok '\n')]
+    [(= c 't') (Ok '\t')]
+    [(= c 'r') (Ok '\r')]
+    [(= c '0') (Ok '\0')]
+    [(= c '\\') (Ok '\\')]
+    [(= c '\'') (Ok '\'')]
+    [else (Err "lexer: unknown character escape")]))
 
 (define (apostrophe-char-literal-result [src : (& src str)] [i : i64] [n : i64]) : ResultMaybeLexCharLiteral
   (if (< (+ i 1) n)
@@ -577,25 +577,22 @@
             (if (< esc-idx n)
               (match (apostrophe-escaped-char-result
                 (__tl_string_ref src esc-idx))
-                [(ResultLexChar.Ok c)
+                [(Ok c)
                   (let
                     [message : String (char-close-error src (+ i 3) n)]
                     (if (ok? message)
-                      (ResultMaybeLexCharLiteral.Ok c (+ i 4))
-                      (ResultMaybeLexCharLiteral.Err message)))]
-                [(ResultLexChar.Err message)
-                  (ResultMaybeLexCharLiteral.Err message)])
-              (ResultMaybeLexCharLiteral.Err
-                "lexer: unterminated character literal")))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r'))
-          (ResultMaybeLexCharLiteral.No)]
+                      (Ok c (+ i 4))
+                      (Err message)))]
+                [(Err message) (Err message)])
+              (Err "lexer: unterminated character literal")))]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (No)]
         [else
           (if (< (+ i 2) n)
             (if (= (__tl_string_ref src (+ i 2)) '\'')
-              (ResultMaybeLexCharLiteral.Ok payload (+ i 3))
-              (ResultMaybeLexCharLiteral.No))
-            (ResultMaybeLexCharLiteral.No))]))
-    (ResultMaybeLexCharLiteral.No)))
+              (Ok payload (+ i 3))
+              (No))
+            (No))]))
+    (No)))
 
 (defenum LexPosition
   (Position i64 i64))
@@ -619,7 +616,7 @@
               (set! next-col 1))
             (set! next-col (+ next-col 1)))
           (set! j (+ j 1))))
-      (LexPosition.Position next-line next-col))))
+      (Position next-line next-col))))
 
 ;; Scan `src` into the shared spanned-token buffer, growing it on demand.
 ;; `limit` mirrors the global buffer capacity and is refreshed whenever it moves;
@@ -663,7 +660,7 @@
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.LParen line col))
+                    (token.spanned-token-new LParen line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
@@ -671,7 +668,7 @@
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.LBracket line col))
+                    (token.spanned-token-new LBracket line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
@@ -679,7 +676,7 @@
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.RParen line col))
+                    (token.spanned-token-new RParen line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
@@ -687,7 +684,7 @@
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.RBracket line col))
+                    (token.spanned-token-new RBracket line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
@@ -696,27 +693,27 @@
                   [token-line : i64 line]
                   [token-col : i64 col]
                   (match (apostrophe-char-literal-result src i n)
-                    [(ResultMaybeLexCharLiteral.Ok value end)
+                    [(Ok value end)
                       (begin
                         (set!
                           (array-ref lex-spanned-token-buffer count)
                           (token.spanned-token-new
-                            (token.Token.Char value)
+                            (Char value)
                             token-line
                             token-col))
                         (set! count (+ count 1))
                         (set! col (+ col (- end i)))
                         (set! i end))]
-                    [(ResultMaybeLexCharLiteral.Err err)
+                    [(Err err)
                       (begin
                         (set! ok false)
                         (set! message err)
                         (set! err-pos i))]
-                    [(ResultMaybeLexCharLiteral.No)
+                    [(No)
                       (begin
                         (set!
                           (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.Quote line col))
+                          (token.spanned-token-new Quote line col))
                         (set! count (+ count 1))
                         (set! i (+ i 1))
                         (set! col (+ col 1)))]))]
@@ -724,7 +721,7 @@
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.Backtick line col))
+                    (token.spanned-token-new Backtick line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
@@ -735,19 +732,19 @@
                       (begin
                         (set!
                           (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.CommaAt line col))
+                          (token.spanned-token-new CommaAt line col))
                         (set! i (+ i 2))
                         (set! col (+ col 2)))
                       (begin
                         (set!
                           (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.Comma line col))
+                          (token.spanned-token-new Comma line col))
                         (set! i (+ i 1))
                         (set! col (+ col 1))))
                     (begin
                       (set!
                         (array-ref lex-spanned-token-buffer count)
-                        (token.spanned-token-new token.Token.Comma line col))
+                        (token.spanned-token-new Comma line col))
                       (set! i (+ i 1))
                       (set! col (+ col 1))))
                   (set! count (+ count 1)))]
@@ -757,7 +754,7 @@
                   [token-line : i64 line]
                   [token-col : i64 col]
                   (match (scan-str-end-result src start n)
-                    [(result_lex_i64.Ok end)
+                    [(Ok end)
                       (let
                         [text : String (unescape-string-literal src start end)]
                         [string-id : ci.InternId
@@ -770,18 +767,17 @@
                           (set!
                             (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
-                              (token.Token.Str
-                                (token.token-intern-payload string-id))
+                              (Str (token.token-intern-payload string-id))
                               token-line
                               token-col))
                           (set! count (+ count 1))
                           (match (advance-position src i (+ end 1) line col)
-                            [(LexPosition.Position next-line next-col)
+                            [(Position next-line next-col)
                               (begin
                                 (set! line next-line)
                                 (set! col next-col))])
                           (set! i (+ end 1))))]
-                    [(result_lex_i64.Err err)
+                    [(Err err)
                       (begin
                         (set! ok false)
                         (set! message err)
@@ -794,7 +790,7 @@
                     (set! i end)))]
               [(or (is-digit c) (negative-number-start? src i n))
                 (match (scan-number-end-result src i n)
-                  [(result_lex_i64.Ok end)
+                  [(Ok end)
                     (let
                       [token-line : i64 line]
                       [token-col : i64 col]
@@ -803,14 +799,13 @@
                           (set!
                             (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
-                              (token.Token.Float
-                                (string.substring src i (- end i)))
+                              (Float (string.substring src i (- end i)))
                               token-line
                               token-col))
                           (set!
                             (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
-                              (token.Token.Int
+                              (Int
                                 (number-int-value src i end n)
                                 (number-int-source-text src i end n))
                               token-line
@@ -818,7 +813,7 @@
                         (set! count (+ count 1))
                         (set! col (+ col (- end i)))
                         (set! i end)))]
-                  [(result_lex_i64.Err err)
+                  [(Err err)
                     (begin
                       (set! ok false)
                       (set! message err)
@@ -831,7 +826,7 @@
                       (set!
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
-                          (token.Token.Sym
+                          (Sym
                             (token.token-intern-payload
                               (lexer-intern-source-slice-id
                                 owner
@@ -847,7 +842,7 @@
                       (set!
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
-                          (token.Token.Sym
+                          (Sym
                             (token.token-intern-payload
                               (colon-intern-id owner src i)))
                           line
@@ -862,7 +857,7 @@
                     (set!
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new
-                        (token.Token.Sym
+                        (Sym
                           (token.token-intern-payload
                             (lexer-intern-source-slice-id owner src i (- end i))))
                         line
@@ -884,9 +879,9 @@
             unit)
           (set!
             (array-ref lex-spanned-token-buffer count)
-            (token.spanned-token-new token.Token.End line col))
-          (ResultLexIntoSpanned.Ok count))
-        (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
+            (token.spanned-token-new End line col))
+          (Ok count))
+        (Err (source-error-at src err-pos message))))))
 
 ;; ---- Spanned token stream ----------------------------------------------------
 ;; Each token is paired with the 1-based line/column of its starting byte; the
@@ -1079,22 +1074,19 @@
   [src : String]
   [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
   (match (into-spanned-tokens-result-with-intern-owner (& src) owner)
-    [(ResultLexIntoSpanned.Ok _)
-      (ResultSpannedTokens.Ok (global-shared-view lex-spanned-token-buffer))]
-    [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
+    [(Ok _) (Ok (global-shared-view lex-spanned-token-buffer))]
+    [(Err err) (Err err)]))
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
 (define (spanned-result [src : String]) : ResultSpannedTokens
-  (spanned-result-with-intern-owner src LexerInternOwner.Active))
+  (spanned-result-with-intern-owner src Active))
 
 (define (spanned-result-with-intern-state
   [src : String]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : ResultSpannedTokens
   (begin
     (ci.intern-compat-state-ensure-ready! intern-state)
-    (spanned-result-with-intern-owner
-      src
-      (LexerInternOwner.State (& intern-state)))))
+    (spanned-result-with-intern-owner src (State (& intern-state)))))
 
 ;; The spanned token stream without positions, copied into a fresh array that
 ;; ends in `token.Token.End`, for callers that compare token streams.
@@ -1102,9 +1094,8 @@
   [src : String]
   [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (match (spanned-result-with-intern-owner src owner)
-    [(ResultSpannedTokens.Err err)
-      (ResultTokens.Err (token.source-error-message err))]
-    [(ResultSpannedTokens.Ok spanned)
+    [(Err err) (Err (token.source-error-message err))]
+    [(Ok spanned)
       (let
         [toks : (__tl_dyn-array token.Token)
           (__tl_make-array token.Token (array-length spanned))]
@@ -1119,12 +1110,12 @@
                 (set! more (!= (token.tag-ref (& tok)) (token.tag-end)))
                 (set! (array-ref toks index) tok)
                 (set! index (+ index 1)))))
-          (ResultTokens.Ok toks)))]))
+          (Ok toks)))]))
 
 (define (result [src : String]) : ResultTokens
-  (result-with-intern-owner src LexerInternOwner.Active))
+  (result-with-intern-owner src Active))
 
 (define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)
-    [(ResultTokens.Ok toks) toks]
-    [(ResultTokens.Err message) (io.panic message)]))
+    [(Ok toks) toks]
+    [(Err message) (io.panic message)]))

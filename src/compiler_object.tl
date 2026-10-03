@@ -59,8 +59,8 @@
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(CompilerObjectDataRecord.Label _) offset]
-    [(CompilerObjectDataRecord.Align align)
+    [(Label _) offset]
+    [(Align align)
       (if (<= align 1)
         offset
         (let
@@ -68,16 +68,14 @@
           (if (= rem 0)
             offset
             (+ offset (- align rem)))))]
-    [(CompilerObjectDataRecord.Bytes bytes)
-      (+ offset (__tl_string_length bytes))]
-    [(CompilerObjectDataRecord.String text)
-      (+ offset (+ (__tl_string_length text) 1))]
-    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
-    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
-    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
-    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
+    [(Bytes bytes) (+ offset (__tl_string_length bytes))]
+    [(String text) (+ offset (+ (__tl_string_length text) 1))]
+    [(F64 _) (+ offset 8)]
+    [(F32 _) (+ offset 4)]
+    [(I64 _) (+ offset 8)]
+    [(Zero count) (+ offset count)]
+    [(SymbolAddress _) (+ offset 8)]
+    [(SymbolRva32 _) (+ offset 4)]))
 
 (defstruct CompilerObjectDataRecordList
   (slots (__tl_dyn-array CompilerObjectDataRecord))
@@ -440,7 +438,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (array-ref slots index)
-          [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
+          [(Symbol found-name found-binding found-kind _)
             (if (and
               (string.eq found-name name)
               (compiler-object-symbol-binding-eq? found-binding binding)
@@ -460,7 +458,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (array-ref slots index)
-          [(CompilerObjectRelocation.Relocation _ _ _ found-target)
+          [(Relocation _ _ _ found-target)
             (if (string.eq found-target target)
               (set! found true)
               (set! index (+ index 1)))]))
@@ -470,104 +468,104 @@
   [a : CompilerObjectSectionKind]
   [b : CompilerObjectSectionKind]) : bool
   (match a
-    [(CompilerObjectSectionKind.Text)
+    [(Text)
       (match b
-        [(CompilerObjectSectionKind.Text) true]
+        [(Text) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Data)
+    [(Data)
       (match b
-        [(CompilerObjectSectionKind.Data) true]
+        [(Data) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Rodata)
+    [(Rodata)
       (match b
-        [(CompilerObjectSectionKind.Rodata) true]
+        [(Rodata) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Bss)
+    [(Bss)
       (match b
-        [(CompilerObjectSectionKind.Bss) true]
+        [(Bss) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Pdata)
+    [(Pdata)
       (match b
-        [(CompilerObjectSectionKind.Pdata) true]
+        [(Pdata) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Xdata)
+    [(Xdata)
       (match b
-        [(CompilerObjectSectionKind.Xdata) true]
+        [(Xdata) true]
         [_ false])]
-    [(CompilerObjectSectionKind.Rsrc)
+    [(Rsrc)
       (match b
-        [(CompilerObjectSectionKind.Rsrc) true]
+        [(Rsrc) true]
         [_ false])]))
 
 (define (compiler-object-symbol-binding-eq?
   [a : CompilerObjectSymbolBinding]
   [b : CompilerObjectSymbolBinding]) : bool
   (match a
-    [(CompilerObjectSymbolBinding.Local)
+    [(Local)
       (match b
-        [(CompilerObjectSymbolBinding.Local) true]
+        [(Local) true]
         [_ false])]
-    [(CompilerObjectSymbolBinding.Export)
+    [(Export)
       (match b
-        [(CompilerObjectSymbolBinding.Export) true]
+        [(Export) true]
         [_ false])]
-    [(CompilerObjectSymbolBinding.Extern)
+    [(Extern)
       (match b
-        [(CompilerObjectSymbolBinding.Extern) true]
+        [(Extern) true]
         [_ false])]))
 
 (define (compiler-object-symbol-kind-eq?
   [a : CompilerObjectSymbolKind]
   [b : CompilerObjectSymbolKind]) : bool
   (match a
-    [(CompilerObjectSymbolKind.Function)
+    [(Function)
       (match b
-        [(CompilerObjectSymbolKind.Function) true]
+        [(Function) true]
         [_ false])]
-    [(CompilerObjectSymbolKind.Data)
+    [(Data)
       (match b
-        [(CompilerObjectSymbolKind.Data) true]
+        [(Data) true]
         [_ false])]
-    [(CompilerObjectSymbolKind.Section)
+    [(Section)
       (match b
-        [(CompilerObjectSymbolKind.Section) true]
+        [(Section) true]
         [_ false])]
-    [(CompilerObjectSymbolKind.Runtime)
+    [(Runtime)
       (match b
-        [(CompilerObjectSymbolKind.Runtime) true]
+        [(Runtime) true]
         [_ false])]))
 
 (define (compiler-object-relocation-kind-eq?
   [a : CompilerObjectRelocationKind]
   [b : CompilerObjectRelocationKind]) : bool
   (match a
-    [(CompilerObjectRelocationKind.Call)
+    [(Call)
       (match b
-        [(CompilerObjectRelocationKind.Call) true]
+        [(Call) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.TailCall)
+    [(TailCall)
       (match b
-        [(CompilerObjectRelocationKind.TailCall) true]
+        [(TailCall) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.Abs64)
+    [(Abs64)
       (match b
-        [(CompilerObjectRelocationKind.Abs64) true]
+        [(Abs64) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.Addr32Nb)
+    [(Addr32Nb)
       (match b
-        [(CompilerObjectRelocationKind.Addr32Nb) true]
+        [(Addr32Nb) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.RipValue)
+    [(RipValue)
       (match b
-        [(CompilerObjectRelocationKind.RipValue) true]
+        [(RipValue) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.RipAddress)
+    [(RipAddress)
       (match b
-        [(CompilerObjectRelocationKind.RipAddress) true]
+        [(RipAddress) true]
         [_ false])]
-    [(CompilerObjectRelocationKind.Branch)
+    [(Branch)
       (match b
-        [(CompilerObjectRelocationKind.Branch) true]
+        [(Branch) true]
         [_ false])]))
 
 (define (compiler-object-symbol-list-count
@@ -627,7 +625,7 @@
     [count : i64 (compiler-object-section-list-count sections)]
     [index : i64 0]
     [result : CompilerObjectSection
-      (CompilerObjectSection.Section
+      (Section
         kind
         (CompilerObjectDataRecordList
           (__tl_make-array CompilerObjectDataRecord 0)
@@ -642,7 +640,7 @@
           [section : CompilerObjectSection
             (compiler-object-section-list-ref sections index)]
           (match (owned_view.compiler-owned-shared-view section)
-            [(CompilerObjectSection.Section found-kind _ _)
+            [(Section found-kind _ _)
               (if (compiler-object-section-kind-eq? found-kind kind)
                 (begin
                   (set! result section)
@@ -662,7 +660,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
+          [(Symbol found-name found-binding found-kind _)
             (if (and
               (string.eq found-name name)
               (compiler-object-symbol-binding-eq? found-binding binding)
@@ -682,7 +680,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-relocation-list-ref relocs index)
-          [(CompilerObjectRelocation.Relocation _ _ found-kind found-target)
+          [(Relocation _ _ found-kind found-target)
             (if (and
               (compiler-object-relocation-kind-eq? found-kind kind)
               (string.eq found-target target))
@@ -700,7 +698,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(CompilerObjectDataRecord.Label value)
+          [(Label value)
             (if (string.eq value label)
               (set! found true)
               (set! index (+ index 1)))]
@@ -712,7 +710,7 @@
   [kind : CompilerObjectSectionKind]
   [label : (& label str)]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(CompilerObjectSection.Section _ data _)
+    [(Section _ data _)
       (compiler-object-data-record-list-contains-label? data label)]))
 
 (define (compiler-object-string-prefix-at?
@@ -750,11 +748,11 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(CompilerObjectX64Instr.Bytes value)
+          [(Bytes value)
             (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
-          [(CompilerObjectX64Instr.Raw value)
+          [(Raw value)
             (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
@@ -764,8 +762,6 @@
 (define (compiler-object-section-contains-bytes?
   [sections : (& sections CompilerObjectSectionList)]
   [bytes : String]) : bool
-  (match (compiler-object-section-list-find
-    sections
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
+  (match (compiler-object-section-list-find sections (Text))
+    [(Section _ _ instrs)
       (compiler-object-instr-list-contains-bytes? instrs bytes)]))

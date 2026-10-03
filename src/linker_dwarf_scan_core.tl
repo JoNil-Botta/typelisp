@@ -3068,7 +3068,7 @@
       (when
         (not (linker-dwarf-limits-valid? (& limits)))
         (return
-          (ResultLinkerDwarfInventory.Err
+          (Err
             (LinkerDwarfError
               linker-dwarf-error-invalid-limits
               -1
@@ -3081,7 +3081,7 @@
       (when
         (> count limits.max-views)
         (return
-          (ResultLinkerDwarfInventory.Err
+          (Err
             (LinkerDwarfError
               linker-dwarf-error-view-limit
               -1
@@ -3100,7 +3100,7 @@
       (when
         (> total limits.max-bytes)
         (return
-          (ResultLinkerDwarfInventory.Err
+          (Err
             (LinkerDwarfError
               linker-dwarf-error-byte-limit
               -1
@@ -3208,7 +3208,7 @@
                       (& scan.ledger.slots)
                       0
                       scan.ledger.len)
-                    (ResultLinkerDwarfInventory.Ok
+                    (Ok
                       (LinkerDwarfInventory
                         units
                         tables
@@ -3217,7 +3217,7 @@
                         scan.dies
                         scan.attributes
                         scan.work))))
-                (ResultLinkerDwarfInventory.Err scan.error)))))))))
+                (Err scan.error)))))))))
 
 ;: Check every reference, resolving signatures through the type units.
 (define (linker-dwarf-check-references! [scan : (&mut scan LinkerDwarfScan)]) : unit

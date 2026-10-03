@@ -30,12 +30,12 @@
 (define (compiler-float-decimal-syntax? [text : String]) : bool
   (match (io.float-parse-decimal text)
     [(IoFloatSomeDecimal _ _ _) true]
-    [(io.IoFloatNoDecimal) false]))
+    [(IoFloatNoDecimal) false]))
 
 (define (compiler-float-parse-f64 [text : String]) : CompilerFloatMaybeF64
   (match (io.float-parse-f64 text)
-    [(io.IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
-    [(io.IoFloatNoF64) (CompilerFloatNoF64)]))
+    [(IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
+    [(IoFloatNoF64) (CompilerFloatNoF64)]))
 
 (define (compiler-float-f64-from-bits [bits : u64]) : f64
   (io.float-f64-from-bits bits))
@@ -63,40 +63,40 @@
 
 (define (compiler-finite-cast-integer-type? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.I64) true]
-    [(ast.AstType.I32) true]
-    [(ast.AstType.I16) true]
-    [(ast.AstType.I8) true]
-    [(ast.AstType.U64) true]
-    [(ast.AstType.U32) true]
-    [(ast.AstType.U16) true]
-    [(ast.AstType.U8) true]
+    [(I64) true]
+    [(I32) true]
+    [(I16) true]
+    [(I8) true]
+    [(U64) true]
+    [(U32) true]
+    [(U16) true]
+    [(U8) true]
     [_ false]))
 
 (define (compiler-finite-cast-int-or-char-type? [ty : ast.AstType]) : bool
   (if (compiler-finite-cast-integer-type? (clone ty))
     true
     (match ty
-      [(ast.AstType.Char) true]
+      [(Char) true]
       [_ false])))
 
 (define (compiler-finite-cast-float-type? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.F64) true]
-    [(ast.AstType.F32) true]
+    [(F64) true]
+    [(F32) true]
     [_ false]))
 
 (define (compiler-finite-cast-normalize-i64 [value : i64] [ty : ast.AstType]) : i64
   (match ty
-    [(ast.AstType.I64) (cast (cast value : i64) : i64)]
-    [(ast.AstType.I32) (cast (cast value : i32) : i64)]
-    [(ast.AstType.I16) (cast (cast value : i16) : i64)]
-    [(ast.AstType.I8) (cast (cast value : i8) : i64)]
-    [(ast.AstType.U64) (cast (cast value : u64) : i64)]
-    [(ast.AstType.U32) (cast (cast value : u32) : i64)]
-    [(ast.AstType.U16) (cast (cast value : u16) : i64)]
-    [(ast.AstType.U8) (cast (cast value : u8) : i64)]
-    [(ast.AstType.Char) (cast (cast value : char) : i64)]
+    [(I64) (cast (cast value : i64) : i64)]
+    [(I32) (cast (cast value : i32) : i64)]
+    [(I16) (cast (cast value : i16) : i64)]
+    [(I8) (cast (cast value : i8) : i64)]
+    [(U64) (cast (cast value : u64) : i64)]
+    [(U32) (cast (cast value : u32) : i64)]
+    [(U16) (cast (cast value : u16) : i64)]
+    [(U8) (cast (cast value : u8) : i64)]
+    [(Char) (cast (cast value : char) : i64)]
     [_ value]))
 
 (define (compiler-finite-cast-input-to-i64
@@ -105,25 +105,24 @@
   (if (compiler-finite-cast-int-or-char-type? (clone from-ty))
     (match input
       [(CompilerFiniteCastInputI64 value)
-        (option_i64.Some (compiler-finite-cast-normalize-i64 value from-ty))]
+        (Some (compiler-finite-cast-normalize-i64 value from-ty))]
       [(CompilerFiniteCastInputChar value)
-        (option_i64.Some
-          (compiler-finite-cast-normalize-i64 (cast value : i64) from-ty))]
-      [_ (option_i64.None)])
-    (option_i64.None)))
+        (Some (compiler-finite-cast-normalize-i64 (cast value : i64) from-ty))]
+      [_ (None)])
+    (None)))
 
 (define (compiler-finite-cast-input-to-f64
   [input : CompilerFiniteCastInput]
   [from-ty : ast.AstType]) : CompilerFloatMaybeF64
   (match from-ty
-    [(ast.AstType.F64)
+    [(F64)
       (match input
         [(CompilerFiniteCastInputF64 value)
           (if (compiler-float-f64-finite? value)
             (CompilerFloatSomeF64 value)
             (CompilerFloatNoF64))]
         [_ (CompilerFloatNoF64)])]
-    [(ast.AstType.F32)
+    [(F32)
       (match input
         [(CompilerFiniteCastInputF32 value)
           (let
@@ -136,11 +135,11 @@
 
 (define (compiler-finite-cast-int-to-f64 [value : i64] [from-ty : ast.AstType]) : f64
   (match from-ty
-    [(ast.AstType.U64) (cast (cast value : u64) : f64)]
-    [(ast.AstType.U32) (cast (cast value : u32) : f64)]
-    [(ast.AstType.U16) (cast (cast value : u16) : f64)]
-    [(ast.AstType.U8) (cast (cast value : u8) : f64)]
-    [(ast.AstType.Char) (cast (cast value : char) : f64)]
+    [(U64) (cast (cast value : u64) : f64)]
+    [(U32) (cast (cast value : u32) : f64)]
+    [(U16) (cast (cast value : u16) : f64)]
+    [(U8) (cast (cast value : u8) : f64)]
+    [(Char) (cast (cast value : char) : f64)]
     [_ (cast value : f64)]))
 
 ;; Convert directly to binary32 before widening the exact result for compiler
@@ -150,11 +149,11 @@
   [value : i64]
   [from-ty : ast.AstType]) : f64
   (match from-ty
-    [(ast.AstType.U64) (cast (cast (cast value : u64) : f32) : f64)]
-    [(ast.AstType.U32) (cast (cast (cast value : u32) : f32) : f64)]
-    [(ast.AstType.U16) (cast (cast (cast value : u16) : f32) : f64)]
-    [(ast.AstType.U8) (cast (cast (cast value : u8) : f32) : f64)]
-    [(ast.AstType.Char) (cast (cast (cast value : char) : f32) : f64)]
+    [(U64) (cast (cast (cast value : u64) : f32) : f64)]
+    [(U32) (cast (cast (cast value : u32) : f32) : f64)]
+    [(U16) (cast (cast (cast value : u16) : f32) : f64)]
+    [(U8) (cast (cast (cast value : u8) : f32) : f64)]
+    [(Char) (cast (cast (cast value : char) : f32) : f64)]
     [_ (cast (cast value : f32) : f64)]))
 
 (define (compiler-finite-cast-int-to-float-result
@@ -162,13 +161,13 @@
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
   (match to-ty
-    [(ast.AstType.F64)
+    [(F64)
       (let
         [as-f64 : f64 (compiler-finite-cast-int-to-f64 value from-ty)]
         (if (compiler-float-f64-finite? as-f64)
           (CompilerFiniteCastResultF64 as-f64)
           (CompilerFiniteCastNoResult)))]
-    [(ast.AstType.F32)
+    [(F32)
       (let
         [rounded : f64 (compiler-finite-cast-int-to-f32-as-f64 value from-ty)]
         (if (compiler-float-f64-finite? rounded)
@@ -179,52 +178,52 @@
 (define (compiler-finite-cast-u64-f32-bits-eq? [value : u64] [want : u32]) : bool
   (match (compiler-finite-cast-fold
     (CompilerFiniteCastInputI64 (cast value : i64))
-    (ast.AstType.U64)
-    (ast.AstType.F32))
+    (U64)
+    (F32))
     [(CompilerFiniteCastResultF32 rounded)
       (= (compiler-float-f32-bits (cast rounded : f32)) want)]
     [_ false]))
 
 (define (compiler-finite-cast-signed-min [ty : ast.AstType]) : f64
   (match ty
-    [(ast.AstType.I64) -9223372036854775808.0]
-    [(ast.AstType.I32) -2147483648.0]
-    [(ast.AstType.I16) -32768.0]
-    [(ast.AstType.I8) -128.0]
+    [(I64) -9223372036854775808.0]
+    [(I32) -2147483648.0]
+    [(I16) -32768.0]
+    [(I8) -128.0]
     [_ 0.0]))
 
 (define (compiler-finite-cast-signed-max-exclusive [ty : ast.AstType]) : f64
   (match ty
-    [(ast.AstType.I64) 9223372036854775808.0]
-    [(ast.AstType.I32) 2147483648.0]
-    [(ast.AstType.I16) 32768.0]
-    [(ast.AstType.I8) 128.0]
+    [(I64) 9223372036854775808.0]
+    [(I32) 2147483648.0]
+    [(I16) 32768.0]
+    [(I8) 128.0]
     [_ 0.0]))
 
 (define (compiler-finite-cast-unsigned-max-exclusive [ty : ast.AstType]) : f64
   (match ty
-    [(ast.AstType.U64) 18446744073709551616.0]
-    [(ast.AstType.U32) 4294967296.0]
-    [(ast.AstType.U16) 65536.0]
-    [(ast.AstType.U8) 256.0]
-    [(ast.AstType.Char) 256.0]
+    [(U64) 18446744073709551616.0]
+    [(U32) 4294967296.0]
+    [(U16) 65536.0]
+    [(U8) 256.0]
+    [(Char) 256.0]
     [_ 0.0]))
 
 (define (compiler-finite-cast-signed-target? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.I64) true]
-    [(ast.AstType.I32) true]
-    [(ast.AstType.I16) true]
-    [(ast.AstType.I8) true]
+    [(I64) true]
+    [(I32) true]
+    [(I16) true]
+    [(I8) true]
     [_ false]))
 
 (define (compiler-finite-cast-unsigned-target? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.U64) true]
-    [(ast.AstType.U32) true]
-    [(ast.AstType.U16) true]
-    [(ast.AstType.U8) true]
-    [(ast.AstType.Char) true]
+    [(U64) true]
+    [(U32) true]
+    [(U16) true]
+    [(U8) true]
+    [(Char) true]
     [_ false]))
 
 (define (compiler-finite-cast-float-in-target-range?
@@ -248,15 +247,11 @@
   (if (not (compiler-finite-cast-float-in-target-range? value (clone to-ty)))
     (CompilerFiniteCastNoResult)
     (match to-ty
-      [(ast.AstType.I64)
-        (CompilerFiniteCastResultI64 (cast (cast value : i64) : i64))]
-      [(ast.AstType.I32)
-        (CompilerFiniteCastResultI64 (cast (cast value : i32) : i64))]
-      [(ast.AstType.I16)
-        (CompilerFiniteCastResultI64 (cast (cast value : i16) : i64))]
-      [(ast.AstType.I8)
-        (CompilerFiniteCastResultI64 (cast (cast value : i8) : i64))]
-      [(ast.AstType.U64)
+      [(I64) (CompilerFiniteCastResultI64 (cast (cast value : i64) : i64))]
+      [(I32) (CompilerFiniteCastResultI64 (cast (cast value : i32) : i64))]
+      [(I16) (CompilerFiniteCastResultI64 (cast (cast value : i16) : i64))]
+      [(I8) (CompilerFiniteCastResultI64 (cast (cast value : i8) : i64))]
+      [(U64)
         ;; Keep the host execution of the compiler inside signed conversion's
         ;; defined range too. The payload is stored as i64, so restoring bit 63
         ;; produces the exact u64 bits consumed by the optimizer/backend.
@@ -266,25 +261,21 @@
             (bit-or
               (cast (- value 9223372036854775808.0) : i64)
               -9223372036854775808)))]
-      [(ast.AstType.U32)
-        (CompilerFiniteCastResultI64 (cast (cast value : u32) : i64))]
-      [(ast.AstType.U16)
-        (CompilerFiniteCastResultI64 (cast (cast value : u16) : i64))]
-      [(ast.AstType.U8)
-        (CompilerFiniteCastResultI64 (cast (cast value : u8) : i64))]
-      [(ast.AstType.Char)
-        (CompilerFiniteCastResultChar (cast (cast value : u8) : char))]
+      [(U32) (CompilerFiniteCastResultI64 (cast (cast value : u32) : i64))]
+      [(U16) (CompilerFiniteCastResultI64 (cast (cast value : u16) : i64))]
+      [(U8) (CompilerFiniteCastResultI64 (cast (cast value : u8) : i64))]
+      [(Char) (CompilerFiniteCastResultChar (cast (cast value : u8) : char))]
       [_ (CompilerFiniteCastNoResult)])))
 
 (define (compiler-finite-cast-float-to-float-result
   [value : f64]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
   (match (clone to-ty)
-    [(ast.AstType.F64)
+    [(F64)
       (if (compiler-float-f64-finite? value)
         (CompilerFiniteCastResultF64 value)
         (CompilerFiniteCastNoResult))]
-    [(ast.AstType.F32)
+    [(F32)
       (let
         [rounded : f64 (compiler-float-round-f32-as-f64 value)]
         (if (compiler-float-f64-finite? rounded)
@@ -296,7 +287,7 @@
   [value : i64]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
   (match (clone to-ty)
-    [(ast.AstType.Char)
+    [(Char)
       (CompilerFiniteCastResultChar
         (cast (compiler-finite-cast-normalize-i64 value to-ty) : char))]
     [_
@@ -311,13 +302,13 @@
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
   (if (compiler-finite-cast-int-or-char-type? (clone from-ty))
     (match (compiler-finite-cast-input-to-i64 input (clone from-ty))
-      [(option_i64.Some n)
+      [(Some n)
         (if (compiler-finite-cast-int-or-char-type? (clone to-ty))
           (compiler-finite-cast-int-to-int-result n to-ty)
           (if (compiler-finite-cast-float-type? (clone to-ty))
             (compiler-finite-cast-int-to-float-result n from-ty to-ty)
             (CompilerFiniteCastNoResult)))]
-      [(option_i64.None) (CompilerFiniteCastNoResult)])
+      [(None) (CompilerFiniteCastNoResult)])
     (if (compiler-finite-cast-float-type? (clone from-ty))
       (match (compiler-finite-cast-input-to-f64 input (clone from-ty))
         [(CompilerFloatSomeF64 n)

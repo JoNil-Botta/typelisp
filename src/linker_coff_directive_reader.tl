@@ -172,7 +172,7 @@
     [quote-start : i64 0]
     [previous : i64 -1]
     [done : bool false]
-    [failure : TokenScan (TokenScan.Scanned 0 "" -1)]
+    [failure : TokenScan (Scanned 0 "" -1)]
     [failed : bool false]
     (begin
       (while (and (not done) (not failed) (< pos size))
@@ -184,10 +184,10 @@
                 (set! failed true)
                 (set!
                   failure
-                  (TokenScan.ScanFailed
+                  (ScanFailed
                     (directive-error
                       section
-                      (CoffDirectiveErrorKind.NulByte)
+                      (NulByte)
                       pos
                       (+ pos 1)
                       "NUL byte in directive text"))))]
@@ -199,10 +199,10 @@
                     (set! failed true)
                     (set!
                       failure
-                      (TokenScan.ScanFailed
+                      (ScanFailed
                         (directive-error
                           section
-                          (CoffDirectiveErrorKind.QuotedOptionName)
+                          (QuotedOptionName)
                           token-start
                           (+ pos 1)
                           "quotes are only admitted in an option's payload"))))]
@@ -213,10 +213,10 @@
                     (set! failed true)
                     (set!
                       failure
-                      (TokenScan.ScanFailed
+                      (ScanFailed
                         (directive-error
                           section
-                          (CoffDirectiveErrorKind.AmbiguousQuote)
+                          (AmbiguousQuote)
                           (- pos 1)
                           (+ pos 1)
                           "a quote after a backslash or another quote is an escape in Windows argument parsing and is not admitted"))))]
@@ -229,10 +229,10 @@
                 (set! failed true)
                 (set!
                   failure
-                  (TokenScan.ScanFailed
+                  (ScanFailed
                     (directive-error
                       section
-                      (CoffDirectiveErrorKind.NonAsciiWithoutBom)
+                      (NonAsciiWithoutBom)
                       pos
                       (+ pos 1)
                       "non-ASCII byte without a UTF-8 BOM; host code page decoding is not admitted"))))]
@@ -251,10 +251,10 @@
               (set! failed true)
               (set!
                 failure
-                (TokenScan.ScanFailed
+                (ScanFailed
                   (directive-error
                     section
-                    (CoffDirectiveErrorKind.TokenTooLong)
+                    (TokenTooLong)
                     token-start
                     pos
                     (cat.str-cat
@@ -264,10 +264,10 @@
       (cond
         [failed failure]
         [quoted
-          (TokenScan.ScanFailed
+          (ScanFailed
             (directive-error
               section
-              (CoffDirectiveErrorKind.UnterminatedQuote)
+              (UnterminatedQuote)
               quote-start
               pos
               "unterminated quote"))]
@@ -278,18 +278,14 @@
                 data
                 (+ base token-start)
                 (- pos token-start))))
-          (TokenScan.ScanFailed
+          (ScanFailed
             (directive-error
               section
-              (CoffDirectiveErrorKind.MalformedUtf8)
+              (MalformedUtf8)
               token-start
               pos
               "malformed UTF-8"))]
-        [else
-          (TokenScan.Scanned
-            pos
-            (bytes.byte-buf-builder-to-string (& text))
-            colon)]))))
+        [else (Scanned pos (bytes.byte-buf-builder-to-string (& text)) colon)]))))
 
 (define (upper-range [text : (& t str)] [from : i64] [to : i64]) : String
   (let
@@ -337,7 +333,7 @@
   (Rejected CoffDirectiveErrorKind String))
 
 (define (reject [kind : CoffDirectiveErrorKind] [detail : String]) : OptionParse
-  (OptionParse.Rejected kind detail))
+  (Rejected kind detail))
 
 (define (require-payload
   [written : (& w str)]
@@ -347,13 +343,13 @@
   (cond
     [(not present)
       (reject
-        (CoffDirectiveErrorKind.MissingPayload)
+        (MissingPayload)
         (cat.str-cat "/" (string.copy written) " requires a `:` payload"))]
     [(= (string.string-length payload) 0)
       (reject
-        (CoffDirectiveErrorKind.EmptyField)
+        (EmptyField)
         (cat.str-cat "/" (string.copy written) " has an empty payload"))]
-    [else (OptionParse.Parsed directive)]))
+    [else (Parsed directive)]))
 
 ;; Split `key=value` at the first `=`; both sides must be nonempty.
 (define (pair-field
@@ -367,25 +363,25 @@
     (cond
       [(not present)
         (reject
-          (CoffDirectiveErrorKind.MissingPayload)
+          (MissingPayload)
           (cat.str-cat "/" (string.copy written) " requires a `:` payload"))]
       [(< equals 0)
         (reject
-          (CoffDirectiveErrorKind.MissingSeparator)
+          (MissingSeparator)
           (cat.str-cat "/" (string.copy written) " payload needs `=`"))]
       [(or (= equals 0) (= equals (- length 1)))
         (reject
-          (CoffDirectiveErrorKind.EmptyField)
+          (EmptyField)
           (cat.str-cat "/" (string.copy written) " has an empty side of `=`"))]
       [else
         (let
           [left : String (string.substring payload 0 equals)]
           [right : String
             (string.substring payload (+ equals 1) (- length (+ equals 1)))]
-          (OptionParse.Parsed
+          (Parsed
             (if alias
-              (CoffDirective.AlternateName left right)
-              (CoffDirective.FailIfMismatch left right))))])))
+              (AlternateName left right)
+              (FailIfMismatch left right))))])))
 
 (define (path-bearing? [name : (& n str)]) : bool
   (or
@@ -402,15 +398,13 @@
     (cond
       [(not present)
         (reject
-          (CoffDirectiveErrorKind.MissingPayload)
+          (MissingPayload)
           (cat.str-cat "/" (string.copy written) " requires :UNLOAD or :NOBIND"))]
-      [(string.eq qualifier "UNLOAD")
-        (OptionParse.Parsed (CoffDirective.DelayUnload))]
-      [(string.eq qualifier "NOBIND")
-        (OptionParse.Parsed (CoffDirective.DelayNoBind))]
+      [(string.eq qualifier "UNLOAD") (Parsed (DelayUnload))]
+      [(string.eq qualifier "NOBIND") (Parsed (DelayNoBind))]
       [else
         (reject
-          (CoffDirectiveErrorKind.UnknownDelayQualifier)
+          (UnknownDelayQualifier)
           (cat.str-cat
             "/"
             (string.copy written)
@@ -435,34 +429,33 @@
     [written : String (string.substring text 1 (- name-end 1))]
     [upper : String (upper-range text 1 name-end)]
     (cond
-      [(= name-end 1)
-        (reject (CoffDirectiveErrorKind.EmptyOptionName) "empty option name")]
+      [(= name-end 1) (reject (EmptyOptionName) "empty option name")]
       [(string.eq upper "DEFAULTLIB")
         (require-payload
           (& written)
           (& payload)
           present
-          (CoffDirective.DefaultLib (clone payload)))]
+          (DefaultLib (clone payload)))]
       [(string.eq upper "INCLUDE")
         (require-payload
           (& written)
           (& payload)
           present
-          (CoffDirective.Include (clone payload)))]
+          (Include (clone payload)))]
       [(string.eq upper "EXPORT")
         (require-payload
           (& written)
           (& payload)
           present
-          (CoffDirective.Export (clone payload)))]
+          (Export (clone payload)))]
       [(string.eq upper "NODEFAULTLIB")
         (if present
           (require-payload
             (& written)
             (& payload)
             present
-            (CoffDirective.NoDefaultLib (clone payload)))
-          (OptionParse.Parsed (CoffDirective.NoDefaultLibAll)))]
+            (NoDefaultLib (clone payload)))
+          (Parsed (NoDefaultLibAll)))]
       [(string.eq upper "ALTERNATENAME")
         (pair-field (& written) (& payload) present true)]
       [(string.eq upper "FAILIFMISMATCH")
@@ -470,7 +463,7 @@
       [(string.eq upper "DELAYLOAD")
         (if (and present (path-bearing? (& payload)))
           (reject
-            (CoffDirectiveErrorKind.PathBearingDll)
+            (PathBearingDll)
             (cat.str-cat
               "/"
               (clone written)
@@ -479,12 +472,12 @@
             (& written)
             (& payload)
             present
-            (CoffDirective.DelayLoad (clone payload))))]
+            (DelayLoad (clone payload))))]
       [(string.eq upper "DELAY")
         (delay-qualifier (& written) (& payload) present)]
       [else
         (reject
-          (CoffDirectiveErrorKind.UnsupportedOption)
+          (UnsupportedOption)
           (cat.str-cat
             "linker directive /"
             (clone written)
@@ -497,13 +490,11 @@
     [first : i64 (cast (string.string-ref text 0) : i64)]
     (cond
       [(= first (cast '@' : i64))
-        (reject
-          (CoffDirectiveErrorKind.ResponseFile)
-          "response files are not admitted in directives")]
+        (reject (ResponseFile) "response files are not admitted in directives")]
       [(= first (cast '/' : i64)) (parse-named-option text colon)]
       [else
         (reject
-          (CoffDirectiveErrorKind.NotAnOption)
+          (NotAnOption)
           (cat.str-cat
             "expected an option starting with `/`"
             (if (= first (cast '-' : i64))
@@ -529,18 +520,18 @@
         0)]
     [records : record_vec.Vec (record_vec.new)]
     [failure : CoffDirectiveError
-      (directive-error section (CoffDirectiveErrorKind.InvalidRange) 0 0 "")]
+      (directive-error section (InvalidRange) 0 0 "")]
     [failed : bool false]
     (begin
       (while (and (not failed) (< pos size))
         (if (ws? (byte-at data (+ base pos)))
           (set! pos (+ pos 1))
           (match (scan-token section data base size pos bom limits)
-            [(TokenScan.ScanFailed error)
+            [(ScanFailed error)
               (begin
                 (set! failure error)
                 (set! failed true))]
-            [(TokenScan.Scanned end text colon)
+            [(Scanned end text colon)
               (cond
                 [(>= records.len limits.max-options)
                   (begin
@@ -548,7 +539,7 @@
                       failure
                       (directive-error
                         section
-                        (CoffDirectiveErrorKind.TooManyOptions)
+                        (TooManyOptions)
                         pos
                         end
                         (cat.str-cat
@@ -558,7 +549,7 @@
                     (set! failed true))]
                 [else
                   (match (parse-option (& text) colon)
-                    [(OptionParse.Parsed directive)
+                    [(Parsed directive)
                       (let
                         [spelling : bytes.ByteBufBuilder
                           (bytes.byte-buf-builder-with-capacity (- end pos))]
@@ -578,14 +569,14 @@
                               (bytes.byte-buf-builder-to-string (& spelling))
                               directive))
                           (set! pos end)))]
-                    [(OptionParse.Rejected kind detail)
+                    [(Rejected kind detail)
                       (begin
                         (set!
                           failure
                           (directive-error section kind pos end detail))
                         (set! failed true))])])])))
       (if failed
-        (ResultCoffDirectives.Err failure)
+        (Err failure)
         (ResultCoffDirectives.Ok records)))))
 
 ;: Read the directives in `data[start, start + size)`, the raw data of
@@ -599,34 +590,34 @@
   [limits : (& l CoffDirectiveLimits)]) : ResultCoffDirectives
   (cond
     [(not (string.eq section.name ".drectve"))
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.NotDirectiveSection)
+          (NotDirectiveSection)
           0
           0
           (cat.str-cat "section `" (clone section.name) "` is not .drectve")))]
     [(= (bit-and section.characteristics 0x200) 0)
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.NotDirectiveSection)
+          (NotDirectiveSection)
           0
           0
           "section lacks IMAGE_SCN_LNK_INFO"))]
     [(!= section.relocations 0)
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.HasRelocations)
+          (HasRelocations)
           0
           0
           "a directive section must have no relocations"))]
     [(!= section.line-numbers 0)
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.HasLineNumbers)
+          (HasLineNumbers)
           0
           0
           "a directive section must have no line numbers"))]
@@ -634,26 +625,26 @@
         (<= limits.max-bytes 0)
         (<= limits.max-options 0)
         (<= limits.max-token-bytes 0))
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.InvalidLimits)
+          (InvalidLimits)
           0
           0
           "directive limits must be positive"))]
     [(not (byte_reader.range-present? (array-length data) start size))
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.InvalidRange)
+          (InvalidRange)
           0
           size
           "section data lies outside the object bytes"))]
     [(> size limits.max-bytes)
-      (ResultCoffDirectives.Err
+      (Err
         (directive-error
           section
-          (CoffDirectiveErrorKind.TooLarge)
+          (TooLarge)
           0
           size
           (cat.str-cat

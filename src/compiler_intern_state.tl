@@ -400,7 +400,7 @@
   ;; them in one pass: layering record -> ownership -> validity repeatedly
   ;; materialized the large session value and table record at every level.
   (if (or (< raw (ci.intern-structural-key-base)) (<= handle.address 0))
-    InternMaybeStructuralRecord.No
+    No
     (let
       [session-ptr : (Ptr ci.InternSourceNameSession)
         (unsafe
@@ -416,8 +416,8 @@
         (let
           [kind : i64 (ci.intern-active-structural-record-kind-or raw -1)]
           (if (< kind 0)
-            InternMaybeStructuralRecord.No
-            (InternMaybeStructuralRecord.Some
+            No
+            (Some
               (InternStructuralRecord
                 kind
                 (ci.intern-composite-left-id-unchecked raw)
@@ -451,7 +451,7 @@
             (not (= table-owner structural-owner))
             (<= encoded-index 0)
             (> encoded-index table-len))
-            InternMaybeStructuralRecord.No
+            No
             (let
               [index : i64 (- encoded-index 1)]
               [kinds : (__tl_dyn-array u8)
@@ -466,7 +466,7 @@
               [rights : (__tl_dyn-array i64)
                 (unsafe
                   (__tl-project-field (ptr-read table-ptr) rights))]
-              (InternMaybeStructuralRecord.Some
+              (Some
                 (InternStructuralRecord
                   (cast
                     (unsafe
@@ -691,8 +691,8 @@
   (match (intern-structural-session-record-for-raw
     handle
     (intern-template-source-identity-raw identity))
-    [(InternMaybeStructuralRecord.No) InternMaybeTemplateSourceRecord.No]
-    [(InternMaybeStructuralRecord.Some record)
+    [(No) No]
+    [(Some record)
       (if (and
         (= record.kind (ci.intern-structural-kind-template-source))
         (= record.left-id 0)
@@ -700,9 +700,8 @@
         (intern-structural-session-source-name-component-valid?
           handle
           record.right-id))
-        (InternMaybeTemplateSourceRecord.Some
-          (InternTemplateSourceRecord record.right-id))
-        InternMaybeTemplateSourceRecord.No)]))
+        (Some (InternTemplateSourceRecord record.right-id))
+        No)]))
 
 (define (intern-structural-session-template-source-record-for-raw
   [handle : InternStructuralSessionHandle]
@@ -711,7 +710,7 @@
     (=
       (intern-structural-session-record-kind-for-structural-or handle raw -1)
       (ci.intern-structural-kind-template-source)))
-    InternMaybeTemplateSourceRecord.No
+    No
     (intern-structural-session-template-source-record
       handle
       (InternTemplateSourceIdentity raw))))
@@ -720,16 +719,16 @@
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : bool
   (match (intern-structural-session-template-source-record-for-raw handle raw)
-    [(InternMaybeTemplateSourceRecord.Some _) true]
-    [(InternMaybeTemplateSourceRecord.No) false]))
+    [(Some _) true]
+    [(No) false]))
 
 (define (intern-structural-session-template-source-name-id-or
   [handle : InternStructuralSessionHandle]
   [raw : i64]
   [fallback : i64]) : i64
   (match (intern-structural-session-template-source-record-for-raw handle raw)
-    [(InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
-    [(InternMaybeTemplateSourceRecord.No) fallback]))
+    [(Some record) record.source-name-id]
+    [(No) fallback]))
 
 (define (intern-structural-session-fresh-local-identity
   [handle : InternStructuralSessionHandle]
@@ -757,8 +756,8 @@
   (match (intern-structural-session-record-for-raw
     handle
     (intern-fresh-local-identity-raw identity))
-    [(InternMaybeStructuralRecord.No) InternMaybeFreshLocalRecord.No]
-    [(InternMaybeStructuralRecord.Some record)
+    [(No) No]
+    [(Some record)
       (if (and
         (= record.kind (ci.intern-structural-kind-fresh-local))
         (>= record.left-id 0)
@@ -766,9 +765,8 @@
         (intern-structural-session-source-name-component-valid?
           handle
           record.right-id))
-        (InternMaybeFreshLocalRecord.Some
-          (InternFreshLocalRecord record.left-id record.right-id))
-        InternMaybeFreshLocalRecord.No)]))
+        (Some (InternFreshLocalRecord record.left-id record.right-id))
+        No)]))
 
 (define (intern-structural-session-fresh-local-record-for-raw
   [handle : InternStructuralSessionHandle]
@@ -777,7 +775,7 @@
     (=
       (intern-structural-session-record-kind-for-structural-or handle raw -1)
       (ci.intern-structural-kind-fresh-local)))
-    InternMaybeFreshLocalRecord.No
+    No
     (intern-structural-session-fresh-local-record
       handle
       (InternFreshLocalIdentity raw))))
@@ -786,16 +784,16 @@
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : bool
   (match (intern-structural-session-fresh-local-record-for-raw handle raw)
-    [(InternMaybeFreshLocalRecord.Some _) true]
-    [(InternMaybeFreshLocalRecord.No) false]))
+    [(Some _) true]
+    [(No) false]))
 
 (define (intern-structural-session-fresh-local-source-name-id-or
   [handle : InternStructuralSessionHandle]
   [raw : i64]
   [fallback : i64]) : i64
   (match (intern-structural-session-fresh-local-record-for-raw handle raw)
-    [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
-    [(InternMaybeFreshLocalRecord.No) fallback]))
+    [(Some record) record.source-name-id]
+    [(No) fallback]))
 
 (define (intern-structural-session-macro-definition-identity
   [handle : InternStructuralSessionHandle]
@@ -816,17 +814,16 @@
   (match (intern-structural-session-record-for-raw
     handle
     (intern-macro-definition-identity-raw identity))
-    [(InternMaybeStructuralRecord.No) InternMaybeMacroDefinitionRecord.No]
-    [(InternMaybeStructuralRecord.Some record)
+    [(No) No]
+    [(Some record)
       (if (= record.kind (ci.intern-structural-kind-macro-definition))
-        (InternMaybeMacroDefinitionRecord.Some
-          (InternMacroDefinitionRecord record.left-id record.right-id))
-        InternMaybeMacroDefinitionRecord.No)]))
+        (Some (InternMacroDefinitionRecord record.left-id record.right-id))
+        No)]))
 
 (define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
   (match role
-    [(InternMacroGlobalRole.Legacy) 0]
-    [(InternMacroGlobalRole.Context) 1]))
+    [(Legacy) 0]
+    [(Context) 1]))
 
 (define (intern-structural-session-macro-global-identity
   [handle : InternStructuralSessionHandle]
@@ -848,7 +845,7 @@
   (let
     [raw : i64 (intern-macro-global-identity-raw identity)]
     (if (or (< raw (ci.intern-structural-key-base)) (<= handle.address 0))
-      InternMaybeMacroGlobalRecord.No
+      No
       (let
         [session-ptr : (Ptr ci.InternSourceNameSession)
           (unsafe
@@ -862,7 +859,7 @@
           (let
             [kind : i64 (ci.intern-active-structural-record-kind-or raw -1)]
             (if (not (= kind (ci.intern-structural-kind-macro-global)))
-              InternMaybeMacroGlobalRecord.No
+              No
               (let
                 [role : i64 (ci.intern-composite-left-id-unchecked raw)]
                 [definition-module-id : i64
@@ -871,37 +868,37 @@
                   (ci.intern-composite-right-id-unchecked raw)]
                 (cond
                   [(= role 0)
-                    (InternMaybeMacroGlobalRecord.Some
+                    (Some
                       (InternMacroGlobalRecord
-                        InternMacroGlobalRole.Legacy
+                        Legacy
                         definition-module-id
                         source-name-id))]
                   [(= role 1)
-                    (InternMaybeMacroGlobalRecord.Some
+                    (Some
                       (InternMacroGlobalRecord
-                        InternMacroGlobalRole.Context
+                        Context
                         definition-module-id
                         source-name-id))]
-                  [else InternMaybeMacroGlobalRecord.No]))))
+                  [else No]))))
           (match (intern-structural-session-record-for-raw handle raw)
-            [(InternMaybeStructuralRecord.No) InternMaybeMacroGlobalRecord.No]
-            [(InternMaybeStructuralRecord.Some record)
+            [(No) No]
+            [(Some record)
               (if (not (= record.kind (ci.intern-structural-kind-macro-global)))
-                InternMaybeMacroGlobalRecord.No
+                No
                 (cond
                   [(= record.left-id 0)
-                    (InternMaybeMacroGlobalRecord.Some
+                    (Some
                       (InternMacroGlobalRecord
-                        InternMacroGlobalRole.Legacy
+                        Legacy
                         record.middle-id
                         record.right-id))]
                   [(= record.left-id 1)
-                    (InternMaybeMacroGlobalRecord.Some
+                    (Some
                       (InternMacroGlobalRecord
-                        InternMacroGlobalRole.Context
+                        Context
                         record.middle-id
                         record.right-id))]
-                  [else InternMaybeMacroGlobalRecord.No]))]))))))
+                  [else No]))]))))))
 
 (defmacro (intern-structural-session-macro-global-record-for-raw
   [handle : Expr]
@@ -922,8 +919,8 @@
     (match (intern-structural-session-macro-definition-record
       handle
       macro-definition)
-      [(InternMaybeMacroDefinitionRecord.No) true]
-      [(InternMaybeMacroDefinitionRecord.Some _) false]))
+      [(No) true]
+      [(Some _) false]))
     (ci.tl_oob_abort)
     (InternMacroLocalIdentity
       (intern-structural-key-raw
@@ -940,8 +937,8 @@
   (match (intern-structural-session-record-for-raw
     handle
     (intern-macro-local-identity-raw identity))
-    [(InternMaybeStructuralRecord.No) InternMaybeMacroLocalRecord.No]
-    [(InternMaybeStructuralRecord.Some record)
+    [(No) No]
+    [(Some record)
       (let
         [definition : InternMacroDefinitionIdentity
           (InternMacroDefinitionIdentity record.left-id)]
@@ -950,10 +947,10 @@
           (match (intern-structural-session-macro-definition-record
             handle
             definition)
-            [(InternMaybeMacroDefinitionRecord.No) true]
-            [(InternMaybeMacroDefinitionRecord.Some _) false]))
-          InternMaybeMacroLocalRecord.No
-          (InternMaybeMacroLocalRecord.Some
+            [(No) true]
+            [(Some _) false]))
+          No
+          (Some
             (InternMacroLocalRecord definition record.middle-id record.right-id))))]))
 
 (define (intern-structural-session-macro-local-record-for-raw
@@ -963,7 +960,7 @@
     (=
       (intern-structural-session-record-kind-for-structural-or handle raw -1)
       (ci.intern-structural-kind-macro-local)))
-    InternMaybeMacroLocalRecord.No
+    No
     (intern-structural-session-macro-local-record
       handle
       (InternMacroLocalIdentity raw))))
@@ -996,92 +993,92 @@
   [handle : InternStructuralSessionHandle]
   [record : InternLowerPrivateRecord]) : InternLowerPrivateIdentity
   (match record
-    [(InternLowerPrivateRecord.SretParameter)
+    [(SretParameter)
       (intern-structural-session-lower-private-identity-for-components
         handle
         0
         0)]
-    [(InternLowerPrivateRecord.CleanupStack)
+    [(CleanupStack)
       (intern-structural-session-lower-private-identity-for-components
         handle
         1
         0)]
-    [(InternLowerPrivateRecord.RegionReset)
+    [(RegionReset)
       (intern-structural-session-lower-private-identity-for-components
         handle
         2
         0)]
-    [(InternLowerPrivateRecord.CleanupHidden owner-id)
+    [(CleanupHidden owner-id)
       (intern-structural-session-lower-private-component-identity
         handle
         3
         owner-id)]
-    [(InternLowerPrivateRecord.CleanupLiveness owner-id)
+    [(CleanupLiveness owner-id)
       (intern-structural-session-lower-private-component-identity
         handle
         4
         owner-id)]
-    [(InternLowerPrivateRecord.RegionHidden owner-id)
+    [(RegionHidden owner-id)
       (intern-structural-session-lower-private-component-identity
         handle
         5
         owner-id)]
-    [(InternLowerPrivateRecord.ArenaRestoreHidden owner-id)
+    [(ArenaRestoreHidden owner-id)
       (intern-structural-session-lower-private-component-identity
         handle
         6
         owner-id)]
-    [(InternLowerPrivateRecord.SpmdReduceAccumulator)
+    [(SpmdReduceAccumulator)
       (intern-structural-session-lower-private-identity-for-components
         handle
         7
         0)]
-    [(InternLowerPrivateRecord.SpmdReduceEnd)
+    [(SpmdReduceEnd)
       (intern-structural-session-lower-private-identity-for-components
         handle
         8
         0)]
-    [(InternLowerPrivateRecord.SpmdReduceValue)
+    [(SpmdReduceValue)
       (intern-structural-session-lower-private-identity-for-components
         handle
         9
         0)]
-    [(InternLowerPrivateRecord.SpmdReduceCurrent)
+    [(SpmdReduceCurrent)
       (intern-structural-session-lower-private-identity-for-components
         handle
         10
         0)]
-    [(InternLowerPrivateRecord.SpmdReduceStart)
+    [(SpmdReduceStart)
       (intern-structural-session-lower-private-identity-for-components
         handle
         11
         0)]
-    [(InternLowerPrivateRecord.SpmdReduceUniform)
+    [(SpmdReduceUniform)
       (intern-structural-session-lower-private-identity-for-components
         handle
         12
         0)]
-    [(InternLowerPrivateRecord.SpmdScanAccumulator)
+    [(SpmdScanAccumulator)
       (intern-structural-session-lower-private-identity-for-components
         handle
         13
         0)]
-    [(InternLowerPrivateRecord.SpmdScanEnd)
+    [(SpmdScanEnd)
       (intern-structural-session-lower-private-identity-for-components
         handle
         14
         0)]
-    [(InternLowerPrivateRecord.SpmdScanValue)
+    [(SpmdScanValue)
       (intern-structural-session-lower-private-identity-for-components
         handle
         15
         0)]
-    [(InternLowerPrivateRecord.WhileExit ordinal)
+    [(WhileExit ordinal)
       (intern-structural-session-lower-private-component-identity
         handle
         16
         ordinal)]
-    [(InternLowerPrivateRecord.WhileHeader ordinal)
+    [(WhileHeader ordinal)
       (intern-structural-session-lower-private-component-identity
         handle
         17
@@ -1093,96 +1090,72 @@
   (match (intern-structural-session-record-for-raw
     handle
     (intern-lower-private-identity-raw identity))
-    [(InternMaybeStructuralRecord.No) InternMaybeLowerPrivateRecord.No]
-    [(InternMaybeStructuralRecord.Some record)
+    [(No) No]
+    [(Some record)
       (if (or
         (not (= record.kind (ci.intern-structural-kind-lower-private)))
         (not (= record.right-id 0))
         (< record.middle-id 0))
-        InternMaybeLowerPrivateRecord.No
+        No
         (let
           [role : i64 record.left-id]
           [component : i64 record.middle-id]
           (cond
             [(= role 0)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SretParameter)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SretParameter)
+                No)]
             [(= role 1)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.CleanupStack)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some CleanupStack)
+                No)]
             [(= role 2)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.RegionReset)
-                InternMaybeLowerPrivateRecord.No)]
-            [(= role 3)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.CleanupHidden component))]
-            [(= role 4)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.CleanupLiveness component))]
-            [(= role 5)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.RegionHidden component))]
-            [(= role 6)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.ArenaRestoreHidden component))]
+                (Some RegionReset)
+                No)]
+            [(= role 3) (Some (CleanupHidden component))]
+            [(= role 4) (Some (CleanupLiveness component))]
+            [(= role 5) (Some (RegionHidden component))]
+            [(= role 6) (Some (ArenaRestoreHidden component))]
             [(= role 7)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceAccumulator)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceAccumulator)
+                No)]
             [(= role 8)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceEnd)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceEnd)
+                No)]
             [(= role 9)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceValue)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceValue)
+                No)]
             [(= role 10)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceCurrent)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceCurrent)
+                No)]
             [(= role 11)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceStart)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceStart)
+                No)]
             [(= role 12)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdReduceUniform)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdReduceUniform)
+                No)]
             [(= role 13)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdScanAccumulator)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdScanAccumulator)
+                No)]
             [(= role 14)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdScanEnd)
-                InternMaybeLowerPrivateRecord.No)]
+                (Some SpmdScanEnd)
+                No)]
             [(= role 15)
               (if (= component 0)
-                (InternMaybeLowerPrivateRecord.Some
-                  InternLowerPrivateRecord.SpmdScanValue)
-                InternMaybeLowerPrivateRecord.No)]
-            [(= role 16)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.WhileExit component))]
-            [(= role 17)
-              (InternMaybeLowerPrivateRecord.Some
-                (InternLowerPrivateRecord.WhileHeader component))]
-            [else InternMaybeLowerPrivateRecord.No])))]))
+                (Some SpmdScanValue)
+                No)]
+            [(= role 16) (Some (WhileExit component))]
+            [(= role 17) (Some (WhileHeader component))]
+            [else No])))]))
 
 (define (intern-structural-session-lower-private-record-for-raw
   [handle : InternStructuralSessionHandle]
@@ -1211,8 +1184,8 @@
         ;; macro locals alone need one additional lookup to prove their nested
         ;; definition identity.
         (match (intern-structural-session-record-for-raw handle raw)
-          [(InternMaybeStructuralRecord.No) fallback]
-          [(InternMaybeStructuralRecord.Some record)
+          [(No) fallback]
+          [(Some record)
             (cond
               [(= record.kind (ci.intern-structural-kind-template-source))
                 (if (and
@@ -1244,8 +1217,8 @@
                 (match (intern-structural-session-macro-definition-record
                   handle
                   (InternMacroDefinitionIdentity record.left-id))
-                  [(InternMaybeMacroDefinitionRecord.Some _) record.right-id]
-                  [(InternMaybeMacroDefinitionRecord.No) fallback])]
+                  [(Some _) record.right-id]
+                  [(No) fallback])]
               [else fallback])])))))
 
 (define (intern-structural-session-arena-phase-identity-for-components
@@ -1266,25 +1239,25 @@
   [handle : InternStructuralSessionHandle]
   [record : InternArenaPhaseRecord]) : InternArenaPhaseIdentity
   (match record
-    [(InternArenaPhaseRecord.Region owner-id token-id)
+    [(Region owner-id token-id)
       (intern-structural-session-arena-phase-identity-for-components
         handle
         0
         owner-id
         token-id)]
-    [(InternArenaPhaseRecord.CurrentRegionMarker owner-id)
+    [(CurrentRegionMarker owner-id)
       (intern-structural-session-arena-phase-identity-for-components
         handle
         1
         owner-id
         0)]
-    [(InternArenaPhaseRecord.TokenOwnerMarker token-id)
+    [(TokenOwnerMarker token-id)
       (intern-structural-session-arena-phase-identity-for-components
         handle
         2
         token-id
         0)]
-    [(InternArenaPhaseRecord.TokenRegionMarker token-id)
+    [(TokenRegionMarker token-id)
       (intern-structural-session-arena-phase-identity-for-components
         handle
         3
@@ -1298,7 +1271,7 @@
     [key : InternStructuralKey
       (InternStructuralKey (intern-arena-phase-identity-raw identity))]
     (if (not (intern-structural-session-key-owned? handle key))
-      InternMaybeArenaPhaseRecord.No
+      No
       (let
         [session : ci.InternSourceNameSession
           (intern-structural-session-handle-session handle)]
@@ -1312,21 +1285,13 @@
         [first-id : i64 (array-ref table.middles index)]
         [second-id : i64 (array-ref table.rights index)]
         (if (not (= kind (ci.intern-structural-kind-arena-phase)))
-          InternMaybeArenaPhaseRecord.No
+          No
           (cond
-            [(= role 0)
-              (InternMaybeArenaPhaseRecord.Some
-                (InternArenaPhaseRecord.Region first-id second-id))]
-            [(= role 1)
-              (InternMaybeArenaPhaseRecord.Some
-                (InternArenaPhaseRecord.CurrentRegionMarker first-id))]
-            [(= role 2)
-              (InternMaybeArenaPhaseRecord.Some
-                (InternArenaPhaseRecord.TokenOwnerMarker first-id))]
-            [(= role 3)
-              (InternMaybeArenaPhaseRecord.Some
-                (InternArenaPhaseRecord.TokenRegionMarker first-id))]
-            [else InternMaybeArenaPhaseRecord.No]))))))
+            [(= role 0) (Some (Region first-id second-id))]
+            [(= role 1) (Some (CurrentRegionMarker first-id))]
+            [(= role 2) (Some (TokenOwnerMarker first-id))]
+            [(= role 3) (Some (TokenRegionMarker first-id))]
+            [else No]))))))
 
 (define (intern-structural-session-arena-phase-record-for-raw
   [handle : InternStructuralSessionHandle]

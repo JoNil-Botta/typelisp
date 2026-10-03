@@ -59,10 +59,10 @@
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
   (match (scaffold-try-mkdir path)
-    [(io.OkIoUnit) io.OkIoUnit]
-    [(io.ErrIoUnit _)
+    [(OkIoUnit) OkIoUnit]
+    [(ErrIoUnit _)
       (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-        io.OkIoUnit
+        OkIoUnit
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
@@ -76,8 +76,8 @@
           "\n"))
       1)
     (match (scaffold-try-write-file path contents)
-      [(io.OkIoUnit) 0]
-      [(io.ErrIoUnit _)
+      [(OkIoUnit) 0]
+      [(ErrIoUnit _)
         (begin
           (io.print-error
             (str_cat.str-cat "scaffold: could not write " path "\n"))
@@ -111,7 +111,7 @@
         (scaffold-lib-source)
         (scaffold-bin-source))]
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view src-dir))
-      [(io.ErrIoUnit _)
+      [(ErrIoUnit _)
         (begin
           (io.print-error
             (str_cat.str-cat
@@ -119,7 +119,7 @@
               src-dir
               "\n"))
           1)]
-      [(io.OkIoUnit)
+      [(OkIoUnit)
         (let
           [pkg-code : i64
             (scaffold-write-new
@@ -157,12 +157,12 @@
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
       2)
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view name))
-      [(io.ErrIoUnit _)
+      [(ErrIoUnit _)
         (begin
           (io.print-error
             (str_cat.str-cat "scaffold: could not create directory " name "\n"))
           1)]
-      [(io.OkIoUnit)
+      [(OkIoUnit)
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64

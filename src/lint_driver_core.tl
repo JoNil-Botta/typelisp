@@ -145,11 +145,11 @@
                 "selfhost-lint: --target was provided more than once")
               (match (target_cfg.compiler-target-cfg-parse
                 (cli_option.cli-args-value (& args)))
-                [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                [(Ok parsed-target)
                   (begin
                     (set! selfhost-lint-language-target parsed-target)
                     (set! has-target true))]
-                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                [(Err message)
                   (cli_option.cli-args-fail!
                     (&mut args)
                     (str_cat.str-cat "selfhost-lint: " message))]))]
@@ -172,9 +172,9 @@
           [else
             (lint_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
       (cond
-        [args.failed (ResultSelfhostLintConfig.Err args.error)]
+        [args.failed (Err args.error)]
         [(lint_svec.is-empty? (& input-paths))
-          (ResultSelfhostLintConfig.Ok
+          (Ok
             (SelfhostLintConfig.Package
               manifest-path
               has-manifest
@@ -186,10 +186,9 @@
               prefer-dotted-field
               name-case))]
         [has-manifest
-          (ResultSelfhostLintConfig.Err
-            "selfhost-lint: cannot combine input paths with --manifest-path")]
+          (Err "selfhost-lint: cannot combine input paths with --manifest-path")]
         [else
-          (ResultSelfhostLintConfig.Ok
+          (Ok
             (SelfhostLintConfig.File
               input-paths
               stdlib-roots
@@ -215,13 +214,13 @@
         (cdiag.compiler-diagnostic-with-code
           (cdiag.compiler-diagnostic-with-level
             (cdiag.compiler-diagnostic-from-ast-span path fspan finding.message)
-            cdiag.CompilerDiagnosticWarning)
+            CompilerDiagnosticWarning)
           rule-id)
         suggestion)]
     (match finding.fix
-      [(lint_core.LintFixAvailable fix)
+      [(LintFixAvailable fix)
         (cdiag.compiler-diagnostic-with-fix diagnostic fix)]
-      [(lint_core.LintFixUnavailable _ _) diagnostic])))
+      [(LintFixUnavailable _ _) diagnostic])))
 
 ;; Rich diagnostics are the human-facing default. `--format flat` preserves the
 ;; historical line-oriented form for scripts and editors that parse it. `source`
@@ -726,45 +725,37 @@
   [stdlib-roots : lint_svec.Vec]
   [decl : ast.AstDecl]) : SelfhostLintMaybeImport
   (match decl
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec
-          (ast.AstImportKind.Module)
-          import-path
-          expected
-          alias
-          span))
+    [(Import decl-meta (Spec (Module) import-path expected alias span))
       (match (compiler_load.compiler-load-resolve-import-spec-with-roots-classified
         importer-path
         import-root
-        (ast.AstImportKind.Module)
+        (Module)
         (owned_view.compiler-owned-shared-view import-path)
         expected
         alias
         stdlib-roots)
-        [(compiler_load.ResultCompilerLoadResolvedImport.Ok resolved)
+        [(Ok resolved)
           (match resolved.kind
-            [(ast.AstImportKind.ModuleItem _)
-              (SelfhostLintMaybeImport.Some
-                (ast.AstDecl.Import
+            [(ModuleItem _)
+              (Some
+                (Import
                   decl-meta
-                  (ast.AstImportSpec.Spec
+                  (Spec
                     resolved.kind
                     import-path
                     resolved.expected-module
                     resolved.alias
                     span)))]
-            [_ SelfhostLintMaybeImport.No])]
-        [(compiler_load.ResultCompilerLoadResolvedImport.Err _)
-          SelfhostLintMaybeImport.No])]
-    [_ SelfhostLintMaybeImport.No]))
+            [_ No])]
+        [(Err _) No])]
+    [_ No]))
 
 (define (selfhost-lint-program-with-selected-items
   [path : (& path str)]
   [stdlib-roots : lint_svec.Vec]
   [program : ast.AstProgram]) : ast.AstProgram
   (match (owned_view.compiler-owned-shared-view program)
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         [importer-path : String (string.copy path)]
@@ -783,12 +774,11 @@
                   (owned_view.compiler-owned-shared-view import-root)
                   (owned_view.compiler-owned-shared-view stdlib-roots)
                   (owned_view.compiler-owned-shared-view decl))
-                  [(SelfhostLintMaybeImport.Some item-import)
+                  [(Some item-import)
                     (begin
                       (ast.ast-decl-list-push (&mut out) item-import)
                       (set! rewritten true))]
-                  [(SelfhostLintMaybeImport.No)
-                    (ast.ast-decl-list-push (&mut out) decl)])
+                  [(No) (ast.ast-decl-list-push (&mut out) decl)])
                 (set! index (+ index 1)))))
           (if rewritten
             (ast.ast-program out)
@@ -805,7 +795,7 @@
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (match (selfhost-lint-program-with-selected-items path stdlib-roots parsed)
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         ;; Keep the default path allocation-free with respect to lint policy.
@@ -1025,8 +1015,8 @@
         (let
           [entry : SelfhostLintUnsafeSurfaceCacheEntry
             (selfhost-lint-unsafe-surface-cache-entry index)]
-          (SelfhostLintUnsafeSurfaceLookup.Hit entry.valid entry.names))
-        (SelfhostLintUnsafeSurfaceLookup.Miss)))))
+          (Hit entry.valid entry.names))
+        (Miss)))))
 
 (define (selfhost-lint-unsafe-surface-value-kind?
   [kind : compiler_load.CompilerLoadSurfaceDeclKind]) : bool
@@ -1131,13 +1121,13 @@
     [normalized : String (compiler_load.compiler-load-normalize-path path)]
     (match (selfhost-lint-unsafe-surface-cache-lookup
       (owned_view.compiler-owned-shared-view normalized))
-      [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
+      [(Hit valid names)
         (begin
           (set!
             selfhost-lint-unsafe-surface-hit-count
             (+ selfhost-lint-unsafe-surface-hit-count 1))
-          (SelfhostLintUnsafeSurfaceLookup.Hit valid names))]
-      [(SelfhostLintUnsafeSurfaceLookup.Miss)
+          (Hit valid names))]
+      [(Miss)
         (begin
           (set!
             selfhost-lint-unsafe-surface-parse-count
@@ -1155,7 +1145,7 @@
                   (owned_view.compiler-owned-shared-view normalized)))
               cfgs
               (ast.ast-node-pool-compat-context-current))
-              [(parser.ResultAstProgramDiagnostic.Ok program)
+              [(Ok program)
                 (match (compiler_load.compiler-load-surface-summary-build
                   (owned_view.compiler-owned-shared-view normalized)
                   0
@@ -1163,14 +1153,14 @@
                   program
                   0
                   true)
-                  [(compiler_load.ResultCompilerLoadSurfaceSummary.Ok summary)
+                  [(Ok summary)
                     (selfhost-lint-unsafe-surface-cache-store-summary!
                       normalized
                       summary)]
-                  [(compiler_load.ResultCompilerLoadSurfaceSummary.Err _)
+                  [(Err _)
                     (selfhost-lint-unsafe-surface-cache-store-invalid!
                       normalized)])]
-              [(parser.ResultAstProgramDiagnostic.Err _)
+              [(Err _)
                 (selfhost-lint-unsafe-surface-cache-store-invalid! normalized)])
             (selfhost-lint-unsafe-surface-cache-store-invalid! normalized))
           (selfhost-lint-unsafe-surface-cache-lookup normalized))])))
@@ -1249,9 +1239,7 @@
         (compiler_load.compiler-load-dirname path)
         import-edge.import-path
         stdlib-roots)]
-    [_
-      (compiler_load.ResultPkgResolve.Err
-        "lint: macro import surface is not static")]))
+    [_ (Err "lint: macro import surface is not static")]))
 
 (define (selfhost-lint-unsafe-surface-prepare-imports!
   [path : String]
@@ -1274,11 +1262,11 @@
               (owned_view.compiler-owned-shared-view path)
               (owned_view.compiler-owned-shared-view stdlib-roots)
               import-edge)
-              [(compiler_load.ResultPkgResolve.Err _) unit]
-              [(compiler_load.ResultPkgResolve.Ok resolved)
+              [(Err _) unit]
+              [(Ok resolved)
                 (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
-                  [(SelfhostLintUnsafeSurfaceLookup.Miss) unit]
-                  [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
+                  [(Miss) unit]
+                  [(Hit valid names)
                     (if valid
                       (selfhost-lint-unsafe-surface-add-names! alias names)
                       unit)])]))
@@ -1299,8 +1287,8 @@
       program
       0
       false)
-      [(compiler_load.ResultCompilerLoadSurfaceSummary.Err _) unit]
-      [(compiler_load.ResultCompilerLoadSurfaceSummary.Ok summary)
+      [(Err _) unit]
+      [(Ok summary)
         (begin
           (selfhost-lint-unsafe-surface-add-local-decls!
             summary.decls
@@ -1371,7 +1359,7 @@
           stdlib-roots
           cfgs
           job-state))
-        [(compiler_check_core.ResultCompilerCheck.Ok _ _)
+        [(Ok _ _)
           (let
             [unused-findings : lint_core.LintFindings
               (selfhost-lint-unused-unsafe-findings-from
@@ -1384,7 +1372,7 @@
             (begin
               (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
               findings))]
-        [(compiler_check_core.ResultCompilerCheck.Err diag _)
+        [(Err diag _)
           (begin
             (set!
               selfhost-lint-typed-unused-unsafe-error
@@ -1522,7 +1510,7 @@
           (owned_view.compiler-owned-shared-view path)
           (owned_view.compiler-owned-shared-view source)
           cfgs)
-          [(parser.ResultAstProgramDiagnostic.Ok program)
+          [(Ok program)
             (let
               [ordinary : lint_core.LintFindings
                 (selfhost-lint-program-findings-with-all-options
@@ -1543,8 +1531,7 @@
                   program
                   stdlib-roots
                   cfgs)))]
-          [(parser.ResultAstProgramDiagnostic.Err _)
-            (lint_core.lint-findings-empty)])]
+          [(Err _) (lint_core.lint-findings-empty)])]
       (begin
         ;; Preserve diagnostic counters, but leave no cache pointer into the
         ;; caller's request arena after returning its findings.
@@ -1934,8 +1921,8 @@
   (if (< (ast.ast-expr-span-wrapper-inner expr-id) 0)
     (lint_core.lint-no-span)
     (match (ast.ast-expr-view-span expr-id)
-      [(ast.AstMaybeSourceSpan.Some span) span]
-      [(ast.AstMaybeSourceSpan.No) (lint_core.lint-no-span)])))
+      [(Some span) span]
+      [(No) (lint_core.lint-no-span)])))
 
 (define (selfhost-lint-dead-find-prefix-from
   [source : (& source str)]
@@ -2124,7 +2111,7 @@
       (and requested-report (not (ast.ast-decl-comptime-only? decl)))]
     [result : SelfhostLintDeadScan
       (match (owned_view.compiler-owned-shared-view decl)
-        [(ast.AstDecl.ModuleBody name body-box)
+        [(ModuleBody name body-box)
           (selfhost-lint-dead-scan-decls
             scan
             path
@@ -2133,8 +2120,8 @@
             visible-root
             allow-report
             (deref body-box))]
-        [(ast.AstDecl.Module _) scan]
-        [(ast.AstDecl.Def _ name _ body)
+        [(Module _) scan]
+        [(Def _ name _ body)
           (let
             [text : String (ci.intern-str name)]
             [span : ast.AstSourceSpan
@@ -2153,7 +2140,7 @@
                 (owned_view.compiler-owned-shared-view decl))
               visible-root
               allow-report))]
-        [(ast.AstDecl.DefFn _ name _ _ body _)
+        [(DefFn _ name _ _ body _)
           (let
             [text : String (ci.intern-str name)]
             [span : ast.AstSourceSpan
@@ -2172,7 +2159,7 @@
                 (owned_view.compiler-owned-shared-view decl))
               visible-root
               allow-report))]
-        [(ast.AstDecl.DefMacro _ name _ _ body)
+        [(DefMacro _ name _ _ body)
           (selfhost-lint-dead-add-visible-node
             scan
             path
@@ -2184,7 +2171,7 @@
               (owned_view.compiler-owned-shared-view decl))
             visible-root
             allow-report)]
-        [(ast.AstDecl.Extern _ name _ _ _)
+        [(Extern _ name _ _ _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2194,7 +2181,7 @@
             name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefEnum _ name _ _)
+        [(DefEnum _ name _ _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2204,7 +2191,7 @@
             name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefEnumLifetimes _ name _ _ _)
+        [(DefEnumLifetimes _ name _ _ _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2214,7 +2201,7 @@
             name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefStruct _ name _ _ _)
+        [(DefStruct _ name _ _ _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2224,7 +2211,7 @@
             name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefStructLifetimes _ name _ _ _ _)
+        [(DefStructLifetimes _ name _ _ _ _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2234,7 +2221,7 @@
             name
             visible-root
             allow-report)]
-        [(ast.AstDecl.DefDispatch _ name _)
+        [(DefDispatch _ name _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2246,21 +2233,21 @@
             allow-report)]
         ;; Macro imports and tests reference their names from outside any
         ;; declaration; other imports reference none.
-        [(ast.AstDecl.Import _ _)
+        [(Import _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-decl-refs
               (owned_view.compiler-owned-shared-view decl)))]
-        [(ast.AstDecl.Test _ _ _ _)
+        [(Test _ _ _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-decl-refs
               (owned_view.compiler-owned-shared-view decl)))]
-        [(ast.AstDecl.IncludeStr _ _) scan]
-        [(ast.AstDecl.IncludeStrComptime _ _) scan]
-        [(ast.AstDecl.IncludeStrLzss _ _) scan]
-        [(ast.AstDecl.IncludeBin _ _) scan]
-        [(ast.AstDecl.Unsafe inner)
+        [(IncludeStr _ _) scan]
+        [(IncludeStrComptime _ _) scan]
+        [(IncludeStrLzss _ _) scan]
+        [(IncludeBin _ _) scan]
+        [(Unsafe inner)
           (selfhost-lint-dead-scan-decl
             scan
             path
@@ -2306,10 +2293,10 @@
   [reportable : bool]
   [decls : ast.AstDeclList]) : SelfhostLintDeadScan
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) scan]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) scan]
+    [(Cons decl rest)
       (match (owned_view.compiler-owned-shared-view decl)
-        [(ast.AstDecl.Module name)
+        [(Module name)
           (selfhost-lint-dead-scan-decls
             scan
             path
@@ -2318,7 +2305,7 @@
             visible-root
             reportable
             rest)]
-        [(ast.AstDecl.ModuleBody name body-box)
+        [(ModuleBody name body-box)
           (selfhost-lint-dead-scan-decls
             (selfhost-lint-dead-scan-decls
               scan
@@ -2355,24 +2342,17 @@
   [decls : ast.AstDeclList]
   [aliases : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) aliases]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) aliases]
+    [(Cons decl rest)
       (match decl
-        [(ast.AstDecl.Import
-            _
-            (ast.AstImportSpec.Spec
-              (ast.AstImportKind.Module)
-              _
-              (ast.AstMaybeModuleName.Some target)
-              (ast.AstMaybeImportAlias.Some alias)
-              _))
+        [(Import _ (Spec (Module) _ (Some target) (Some alias) _))
           (selfhost-lint-dead-import-aliases-from-decls
             rest
             (sym_i64_env.sym-i64-bind-id
               aliases
               alias
               (parser.parse-ast-dotted-import-default-alias-id target)))]
-        [(ast.AstDecl.ModuleBody _ body-box)
+        [(ModuleBody _ body-box)
           (selfhost-lint-dead-import-aliases-from-decls
             rest
             (selfhost-lint-dead-import-aliases-from-decls
@@ -2391,9 +2371,9 @@
     (owned_view.compiler-owned-shared-view path)
     (owned_view.compiler-owned-shared-view source)
     cfgs)
-    [(parser.ResultAstProgramDiagnostic.Ok program)
+    [(Ok program)
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -2411,7 +2391,7 @@
                 visible-root
                 reportable
                 decls)))])]
-    [(parser.ResultAstProgramDiagnostic.Err _) scan]))
+    [(Err _) scan]))
 
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]
@@ -2975,9 +2955,8 @@
     source-set.manifest-dir
     "src/tests"
     (lint_svec.new))
-    [(package_source_core.ResultPackageSourceList.Ok sources) sources]
-    [(package_source_core.ResultPackageSourceList.Err _)
-      (selfhost-lint-package-empty-source-list)]))
+    [(Ok sources) sources]
+    [(Err _) (selfhost-lint-package-empty-source-list)]))
 
 (define (selfhost-lint-package-dead-import-paths-from-decls
   [decls : ast.AstDeclList]
@@ -2990,12 +2969,10 @@
   [package-imports : bool]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadImportList
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (ResultSelfhostLintDeadImportList.Ok items)]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) (ResultSelfhostLintDeadImportList.Ok items)]
+    [(Cons decl rest)
       (match decl
-        [(ast.AstDecl.Import
-            decl-meta
-            (ast.AstImportSpec.Spec kind import-path expected-module alias _))
+        [(Import decl-meta (Spec kind import-path expected-module alias _))
           (if (compiler_load.compiler-load-macro-import-kind? kind)
             (selfhost-lint-package-dead-import-paths-from-decls
               rest
@@ -3028,11 +3005,11 @@
                   (owned_view.compiler-owned-shared-view import-path)
                   expected-module
                   (owned_view.compiler-owned-shared-view stdlib-roots)))
-                [(compiler_load.ResultPkgResolve.Err message)
-                  (ResultSelfhostLintDeadImportList.Err
+                [(Err message)
+                  (Err
                     (box
                       (cdiag.compiler-diagnostic-at-start importer-path message)))]
-                [(compiler_load.ResultPkgResolve.Ok resolved)
+                [(Ok resolved)
                   (let
                     [resolved-id : i64
                       (compiler_load.compiler-load-source-path-id resolved)]
@@ -3110,7 +3087,7 @@
                       pools
                       package-imports
                       next))])))]
-        [(ast.AstDecl.ModuleBody _ body-box)
+        [(ModuleBody _ body-box)
           (match (selfhost-lint-package-dead-import-paths-from-decls
             (ast.ast-decl-list-box-shared-view body-box)
             (owned_view.compiler-owned-shared-view importer-path)
@@ -3121,9 +3098,8 @@
             pools
             package-imports
             items)
-            [(ResultSelfhostLintDeadImportList.Err diag)
-              (ResultSelfhostLintDeadImportList.Err diag)]
-            [(ResultSelfhostLintDeadImportList.Ok nested)
+            [(Err diag) (Err diag)]
+            [(Ok nested)
               (selfhost-lint-package-dead-import-paths-from-decls
                 rest
                 importer-path
@@ -3174,11 +3150,10 @@
               (byte_buf.to-string
                 (io.read-file (owned_view.compiler-owned-shared-view path)))
               (selfhost-lint-package-dead-cfgs))
-              [(parser.ResultAstProgramDiagnostic.Err diag)
-                (ResultSelfhostLintDeadImportList.Err diag)]
-              [(parser.ResultAstProgramDiagnostic.Ok program)
+              [(Err diag) (Err diag)]
+              [(Ok program)
                 (match program
-                  [(ast.AstProgram.Program decls-box)
+                  [(Program decls-box)
                     (selfhost-lint-package-dead-import-paths-from-decls
                       (ast.ast-decl-list-box-shared-view decls-box)
                       path
@@ -3219,9 +3194,8 @@
       (owned_view.compiler-owned-shared-view root-sources)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       package-imports)
-      [(ResultSelfhostLintDeadImportList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadImportList.Ok imports)
+      [(Err diag) (Err diag)]
+      [(Ok imports)
         (let
           [next : lint_svec.Vec queue]
           [_append : unit
@@ -3281,9 +3255,8 @@
       root-sources
       stdlib-roots
       package-imports)
-      [(ResultSelfhostLintDeadSourceList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadSourceList.Ok paths)
+      [(Err diag) (Err diag)]
+      [(Ok paths)
         (ResultSelfhostLintDeadSourceList.Ok
           (selfhost-lint-package-dead-merge-paths-from items paths 0))])))
 
@@ -3329,9 +3302,8 @@
       (owned_view.compiler-owned-shared-view root-sources)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       items)
-      [(ResultSelfhostLintDeadSourceList.Err diag)
-        (ResultSelfhostLintDeadSourceList.Err diag)]
-      [(ResultSelfhostLintDeadSourceList.Ok next-sources)
+      [(Err diag) (Err diag)]
+      [(Ok next-sources)
         (selfhost-lint-package-dead-root-closure-sources-from
           root-sources
           source-set
@@ -3378,24 +3350,22 @@
           (owned_view.compiler-owned-shared-view root-sources)
           (owned_view.compiler-owned-shared-view package-roots)
           (lint_svec.new))
-          [(ResultSelfhostLintDeadSourceList.Err diag)
-            (ResultSelfhostLintDeadSources.Err diag)]
-          [(ResultSelfhostLintDeadSourceList.Ok entry-sources)
+          [(Err diag) (Err diag)]
+          [(Ok entry-sources)
             (match (selfhost-lint-package-dead-root-closure-sources
               (owned_view.compiler-owned-shared-view root-sources)
               (owned_view.compiler-owned-shared-view source-set)
               package-roots
               entry-sources)
-              [(ResultSelfhostLintDeadSourceList.Err diag)
-                (ResultSelfhostLintDeadSources.Err diag)]
-              [(ResultSelfhostLintDeadSourceList.Ok graph-sources)
-                (ResultSelfhostLintDeadSources.Ok
+              [(Err diag) (Err diag)]
+              [(Ok graph-sources)
+                (Ok
                   (SelfhostLintDeadSourceSet
                     graph-sources
                     root-sources
                     source-set.sources
                     explicit-roots))])]))
-      (ResultSelfhostLintDeadSources.Ok
+      (Ok
         (SelfhostLintDeadSourceSet
           (owned_view.compiler-owned-shared-view source-set.sources)
           (selfhost-lint-package-empty-source-list)
@@ -3639,7 +3609,7 @@
       (owned_view.compiler-owned-shared-view source)
       (selfhost-lint-language-cfgs)
       (ast.ast-node-pool-compat-context-current))
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (let
           [findings : lint_core.LintFindings
             (selfhost-lint-program-and-typed-findings
@@ -3676,7 +3646,7 @@
                   selfhost-lint-typed-unused-unsafe-error
                   "\n"))
               1)))]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
+      [(Err diag)
         (begin
           (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
           1)])))
@@ -3707,7 +3677,7 @@
       (owned_view.compiler-owned-shared-view source)
       (selfhost-lint-language-cfgs)
       (ast.ast-node-pool-compat-context-current))
-      [(parser.ResultAstProgramDiagnostic.Ok program)
+      [(Ok program)
         (let
           [findings : lint_core.LintFindings
             (selfhost-lint-program-and-typed-findings
@@ -3748,7 +3718,7 @@
                   selfhost-lint-typed-unused-unsafe-error
                   "\n"))
               1)))]
-      [(parser.ResultAstProgramDiagnostic.Err diag)
+      [(Err diag)
         (begin
           (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
           1)])))
@@ -3924,11 +3894,11 @@
     "lint"
     manifest-path
     has-manifest)
-    [(package_source_core.ResultPackageSourceSet.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat message "\n"))
         1)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
+    [(Ok source-set)
       (let
         [sources : lint_svec.Vec
           (owned_view.compiler-owned-shared-view source-set.sources)]
@@ -3941,7 +3911,7 @@
         [package-roots : lint_svec.Vec
           (selfhost-lint-package-import-roots source-set stdlib-roots)]
         (match dead-sources-result
-          [(ResultSelfhostLintDeadSources.Ok dead-sources)
+          [(Ok dead-sources)
             (let
               [dead-decls : SelfhostLintDeadDecls
                 (selfhost-lint-package-dead-code
@@ -3960,7 +3930,7 @@
                 dead-decls
                 (> (lint_svec.len (& sources)) 1)
                 0))]
-          [(ResultSelfhostLintDeadSources.Err diag)
+          [(Err diag)
             (begin
               (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
               1)]))]))
@@ -3968,9 +3938,9 @@
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-lint-config-from start count)
-    [(ResultSelfhostLintConfig.Ok config)
+    [(Ok config)
       (match config
-        [(SelfhostLintConfig.File
+        [(File
             input-paths
             stdlib-roots
             enforcing
@@ -3990,7 +3960,7 @@
             name-case
             (> (lint_svec.len (& input-paths)) 1)
             0)]
-        [(SelfhostLintConfig.Package
+        [(Package
             manifest-path
             has-manifest
             stdlib-roots
@@ -4010,7 +3980,7 @@
             redundant-begin
             prefer-dotted-field
             name-case)])]
-    [(ResultSelfhostLintConfig.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat message "\n"))
         2)]))

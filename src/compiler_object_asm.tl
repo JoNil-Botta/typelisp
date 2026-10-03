@@ -115,27 +115,27 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instr : cobj.CompilerObjectX64Instr]) : bool
   (match instr
-    [(cobj.CompilerObjectX64Instr.Label label)
+    [(Label label)
       (begin
         (compiler-object-asm-append-label! out label)
         true)]
-    [(cobj.CompilerObjectX64Instr.Call target)
+    [(Call target)
       (begin
         (compiler-object-asm-append-rip-instr! out "    call " target "\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.TailCall target)
+    [(TailCall target)
       (begin
         (compiler-object-asm-append-rip-instr! out "    jmp " target "\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.Jump target)
+    [(Jump target)
       (begin
         (compiler-object-asm-append-rip-instr! out "    jmp " target "\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.Ja target)
+    [(Ja target)
       (begin
         (compiler-object-asm-append-rip-instr! out "    ja " target "\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.Jcc cc target)
+    [(Jcc cc target)
       (if (cobj.compiler-object-condition-code-valid? cc)
         (begin
           (compiler-object-asm-append-rip-instr!
@@ -145,7 +145,7 @@
             "\n")
           true)
         false)]
-    [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
+    [(Branch true-target false-target)
       (begin
         (compiler-object-asm-append! out "    testq %rax, %rax\n    jne ")
         (compiler-object-asm-append! out true-target)
@@ -153,7 +153,7 @@
         (compiler-object-asm-append! out false-target)
         (compiler-object-asm-push-char! out '\n')
         true)]
-    [(cobj.CompilerObjectX64Instr.LoadRip target)
+    [(LoadRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -161,7 +161,7 @@
           target
           "(%rip), %rax\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.LoadRipAddress target)
+    [(LoadRipAddress target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -169,7 +169,7 @@
           target
           "(%rip), %rax\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 target)
+    [(LoadRipAddressR11 target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -177,7 +177,7 @@
           target
           "(%rip), %r11\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.StoreRip target)
+    [(StoreRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -185,13 +185,13 @@
           target
           "(%rip)\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.SubRspImm8 immediate)
+    [(SubRspImm8 immediate)
       (begin
         (compiler-object-asm-append! out "    subq $")
         (compiler-object-asm-append-int! out immediate)
         (compiler-object-asm-append! out ", %rsp\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.MovRcxRip target)
+    [(MovRcxRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -199,7 +199,7 @@
           target
           "(%rip), %rcx\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.MovRdxRip target)
+    [(MovRdxRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -207,7 +207,7 @@
           target
           "(%rip), %rdx\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx target)
+    [(LoadRipAddressRdx target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -215,7 +215,7 @@
           target
           "(%rip), %rdx\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.StoreR14Rip target)
+    [(StoreR14Rip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -223,7 +223,7 @@
           target
           "(%rip)\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.StoreR15Rip target)
+    [(StoreR15Rip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -231,7 +231,7 @@
           target
           "(%rip)\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.AddRcxRip target)
+    [(AddRcxRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -239,11 +239,11 @@
           target
           "(%rip)\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.MovRcxRax)
+    [(MovRcxRax)
       (begin
         (compiler-object-asm-append! out "    movq %rax, %rcx\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.XorpdRip target)
+    [(XorpdRip target)
       (begin
         (compiler-object-asm-append-rip-instr!
           out
@@ -251,11 +251,11 @@
           target
           "(%rip), %xmm0\n")
         true)]
-    [(cobj.CompilerObjectX64Instr.Bytes bytes)
+    [(Bytes bytes)
       (begin
         (compiler-object-asm-append-bytes! out bytes)
         true)]
-    [(cobj.CompilerObjectX64Instr.Raw _) false]))
+    [(Raw _) false]))
 
 (define (compiler-object-asm-render-instrs!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -279,45 +279,43 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [record : cobj.CompilerObjectDataRecord]) : unit
   (match record
-    [(cobj.CompilerObjectDataRecord.Label label)
-      (compiler-object-asm-append-label! out label)]
-    [(cobj.CompilerObjectDataRecord.Align alignment)
+    [(Label label) (compiler-object-asm-append-label! out label)]
+    [(Align alignment)
       (begin
         (compiler-object-asm-append! out "    .balign ")
         (compiler-object-asm-append-int! out alignment)
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.Bytes bytes)
-      (compiler-object-asm-append-bytes! out bytes)]
-    [(cobj.CompilerObjectDataRecord.String text)
+    [(Bytes bytes) (compiler-object-asm-append-bytes! out bytes)]
+    [(String text)
       (begin
         (compiler-object-asm-append-bytes! out text)
         (compiler-object-asm-append! out "    .byte 0\n"))]
-    [(cobj.CompilerObjectDataRecord.F64 bits)
+    [(F64 bits)
       (begin
         (compiler-object-asm-append! out "    .quad ")
         (compiler-object-asm-append-int! out (cast bits : i64))
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.F32 bits)
+    [(F32 bits)
       (begin
         (compiler-object-asm-append! out "    .long ")
         (compiler-object-asm-append-int! out (cast bits : i64))
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.I64 value)
+    [(I64 value)
       (begin
         (compiler-object-asm-append! out "    .quad ")
         (compiler-object-asm-append-int! out value)
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.Zero count)
+    [(Zero count)
       (begin
         (compiler-object-asm-append! out "    .zero ")
         (compiler-object-asm-append-int! out count)
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.SymbolAddress target)
+    [(SymbolAddress target)
       (begin
         (compiler-object-asm-append! out "    .quad ")
         (compiler-object-asm-append! out target)
         (compiler-object-asm-push-char! out '\n'))]
-    [(cobj.CompilerObjectDataRecord.SymbolRva32 target)
+    [(SymbolRva32 target)
       (begin
         (compiler-object-asm-append! out "    .rva ")
         (compiler-object-asm-append! out target)
@@ -341,17 +339,13 @@
 (define (compiler-object-asm-section-header
   [kind : cobj.CompilerObjectSectionKind]) : String
   (match kind
-    [(cobj.CompilerObjectSectionKind.Text) ".text\n    .balign 16\n"]
-    [(cobj.CompilerObjectSectionKind.Data) ".data\n    .balign 8\n"]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      ".section .rdata,\"dr\"\n    .balign 8\n"]
-    [(cobj.CompilerObjectSectionKind.Bss) ".bss\n    .balign 8\n"]
-    [(cobj.CompilerObjectSectionKind.Pdata)
-      ".section .pdata,\"dr\"\n    .balign 8\n"]
-    [(cobj.CompilerObjectSectionKind.Xdata)
-      ".section .xdata,\"dr\"\n    .balign 8\n"]
-    [(cobj.CompilerObjectSectionKind.Rsrc)
-      ".section .rsrc,\"dr\"\n    .balign 8\n"]))
+    [(Text) ".text\n    .balign 16\n"]
+    [(Data) ".data\n    .balign 8\n"]
+    [(Rodata) ".section .rdata,\"dr\"\n    .balign 8\n"]
+    [(Bss) ".bss\n    .balign 8\n"]
+    [(Pdata) ".section .pdata,\"dr\"\n    .balign 8\n"]
+    [(Xdata) ".section .xdata,\"dr\"\n    .balign 8\n"]
+    [(Rsrc) ".section .rsrc,\"dr\"\n    .balign 8\n"]))
 
 (define (compiler-object-asm-render-symbols!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -363,9 +357,9 @@
       (while (< index count)
         (begin
           (match (cobj.compiler-object-symbol-list-ref symbols index)
-            [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
+            [(Symbol name binding _ _)
               (match binding
-                [(cobj.CompilerObjectSymbolBinding.Export)
+                [(Export)
                   (begin
                     (compiler-object-asm-append! out ".globl ")
                     (compiler-object-asm-append! out name)
@@ -385,7 +379,7 @@
       (while (and ok (< index count))
         (begin
           (match (cobj.compiler-object-section-list-ref sections index)
-            [(cobj.CompilerObjectSection.Section kind records instrs)
+            [(Section kind records instrs)
               (begin
                 (compiler-object-asm-append!
                   out
@@ -403,9 +397,8 @@
     (begin
       (compiler-object-asm-render-symbols! (&mut out) image.symbols)
       (if (compiler-object-asm-render-sections! (&mut out) image.sections)
-        (ResultCompilerObjectAsm.Ok
-          (byte_buf_core.byte-buf-builder-finish-string (& out)))
-        (ResultCompilerObjectAsm.Err
+        (Ok (byte_buf_core.byte-buf-builder-finish-string (& out)))
+        (Err
           "structured assembly rendering requires supported instructions and condition codes")))))
 
 (cfg
@@ -428,14 +421,11 @@
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.byte-buf-builder-with-capacity 64)]
       [_empty : unit
-        (compiler-object-asm-render-data-record!
-          (&mut out)
-          (cobj.CompilerObjectDataRecord.String ""))]
+        (compiler-object-asm-render-data-record! (&mut out) (String ""))]
       [_interior-nul : unit
         (compiler-object-asm-render-data-record!
           (&mut out)
-          (cobj.CompilerObjectDataRecord.String
-            (compiler-object-asm-interior-nul-string)))]
+          (String (compiler-object-asm-interior-nul-string)))]
       [rendered : String (byte_buf_core.byte-buf-builder-finish-string (& out))]
       (test.assert-true
         (string.eq
@@ -452,37 +442,32 @@
         (cobj.compiler-object-instr-builder-push
           (cobj.compiler-object-instr-builder-push
             (cobj.compiler-object-instr-builder-with-capacity 2)
-            (cobj.CompilerObjectX64Instr.Label "_tl_start"))
-          (cobj.CompilerObjectX64Instr.Call "ExitProcess"))]
+            (Label "_tl_start"))
+          (Call "ExitProcess"))]
       [data-records : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-push
           (cobj.compiler-object-data-record-builder-push
             (cobj.compiler-object-data-record-builder-with-capacity 2)
-            (cobj.CompilerObjectDataRecord.Label "_tl_answer"))
-          (cobj.CompilerObjectDataRecord.I64 42))]
+            (Label "_tl_answer"))
+          (I64 42))]
       [sections : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           (cobj.compiler-object-section-builder-push
             (cobj.compiler-object-section-builder-with-capacity 2)
-            (cobj.CompilerObjectSection.Section
-              (cobj.CompilerObjectSectionKind.Text)
+            (Section
+              (Text)
               (cobj.compiler-object-data-record-builder-finish
                 (cobj.compiler-object-data-record-builder-with-capacity 1))
               (cobj.compiler-object-instr-builder-finish text-instrs)))
-          (cobj.CompilerObjectSection.Section
-            (cobj.CompilerObjectSectionKind.Data)
+          (Section
+            (Data)
             (cobj.compiler-object-data-record-builder-finish data-records)
             (cobj.compiler-object-instr-builder-finish
               (cobj.compiler-object-instr-builder-with-capacity 1))))]
       [symbols : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-push
           (cobj.compiler-object-symbol-builder-with-capacity 1)
-          (cobj.CompilerObjectSymbol.Symbol
-            "_tl_start"
-            (cobj.CompilerObjectSymbolBinding.Export)
-            (cobj.CompilerObjectSymbolKind.Function)
-            (cobj.CompilerObjectMaybeSection.Some
-              (cobj.CompilerObjectSectionKind.Text))))]
+          (Symbol "_tl_start" (Export) (Function) (Some (Text))))]
       [image : cobj.CompilerObjectImage
         (cobj.CompilerObjectImage
           (cobj.compiler-object-section-builder-finish sections)
@@ -490,8 +475,8 @@
           (cobj.compiler-object-relocation-builder-finish
             (cobj.compiler-object-relocation-builder-with-capacity 1)))]
       (match (compiler-object-asm-render image)
-        [(ResultCompilerObjectAsm.Err message) (test.assert-true false message)]
-        [(ResultCompilerObjectAsm.Ok asm)
+        [(Err message) (test.assert-true false message)]
+        [(Ok asm)
           (let
             [export-needle : String ".globl _tl_start\n"]
             [call-needle : String "    call ExitProcess\n"]

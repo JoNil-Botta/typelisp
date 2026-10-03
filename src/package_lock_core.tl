@@ -147,14 +147,14 @@
       (= i n))))
 
 (define (package-lock-entry-list-fallback) : PackageLockEntry
-  (PackageLockEntry "" "" (package_cache_core.PackageCachePinKind.Rev) "" ""))
+  (PackageLockEntry "" "" (Rev) "" ""))
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : (& alias str)]
   [index : i64]) : PackageLockMaybeEntry
   (if (>= index (package_lock_entry_vec.len entries))
-    (PackageLockMaybeEntry.No)
+    (No)
     (let
       [entry : PackageLockEntry
         (package_lock_entry_vec.get
@@ -162,7 +162,7 @@
           index
           (package-lock-entry-list-fallback))]
       (if (string.eq entry.alias alias)
-        (PackageLockMaybeEntry.Some entry)
+        (Some entry)
         (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
 (define (package-lock-entry-list-lookup
@@ -219,7 +219,7 @@
     [index : i64
       (package-lock-entry-list-insert-position (& next) entry.alias 0)]
     (if (< index 0)
-      (ResultPackageLockEntryList.Err
+      (Err
         (str_cat.str-cat
           "package-lock: duplicate dependency alias `"
           entry.alias
@@ -232,26 +232,25 @@
   [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPackageLockString
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vhead)
-        [(reader.SexprView.Str val-id)
+        [(Str val-id)
           (match (reader.sexpr-view vrest)
-            [(reader.SexprView.Nil)
-              (ResultPackageLockString.Ok (ci.intern-id-str val-id))]
+            [(Nil) (Ok (ci.intern-id-str val-id))]
             [_
-              (ResultPackageLockString.Err
+              (Err
                 (str_cat.str-cat
                   "package-lock: field `"
                   fname
                   "` takes a single string value"))])]
         [_
-          (ResultPackageLockString.Err
+          (Err
             (str_cat.str-cat
               "package-lock: field `"
               fname
               "` must have a string value"))])]
     [_
-      (ResultPackageLockString.Err
+      (Err
         (str_cat.str-cat
           "package-lock: field `"
           fname
@@ -259,44 +258,34 @@
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
   (cond
-    [(string.eq value "rev")
-      (ResultPackageLockPinKind.Ok (package_cache_core.PackageCachePinKind.Rev))]
-    [(string.eq value "tag")
-      (ResultPackageLockPinKind.Ok (package_cache_core.PackageCachePinKind.Tag))]
-    [(string.eq value "branch")
-      (ResultPackageLockPinKind.Ok
-        (package_cache_core.PackageCachePinKind.Branch))]
-    [else
-      (ResultPackageLockPinKind.Err
-        "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
+    [(string.eq value "rev") (Ok (Rev))]
+    [(string.eq value "tag") (Ok (Tag))]
+    [(string.eq value "branch") (Ok (Branch))]
+    [else (Err "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
 
 (define (package-lock-pin-shape-error) : ResultPackageLockPin
-  (ResultPackageLockPin.Err
-    "package-lock: pin must be `(rev|tag|branch \"value\")`"))
+  (Err "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
 (define (package-lock-pin-form [form : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons kind-node kind-tail)
+    [(Cons kind-node kind-tail)
       (match (reader.sexpr-view kind-node)
-        [(reader.SexprView.Sym kind-name)
+        [(Sym kind-name)
           (match (reader.sexpr-view kind-tail)
-            [(reader.SexprView.Cons value-node end)
+            [(Cons value-node end)
               (match (reader.sexpr-view end)
-                [(reader.SexprView.Nil)
+                [(Nil)
                   (match (reader.sexpr-view value-node)
-                    [(reader.SexprView.Str pin-value-id)
+                    [(Str pin-value-id)
                       (let
                         [pin-value : String (ci.intern-id-str pin-value-id)]
                         (if (string.eq pin-value "")
-                          (ResultPackageLockPin.Err
-                            "package-lock: pin value must not be empty")
+                          (Err "package-lock: pin value must not be empty")
                           (match (package-lock-parse-pin-kind
                             (package-lock-symbol-text kind-name))
-                            [(ResultPackageLockPinKind.Err message)
-                              (ResultPackageLockPin.Err message)]
-                            [(ResultPackageLockPinKind.Ok pin-kind)
-                              (ResultPackageLockPin.Ok
-                                (PackageLockPin pin-kind pin-value))])))]
+                            [(Err message) (Err message)]
+                            [(Ok pin-kind)
+                              (Ok (PackageLockPin pin-kind pin-value))])))]
                     [_ (package-lock-pin-shape-error)])]
                 [_ (package-lock-pin-shape-error)])]
             [_ (package-lock-pin-shape-error)])]
@@ -305,12 +294,11 @@
 
 (define (package-lock-field-pin-value [ftail : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons pin-form after-pin)
+    [(Cons pin-form after-pin)
       (match (reader.sexpr-view after-pin)
-        [(reader.SexprView.Nil) (package-lock-pin-form pin-form)]
-        [_
-          (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")])]
-    [_ (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")]))
+        [(Nil) (package-lock-pin-form pin-form)]
+        [_ (Err "package-lock: field `pin` takes one value")])]
+    [_ (Err "package-lock: field `pin` takes one value")]))
 
 (define (package-lock-entry-fields
   [fields : reader.SpannedSexpr]
@@ -324,51 +312,40 @@
   [commit : String]
   [has-commit : bool]) : ResultPackageLockEntry
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-alias)
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency missing required field `alias`")]
+          (Err "package-lock: dependency missing required field `alias`")]
         [(not has-url)
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency missing required field `url`")]
+          (Err "package-lock: dependency missing required field `url`")]
         [(not has-pin)
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency missing required field `pin`")]
+          (Err "package-lock: dependency missing required field `pin`")]
         [(not has-commit)
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency missing required field `commit`")]
+          (Err "package-lock: dependency missing required field `commit`")]
         [(string.eq alias "")
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency alias must not be empty")]
+          (Err "package-lock: dependency alias must not be empty")]
         [(not (package-lock-alias-token-valid? alias))
-          (ResultPackageLockEntry.Err
+          (Err
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.eq url "")
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency url must not be empty")]
+          (Err "package-lock: dependency url must not be empty")]
         [(string.eq commit "")
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency commit must not be empty")]
-        [else
-          (ResultPackageLockEntry.Ok
-            (PackageLockEntry alias url pin-kind pin-value commit))])]
-    [(reader.SexprView.Cons field rest)
+          (Err "package-lock: dependency commit must not be empty")]
+        [else (Ok (PackageLockEntry alias url pin-kind pin-value commit))])]
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (cond
                 [(string.eq (package-lock-symbol-text fname) "alias")
                   (if has-alias
-                    (ResultPackageLockEntry.Err
-                      "package-lock: duplicate dependency field `alias`")
+                    (Err "package-lock: duplicate dependency field `alias`")
                     (match (package-lock-field-string-value
                       ftail
                       (package-lock-symbol-text fname))
-                      [(ResultPackageLockString.Err message)
-                        (ResultPackageLockEntry.Err message)]
-                      [(ResultPackageLockString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (package-lock-entry-fields
                           rest
                           value
@@ -382,14 +359,12 @@
                           has-commit)]))]
                 [(string.eq (package-lock-symbol-text fname) "url")
                   (if has-url
-                    (ResultPackageLockEntry.Err
-                      "package-lock: duplicate dependency field `url`")
+                    (Err "package-lock: duplicate dependency field `url`")
                     (match (package-lock-field-string-value
                       ftail
                       (package-lock-symbol-text fname))
-                      [(ResultPackageLockString.Err message)
-                        (ResultPackageLockEntry.Err message)]
-                      [(ResultPackageLockString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (package-lock-entry-fields
                           rest
                           alias
@@ -403,12 +378,10 @@
                           has-commit)]))]
                 [(string.eq (package-lock-symbol-text fname) "pin")
                   (if has-pin
-                    (ResultPackageLockEntry.Err
-                      "package-lock: duplicate dependency field `pin`")
+                    (Err "package-lock: duplicate dependency field `pin`")
                     (match (package-lock-field-pin-value ftail)
-                      [(ResultPackageLockPin.Err message)
-                        (ResultPackageLockEntry.Err message)]
-                      [(ResultPackageLockPin.Ok pin)
+                      [(Err message) (Err message)]
+                      [(Ok pin)
                         (package-lock-entry-fields
                           rest
                           alias
@@ -422,14 +395,12 @@
                           has-commit)]))]
                 [(string.eq (package-lock-symbol-text fname) "commit")
                   (if has-commit
-                    (ResultPackageLockEntry.Err
-                      "package-lock: duplicate dependency field `commit`")
+                    (Err "package-lock: duplicate dependency field `commit`")
                     (match (package-lock-field-string-value
                       ftail
                       (package-lock-symbol-text fname))
-                      [(ResultPackageLockString.Err message)
-                        (ResultPackageLockEntry.Err message)]
-                      [(ResultPackageLockString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (package-lock-entry-fields
                           rest
                           alias
@@ -442,26 +413,22 @@
                           value
                           true)]))]
                 [else
-                  (ResultPackageLockEntry.Err
+                  (Err
                     (str_cat.str-cat
                       "package-lock: unknown dependency field `"
                       (package-lock-symbol-text fname)
                       "`"))])]
             [_
-              (ResultPackageLockEntry.Err
+              (Err
                 "package-lock: dependency fields must start with a field name")])]
-        [_
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency fields must be lists")])]
-    [_
-      (ResultPackageLockEntry.Err
-        "package-lock: dependency fields must be lists")]))
+        [_ (Err "package-lock: dependency fields must be lists")])]
+    [_ (Err "package-lock: dependency fields must be lists")]))
 
 (define (package-lock-entry-from-form [form : reader.SpannedSexpr]) : ResultPackageLockEntry
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym name)
+        [(Sym name)
           (if (string.eq (package-lock-symbol-text name) "dependency")
             (package-lock-entry-fields
               rest
@@ -469,38 +436,30 @@
               false
               ""
               false
-              (package_cache_core.PackageCachePinKind.Rev)
+              (Rev)
               ""
               false
               ""
               false)
-            (ResultPackageLockEntry.Err
+            (Err
               "package-lock: dependency entries must start with `dependency`"))]
         [_
-          (ResultPackageLockEntry.Err
-            "package-lock: dependency entries must start with `dependency`")])]
-    [_
-      (ResultPackageLockEntry.Err
-        "package-lock: dependency entries must be lists")]))
+          (Err "package-lock: dependency entries must start with `dependency`")])]
+    [_ (Err "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-dependencies-entries
   [entries : reader.SpannedSexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match (reader.sexpr-view entries)
-    [(reader.SexprView.Nil) (ResultPackageLockEntryList.Ok acc)]
-    [(reader.SexprView.Cons entry rest)
+    [(Nil) (ResultPackageLockEntryList.Ok acc)]
+    [(Cons entry rest)
       (match (package-lock-entry-from-form entry)
-        [(ResultPackageLockEntry.Err message)
-          (ResultPackageLockEntryList.Err message)]
-        [(ResultPackageLockEntry.Ok parsed)
+        [(Err message) (Err message)]
+        [(Ok parsed)
           (match (package-lock-entry-list-insert acc parsed)
-            [(ResultPackageLockEntryList.Err message)
-              (ResultPackageLockEntryList.Err message)]
-            [(ResultPackageLockEntryList.Ok next)
-              (package-lock-dependencies-entries rest next)])])]
-    [_
-      (ResultPackageLockEntryList.Err
-        "package-lock: `dependencies` must contain dependency lists")]))
+            [(Err message) (Err message)]
+            [(Ok next) (package-lock-dependencies-entries rest next)])])]
+    [_ (Err "package-lock: `dependencies` must contain dependency lists")]))
 
 (define (package-lock-fields
   [fields : reader.SpannedSexpr]
@@ -509,66 +468,58 @@
   [entries : package_lock_entry_vec.Vec]
   [has-deps : bool]) : ResultPackageLockFile
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-version)
-          (ResultPackageLockFile.Err
-            "package-lock: missing required field `version`")]
+          (Err "package-lock: missing required field `version`")]
         [(not (string.eq version package-lock-version))
-          (ResultPackageLockFile.Err
+          (Err
             (str_cat.str-cat "package-lock: unsupported version `" version "`"))]
         [(not has-deps)
-          (ResultPackageLockFile.Err
-            "package-lock: missing required field `dependencies`")]
-        [else (ResultPackageLockFile.Ok (PackageLockFile version entries))])]
-    [(reader.SexprView.Cons field rest)
+          (Err "package-lock: missing required field `dependencies`")]
+        [else (Ok (PackageLockFile version entries))])]
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (if (string.eq (package-lock-symbol-text fname) "version")
                 (if has-version
-                  (ResultPackageLockFile.Err
-                    "package-lock: duplicate field `version`")
+                  (Err "package-lock: duplicate field `version`")
                   (match (package-lock-field-string-value
                     ftail
                     (package-lock-symbol-text fname))
-                    [(ResultPackageLockString.Err message)
-                      (ResultPackageLockFile.Err message)]
-                    [(ResultPackageLockString.Ok value)
+                    [(Err message) (Err message)]
+                    [(Ok value)
                       (package-lock-fields rest value true entries has-deps)]))
                 (if (string.eq (package-lock-symbol-text fname) "dependencies")
                   (if has-deps
-                    (ResultPackageLockFile.Err
-                      "package-lock: duplicate field `dependencies`")
+                    (Err "package-lock: duplicate field `dependencies`")
                     (match (package-lock-dependencies-entries
                       ftail
                       (package_lock_entry_vec.new))
-                      [(ResultPackageLockEntryList.Err message)
-                        (ResultPackageLockFile.Err message)]
-                      [(ResultPackageLockEntryList.Ok parsed)
+                      [(Err message) (Err message)]
+                      [(Ok parsed)
                         (package-lock-fields
                           rest
                           version
                           has-version
                           parsed
                           true)]))
-                  (ResultPackageLockFile.Err
+                  (Err
                     (str_cat.str-cat
                       "package-lock: unknown field `"
                       (package-lock-symbol-text fname)
                       "`"))))]
-            [_
-              (ResultPackageLockFile.Err
-                "package-lock: fields must start with a field name")])]
-        [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")])]
-    [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")]))
+            [_ (Err "package-lock: fields must start with a field name")])]
+        [_ (Err "package-lock: fields must be lists")])]
+    [_ (Err "package-lock: fields must be lists")]))
 
 (define (package-lock-from-form [form : reader.SpannedSexpr]) : ResultPackageLockFile
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym name)
+        [(Sym name)
           (if (string.eq (package-lock-symbol-text name) "typelisp-lock")
             (package-lock-fields
               rest
@@ -576,26 +527,21 @@
               false
               (package_lock_entry_vec.new)
               false)
-            (ResultPackageLockFile.Err
+            (Err
               (str_cat.str-cat
                 "expected `typelisp-lock` form, got `"
                 (package-lock-symbol-text name)
                 "`")))]
-        [_
-          (ResultPackageLockFile.Err
-            "package-lock: lockfile must start with `typelisp-lock`")])]
-    [_
-      (ResultPackageLockFile.Err
-        "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
+        [_ (Err "package-lock: lockfile must start with `typelisp-lock`")])]
+    [_ (Err "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultPackageLockFile
       (match (reader.data-result source)
-        [(reader.ResultSexpr.Err message)
-          (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
-        [(reader.ResultSexpr.Ok form) (package-lock-from-form form)])]
+        [(Err message) (Err (str_cat.str-cat "package-lock: " message))]
+        [(Ok form) (package-lock-from-form form)])]
     (begin
       (reader.sp-node-pool-truncate! mark)
       result)))
@@ -733,22 +679,21 @@
 
 (define (package-lock-transaction-read [path : String]) : ResultPackageLockSnapshot
   (match (io.try-file-exists? (& path))
-    [(io.ErrIoBool error)
-      (ResultPackageLockSnapshot.Err
+    [(ErrIoBool error)
+      (Err
         (package-lock-transaction-error "read" path (io.error-message error)))]
-    [(io.OkIoBool exists)
+    [(OkIoBool exists)
       (if exists
         (match (io.try-read-file (& path))
-          [(io.ErrIoBytes error)
-            (ResultPackageLockSnapshot.Err
+          [(ErrIoBytes error)
+            (Err
               (package-lock-transaction-error
                 "read"
                 path
                 (io.error-message error)))]
-          [(io.OkIoBytes contents)
-            (ResultPackageLockSnapshot.Ok
-              (PackageLockSnapshot path (byte_buf.to-string contents) true))])
-        (ResultPackageLockSnapshot.Ok (PackageLockSnapshot path "" false)))]))
+          [(OkIoBytes contents)
+            (Ok (PackageLockSnapshot path (byte_buf.to-string contents) true))])
+        (Ok (PackageLockSnapshot path "" false)))]))
 
 (define (package-lock-snapshot-identity-eq?
   [left : (& left PackageLockSnapshot)]
@@ -766,27 +711,27 @@
 
 (define (package-lock-io-already-exists? [error : io.IoError]) : bool
   (match error
-    [(io.IoSystemCode code _) (= code fs.fs-status-already-exists)]
+    [(IoSystemCode code _) (= code fs.fs-status-already-exists)]
     [_ false]))
 
 (define (package-lock-io-retryable-replace? [error : io.IoError]) : bool
   (match error
-    [(io.IoSystemCode code _) (or (= code 32) (= code 33))]
+    [(IoSystemCode code _) (or (= code 32) (= code 33))]
     [_ false]))
 
 (define (package-lock-transaction-fault? [phase : String]) : bool
   (let
     [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
     (match (env.get (& name))
-      [(env.EnvNoString) false]
-      [(env.EnvSomeString value) (string.eq value phase)])))
+      [(EnvNoString) false]
+      [(EnvSomeString value) (string.eq value phase)])))
 
 (define (package-lock-transaction-pause? [phase : String]) : bool
   (let
     [name : String "TYPELISP_PACKAGE_LOCK_TEST_PAUSE"]
     (match (env.get (& name))
-      [(env.EnvNoString) false]
-      [(env.EnvSomeString value) (string.eq value phase)])))
+      [(EnvNoString) false]
+      [(EnvSomeString value) (string.eq value phase)])))
 
 (define (package-lock-transaction-wait-release [path : String]) : ResultPackageLockString
   (let
@@ -796,38 +741,36 @@
     (begin
       (while (and (not done) (< attempt 6000))
         (match (io.try-file-exists? (& path))
-          [(io.ErrIoBool error)
+          [(ErrIoBool error)
             (begin
               (set! error-message (io.error-message error))
               (set! done true))]
-          [(io.OkIoBool exists)
+          [(OkIoBool exists)
             (if exists
               (match (time.sleep-ms 10)
-                [(time.ErrTimeUnit error)
+                [(ErrTimeUnit error)
                   (begin
                     (set! error-message (time.error-message error))
                     (set! done true))]
-                [(time.OkTimeUnit) (set! attempt (+ attempt 1))])
+                [(OkTimeUnit) (set! attempt (+ attempt 1))])
               (set! done true))]))
       (if (> (string.string-length error-message) 0)
-        (ResultPackageLockString.Err error-message)
+        (Err error-message)
         (if (>= attempt 6000)
-          (ResultPackageLockString.Err
-            "package-lock transaction test pause timed out")
-          (ResultPackageLockString.Ok ""))))))
+          (Err "package-lock transaction test pause timed out")
+          (Ok ""))))))
 
 (define (package-lock-transaction-maybe-pause [phase : String]) : ResultPackageLockString
   (if (package-lock-transaction-pause? phase)
     (let
       [name : String "TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE"]
       (match (env.get (& name))
-        [(env.EnvNoString)
+        [(EnvNoString)
           (match (time.sleep-ms 2000)
-            [(time.ErrTimeUnit error)
-              (ResultPackageLockString.Err (time.error-message error))]
-            [(time.OkTimeUnit) (ResultPackageLockString.Ok "")])]
-        [(env.EnvSomeString path) (package-lock-transaction-wait-release path)]))
-    (ResultPackageLockString.Ok "")))
+            [(ErrTimeUnit error) (Err (time.error-message error))]
+            [(OkTimeUnit) (Ok "")])]
+        [(EnvSomeString path) (package-lock-transaction-wait-release path)]))
+    (Ok "")))
 
 (define (package-lock-stage-next-sequence) : i64
   (begin
@@ -891,9 +834,9 @@
 
 (define (package-lock-remove-stage [path : String]) : ResultPackageLockString
   (match (fs.try-remove-file-if-exists (& path))
-    [(io.OkIoUnit) (ResultPackageLockString.Ok "")]
-    [(io.ErrIoUnit error)
-      (ResultPackageLockString.Err
+    [(OkIoUnit) (Ok "")]
+    [(ErrIoUnit error)
+      (Err
         (package-lock-transaction-error "cleanup" path (io.error-message error)))]))
 
 (define (package-lock-stage-write-opened
@@ -904,43 +847,43 @@
     (begin
       (io.file-close handle)
       (package-lock-remove-stage (string.copy path))
-      (ResultPackageLockString.Err
+      (Err
         (package-lock-transaction-error
           "during-stage"
           path
           "injected test failure")))
     (match (io.file-write handle (byte_buf.str-as-bytes (& source)))
-      [(io.ErrIoUnit error)
+      [(ErrIoUnit error)
         (begin
           (io.file-close handle)
           (package-lock-remove-stage (string.copy path))
-          (ResultPackageLockString.Err
+          (Err
             (package-lock-transaction-error
               "stage-write"
               path
               (io.error-message error))))]
-      [(io.OkIoUnit)
+      [(OkIoUnit)
         (match (io.file-flush handle)
-          [(io.ErrIoUnit error)
+          [(ErrIoUnit error)
             (begin
               (io.file-close handle)
               (package-lock-remove-stage (string.copy path))
-              (ResultPackageLockString.Err
+              (Err
                 (package-lock-transaction-error
                   "stage-flush"
                   path
                   (io.error-message error))))]
-          [(io.OkIoUnit)
+          [(OkIoUnit)
             (match (io.file-close handle)
-              [(io.ErrIoUnit error)
+              [(ErrIoUnit error)
                 (begin
                   (package-lock-remove-stage (string.copy path))
-                  (ResultPackageLockString.Err
+                  (Err
                     (package-lock-transaction-error
                       "stage-close"
                       path
                       (io.error-message error))))]
-              [(io.OkIoUnit) (ResultPackageLockString.Ok path)])])])))
+              [(OkIoUnit) (Ok path)])])])))
 
 (define (package-lock-stage-write-attempt
   [destination : String]
@@ -948,7 +891,7 @@
   [sequence : i64]
   [attempt : i64]) : ResultPackageLockString
   (if (>= attempt 100)
-    (ResultPackageLockString.Err
+    (Err
       (package-lock-transaction-error
         "stage-create"
         destination
@@ -956,17 +899,16 @@
     (let
       [path : String
         (package-lock-stage-path (string.copy destination) sequence attempt)]
-      (match (io.file-open (& path) (io.OpenWriteCreateNew))
-        [(io.OkIoFile handle)
-          (package-lock-stage-write-opened path source handle)]
-        [(io.ErrIoFile error)
+      (match (io.file-open (& path) (OpenWriteCreateNew))
+        [(OkIoFile handle) (package-lock-stage-write-opened path source handle)]
+        [(ErrIoFile error)
           (if (package-lock-io-already-exists? (clone error))
             (package-lock-stage-write-attempt
               destination
               source
               sequence
               (+ attempt 1))
-            (ResultPackageLockString.Err
+            (Err
               (package-lock-transaction-error
                 "stage-create"
                 path
@@ -981,32 +923,32 @@
 
 (define (package-lock-stage-validate [path : String] [expected : String]) : ResultPackageLockString
   (match (io.try-read-file (& path))
-    [(io.ErrIoBytes error)
-      (ResultPackageLockString.Err
+    [(ErrIoBytes error)
+      (Err
         (package-lock-transaction-error
           "stage-validate"
           path
           (io.error-message error)))]
-    [(io.OkIoBytes contents)
+    [(OkIoBytes contents)
       (let
         [actual : String (byte_buf.to-string contents)]
         (if (not (string.eq actual expected))
-          (ResultPackageLockString.Err
+          (Err
             (package-lock-transaction-error
               "stage-validate"
               path
               "staged bytes differ from the complete canonical lock"))
           (match (package-lock-parse actual)
-            [(ResultPackageLockFile.Err message)
-              (ResultPackageLockString.Err
+            [(Err message)
+              (Err
                 (package-lock-transaction-error "stage-validate" path message))]
-            [(ResultPackageLockFile.Ok _) (ResultPackageLockString.Ok path)])))]))
+            [(Ok _) (Ok path)])))]))
 
 (define (package-lock-transaction-ensure-dir [path : String]) : ResultPackageLockString
   (match (fs.try-mkdir-if-missing (& path))
-    [(io.OkIoUnit) (ResultPackageLockString.Ok path)]
-    [(io.ErrIoUnit error)
-      (ResultPackageLockString.Err
+    [(OkIoUnit) (Ok path)]
+    [(ErrIoUnit error)
+      (Err
         (package-lock-transaction-error
           "coordination-directory"
           path
@@ -1024,18 +966,14 @@
     [locks : String (fs.path-join (& typelisp) (& locks-name))]
     [guard : String (fs.path-join (& locks) (& guard-name))]
     (match (package-lock-transaction-ensure-dir target)
-      [(ResultPackageLockString.Err message)
-        (ResultPackageLockString.Err message)]
-      [(ResultPackageLockString.Ok _)
+      [(Err message) (Err message)]
+      [(Ok _)
         (match (package-lock-transaction-ensure-dir typelisp)
-          [(ResultPackageLockString.Err message)
-            (ResultPackageLockString.Err message)]
-          [(ResultPackageLockString.Ok _)
+          [(Err message) (Err message)]
+          [(Ok _)
             (match (package-lock-transaction-ensure-dir locks)
-              [(ResultPackageLockString.Err message)
-                (ResultPackageLockString.Err message)]
-              [(ResultPackageLockString.Ok _)
-                (ResultPackageLockString.Ok guard)])])])))
+              [(Err message) (Err message)]
+              [(Ok _) (Ok guard)])])])))
 
 (define (package-lock-transaction-finish
   [lock : fs.FsFileLock]
@@ -1046,40 +984,38 @@
     [cleanup : ResultPackageLockString
       (if remove-stage
         (package-lock-remove-stage (string.copy stage))
-        (ResultPackageLockString.Ok ""))]
+        (Ok ""))]
     [release : io.ResultIoUnit (fs.file-lock-release lock)]
     (match cleanup
-      [(ResultPackageLockString.Err message)
-        (ResultPackageLockCommit.Err message)]
-      [(ResultPackageLockString.Ok _)
+      [(Err message) (Err message)]
+      [(Ok _)
         (match release
-          [(io.ErrIoUnit error)
-            (ResultPackageLockCommit.Err
+          [(ErrIoUnit error)
+            (Err
               (package-lock-transaction-error
                 "coordination-unlock"
                 stage
                 (io.error-message error)))]
-          [(io.OkIoUnit) result])])))
+          [(OkIoUnit) result])])))
 
 (define (package-lock-atomic-replace-attempt
   [stage : String]
   [destination : String]
   [attempt : i64]) : ResultPackageLockString
   (match (fs.try-atomic-replace (& stage) (& destination))
-    [(io.OkIoUnit) (ResultPackageLockString.Ok destination)]
-    [(io.ErrIoUnit error)
+    [(OkIoUnit) (Ok destination)]
+    [(ErrIoUnit error)
       (if (and
         (< attempt 100)
         (package-lock-io-retryable-replace? (clone error)))
         (match (time.sleep-ms 10)
-          [(time.ErrTimeUnit sleep-error)
-            (ResultPackageLockString.Err (time.error-message sleep-error))]
-          [(time.OkTimeUnit)
+          [(ErrTimeUnit sleep-error) (Err (time.error-message sleep-error))]
+          [(OkTimeUnit)
             (package-lock-atomic-replace-attempt
               stage
               destination
               (+ attempt 1))])
-        (ResultPackageLockString.Err (io.error-message error)))]))
+        (Err (io.error-message error)))]))
 
 (define (package-lock-transaction-under-lock
   [snapshot : PackageLockSnapshot]
@@ -1087,27 +1023,22 @@
   [stage : String]
   [lock : fs.FsFileLock]) : ResultPackageLockCommit
   (match (package-lock-transaction-read (string.copy snapshot.path))
-    [(ResultPackageLockSnapshot.Err message)
-      (package-lock-transaction-finish
-        lock
-        stage
-        true
-        (ResultPackageLockCommit.Err message))]
-    [(ResultPackageLockSnapshot.Ok current)
+    [(Err message)
+      (package-lock-transaction-finish lock stage true (Err message))]
+    [(Ok current)
       (cond
         [(package-lock-snapshot-is-source? (& current) (string.copy source))
           (package-lock-transaction-finish
             lock
             stage
             true
-            (ResultPackageLockCommit.Ok
-              (PackageLockCommitOutcome.Reused snapshot.path)))]
+            (Ok (Reused snapshot.path)))]
         [(not (package-lock-snapshot-identity-eq? (& snapshot) (& current)))
           (package-lock-transaction-finish
             lock
             stage
             true
-            (ResultPackageLockCommit.Err
+            (Err
               (str_cat.str-cat
                 "package-lock transaction conflict for '"
                 snapshot.path
@@ -1117,7 +1048,7 @@
             lock
             stage
             true
-            (ResultPackageLockCommit.Err
+            (Err
               (package-lock-transaction-error
                 "before-replace"
                 snapshot.path
@@ -1127,23 +1058,22 @@
             (string.copy stage)
             (string.copy snapshot.path)
             0)
-            [(ResultPackageLockString.Err message)
+            [(Err message)
               (package-lock-transaction-finish
                 lock
                 stage
                 true
-                (ResultPackageLockCommit.Err
+                (Err
                   (package-lock-transaction-error
                     "replace"
                     snapshot.path
                     message)))]
-            [(ResultPackageLockString.Ok _)
+            [(Ok _)
               (package-lock-transaction-finish
                 lock
                 stage
                 false
-                (ResultPackageLockCommit.Ok
-                  (PackageLockCommitOutcome.Replaced snapshot.path)))])])]))
+                (Ok (Replaced snapshot.path)))])])]))
 
 (define (package-lock-transaction-acquire
   [snapshot : PackageLockSnapshot]
@@ -1151,21 +1081,21 @@
   [guard : String]
   [stage : String]) : ResultPackageLockCommit
   (match (package-lock-transaction-maybe-pause "before-lock")
-    [(ResultPackageLockString.Err message)
+    [(Err message)
       (begin
         (package-lock-remove-stage stage)
-        (ResultPackageLockCommit.Err message))]
-    [(ResultPackageLockString.Ok _)
+        (Err message))]
+    [(Ok _)
       (match (fs.file-lock-acquire (& guard))
-        [(fs.ErrFsFileLock error)
+        [(ErrFsFileLock error)
           (begin
             (package-lock-remove-stage stage)
-            (ResultPackageLockCommit.Err
+            (Err
               (package-lock-transaction-error
                 "coordination-lock"
                 guard
                 (io.error-message error))))]
-        [(fs.OkFsFileLock lock)
+        [(OkFsFileLock lock)
           (package-lock-transaction-under-lock snapshot source stage lock)])]))
 
 (define (package-lock-transaction-stage-ready
@@ -1174,15 +1104,15 @@
   [guard : String]
   [stage : String]) : ResultPackageLockCommit
   (match (package-lock-stage-validate (string.copy stage) (string.copy source))
-    [(ResultPackageLockString.Err message)
+    [(Err message)
       (begin
         (package-lock-remove-stage stage)
-        (ResultPackageLockCommit.Err message))]
-    [(ResultPackageLockString.Ok _)
+        (Err message))]
+    [(Ok _)
       (if (package-lock-transaction-fault? "after-stage")
         (begin
           (package-lock-remove-stage stage)
-          (ResultPackageLockCommit.Err
+          (Err
             (package-lock-transaction-error
               "after-stage"
               snapshot.path
@@ -1196,33 +1126,29 @@
   (match (package-lock-stage-write
     (string.copy snapshot.path)
     (string.copy source))
-    [(ResultPackageLockString.Err message)
-      (ResultPackageLockCommit.Err message)]
-    [(ResultPackageLockString.Ok stage)
+    [(Err message) (Err message)]
+    [(Ok stage)
       (package-lock-transaction-stage-ready snapshot source guard stage)]))
 
 (define (package-lock-transaction-commit
   [snapshot : PackageLockSnapshot]
   [source : String]) : ResultPackageLockCommit
   (match (package-lock-parse (string.copy source))
-    [(ResultPackageLockFile.Err message)
-      (ResultPackageLockCommit.Err
-        (package-lock-transaction-error "validate" snapshot.path message))]
-    [(ResultPackageLockFile.Ok _)
+    [(Err message)
+      (Err (package-lock-transaction-error "validate" snapshot.path message))]
+    [(Ok _)
       (if (package-lock-snapshot-is-source? (& snapshot) (string.copy source))
-        (ResultPackageLockCommit.Ok
-          (PackageLockCommitOutcome.Unchanged snapshot.path))
+        (Ok (Unchanged snapshot.path))
         (if (package-lock-transaction-fault? "before-stage")
-          (ResultPackageLockCommit.Err
+          (Err
             (package-lock-transaction-error
               "before-stage"
               snapshot.path
               "injected test failure"))
           (match (package-lock-transaction-lock-path
             (string.copy snapshot.path))
-            [(ResultPackageLockString.Err message)
-              (ResultPackageLockCommit.Err message)]
-            [(ResultPackageLockString.Ok guard)
+            [(Err message) (Err message)]
+            [(Ok guard)
               (package-lock-transaction-with-guard snapshot source guard)])))]))
 
 (define (package-lock-entry-matches?
@@ -1247,6 +1173,6 @@
   [pin-value : String]
   [commit : String]) : bool
   (match (package-lock-entry-list-lookup entries alias)
-    [(PackageLockMaybeEntry.No) false]
-    [(PackageLockMaybeEntry.Some entry)
+    [(No) false]
+    [(Some entry)
       (package-lock-entry-matches? entry alias url kind pin-value commit)]))

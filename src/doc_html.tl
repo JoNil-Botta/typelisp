@@ -948,7 +948,7 @@
         "TypeLisp API"
         (owned_view.compiler-owned-shared-view path))
       "<main>\n"
-      (doc-html-module-section (doc_render.DocModule.Module path docs))
+      (doc-html-module-section (Module path docs))
       "</main>\n"
       (doc-html-page-close))))
 

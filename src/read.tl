@@ -414,7 +414,7 @@
           (sp-node-push (sp-builder-shared-view (+ builder-start i)))
           (set! i (+ i 1))))
       (set! sp-builder-count builder-start)
-      (SpannedSexpr.List start len span))))
+      (List start len span))))
 
 (define (spanned-sexpr-builder-discard! [builder : SpannedSexprBuilder]) : unit
   (set! sp-builder-count builder.start))
@@ -423,7 +423,7 @@
   [builder : SpannedSexprBuilder]
   [items : SpannedSexpr]) : SpannedSexprBuilder
   (match items
-    [(SpannedSexpr.List start length _)
+    [(List start length _)
       (let
         [out : SpannedSexprBuilder builder]
         [i : i64 0]
@@ -482,14 +482,14 @@
     span))
 
 (define (spanned-sexpr-empty [span : token.SourceSpan]) : SpannedSexpr
-  (SpannedSexpr.List (sp-node-pool-len) 0 span))
+  (List (sp-node-pool-len) 0 span))
 
 (define (spanned-sexpr-list-prepend
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
   [span : token.SourceSpan]) : SpannedSexpr
   (match tail
-    [(SpannedSexpr.List start length _)
+    [(List start length _)
       (let
         [builder : SpannedSexprBuilder
           (spanned-sexpr-builder-push (spanned-sexpr-builder-new) head)]
@@ -508,54 +508,47 @@
   [items : SpannedSexpr]
   [span : token.SourceSpan]) : SpannedSexpr
   (match items
-    [(SpannedSexpr.List start length _)
-      (SpannedSexpr.BracketList start length span)]
+    [(List start length _) (BracketList start length span)]
     [_ (io.panic "reader: bracket form requires a proper list")]))
 
 (define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
-    [(SpannedSexpr.Int n text span) (SpannedSexprView.Int n text span)]
-    [(SpannedSexpr.Sym name span) (SpannedSexprView.Sym name span)]
-    [(SpannedSexpr.List start length span)
+    [(Int n text span) (Int n text span)]
+    [(Sym name span) (Sym name span)]
+    [(List start length span)
       (if (<= length 0)
-        (SpannedSexprView.Nil span)
-        (SpannedSexprView.Cons
-          (sp-node-get start)
-          (SpannedSexpr.List (+ start 1) (- length 1) span)
-          span))]
-    [(SpannedSexpr.Str text span) (SpannedSexprView.Str text span)]
-    [(SpannedSexpr.Char c span) (SpannedSexprView.Char c span)]
-    [(SpannedSexpr.Float text span) (SpannedSexprView.Float text span)]
-    [(SpannedSexpr.BracketList start length span)
-      (SpannedSexprView.BracketList (SpannedSexpr.List start length span) span)]))
+        (Nil span)
+        (Cons (sp-node-get start) (List (+ start 1) (- length 1) span) span))]
+    [(Str text span) (Str text span)]
+    [(Char c span) (Char c span)]
+    [(Float text span) (Float text span)]
+    [(BracketList start length span)
+      (BracketList (List start length span) span)]))
 
 (define (sexpr-list-view [start : i64] [length : i64] [span : token.SourceSpan]) : SexprView
   (if (<= length 0)
-    SexprView.Nil
-    (SexprView.Cons
-      (sp-node-get start)
-      (SpannedSexpr.List (+ start 1) (- length 1) span))))
+    Nil
+    (Cons (sp-node-get start) (List (+ start 1) (- length 1) span))))
 
 (define (sexpr-view [s : SpannedSexpr]) : SexprView
   (match s
-    [(SpannedSexpr.Int n text _) (SexprView.Int n text)]
-    [(SpannedSexpr.Sym name _) (SexprView.Sym name)]
-    [(SpannedSexpr.List start length span) (sexpr-list-view start length span)]
-    [(SpannedSexpr.Str text _) (SexprView.Str text)]
-    [(SpannedSexpr.Char c _) (SexprView.Char c)]
-    [(SpannedSexpr.Float text _) (SexprView.Float text)]
-    [(SpannedSexpr.BracketList start length span)
-      (sexpr-list-view start length span)]))
+    [(Int n text _) (Int n text)]
+    [(Sym name _) (Sym name)]
+    [(List start length span) (sexpr-list-view start length span)]
+    [(Str text _) (Str text)]
+    [(Char c _) (Char c)]
+    [(Float text _) (Float text)]
+    [(BracketList start length span) (sexpr-list-view start length span)]))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s
-    [(SpannedSexpr.Int _ _ span) span]
-    [(SpannedSexpr.Sym _ span) span]
-    [(SpannedSexpr.List _ _ span) span]
-    [(SpannedSexpr.Str _ span) span]
-    [(SpannedSexpr.Char _ span) span]
-    [(SpannedSexpr.Float _ span) span]
-    [(SpannedSexpr.BracketList _ _ span) span]))
+    [(Int _ _ span) span]
+    [(Sym _ span) span]
+    [(List _ _ span) span]
+    [(Str _ span) span]
+    [(Char _ span) span]
+    [(Float _ span) span]
+    [(BracketList _ _ span) span]))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the
@@ -609,7 +602,7 @@
       (spanned-sexpr-builder-push
         (spanned-sexpr-builder-push
           (spanned-sexpr-builder-new)
-          (SpannedSexpr.Sym name prefix-span))
+          (Sym name prefix-span))
         form)
       span)))
 
@@ -687,34 +680,31 @@
           [text : String (token.int-text tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Int value text span))))]
+            (Ok (Int value text span))))]
       [(= t (token.tag-float))
         (let
           [text : String (token.float tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Float text span))))]
+            (Ok (Float text span))))]
       [(= t (token.tag-sym))
         (let
           [name-id : ci.InternId (token.sym-id tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok
-              (SpannedSexpr.Sym
-                (ci.intern-syntax-id-from-renderable name-id)
-                span))))]
+            (Ok (Sym (ci.intern-syntax-id-from-renderable name-id) span))))]
       [(= t (token.tag-str))
         (let
           [string-id : ci.InternId (token.str-id tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Str string-id span))))]
+            (Ok (Str string-id span))))]
       [(= t (token.tag-char))
         (let
           [value : char (token.char tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Char value span))))]
+            (Ok (Char value span))))]
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
@@ -735,21 +725,17 @@
           (begin
             (advance cur)
             (match (form-spanned-result toks cur)
-              [(ResultSpannedSexpr.Ok form)
+              [(Ok form)
                 (form-spanned-suffix-result
                   toks
                   cur
                   (prefix-spanned-form name span form))]
-              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])))]
+              [(Err err) (Err err)])))]
       [(= t (token.tag-rparen))
-        (ResultSpannedSexpr.Err
-          (token.SourceError "reader: unexpected ')'" span))]
+        (Err (token.SourceError "reader: unexpected ')'" span))]
       [(= t (token.tag-rbracket))
-        (ResultSpannedSexpr.Err
-          (token.SourceError "reader: unexpected ']'" span))]
-      [else
-        (ResultSpannedSexpr.Err
-          (token.SourceError "reader: unexpected end of input" span))])))
+        (Err (token.SourceError "reader: unexpected ']'" span))]
+      [else (Err (token.SourceError "reader: unexpected end of input" span))])))
 
 (define (spanned-sexpr-adjacent?
   [left : SpannedSexpr]
@@ -775,7 +761,7 @@
       end)))
 
 (define (projection-suffix-error [message : String] [span : token.SourceSpan]) : ResultSpannedSexpr
-  (ResultSpannedSexpr.Err (token.SourceError message span)))
+  (Err (token.SourceError message span)))
 
 (define (spanned-projection-suffix-at
   [base : SpannedSexpr]
@@ -809,15 +795,13 @@
               (ci.intern-source-slice-id text start (- end start)))]
           [projected : SpannedSexpr
             (spanned-sexpr-list3
-              (SpannedSexpr.Sym
-                (stable-syntax-id "__tl_struct-get")
-                suffix-span)
+              (Sym (stable-syntax-id "__tl_struct-get") suffix-span)
               base
-              (SpannedSexpr.Sym field suffix-span)
+              (Sym field suffix-span)
               span)]
           (if (< end length)
             (spanned-projection-suffix-at projected text suffix-span (+ end 1))
-            (ResultSpannedSexpr.Ok projected)))])))
+            (Ok projected)))])))
 
 (define (form-spanned-suffix-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -843,19 +827,18 @@
           (begin
             (advance cur)
             (match (spanned-projection-suffix-at base text span 1)
-              [(ResultSpannedSexpr.Ok projected)
-                (form-spanned-suffix-result toks cur projected)]
-              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
-          (ResultSpannedSexpr.Ok base)))
-      (ResultSpannedSexpr.Ok base))))
+              [(Ok projected) (form-spanned-suffix-result toks cur projected)]
+              [(Err err) (Err err)]))
+          (Ok base)))
+      (Ok base))))
 
 (define (form-spanned-compound-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (&mut cur (__tl_dyn-array i64))]
   [result : ResultSpannedSexpr]) : ResultSpannedSexpr
   (match result
-    [(ResultSpannedSexpr.Ok form) (form-spanned-suffix-result toks cur form)]
-    [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
+    [(Ok form) (form-spanned-suffix-result toks cur form)]
+    [(Err err) (Err err)]))
 
 (define (list-spanned-items-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -871,26 +854,26 @@
       [(= t close-tag)
         (begin
           (advance cur)
-          (ResultSpannedSexpr.Ok
+          (Ok
             (spanned-sexpr-list-from-builder
               builder
               (token.merge-spans open-span span))))]
       [(= t (token.tag-end))
-        (ResultSpannedSexpr.Err
+        (Err
           (token.SourceError (unterminated-list-message close-tag) open-span))]
       [(and (opposite-close-delimiter? t close-tag) (not sp-reader-data-mode?))
-        (ResultSpannedSexpr.Err
+        (Err
           (token.SourceError (mismatched-close-message close-tag t span) span))]
       [else
         (match (form-spanned-result toks cur)
-          [(ResultSpannedSexpr.Ok head)
+          [(Ok head)
             (list-spanned-items-result
               toks
               cur
               open-span
               close-tag
               (spanned-sexpr-builder-push builder head))]
-          [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])])))
+          [(Err err) (Err err)])])))
 
 (define (list-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -902,12 +885,12 @@
     [result : ResultSpannedSexpr
       (list-spanned-items-result toks cur open-span (token.tag-rparen) builder)]
     (match result
-      [(ResultSpannedSexpr.Ok form) (ResultSpannedSexpr.Ok form)]
-      [(ResultSpannedSexpr.Err err)
+      [(Ok form) (Ok form)]
+      [(Err err)
         (begin
           (spanned-sexpr-builder-discard! builder)
           (sp-node-pool-truncate! pool-mark)
-          (ResultSpannedSexpr.Err err))])))
+          (Err err))])))
 
 (define (bracket-list-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -924,18 +907,18 @@
         (token.tag-rbracket)
         builder)]
     (match result
-      [(ResultSpannedSexpr.Ok items)
+      [(Ok items)
         (let
           [span : token.SourceSpan
             (spanned-sexpr-span
               (unsafe
                 (ptr-read (ptr-addr-of items))))]
-          (ResultSpannedSexpr.Ok (spanned-sexpr-bracket-list items span)))]
-      [(ResultSpannedSexpr.Err err)
+          (Ok (spanned-sexpr-bracket-list items span)))]
+      [(Err err)
         (begin
           (spanned-sexpr-builder-discard! builder)
           (sp-node-pool-truncate! pool-mark)
-          (ResultSpannedSexpr.Err err))])))
+          (Err err))])))
 
 (define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
   (let
@@ -952,9 +935,8 @@
 ;; out what they need. A lexer error panics.
 (define (data-result [src : String]) : ResultSexpr
   (match (lexer.spanned-result src)
-    [(lexer.ResultSpannedTokens.Err err)
-      (io.panic (token.source-error-message err))]
-    [(lexer.ResultSpannedTokens.Ok toks)
+    [(Err err) (io.panic (token.source-error-message err))]
+    [(Ok toks)
       (let
         [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         (begin
@@ -966,6 +948,5 @@
             (begin
               (set! sp-reader-data-mode? false)
               (match result
-                [(ResultSpannedSexpr.Ok form) (ResultSexpr.Ok form)]
-                [(ResultSpannedSexpr.Err err)
-                  (ResultSexpr.Err (token.source-error-message err))])))))]))
+                [(Ok form) (Ok form)]
+                [(Err err) (Err (token.source-error-message err))])))))]))

@@ -50,7 +50,7 @@
 
 (define (embedded-native-macro-result-kind [ret : compiler_ast_types.AstType]) : i64
   (match ret
-    [(compiler_ast_types.AstType.Var name)
+    [(Var name)
       (if (or
         (= name cbi.compiler-builtin-id-fix-Module)
         (= name cbi.compiler-builtin-id-fix-module))
@@ -227,10 +227,8 @@
 
 (define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : compiler_ast_types.AstExpr
   (match (compiler_ast_types.ast-node-get node)
-    [(compiler_ast_types.AstExpr.Spanned inner _)
-      (embedded-stdlib-tlci-unwrap-expr inner)]
-    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
-      (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(Spanned inner _) (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(MacroExpansion inner _ _) (embedded-stdlib-tlci-unwrap-expr inner)]
     [_ (compiler_ast_types.ast-node-get node)]))
 
 ;; Is this template position an unquote? Its substituted value already carries
@@ -239,7 +237,7 @@
 ;; interpreted quote.
 (define (embedded-native-unquote-template-node? [node : i64]) : bool
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Unquote _) true]
+    [(Unquote _) true]
     [_ false]))
 
 ;; The immediates one template source span travels in: start line, start
@@ -260,7 +258,7 @@
       (while (and (< found 0) (< index params.len))
         (begin
           (match (array-ref params.slots index)
-            [(compiler_ast_types.AstMacroParam.Param pname _ _ _)
+            [(Param pname _ _ _)
               (if (= pname name-id)
                 (set! found index)
                 unit)])
@@ -448,80 +446,78 @@
 ;; The source-level spelling of an expression node, for the reason string.
 (define (embedded-native-expr-kind-name [e : compiler_ast_types.AstExpr]) : String
   (match e
-    [(compiler_ast_types.AstExpr.Ann _ _) "ann"]
-    [(compiler_ast_types.AstExpr.Cast _ _) "cast"]
-    [(compiler_ast_types.AstExpr.Try _) "try"]
-    [(compiler_ast_types.AstExpr.Tuple _) "tuple"]
-    [(compiler_ast_types.AstExpr.TupleRef _ _) "tuple-ref"]
-    [(compiler_ast_types.AstExpr.Init _) "init"]
-    [(compiler_ast_types.AstExpr.Lambda _) "lambda"]
-    [(compiler_ast_types.AstExpr.DynArray _) "dyn-array"]
-    [(compiler_ast_types.AstExpr.Array _) "array"]
-    [(compiler_ast_types.AstExpr.ArrayTake _ _ _) "array-take"]
-    [(compiler_ast_types.AstExpr.Replace _ _) "replace"]
-    [(compiler_ast_types.AstExpr.BoxTake _) "box-take"]
-    [(compiler_ast_types.AstExpr.BoxSet _ _) "box-set"]
-    [(compiler_ast_types.AstExpr.IntToPtr _ _) "int->ptr"]
-    [(compiler_ast_types.AstExpr.PtrAddrOf _) "ptr-addr-of"]
-    [(compiler_ast_types.AstExpr.PtrNull _) "ptr-null"]
-    [(compiler_ast_types.AstExpr.PtrNullCheck _) "ptr-null?"]
-    [(compiler_ast_types.AstExpr.PtrCast _ _) "ptr-cast"]
-    [(compiler_ast_types.AstExpr.StringRef _ _) "string-ref"]
-    [(compiler_ast_types.AstExpr.StringFromBytes _ _) "string-from-bytes"]
-    [(compiler_ast_types.AstExpr.Comptime _) "comptime"]
-    [(compiler_ast_types.AstExpr.Quote _) "quote"]
-    [(compiler_ast_types.AstExpr.Quasiquote _) "quasiquote"]
-    [(compiler_ast_types.AstExpr.UnquoteSplicing _) "unquote-splicing"]
-    [(compiler_ast_types.AstExpr.Unquote _) "unquote"]
-    [(compiler_ast_types.AstExpr.Break) "break"]
-    [(compiler_ast_types.AstExpr.Continue) "continue"]
-    [(compiler_ast_types.AstExpr.Return _) "return"]
-    [(compiler_ast_types.AstExpr.WithRegion _ _) "with-arena"]
-    [(compiler_ast_types.AstExpr.WithResource _) "with"]
-    [(compiler_ast_types.AstExpr.WithScratch _) "with-scratch"]
-    [(compiler_ast_types.AstExpr.WithEscape _ _) "with-escape"]
-    [(compiler_ast_types.AstExpr.InArena _ _) "in-arena"]
-    [(compiler_ast_types.AstExpr.Foreach _) "foreach"]
-    [(compiler_ast_types.AstExpr.SpmdReduce _) "spmd-reduce"]
-    [(compiler_ast_types.AstExpr.SpmdScan _) "spmd-scan"]
-    [(compiler_ast_types.AstExpr.SpmdCompact _) "spmd-compact"]
-    [(compiler_ast_types.AstExpr.ForeachActive _ _) "foreach-active"]
-    [(compiler_ast_types.AstExpr.LaneValue _) "lane-value"]
-    [(compiler_ast_types.AstExpr.Unsafe _) "unsafe"]
-    [(compiler_ast_types.AstExpr.Literal
-        (compiler_ast_types.AstLiteral.Float _))
-      "float-literal"]
-    [(compiler_ast_types.AstExpr.Literal _) "literal"]
+    [(Ann _ _) "ann"]
+    [(Cast _ _) "cast"]
+    [(Try _) "try"]
+    [(Tuple _) "tuple"]
+    [(TupleRef _ _) "tuple-ref"]
+    [(Init _) "init"]
+    [(Lambda _) "lambda"]
+    [(DynArray _) "dyn-array"]
+    [(Array _) "array"]
+    [(ArrayTake _ _ _) "array-take"]
+    [(Replace _ _) "replace"]
+    [(BoxTake _) "box-take"]
+    [(BoxSet _ _) "box-set"]
+    [(IntToPtr _ _) "int->ptr"]
+    [(PtrAddrOf _) "ptr-addr-of"]
+    [(PtrNull _) "ptr-null"]
+    [(PtrNullCheck _) "ptr-null?"]
+    [(PtrCast _ _) "ptr-cast"]
+    [(StringRef _ _) "string-ref"]
+    [(StringFromBytes _ _) "string-from-bytes"]
+    [(Comptime _) "comptime"]
+    [(Quote _) "quote"]
+    [(Quasiquote _) "quasiquote"]
+    [(UnquoteSplicing _) "unquote-splicing"]
+    [(Unquote _) "unquote"]
+    [(Break) "break"]
+    [(Continue) "continue"]
+    [(Return _) "return"]
+    [(WithRegion _ _) "with-arena"]
+    [(WithResource _) "with"]
+    [(WithScratch _) "with-scratch"]
+    [(WithEscape _ _) "with-escape"]
+    [(InArena _ _) "in-arena"]
+    [(Foreach _) "foreach"]
+    [(SpmdReduce _) "spmd-reduce"]
+    [(SpmdScan _) "spmd-scan"]
+    [(SpmdCompact _) "spmd-compact"]
+    [(ForeachActive _ _) "foreach-active"]
+    [(LaneValue _) "lane-value"]
+    [(Unsafe _) "unsafe"]
+    [(Literal (Float _)) "float-literal"]
+    [(Literal _) "literal"]
     ;; Kinds the walkers do support are named too: reaching a give-up point on
     ;; one of these means the construct is supported in some positions and not
     ;; in the one that failed, which is the more useful thing to report.
-    [(compiler_ast_types.AstExpr.If _ _ _) "if"]
-    [(compiler_ast_types.AstExpr.Match _) "match"]
-    [(compiler_ast_types.AstExpr.Let _) "let"]
-    [(compiler_ast_types.AstExpr.Begin _) "begin"]
-    [(compiler_ast_types.AstExpr.Call _ _) "call"]
-    [(compiler_ast_types.AstExpr.Var _) "var"]
-    [(compiler_ast_types.AstExpr.Set _ _) "set!"]
-    [(compiler_ast_types.AstExpr.While _ _) "while"]
-    [(compiler_ast_types.AstExpr.Binary _ _ _) "binary"]
-    [(compiler_ast_types.AstExpr.Unary _ _) "unary"]
-    [(compiler_ast_types.AstExpr.Borrow _ _ _) "borrow"]
-    [(compiler_ast_types.AstExpr.StructGet _ _) "struct-get"]
-    [(compiler_ast_types.AstExpr.StructSet _ _ _) "struct-set!"]
-    [(compiler_ast_types.AstExpr.BracketClause _) "bracket-clause"]
-    [(compiler_ast_types.AstExpr.ArrayRef _ _) "array-ref"]
-    [(compiler_ast_types.AstExpr.ArraySet _ _ _) "array-set!"]
-    [(compiler_ast_types.AstExpr.ArrayPush _ _) "__tl_array-push!"]
-    [(compiler_ast_types.AstExpr.ArrayData _) "__tl_array-data"]
-    [(compiler_ast_types.AstExpr.StringData _) "string-data"]
-    [(compiler_ast_types.AstExpr.Box _) "box"]
-    [(compiler_ast_types.AstExpr.BoxGet _) "box-get"]
-    [(compiler_ast_types.AstExpr.PtrRead _) "ptr-read"]
-    [(compiler_ast_types.AstExpr.PtrWrite _ _) "ptr-write!"]
-    [(compiler_ast_types.AstExpr.PtrOffset _ _) "ptr-offset"]
-    [(compiler_ast_types.AstExpr.PtrToInt _) "ptr->int"]
-    [(compiler_ast_types.AstExpr.FixedMakeArray _ _) "make-array"]
-    [(compiler_ast_types.AstExpr.MakeArray _ _) "__tl_make-array"]
+    [(If _ _ _) "if"]
+    [(Match _) "match"]
+    [(Let _) "let"]
+    [(Begin _) "begin"]
+    [(Call _ _) "call"]
+    [(Var _) "var"]
+    [(Set _ _) "set!"]
+    [(While _ _) "while"]
+    [(Binary _ _ _) "binary"]
+    [(Unary _ _) "unary"]
+    [(Borrow _ _ _) "borrow"]
+    [(StructGet _ _) "struct-get"]
+    [(StructSet _ _ _) "struct-set!"]
+    [(BracketClause _) "bracket-clause"]
+    [(ArrayRef _ _) "array-ref"]
+    [(ArraySet _ _ _) "array-set!"]
+    [(ArrayPush _ _) "__tl_array-push!"]
+    [(ArrayData _) "__tl_array-data"]
+    [(StringData _) "string-data"]
+    [(Box _) "box"]
+    [(BoxGet _) "box-get"]
+    [(PtrRead _) "ptr-read"]
+    [(PtrWrite _ _) "ptr-write!"]
+    [(PtrOffset _ _) "ptr-offset"]
+    [(PtrToInt _) "ptr->int"]
+    [(FixedMakeArray _ _) "make-array"]
+    [(MakeArray _ _) "__tl_make-array"]
     [_ "unclassified"]))
 
 ;: Entries that compiled natively but still contain at least one interpreted
@@ -685,9 +681,9 @@
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.Quasiquote quoted)
+    [(Quasiquote quoted)
       (embedded-native-template-ops params quoted ops ops-count)]
-    [(compiler_ast_types.AstExpr.Var pname)
+    [(Var pname)
       (let
         [param : i64 (embedded-stdlib-tlci-param-index params pname)]
         (if (< param 0)
@@ -701,12 +697,12 @@
               "0"
               "0")
             1)))]
-    [(compiler_ast_types.AstExpr.Call fold-func fold-args)
+    [(Call fold-func fold-args)
       ;; Plain (not quasiquoted) call to the expr-list fold intrinsic: the
       ;; and/or shape. The host op mirrors the interpreted fold exactly, so
       ;; the whole expansion is one dispatch.
       (match (embedded-stdlib-tlci-unwrap-expr fold-func)
-        [(compiler_ast_types.AstExpr.Var fold-head)
+        [(Var fold-head)
           (if (and
             (or
               (string.eq
@@ -834,9 +830,9 @@
 ;: The literal name of a (comptime.expr-var "name") argument; "" otherwise.
 (define (embedded-native-expr-var-name [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call var-func var-args)
+    [(Call var-func var-args)
       (match (embedded-stdlib-tlci-unwrap-expr var-func)
-        [(compiler_ast_types.AstExpr.Var var-head)
+        [(Var var-head)
           (if (and
             (or
               (string.eq (ci.intern-str var-head) "comptime.expr-var")
@@ -844,10 +840,9 @@
             (= (compiler_ast_types.ast-expr-list-len (& var-args)) 1))
             (match (embedded-stdlib-tlci-unwrap-expr
               (compiler_ast_types.ast-expr-list-get (& var-args) 0 0))
-              [(compiler_ast_types.AstExpr.Literal lit)
+              [(Literal lit)
                 (match lit
-                  [(compiler_ast_types.AstLiteral.String text)
-                    (ci.intern-str text)]
+                  [(String text) (ci.intern-str text)]
                   [_ ""])]
               [_ ""])
             "")]
@@ -857,9 +852,9 @@
 ;: 1/0 for a (comptime.expr-bool <literal>) argument; -1 otherwise.
 (define (embedded-native-expr-bool-flag [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call bool-func bool-args)
+    [(Call bool-func bool-args)
       (match (embedded-stdlib-tlci-unwrap-expr bool-func)
-        [(compiler_ast_types.AstExpr.Var bool-head)
+        [(Var bool-head)
           (if (and
             (or
               (string.eq (ci.intern-str bool-head) "comptime.expr-bool")
@@ -874,9 +869,9 @@
 ;: 1/0 for a literal bool node; -1 otherwise.
 (define (embedded-native-bool-literal-flag [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Literal lit)
+    [(Literal lit)
       (match lit
-        [(compiler_ast_types.AstLiteral.Bool flag)
+        [(Bool flag)
           (if flag
             1
             0)]
@@ -925,30 +920,30 @@
 ;; embedded image and its consumer are always the same source-bound binary.
 (define (embedded-native-binop-ordinal [op : compiler_ast_types.AstBinOp]) : i64
   (match op
-    [(compiler_ast_types.AstBinOp.Add) 0]
-    [(compiler_ast_types.AstBinOp.Sub) 1]
-    [(compiler_ast_types.AstBinOp.Mul) 2]
-    [(compiler_ast_types.AstBinOp.Div) 3]
-    [(compiler_ast_types.AstBinOp.Mod) 4]
-    [(compiler_ast_types.AstBinOp.Eq) 5]
-    [(compiler_ast_types.AstBinOp.Ne) 6]
-    [(compiler_ast_types.AstBinOp.Lt) 7]
-    [(compiler_ast_types.AstBinOp.Le) 8]
-    [(compiler_ast_types.AstBinOp.Gt) 9]
-    [(compiler_ast_types.AstBinOp.Ge) 10]
-    [(compiler_ast_types.AstBinOp.And) 11]
-    [(compiler_ast_types.AstBinOp.Or) 12]
-    [(compiler_ast_types.AstBinOp.BitAnd) 13]
-    [(compiler_ast_types.AstBinOp.BitOr) 14]
-    [(compiler_ast_types.AstBinOp.BitXor) 15]
-    [(compiler_ast_types.AstBinOp.Shl) 16]
-    [(compiler_ast_types.AstBinOp.Shr) 17]))
+    [(Add) 0]
+    [(Sub) 1]
+    [(Mul) 2]
+    [(Div) 3]
+    [(Mod) 4]
+    [(Eq) 5]
+    [(Ne) 6]
+    [(Lt) 7]
+    [(Le) 8]
+    [(Gt) 9]
+    [(Ge) 10]
+    [(And) 11]
+    [(Or) 12]
+    [(BitAnd) 13]
+    [(BitOr) 14]
+    [(BitXor) 15]
+    [(Shl) 16]
+    [(Shr) 17]))
 
 (define (embedded-native-unop-ordinal [op : compiler_ast_types.AstUnOp]) : i64
   (match op
-    [(compiler_ast_types.AstUnOp.Neg) 0]
-    [(compiler_ast_types.AstUnOp.Not) 1]
-    [(compiler_ast_types.AstUnOp.BitNot) 2]))
+    [(Neg) 0]
+    [(Not) 1]
+    [(BitNot) 2]))
 
 (define (embedded-native-comparison-spelling [ordinal : i64]) : String
   (cond
@@ -1031,7 +1026,7 @@
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
   (match (compiler_ast_types.ast-node-get node)
-    [(compiler_ast_types.AstExpr.Spanned inner span)
+    [(Spanned inner span)
       (let
         [inner-opened : i64
           (embedded-native-template-spanned-ops params inner ops ops-count)]
@@ -1050,7 +1045,7 @@
                 (compiler_ast_types.ast-source-span-start-col span))
               (embedded-native-span-end-arg span))
             (+ inner-opened 1))))]
-    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
+    [(MacroExpansion inner _ _)
       (embedded-native-template-spanned-ops params inner ops ops-count)]
     [_ (embedded-native-template-ops-inner params node ops ops-count)]))
 
@@ -1060,17 +1055,16 @@
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Unquote inner)
+    [(Unquote inner)
       (match (embedded-stdlib-tlci-unwrap-expr inner)
-        [(compiler_ast_types.AstExpr.Var pname)
-          (embedded-native-unquote-ops params pname ops ops-count)]
+        [(Var pname) (embedded-native-unquote-ops params pname ops ops-count)]
         ;; Any other unquoted operand is a computed comptime expression whose
         ;; value substitutes into the template, matching the interpreted
         ;; quote's unquote step. Refs #5617.
         [_ (embedded-native-computed-expr-ops params inner ops ops-count)])]
-    [(compiler_ast_types.AstExpr.Literal lit)
+    [(Literal lit)
       (match lit
-        [(compiler_ast_types.AstLiteral.Bool flag)
+        [(Bool flag)
           (begin
             (embedded-native-template-push!
               ops
@@ -1082,7 +1076,7 @@
               "0"
               "0")
             1)]
-        [(compiler_ast_types.AstLiteral.Int value text)
+        [(Int value text)
           (if (or
             (= (string.string-length text) 0)
             (string.eq text (string.int->string value)))
@@ -1096,7 +1090,7 @@
                 "0")
               1)
             -1)]
-        [(compiler_ast_types.AstLiteral.String sid)
+        [(String sid)
           (let
             [text : String (ci.intern-str sid)]
             (begin
@@ -1110,7 +1104,7 @@
                 (string.int->string (string.string-length text))
                 "0")
               1))]
-        [(compiler_ast_types.AstLiteral.Char c)
+        [(Char c)
           (begin
             (embedded-native-template-push!
               ops
@@ -1120,7 +1114,7 @@
               "0"
               "0")
             1)]
-        [(compiler_ast_types.AstLiteral.Unit)
+        [(Unit)
           (begin
             (embedded-native-template-push!
               ops
@@ -1130,7 +1124,7 @@
               "0"
               "0")
             1)]
-        [(compiler_ast_types.AstLiteral.Float text)
+        [(Float text)
           (begin
             (embedded-native-template-push!
               ops
@@ -1143,7 +1137,7 @@
               "0")
             1)]
         [_ -1])]
-    [(compiler_ast_types.AstExpr.Var name-id)
+    [(Var name-id)
       (let
         [name : String (ci.intern-str name-id)]
         (begin
@@ -1156,7 +1150,7 @@
             (string.int->string (string.string-length name))
             "0")
           1))]
-    [(compiler_ast_types.AstExpr.Call func-id args)
+    [(Call func-id args)
       ;; The head builds like any other template expression -- a plain symbol,
       ;; an unquoted macro parameter, or a let-bound local -- so it carries its
       ;; own span wrapper and expr-call needs no immediates of its own.
@@ -1179,7 +1173,7 @@
                   "0"
                   "0")
                 (+ head-opened arg-opened 1))))))]
-    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+    [(If cond-node then-node else-node)
       (let
         [cond-opened : i64
           (embedded-native-template-ops params cond-node ops ops-count)]
@@ -1204,7 +1198,7 @@
                       "0"
                       "0")
                     (+ cond-opened then-opened else-opened 1))))))))]
-    [(compiler_ast_types.AstExpr.Begin exprs)
+    [(Begin exprs)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops params (& exprs) ops ops-count)]
@@ -1219,7 +1213,7 @@
               "0"
               "0")
             (+ arg-opened 1))))]
-    [(compiler_ast_types.AstExpr.Tuple items)
+    [(Tuple items)
       (let
         [item-opened : i64
           (embedded-native-template-args-ops params (& items) ops ops-count)]
@@ -1234,7 +1228,7 @@
               "0"
               "0")
             (+ item-opened 1))))]
-    [(compiler_ast_types.AstExpr.Array items)
+    [(Array items)
       (let
         [item-opened : i64
           (embedded-native-template-args-ops params (& items) ops ops-count)]
@@ -1249,7 +1243,7 @@
               "0"
               "0")
             (+ item-opened 1))))]
-    [(compiler_ast_types.AstExpr.TupleRef target index)
+    [(TupleRef target index)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
@@ -1264,7 +1258,7 @@
               "0"
               "0")
             (+ target-opened 1))))]
-    [(compiler_ast_types.AstExpr.BracketClause items)
+    [(BracketClause items)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops params (& items) ops ops-count)]
@@ -1279,7 +1273,7 @@
               "0"
               "0")
             (+ arg-opened 1))))]
-    [(compiler_ast_types.AstExpr.Borrow mutable lifetime-id place)
+    [(Borrow mutable lifetime-id place)
       (let
         [lifetime : compiler_ast_types.AstBorrowLifetime
           (compiler_ast_types.ast-borrow-lifetime-from-id lifetime-id)]
@@ -1288,7 +1282,7 @@
         (if (< place-opened 0)
           -1
           (match lifetime
-            [(compiler_ast_types.AstBorrowLifetime.Inferred)
+            [(Inferred)
               (begin
                 (embedded-native-template-push!
                   ops
@@ -1300,7 +1294,7 @@
                   "0"
                   "0")
                 (+ place-opened 1))]
-            [(compiler_ast_types.AstBorrowLifetime.Named lifetime-id)
+            [(Named lifetime-id)
               (let
                 [lifetime-name : String (ci.intern-str lifetime-id)]
                 (begin
@@ -1316,9 +1310,9 @@
                     (string.int->string (string.string-length lifetime-name)))
                   (+ place-opened 1)))]
             [_ -1])))]
-    [(compiler_ast_types.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(compiler_ast_types.AstMatch.Match scrutinee arms)
+        [(Match scrutinee arms)
           (let
             [scrut-opened : i64
               (embedded-native-template-ops params scrutinee ops ops-count)]
@@ -1342,7 +1336,7 @@
                       "0"
                       "0")
                     (+ scrut-opened arms-opened 1))))))])]
-    [(compiler_ast_types.AstExpr.StructGet target field)
+    [(StructGet target field)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
@@ -1360,7 +1354,7 @@
                 (string.int->string (string.string-length field-name))
                 "0")
               (+ target-opened 1)))))]
-    [(compiler_ast_types.AstExpr.ArraySet target index value)
+    [(ArraySet target index value)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
@@ -1385,7 +1379,7 @@
                       "0"
                       "0")
                     (+ target-opened index-opened value-opened 1))))))))]
-    [(compiler_ast_types.AstExpr.ArrayTake target live index)
+    [(ArrayTake target live index)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target ops ops-count)]
@@ -1410,9 +1404,9 @@
                       "0"
                       "0")
                     (+ target-opened live-opened index-opened 1))))))))]
-    [(compiler_ast_types.AstExpr.Let let-box)
+    [(Let let-box)
       (match (deref let-box)
-        [(compiler_ast_types.AstLet.Let bindings body)
+        [(Let bindings body)
           (begin
             (embedded-native-template-push!
               ops
@@ -1445,9 +1439,9 @@
                         "0"
                         "0")
                       (+ bindings-opened body-opened 2)))))))])]
-    [(compiler_ast_types.AstExpr.Lambda lambda-box)
+    [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
-        [(compiler_ast_types.AstLambda.Lambda lambda-params maybe-ret body)
+        [(Lambda lambda-params maybe-ret body)
           (let
             [param-count : i64
               (compiler_ast_types.ast-param-list-len (& lambda-params))]
@@ -1465,8 +1459,8 @@
               (let
                 [ret-opened : i64
                   (match (clone maybe-ret)
-                    [(compiler_ast_types.AstMaybeType.No) 0]
-                    [(compiler_ast_types.AstMaybeType.Some ret-ty)
+                    [(No) 0]
+                    [(Some ret-ty)
                       (embedded-native-template-type-ops
                         params
                         ret-ty
@@ -1492,10 +1486,10 @@
                             (+
                               (* param-count 2)
                               (match maybe-ret
-                                [(compiler_ast_types.AstMaybeType.No) 0]
-                                [(compiler_ast_types.AstMaybeType.Some _) 1]))))
+                                [(No) 0]
+                                [(Some _) 1]))))
                         (+ params-opened ret-opened body-opened 1))))))))])]
-    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
+    [(Binary op left-node right-node)
       (let
         [left-opened : i64
           (embedded-native-template-ops params left-node ops ops-count)]
@@ -1515,7 +1509,7 @@
                   "0"
                   "0")
                 (+ left-opened right-opened 1))))))]
-    [(compiler_ast_types.AstExpr.Unary op inner-node)
+    [(Unary op inner-node)
       (let
         [inner-opened : i64
           (embedded-native-template-ops params inner-node ops ops-count)]
@@ -1530,28 +1524,28 @@
               "0"
               "0")
             (+ inner-opened 1))))]
-    [(compiler_ast_types.AstExpr.Return inner-node)
+    [(Return inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-return)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.Box inner-node)
+    [(Box inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-box)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.BoxGet inner-node)
+    [(BoxGet inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-box-get)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.BoxTake inner-node)
+    [(BoxTake inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
@@ -1560,28 +1554,28 @@
         ops-count)]
     ;; Raw-pointer and `unsafe` template nodes, the last shapes the
     ;; `stdlib.text_buf_family` generators need. Refs #5605.
-    [(compiler_ast_types.AstExpr.PtrRead inner-node)
+    [(PtrRead inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-ptr-read)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.PtrAddrOf inner-node)
+    [(PtrAddrOf inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-ptr-addr-of)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.PtrToInt inner-node)
+    [(PtrToInt inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-ptr-to-int)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.IntToPtr inner-node cast-type-id)
+    [(IntToPtr inner-node cast-type-id)
       (let
         [value-opened : i64
           (embedded-native-template-ops params inner-node ops ops-count)]
@@ -1605,14 +1599,14 @@
                   "0"
                   "0")
                 (+ value-opened type-opened 1))))))]
-    [(compiler_ast_types.AstExpr.StringData inner-node)
+    [(StringData inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-string-data)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.PtrWrite ptr-node value-node)
+    [(PtrWrite ptr-node value-node)
       (embedded-native-template-binary-node-ops
         params
         ptr-node
@@ -1620,7 +1614,7 @@
         (tlci_core.tlci-host-callback-name expr-ptr-write)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.PtrOffset ptr-node offset-node)
+    [(PtrOffset ptr-node offset-node)
       (embedded-native-template-binary-node-ops
         params
         ptr-node
@@ -1630,7 +1624,7 @@
         ops-count)]
     ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
     ;; same operand order expr-make-array uses. Refs #5605.
-    [(compiler_ast_types.AstExpr.PtrCast ptr-node cast-type-id)
+    [(PtrCast ptr-node cast-type-id)
       (let
         [ptr-opened : i64
           (embedded-native-template-ops params ptr-node ops ops-count)]
@@ -1654,14 +1648,14 @@
                   "0"
                   "0")
                 (+ ptr-opened type-opened 1))))))]
-    [(compiler_ast_types.AstExpr.ArrayData inner-node)
+    [(ArrayData inner-node)
       (embedded-native-template-unary-node-ops
         params
         inner-node
         (tlci_core.tlci-host-callback-name expr-array-data)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.StringFromBytes data-node length-node)
+    [(StringFromBytes data-node length-node)
       (embedded-native-template-binary-node-ops
         params
         data-node
@@ -1669,7 +1663,7 @@
         (tlci_core.tlci-host-callback-name expr-string-from-bytes)
         ops
         ops-count)]
-    [(compiler_ast_types.AstExpr.Unsafe body-exprs)
+    [(Unsafe body-exprs)
       (let
         [arg-opened : i64
           (embedded-native-template-args-ops
@@ -1693,7 +1687,7 @@
     ;; The sentinel field id marks `(set! ,place value)`: evaluate the unquoted
     ;; place and value in source order, then let the value-consuming callback
     ;; select Var, StructGet, or BoxGet assignment reconstruction. Refs #6550.
-    [(compiler_ast_types.AstExpr.StructSet target-node field value-node)
+    [(StructSet target-node field value-node)
       (if (= field (compiler_ast_types.ast-expr-unquote-set-target-field-id))
         (let
           [target-opened : i64
@@ -1738,7 +1732,7 @@
                     (+ target-opened value-opened 1))))))))]
     ;; `(cast e : T)`: the operand template then the type template, matching
     ;; the interpreted quote's cast reconstruction. Refs #5604.
-    [(compiler_ast_types.AstExpr.Cast value-node ty-id)
+    [(Cast value-node ty-id)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
@@ -1764,7 +1758,7 @@
                 (+ value-opened type-opened 1))))))]
     ;; `(ann e : T)` has the same stack shape as `cast`, but preserves the
     ;; annotation node so integer literals keep their requested scalar type.
-    [(compiler_ast_types.AstExpr.Ann value-node ty-id)
+    [(Ann value-node ty-id)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
@@ -1791,9 +1785,9 @@
     ;; Typed `(init : T)`: quote the annotation as a type value, then let the
     ;; host reconstruct the same Init node as interpreted quasiquote. Refs
     ;; #5606.
-    [(compiler_ast_types.AstExpr.Init maybe-ty-id)
+    [(Init maybe-ty-id)
       (match (compiler_ast_types.ast-maybe-type-from-id maybe-ty-id)
-        [(compiler_ast_types.AstMaybeType.Some ty)
+        [(Some ty)
           (let
             [type-opened : i64
               (embedded-native-template-type-ops params ty ops ops-count)]
@@ -1809,7 +1803,7 @@
                   "0")
                 (+ type-opened 1))))]
         [_ -1])]
-    [(compiler_ast_types.AstExpr.Set name-id value-node)
+    [(Set name-id value-node)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
@@ -1827,7 +1821,7 @@
                 (string.int->string (string.string-length name))
                 "0")
               (+ value-opened 1)))))]
-    [(compiler_ast_types.AstExpr.While cond-node body-node)
+    [(While cond-node body-node)
       (let
         [cond-opened : i64
           (embedded-native-template-ops params cond-node ops ops-count)]
@@ -1847,7 +1841,7 @@
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]
-    [(compiler_ast_types.AstExpr.ArrayRef target-node index-node)
+    [(ArrayRef target-node index-node)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target-node ops ops-count)]
@@ -1867,7 +1861,7 @@
                   "0"
                   "0")
                 (+ target-opened index-opened 1))))))]
-    [(compiler_ast_types.AstExpr.Replace place-node replacement-node)
+    [(Replace place-node replacement-node)
       (let
         [place-opened : i64
           (embedded-native-template-ops params place-node ops ops-count)]
@@ -1891,7 +1885,7 @@
                   "0"
                   "0")
                 (+ place-opened replacement-opened 1))))))]
-    [(compiler_ast_types.AstExpr.ArrayPush target-node value-node)
+    [(ArrayPush target-node value-node)
       (let
         [target-opened : i64
           (embedded-native-template-ops params target-node ops ops-count)]
@@ -1911,7 +1905,7 @@
                   "0"
                   "0")
                 (+ target-opened value-opened 1))))))]
-    [(compiler_ast_types.AstExpr.MakeArray elem-type-id size-node)
+    [(MakeArray elem-type-id size-node)
       (let
         [type-opened : i64
           (embedded-native-template-type-ops
@@ -1969,9 +1963,9 @@
         (let
           [item : i64 (compiler_ast_types.ast-expr-list-get args index 0)]
           (match (embedded-stdlib-tlci-unwrap-expr item)
-            [(compiler_ast_types.AstExpr.UnquoteSplicing inner)
+            [(UnquoteSplicing inner)
               (match (embedded-stdlib-tlci-unwrap-expr inner)
-                [(compiler_ast_types.AstExpr.Var pname)
+                [(Var pname)
                   (let
                     [param : i64
                       (embedded-stdlib-tlci-param-index params pname)]
@@ -2056,11 +2050,11 @@
         (match (owned_view.compiler-owned-array-element-shared-view
           arms.slots
           index)
-          [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+          [(Arm pattern body-node)
             (let
               [pat-opened : i64
                 (match pattern
-                  [(compiler_ast_types.AstPattern.Wildcard)
+                  [(Wildcard)
                     (begin
                       (embedded-native-template-push!
                         ops
@@ -2070,7 +2064,7 @@
                         "0"
                         "0")
                       1)]
-                  [(compiler_ast_types.AstPattern.Binding pat-name-id)
+                  [(Binding pat-name-id)
                     (let
                       [pat-name : String (ci.intern-str pat-name-id)]
                       (begin
@@ -2083,9 +2077,9 @@
                           (string.int->string (string.string-length pat-name))
                           "0")
                         1))]
-                  [(compiler_ast_types.AstPattern.Var pat-name-id pat-maybe-ty)
+                  [(Var pat-name-id pat-maybe-ty)
                     (match pat-maybe-ty
-                      [(compiler_ast_types.AstMaybeType.No)
+                      [(No)
                         (let
                           [pat-name : String (ci.intern-str pat-name-id)]
                           (begin
@@ -2100,9 +2094,7 @@
                               "0")
                             1))]
                       [_ -1])]
-                  [(compiler_ast_types.AstPattern.Variant
-                      pat-name-id
-                      pat-args-box)
+                  [(Variant pat-name-id pat-args-box)
                     (let
                       [pat-name : String (ci.intern-str pat-name-id)]
                       [pat-args : compiler_ast_types.AstPatternList
@@ -2171,7 +2163,7 @@
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
   (match pattern
-    [(compiler_ast_types.AstPattern.Wildcard)
+    [(Wildcard)
       (begin
         (embedded-native-template-push!
           ops
@@ -2181,7 +2173,7 @@
           "0"
           "0")
         1)]
-    [(compiler_ast_types.AstPattern.Binding name-id)
+    [(Binding name-id)
       (let
         [name : String (ci.intern-str name-id)]
         (begin
@@ -2194,9 +2186,9 @@
             (string.int->string (string.string-length name))
             "0")
           1))]
-    [(compiler_ast_types.AstPattern.Var name-id maybe-ty)
+    [(Var name-id maybe-ty)
       (match maybe-ty
-        [(compiler_ast_types.AstMaybeType.No)
+        [(No)
           (let
             [name : String (ci.intern-str name-id)]
             (begin
@@ -2210,7 +2202,7 @@
                 "0")
               1))]
         [_ -1])]
-    [(compiler_ast_types.AstPattern.Variant name-id args-box)
+    [(Variant name-id args-box)
       (let
         [name : String (ci.intern-str name-id)]
         [args : compiler_ast_types.AstPatternList (deref args-box)]
@@ -2261,25 +2253,25 @@
 ;; binary. Refs #5603.
 (define (embedded-native-scalar-type-ordinal [ty : compiler_ast_types.AstType]) : i64
   (match ty
-    [(compiler_ast_types.AstType.I64) 0]
-    [(compiler_ast_types.AstType.I32) 1]
-    [(compiler_ast_types.AstType.I16) 2]
-    [(compiler_ast_types.AstType.I8) 3]
-    [(compiler_ast_types.AstType.U64) 4]
-    [(compiler_ast_types.AstType.U32) 5]
-    [(compiler_ast_types.AstType.U16) 6]
-    [(compiler_ast_types.AstType.U8) 7]
-    [(compiler_ast_types.AstType.F64) 8]
-    [(compiler_ast_types.AstType.F32) 9]
-    [(compiler_ast_types.AstType.Bool) 10]
-    [(compiler_ast_types.AstType.Char) 11]
-    [(compiler_ast_types.AstType.String) 12]
-    [(compiler_ast_types.AstType.Str) 13]
-    [(compiler_ast_types.AstType.Bytes) 14]
-    [(compiler_ast_types.AstType.Expr) 15]
-    [(compiler_ast_types.AstType.ExprList) 16]
-    [(compiler_ast_types.AstType.Unit) 17]
-    [(compiler_ast_types.AstType.Never) 18]
+    [(I64) 0]
+    [(I32) 1]
+    [(I16) 2]
+    [(I8) 3]
+    [(U64) 4]
+    [(U32) 5]
+    [(U16) 6]
+    [(U8) 7]
+    [(F64) 8]
+    [(F32) 9]
+    [(Bool) 10]
+    [(Char) 11]
+    [(String) 12]
+    [(Str) 13]
+    [(Bytes) 14]
+    [(Expr) 15]
+    [(ExprList) 16]
+    [(Unit) 17]
+    [(Never) 18]
     [_ -1]))
 
 ;; Emit ops building one template let-binding list: empty, then per binding
@@ -2378,7 +2370,7 @@
     ;; read back through the global `ty-node-get` (the type-side twin of
     ;; `ast-node-get`), so no pool context has to be threaded here. Each arm
     ;; emits its element template then the wrapper op. Refs #5605.
-    [(compiler_ast_types.AstType.Ptr elem-id)
+    [(Ptr elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2386,7 +2378,7 @@
         "0"
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.MutPtr elem-id)
+    [(MutPtr elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2394,7 +2386,7 @@
         "1"
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.Box elem-id)
+    [(Box elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2402,7 +2394,7 @@
         "0"
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.DynArray elem-id)
+    [(DynArray elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2410,7 +2402,7 @@
         "0"
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.Slice elem-id)
+    [(Slice elem-id)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2418,7 +2410,7 @@
         "0"
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.Array elem-id count)
+    [(Array elem-id count)
       (embedded-native-template-type-wrap-ops
         params
         elem-id
@@ -2426,7 +2418,7 @@
         (string.int->string count)
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.Ref region-id inner-id)
+    [(Ref region-id inner-id)
       (embedded-native-template-type-ref-ops
         params
         inner-id
@@ -2434,7 +2426,7 @@
         0
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.MutRef region-id inner-id)
+    [(MutRef region-id inner-id)
       (embedded-native-template-type-ref-ops
         params
         inner-id
@@ -2442,7 +2434,7 @@
         1
         ops
         ops-count)]
-    [(compiler_ast_types.AstType.Tuple elems-box)
+    [(Tuple elems-box)
       (let
         [elems : compiler_ast_types.AstTypeList (deref elems-box)]
         [elem-opened : i64
@@ -2468,7 +2460,7 @@
     ;; internal `(unquote T)` VarArgs sentinel. Mirror interpreted quote
     ;; evaluation by pushing either the direct type operand or a computed
     ;; let-bound type value. Refs #5606.
-    [(compiler_ast_types.AstType.VarArgs name lifetimes-box)
+    [(VarArgs name lifetimes-box)
       (let
         [lifetimes : compiler_ast_types.AstLifetimeList (deref lifetimes-box)]
         (if (= name cbi.compiler-builtin-id-fix-unquote)
@@ -2526,7 +2518,7 @@
                       (owned_view.compiler-owned-shared-view payload)))
                   (string.int->string (string.string-length payload)))
                 1)))))]
-    [(compiler_ast_types.AstType.Var type-name-id)
+    [(Var type-name-id)
       (let
         [type-name : String (ci.intern-str type-name-id)]
         (begin
@@ -2602,7 +2594,7 @@
           params
           index
           (compiler_ast_types.ast-param-fallback))
-          [(compiler_ast_types.AstParam.Param name _ comptime?)
+          [(Param name _ comptime?)
             (set!
               payload
               (str_cat.str-cat
@@ -2629,7 +2621,7 @@
       lambda-params
       index
       (compiler_ast_types.ast-param-fallback))
-      [(compiler_ast_types.AstParam.Param _ ty _)
+      [(Param _ ty _)
         (let
           [head-opened : i64
             (embedded-native-template-type-ops macro-params ty ops ops-count)]
@@ -2659,7 +2651,7 @@
       bindings
       index
       (compiler_ast_types.ast-let-binding-fallback))
-      [(compiler_ast_types.AstLetBinding.Binding name-id maybe-ty init)
+      [(Binding name-id maybe-ty init)
         (let
           [name : String (ci.intern-str name-id)]
           [init-opened : i64
@@ -2669,7 +2661,7 @@
             (let
               [binding-opened : i64
                 (match maybe-ty
-                  [(compiler_ast_types.AstMaybeType.No)
+                  [(No)
                     (begin
                       (embedded-native-template-push!
                         ops
@@ -2680,7 +2672,7 @@
                         (string.int->string (string.string-length name))
                         "0")
                       1)]
-                  [(compiler_ast_types.AstMaybeType.Some ty)
+                  [(Some ty)
                     (let
                       [type-opened : i64
                         (embedded-native-template-type-ops
@@ -2815,8 +2807,7 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Var pname)
-      (embedded-stdlib-tlci-param-index params pname)]
+    [(Var pname) (embedded-stdlib-tlci-param-index params pname)]
     [_ -1]))
 
 ;; Emit the op chain for one computed (non-template) expression, producing
@@ -2846,11 +2837,11 @@
     ;; a body-level template; reuse the template walker for its inner syntax.
     ;; This is needed for computed match-arm bodies in enum dispatch. Refs
     ;; #5626.
-    [(compiler_ast_types.AstExpr.Quasiquote inner)
+    [(Quasiquote inner)
       (embedded-native-template-ops params inner ops ops-count)]
-    [(compiler_ast_types.AstExpr.Literal lit)
+    [(Literal lit)
       (match lit
-        [(compiler_ast_types.AstLiteral.String sid)
+        [(String sid)
           (let
             [text : String (ci.intern-str sid)]
             (begin
@@ -2864,7 +2855,7 @@
                 (string.int->string (string.string-length text))
                 "0")
               1))]
-        [(compiler_ast_types.AstLiteral.Unit)
+        [(Unit)
           (begin
             (embedded-native-template-push!
               ops
@@ -2874,7 +2865,7 @@
               "0"
               "0")
             1)]
-        [(compiler_ast_types.AstLiteral.Int value _)
+        [(Int value _)
           (begin
             (embedded-native-template-push!
               ops
@@ -2884,7 +2875,7 @@
               "0"
               "0")
             1)]
-        [(compiler_ast_types.AstLiteral.Bool flag)
+        [(Bool flag)
           (begin
             (embedded-native-template-push!
               ops
@@ -2901,16 +2892,16 @@
     ;; linear op protocol by staging both Vars and selecting with the generated
     ;; i64 condition. Restricting both branches to Var keeps eager staging
     ;; observationally equivalent to interpreted `if`. Refs #5606.
-    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+    [(If cond-node then-node else-node)
       (let
         [condition : String (embedded-native-data-index-text cond-node)]
         [safe : bool
           (and
             (match (embedded-stdlib-tlci-unwrap-expr then-node)
-              [(compiler_ast_types.AstExpr.Var _) true]
+              [(Var _) true]
               [_ false])
             (match (embedded-stdlib-tlci-unwrap-expr else-node)
-              [(compiler_ast_types.AstExpr.Var _) true]
+              [(Var _) true]
               [_ false]))]
         (if (or (string.eq condition "") (not safe))
           -1
@@ -2937,11 +2928,10 @@
                       "0"
                       "0")
                     (+ then-opened else-opened 1))))))))]
-    [(compiler_ast_types.AstExpr.Var pname)
-      (embedded-native-unquote-ops params pname ops ops-count)]
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Var pname) (embedded-native-unquote-ops params pname ops ops-count)]
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
@@ -3966,8 +3956,7 @@
                   (= argc 1))
                 (match (embedded-stdlib-tlci-unwrap-expr
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                  [(compiler_ast_types.AstExpr.Literal
-                      (compiler_ast_types.AstLiteral.Int value text))
+                  [(Literal (Int value text))
                     (if (or
                       (= (string.string-length text) 0)
                       (string.eq text (string.int->string value)))
@@ -4118,7 +4107,7 @@
                       -1
                       (match (embedded-stdlib-tlci-unwrap-expr
                         (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                        [(compiler_ast_types.AstExpr.Var list-name)
+                        [(Var list-name)
                           (embedded-native-local-index
                             (ci.intern-str list-name))]
                         [_ -1]))]
@@ -4168,8 +4157,8 @@
 ;: Refs #5701.
 (define (embedded-native-data-cast-type? [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(compiler_ast_types.AstType.I64) true]
-    [(compiler_ast_types.AstType.Char) true]
+    [(I64) true]
+    [(Char) true]
     [_ false]))
 
 ;: The generated i64 text of a canonical int literal, a compile-time data
@@ -4177,28 +4166,25 @@
 ;: "" for anything else. Refs #5617, #5701.
 (define (embedded-native-data-index-text [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Literal
-        (compiler_ast_types.AstLiteral.Int value text))
+    [(Literal (Int value text))
       (if (or
         (= (string.string-length text) 0)
         (string.eq text (string.int->string value)))
         (string.int->string value)
         "")]
-    [(compiler_ast_types.AstExpr.Literal
-        (compiler_ast_types.AstLiteral.Bool flag))
+    [(Literal (Bool flag))
       (if flag
         "1"
         "0")]
-    [(compiler_ast_types.AstExpr.Var name)
-      (embedded-native-data-local-text (ci.intern-str name))]
-    [(compiler_ast_types.AstExpr.Cast inner ty-id)
+    [(Var name) (embedded-native-data-local-text (ci.intern-str name))]
+    [(Cast inner ty-id)
       (if (embedded-native-data-cast-type?
         (compiler_ast_types.ty-node-get ty-id))
         (embedded-native-data-index-text inner)
         "")]
     ;; `(+ i 1)` in an index or literal-builder position stays plain generated
     ;; i64 arithmetic over the data locals. Refs #5602.
-    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
+    [(Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
         [spelling : String (embedded-native-arithmetic-spelling ordinal)]
@@ -4211,8 +4197,7 @@
         [negative-literal : String
           (if (and (= ordinal 1) (string.eq left "0"))
             (match (embedded-stdlib-tlci-unwrap-expr right-node)
-              [(compiler_ast_types.AstExpr.Literal
-                  (compiler_ast_types.AstLiteral.Int value _))
+              [(Literal (Int value _))
                 (if (and (>= value 0) (not (string.eq right "")))
                   (string.int->string (- 0 value))
                   "")]
@@ -4734,18 +4719,16 @@
     (if (not (string.eq plain ""))
       (EmbeddedNativeDataValue "" plain 0)
       (match (embedded-stdlib-tlci-unwrap-expr node)
-        [(compiler_ast_types.AstExpr.Var name-id)
-          (embedded-native-data-value-none)]
-        [(compiler_ast_types.AstExpr.Cast inner ty-id)
+        [(Var name-id) (embedded-native-data-value-none)]
+        [(Cast inner ty-id)
           (if (embedded-native-data-cast-type?
             (compiler_ast_types.ty-node-get ty-id))
             (embedded-native-data-value params inner)
             (embedded-native-data-value-none))]
-        [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+        [(If cond-node then-node else-node)
           (embedded-native-data-if-value params cond-node then-node else-node)]
-        [(compiler_ast_types.AstExpr.Match match-box)
-          (embedded-native-data-match-value params match-box)]
-        [(compiler_ast_types.AstExpr.Binary op left-node right-node)
+        [(Match match-box) (embedded-native-data-match-value params match-box)]
+        [(Binary op left-node right-node)
           (let
             [ordinal : i64 (embedded-native-binop-ordinal op)]
             [arithmetic : String (embedded-native-arithmetic-spelling ordinal)]
@@ -4762,7 +4745,7 @@
                   left-node
                   right-node)
                 (embedded-native-data-value-none))))]
-        [(compiler_ast_types.AstExpr.Unary op inner-node)
+        [(Unary op inner-node)
           (if (= (embedded-native-unop-ordinal op) 1)
             (let
               [inner : EmbeddedNativeDataValue
@@ -4783,7 +4766,7 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Var name-id)
+    [(Var name-id)
       (let
         [slot : i64 (embedded-native-local-index (ci.intern-str name-id))]
         (if (not (embedded-native-local-bool? slot))
@@ -4846,7 +4829,7 @@
         (string.int->string param)
         "0")
       (match (embedded-stdlib-tlci-unwrap-expr subject)
-        [(compiler_ast_types.AstExpr.Var name)
+        [(Var name)
           (let
             [slot : i64 (embedded-native-local-index (ci.intern-str name))]
             (if (< slot 0)
@@ -4866,9 +4849,9 @@
   [operand-op : String]
   [local-op : String]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (if (and
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
@@ -5021,10 +5004,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.String sid))
+          [(Literal (String sid))
             (embedded-native-data-if-values
               (embedded-native-data-string-literal-eq-value
                 params
@@ -5036,8 +5018,7 @@
                 scrutinee
                 arms
                 (+ index 1)))]
-          [(compiler_ast_types.AstPattern.Wildcard)
-            (embedded-native-data-value params body-node)]
+          [(Wildcard) (embedded-native-data-value params body-node)]
           [_ (embedded-native-data-value-none)])])))
 
 (define (embedded-native-data-string-match-value
@@ -5050,8 +5031,7 @@
   (if (or
     (>= (embedded-native-var-param-index params scrutinee) 0)
     (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
-      [(compiler_ast_types.AstExpr.Var name)
-        (>= (embedded-native-local-index (ci.intern-str name)) 0)]
+      [(Var name) (>= (embedded-native-local-index (ci.intern-str name)) 0)]
       [_ false]))
     (embedded-native-data-string-match-arms-value params scrutinee arms 0)
     (embedded-native-data-value-none)))
@@ -5066,13 +5046,13 @@
   (if (not (= arms.len 2))
     (embedded-native-data-value-none)
     (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
-      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+      [(Arm first-pattern first-body)
         (match (owned_view.compiler-owned-array-element-shared-view
           arms.slots
           1)
-          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+          [(Arm second-pattern second-body)
             (match first-pattern
-              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+              [(Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList (deref args-box)]
                   (if (and
@@ -5084,10 +5064,10 @@
                       (& args)
                       0
                       (compiler_ast_types.ast-pattern-fallback))
-                      [(compiler_ast_types.AstPattern.Wildcard) true]
+                      [(Wildcard) true]
                       [_ false])
                     (match second-pattern
-                      [(compiler_ast_types.AstPattern.Wildcard) true]
+                      [(Wildcard) true]
                       [_ false])
                     (= (embedded-native-bool-literal-flag first-body) 1)
                     (= (embedded-native-bool-literal-flag second-body) 0))
@@ -5104,7 +5084,7 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
   (match (deref match-box)
-    [(compiler_ast_types.AstMatch.Match scrutinee arms)
+    [(Match scrutinee arms)
       (let
         [var-match : EmbeddedNativeDataValue
           (embedded-native-data-var-match-value params scrutinee (& arms))]
@@ -5118,9 +5098,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
@@ -5193,9 +5173,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (if (and
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
@@ -5216,9 +5196,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (if (and
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (or
@@ -5230,7 +5210,7 @@
                 "expr-binding-clause-has-type?")))
             (match (embedded-stdlib-tlci-unwrap-expr
               (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-              [(compiler_ast_types.AstExpr.Var name-id)
+              [(Var name-id)
                 (let
                   [slot : i64
                     (embedded-native-local-index (ci.intern-str name-id))]
@@ -5250,9 +5230,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             (if (and
@@ -5275,9 +5255,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             (if (and
@@ -5298,9 +5278,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             (if (and
@@ -5411,9 +5391,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
@@ -5468,7 +5448,7 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Var name)
+    [(Var name)
       (if (>= (embedded-stdlib-tlci-param-index params name) 0)
         -1
         (embedded-native-local-index (ci.intern-str name)))]
@@ -5524,9 +5504,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call length-func length-args)
+    [(Call length-func length-args)
       (match (embedded-stdlib-tlci-unwrap-expr length-func)
-        [(compiler_ast_types.AstExpr.Var length-head)
+        [(Var length-head)
           (if (and
             (or
               (string.eq
@@ -5541,7 +5521,7 @@
               0))
             (match (embedded-stdlib-tlci-unwrap-expr
               (compiler_ast_types.ast-expr-list-get (& length-args) 0 0))
-              [(compiler_ast_types.AstExpr.Var list-name)
+              [(Var list-name)
                 (embedded-native-local-index (ci.intern-str list-name))]
               [_ -1])
             -1)]
@@ -5555,9 +5535,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+    [(If cond-node then-node else-node)
       (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-        [(compiler_ast_types.AstExpr.Binary op left-node right-node)
+        [(Binary op left-node right-node)
           (let
             [ordinal : i64 (embedded-native-binop-ordinal op)]
             [left : EmbeddedNativeDataValue
@@ -5913,36 +5893,34 @@
   [node : i64]
   [final : String]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+    [(If cond-node then-node else-node)
       (embedded-native-computed-if-code
         params
         cond-node
         then-node
         else-node
         final)]
-    [(compiler_ast_types.AstExpr.Begin exprs)
-      (embedded-native-computed-begin-code params (& exprs) final)]
-    [(compiler_ast_types.AstExpr.Match match-box)
+    [(Begin exprs) (embedded-native-computed-begin-code params (& exprs) final)]
+    [(Match match-box)
       (embedded-native-computed-match-code params match-box final)]
     ;; A let nested in a computed position preserves the enclosing expression's
     ;; continuation while giving its body access to the new locals. Refs #5603,
     ;; #6552.
-    [(compiler_ast_types.AstExpr.Let _)
-      (embedded-native-computed-let-code params node final)]
+    [(Let _) (embedded-native-computed-let-code params node final)]
     ;; A mutation can be the selected value of an if/match even though its
     ;; language result is unit. Preserve any diagnostic status from evaluating
     ;; the assignment, then continue with the caller's unit continuation.
     ;; Refs #6644.
-    [(compiler_ast_types.AstExpr.Set _ _)
+    [(Set _ _)
       (let
         [statement : String
           (embedded-native-computed-statement-code params node)]
         (if (string.eq statement "")
           ""
           (embedded-native-status-sequence-code statement final)))]
-    [(compiler_ast_types.AstExpr.Call func args)
+    [(Call func args)
       (match (embedded-stdlib-tlci-unwrap-expr func)
-        [(compiler_ast_types.AstExpr.Var head-id)
+        [(Var head-id)
           (let
             [head : String (ci.intern-str head-id)]
             [argc : i64 (compiler_ast_types.ast-expr-list-len (& args))]
@@ -5957,11 +5935,11 @@
                   (= argc 1)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                    [(compiler_ast_types.AstExpr.If _ _ _) true]
-                    [(compiler_ast_types.AstExpr.Match _) true]
-                    [(compiler_ast_types.AstExpr.Call inner-func inner-args)
+                    [(If _ _ _) true]
+                    [(Match _) true]
+                    [(Call inner-func inner-args)
                       (match (embedded-stdlib-tlci-unwrap-expr inner-func)
-                        [(compiler_ast_types.AstExpr.Var inner-head-id)
+                        [(Var inner-head-id)
                           (and
                             (or
                               (string.eq
@@ -5980,16 +5958,16 @@
                                   (& inner-args)
                                   0
                                   0))
-                                [(compiler_ast_types.AstExpr.If _ _ _) true]
-                                [(compiler_ast_types.AstExpr.Match _) true]
+                                [(If _ _ _) true]
+                                [(Match _) true]
                                 [_ false])
                               (match (embedded-stdlib-tlci-unwrap-expr
                                 (compiler_ast_types.ast-expr-list-get
                                   (& inner-args)
                                   1
                                   0))
-                                [(compiler_ast_types.AstExpr.If _ _ _) true]
-                                [(compiler_ast_types.AstExpr.Match _) true]
+                                [(If _ _ _) true]
+                                [(Match _) true]
                                 [_ false])))]
                         [_ false])]
                     [_ false]))
@@ -6013,13 +5991,13 @@
                   (or
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                      [(compiler_ast_types.AstExpr.If _ _ _) true]
-                      [(compiler_ast_types.AstExpr.Match _) true]
+                      [(If _ _ _) true]
+                      [(Match _) true]
                       [_ false])
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                      [(compiler_ast_types.AstExpr.If _ _ _) true]
-                      [(compiler_ast_types.AstExpr.Match _) true]
+                      [(If _ _ _) true]
+                      [(Match _) true]
                       [_ false])))
                 (embedded-native-computed-binary-code
                   params
@@ -6039,8 +6017,8 @@
                   (= argc 2)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                    [(compiler_ast_types.AstExpr.Match _) true]
-                    [(compiler_ast_types.AstExpr.If _ _ _) true]
+                    [(Match _) true]
+                    [(If _ _ _) true]
                     [_ false]))
                 (embedded-native-computed-binary-code
                   params
@@ -6119,7 +6097,7 @@
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [opened : i64
       (if (match (embedded-stdlib-tlci-unwrap-expr node)
-        [(compiler_ast_types.AstExpr.Quasiquote _) true]
+        [(Quasiquote _) true]
         [_ false])
         (embedded-native-body-ops params node (&mut ops) (&mut ops-count))
         (embedded-native-computed-expr-ops
@@ -6222,13 +6200,11 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Literal (compiler_ast_types.AstLiteral.Unit))
-      "  0\n"]
-    [(compiler_ast_types.AstExpr.Begin exprs)
+    [(Literal (Unit)) "  0\n"]
+    [(Begin exprs)
       (embedded-native-computed-statement-list-code params (& exprs) 0)]
-    [(compiler_ast_types.AstExpr.Let _)
-      (embedded-native-let-statement-code params node)]
-    [(compiler_ast_types.AstExpr.While cond-node body-node)
+    [(Let _) (embedded-native-let-statement-code params node)]
+    [(While cond-node body-node)
       (let
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
@@ -6259,7 +6235,7 @@
                 status
                 "))\n"
                 (embedded-native-closing-parens (* 2 condition.opens)))))))]
-    [(compiler_ast_types.AstExpr.Set name-id value-node)
+    [(Set name-id value-node)
       (let
         [target : String
           (embedded-native-data-local-text (ci.intern-str name-id))]
@@ -6285,7 +6261,7 @@
                 params
                 value-node
                 (embedded-native-local-set-final slot))))))]
-    [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
+    [(If cond-node then-node else-node)
       (let
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
@@ -6314,15 +6290,14 @@
     ;; mutations and diagnostics in the selected arm are preserved, while an
     ;; ordinary unit result is discarded. Format-plan validation exercises
     ;; this shape inside compile-time loops. Refs #6644.
-    [(compiler_ast_types.AstExpr.Match _)
+    [(Match _)
       (let
         [code : String (embedded-native-computed-expr-code params node "  0\n")]
         (if (string.eq code "")
           (embedded-native-fallback-code "statement-match:lowering")
           code))]
     ;; Diagnostic calls ignore this final and retain their interpreted status.
-    [(compiler_ast_types.AstExpr.Call _ _)
-      (embedded-native-computed-expr-code params node "  0\n")]
+    [(Call _ _) (embedded-native-computed-expr-code params node "  0\n")]
     [_
       (embedded-native-fallback-code
         (str_cat.str-cat
@@ -6364,9 +6339,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Let let-box)
+    [(Let let-box)
       (match (deref let-box)
-        [(compiler_ast_types.AstLet.Let bindings body)
+        [(Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
@@ -6466,7 +6441,7 @@
         (if (string.eq else-code "")
           ""
           (match (embedded-native-length-probe params cond-node)
-            [(EmbeddedNativeLengthProbe.LengthProbe param ordinal literal)
+            [(LengthProbe param ordinal literal)
               (str_cat.str-cat
                 "  (let [t0 : i64 (comptime-host-expr-list-length host session "
                 (string.int->string param)
@@ -6482,11 +6457,11 @@
                 then-code
                 else-code
                 ")))\n")]
-            [(EmbeddedNativeLengthProbe.NoLengthProbe)
+            [(NoLengthProbe)
               (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-                [(compiler_ast_types.AstExpr.Call cond-func cond-args)
+                [(Call cond-func cond-args)
                   (match (embedded-stdlib-tlci-unwrap-expr cond-func)
-                    [(compiler_ast_types.AstExpr.Var cond-head)
+                    [(Var cond-head)
                       (let
                         [cond-name : String (ci.intern-str cond-head)]
                         (cond
@@ -6600,9 +6575,9 @@
         pat-args
         0
         (compiler_ast_types.ast-pattern-fallback))
-        [(compiler_ast_types.AstPattern.Binding bind-id)
+        [(Binding bind-id)
           (embedded-native-local-push! (ci.intern-str bind-id))]
-        [(compiler_ast_types.AstPattern.Wildcard) -2]
+        [(Wildcard) -2]
         [_ -1])]
     [arm-code : String
       (if (= slot -1)
@@ -6677,9 +6652,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Variant name-id args-box)
+          [(Variant name-id args-box)
             (let
               [pat-args : compiler_ast_types.AstPatternList (deref args-box)]
               (if (and
@@ -6694,7 +6669,7 @@
                   body-node
                   final)
                 ""))]
-          [(compiler_ast_types.AstPattern.Wildcard)
+          [(Wildcard)
             (embedded-native-computed-expr-code params body-node final)]
           [_ ""])])))
 
@@ -6736,13 +6711,13 @@
   (if (not (= arms.len 2))
     ""
     (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
-      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+      [(Arm first-pattern first-body)
         (match (owned_view.compiler-owned-array-element-shared-view
           arms.slots
           1)
-          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+          [(Arm second-pattern second-body)
             (match first-pattern
-              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+              [(Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList (deref args-box)]
                   (if (or
@@ -6753,14 +6728,14 @@
                     (not (= args.len 1))
                     (not
                       (match second-pattern
-                        [(compiler_ast_types.AstPattern.Wildcard) true]
+                        [(Wildcard) true]
                         [_ false])))
                     ""
                     (match (compiler_ast_types.ast-pattern-list-get
                       (& args)
                       0
                       (compiler_ast_types.ast-pattern-fallback))
-                      [(compiler_ast_types.AstPattern.Binding bind-id)
+                      [(Binding bind-id)
                         (let
                           [saved : i64 (array-ref embedded-native-local-len 0)]
                           [scrut-slot : i64
@@ -6873,13 +6848,13 @@
   (if (not (= arms.len 2))
     ""
     (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
-      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+      [(Arm first-pattern first-body)
         (match (owned_view.compiler-owned-array-element-shared-view
           arms.slots
           1)
-          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+          [(Arm second-pattern second-body)
             (match first-pattern
-              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+              [(Variant name-id args-box)
                 (let
                   [args : compiler_ast_types.AstPatternList (deref args-box)]
                   (if (or
@@ -6890,7 +6865,7 @@
                     (not (= args.len 1))
                     (not
                       (match second-pattern
-                        [(compiler_ast_types.AstPattern.Wildcard) true]
+                        [(Wildcard) true]
                         [_ false])))
                     ""
                     (let
@@ -6906,8 +6881,8 @@
                           (& args)
                           0
                           (compiler_ast_types.ast-pattern-fallback))
-                          [(compiler_ast_types.AstPattern.Wildcard) true]
-                          [(compiler_ast_types.AstPattern.Binding bind-id)
+                          [(Wildcard) true]
+                          [(Binding bind-id)
                             (embedded-native-data-local-push!
                               (ci.intern-str bind-id)
                               (owned_view.compiler-owned-shared-view value))]
@@ -6989,10 +6964,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.Int literal _))
+          [(Literal (Int literal _))
             (let
               [arm-code : String
                 (embedded-native-computed-expr-code
@@ -7017,7 +6991,7 @@
                   arm-code
                   rest-code
                   ")\n")))]
-          [(compiler_ast_types.AstPattern.Wildcard)
+          [(Wildcard)
             (embedded-native-computed-expr-code params body-node final)]
           [_ ""])])))
 
@@ -7053,7 +7027,7 @@
   [match-box : (Box compiler_ast_types.AstMatch)]
   [final : String]) : String
   (match (__tl-box-place match-box)
-    [(compiler_ast_types.AstMatch.Match scrutinee arms)
+    [(Match scrutinee arms)
       (let
         [param : i64 (embedded-native-var-param-index params scrutinee)]
         [value-text : String
@@ -7166,10 +7140,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.String sid))
+          [(Literal (String sid))
             (let
               [lit : String (ci.intern-str sid)]
               [blockers-before : i64 embedded-native-full-blocker-events]
@@ -7233,7 +7206,7 @@
                     arm-code
                     rest-code
                     ")))))))\n"))))]
-          [(compiler_ast_types.AstPattern.Wildcard)
+          [(Wildcard)
             (let
               [blockers-before : i64 embedded-native-full-blocker-events]
               [arm-code : String
@@ -7262,9 +7235,9 @@
   [node : i64]
   [final : String]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Let let-box)
+    [(Let let-box)
       (match (deref let-box)
-        [(compiler_ast_types.AstLet.Let bindings body)
+        [(Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
@@ -7304,9 +7277,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.Let let-box)
+    [(Let let-box)
       (match (deref let-box)
-        [(compiler_ast_types.AstLet.Let bindings body)
+        [(Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
@@ -7354,7 +7327,7 @@
       bindings
       index
       (compiler_ast_types.ast-let-binding-fallback))
-      [(compiler_ast_types.AstLetBinding.Binding name maybe-ty init)
+      [(Binding name maybe-ty init)
         (let
           [blockers-before : i64 embedded-native-full-blocker-events]
           [binding-code : String
@@ -7442,9 +7415,7 @@
   (let
     [boolean? : bool
       (match maybe-ty
-        [(compiler_ast_types.AstMaybeType.Some
-            (compiler_ast_types.AstType.Bool))
-          true]
+        [(Some (Bool)) true]
         [_ false])]
     [slot : i64
       (embedded-native-local-push-kind! (ci.intern-str name) boolean?)]
@@ -7495,10 +7466,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.String sid))
+          [(Literal (String sid))
             (let
               [kind : String (ci.intern-str sid)]
               [arm-code : String (embedded-native-body-code params body-node)]
@@ -7546,7 +7516,7 @@
           ;; scrutinee back to the interpreter (`stdlib.eq/inline-eq` raises a
           ;; comptime-error there; `stdlib.hash/hash` generates its module for
           ;; every type except `unit`). Refs #5658.
-          [(compiler_ast_types.AstPattern.Wildcard)
+          [(Wildcard)
             (let
               [arm-code : String (embedded-native-body-code params body-node)]
               (if (string.eq arm-code "")
@@ -7571,9 +7541,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]) : EmbeddedNativeScrutineeProbe
   (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
-    [(compiler_ast_types.AstExpr.Call head-id args)
+    [(Call head-id args)
       (match (embedded-stdlib-tlci-unwrap-expr head-id)
-        [(compiler_ast_types.AstExpr.Var head-name)
+        [(Var head-name)
           (let
             [head : String (ci.intern-str head-name)]
             [kind? : bool
@@ -7587,13 +7557,13 @@
             (if (or
               (not (or kind? key?))
               (not (= (compiler_ast_types.ast-expr-list-len (& args)) 1)))
-              (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
+              (NoScrutineeProbe)
               (let
                 [arg-node : i64
                   (compiler_ast_types.ast-expr-list-get (& args) 0 0)]
                 [direct : i64 (embedded-native-var-param-index params arg-node)]
                 (if (>= direct 0)
-                  (EmbeddedNativeScrutineeProbe.ScrutineeProbe
+                  (ScrutineeProbe
                     (if kind?
                       (tlci_core.tlci-host-callback-name operand-type-kind-eq)
                       (tlci_core.tlci-host-callback-name operand-type-key-eq))
@@ -7602,27 +7572,27 @@
                   ;; operand form in the dispatch set; `type-key` never wraps
                   ;; one.
                   (if key?
-                    (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
+                    (NoScrutineeProbe)
                     (let
                       [expr-index : i64
                         (embedded-native-expr-type-param-index params arg-node)]
                       (if (< expr-index 0)
-                        (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
-                        (EmbeddedNativeScrutineeProbe.ScrutineeProbe
+                        (NoScrutineeProbe)
+                        (ScrutineeProbe
                           (tlci_core.tlci-host-callback-name
                             operand-expr-type-kind-eq)
                           expr-index))))))))]
-        [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)])]
-    [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)]))
+        [_ (NoScrutineeProbe)])]
+    [_ (NoScrutineeProbe)]))
 
 ;; The operand index behind `(comptime.expr-type <param>)`, or -1.
 (define (embedded-native-expr-type-param-index
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call head-id args)
+    [(Call head-id args)
       (match (embedded-stdlib-tlci-unwrap-expr head-id)
-        [(compiler_ast_types.AstExpr.Var head-name)
+        [(Var head-name)
           (if (and
             (or
               (string.eq (ci.intern-str head-name) "comptime.expr-type")
@@ -7639,13 +7609,11 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(compiler_ast_types.AstMatch.Match scrutinee arms)
+        [(Match scrutinee arms)
           (match (embedded-native-scrutinee-probe params scrutinee)
-            [(EmbeddedNativeScrutineeProbe.ScrutineeProbe
-                probe-op
-                operand-index)
+            [(ScrutineeProbe probe-op operand-index)
               (embedded-native-match-arms
                 params
                 probe-op
@@ -7668,9 +7636,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [node : i64]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(compiler_ast_types.AstExpr.Call length-func length-args)
+    [(Call length-func length-args)
       (match (embedded-stdlib-tlci-unwrap-expr length-func)
-        [(compiler_ast_types.AstExpr.Var length-head)
+        [(Var length-head)
           (if (and
             (or
               (string.eq
@@ -7692,22 +7660,21 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [cond-node : i64]) : EmbeddedNativeLengthProbe
   (match (embedded-stdlib-tlci-unwrap-expr cond-node)
-    [(compiler_ast_types.AstExpr.Binary op left-node right-node)
+    [(Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
         [param : i64 (embedded-native-expr-list-length-param params left-node)]
         (if (or (< ordinal 5) (> ordinal 10) (< param 0))
-          (EmbeddedNativeLengthProbe.NoLengthProbe)
+          (NoLengthProbe)
           (match (embedded-stdlib-tlci-unwrap-expr right-node)
-            [(compiler_ast_types.AstExpr.Literal
-                (compiler_ast_types.AstLiteral.Int value text))
+            [(Literal (Int value text))
               (if (or
                 (= (string.string-length text) 0)
                 (string.eq text (string.int->string value)))
-                (EmbeddedNativeLengthProbe.LengthProbe param ordinal value)
-                (EmbeddedNativeLengthProbe.NoLengthProbe))]
-            [_ (EmbeddedNativeLengthProbe.NoLengthProbe)])))]
-    [_ (EmbeddedNativeLengthProbe.NoLengthProbe)]))
+                (LengthProbe param ordinal value)
+                (NoLengthProbe))]
+            [_ (NoLengthProbe)])))]
+    [_ (NoLengthProbe)]))
 
 ;; Compile `(match (comptime.expr-list-length p) [<int> body] ... [n body])`:
 ;; the operand count is probed once into a fresh i64 temporary, each integer
@@ -7719,9 +7686,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(compiler_ast_types.AstMatch.Match scrutinee arms)
+        [(Match scrutinee arms)
           (let
             [param : i64
               (embedded-native-expr-list-length-param params scrutinee)]
@@ -7762,9 +7729,9 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(compiler_ast_types.AstExpr.Match match-box)
+    [(Match match-box)
       (match (__tl-box-place match-box)
-        [(compiler_ast_types.AstMatch.Match scrutinee arms)
+        [(Match scrutinee arms)
           (let
             [param : i64 (embedded-native-var-param-index params scrutinee)]
             (if (< param 0)
@@ -7805,8 +7772,8 @@
         pat-args
         0
         (compiler_ast_types.ast-pattern-fallback))
-        [(compiler_ast_types.AstPattern.Wildcard) true]
-        [(compiler_ast_types.AstPattern.Binding bind-id)
+        [(Wildcard) true]
+        [(Binding bind-id)
           (embedded-native-data-local-push!
             (ci.intern-str bind-id)
             (owned_view.compiler-owned-shared-view value))]
@@ -7862,9 +7829,9 @@
         pat-args
         0
         (compiler_ast_types.ast-pattern-fallback))
-        [(compiler_ast_types.AstPattern.Binding bind-id)
+        [(Binding bind-id)
           (embedded-native-local-push! (ci.intern-str bind-id))]
-        [(compiler_ast_types.AstPattern.Wildcard) -2]
+        [(Wildcard) -2]
         [_ -1])]
     [arm-code : String
       (if (= slot -1)
@@ -7934,9 +7901,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Variant name-id args-box)
+          [(Variant name-id args-box)
             (let
               [pat-args : compiler_ast_types.AstPatternList (deref args-box)]
               (embedded-native-value-match-variant-arm
@@ -7947,8 +7914,7 @@
                 (embedded-native-expr-variant-name name-id)
                 (& pat-args)
                 body-node))]
-          [(compiler_ast_types.AstPattern.Wildcard)
-            (embedded-native-body-code params body-node)]
+          [(Wildcard) (embedded-native-body-code params body-node)]
           [_ ""])])))
 
 ;; One variant-pattern arm of an operand value match. Split out of
@@ -8048,7 +8014,7 @@
         pat-args
         index
         (compiler_ast_types.ast-pattern-fallback))
-        [(compiler_ast_types.AstPattern.Binding _) 1]
+        [(Binding _) 1]
         [_ 0])
       (embedded-native-pattern-binder-count pat-args (+ index 1)))))
 
@@ -8071,8 +8037,8 @@
           pat-args
           index
           (compiler_ast_types.ast-pattern-fallback))
-          [(compiler_ast_types.AstPattern.Wildcard) ""]
-          [(compiler_ast_types.AstPattern.Binding bind-id)
+          [(Wildcard) ""]
+          [(Binding bind-id)
             (let
               [slot : i64 (embedded-native-local-push! (ci.intern-str bind-id))]
               (if (< slot 0)
@@ -8115,10 +8081,9 @@
     (match (owned_view.compiler-owned-array-element-shared-view
       arms.slots
       index)
-      [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
+      [(Arm pattern body-node)
         (match pattern
-          [(compiler_ast_types.AstPattern.Literal
-              (compiler_ast_types.AstLiteral.Int value text))
+          [(Literal (Int value text))
             (if (and
               (> (string.string-length text) 0)
               (not (string.eq text (string.int->string value))))
@@ -8142,13 +8107,10 @@
                     arm-code
                     rest
                     ")\n"))))]
-          [(compiler_ast_types.AstPattern.Wildcard)
-            (embedded-native-body-code params body-node)]
-          [(compiler_ast_types.AstPattern.Binding binder)
+          [(Wildcard) (embedded-native-body-code params body-node)]
+          [(Binding binder)
             (embedded-native-int-match-default params body-node binder name)]
-          [(compiler_ast_types.AstPattern.Var
-              binder
-              (compiler_ast_types.AstMaybeType.No))
+          [(Var binder (No))
             (embedded-native-int-match-default params body-node binder name)]
           [_ ""])])))
 
@@ -8612,17 +8574,13 @@
   (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
     source
     target)
-    [(compiler_lower.ResultCompilerLower.Ok program spans)
+    [(Ok program spans)
       (match (compiler_optimize.optimize-program-with-spans-and-level
         program
         spans
         (embedded-native-opt-level))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
-          (compiler_lower.ResultCompilerLower.Ok optimized optimized-spans)])]
-    [(compiler_lower.ResultCompilerLower.Err diag)
-      (compiler_lower.ResultCompilerLower.Err diag)]))
+        [(Program optimized optimized-spans) (Ok optimized optimized-spans)])]
+    [(Err diag) (Err diag)]))
 
 ;; The source string is the complete transformer input. Callers may capture it
 ;; while source AST pools are live and compile it after those pools are retired.
@@ -8636,11 +8594,11 @@
   (let
     [target : compiler_backend.CompilerBackendTarget
       (if windows-target
-        (compiler_backend.CompilerBackendTarget.Windows)
-        (compiler_backend.CompilerBackendTarget.Linux))]
+        (Windows)
+        (Linux))]
     (match (embedded-native-lower-source source target)
       [(ResultCompilerLower.Err diag)
-        (ResultProducerBytes.Err
+        (Err
           (str_cat.str-cat
             "generated source rejected: "
             (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
@@ -8648,37 +8606,30 @@
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
           target
-          (compiler_backend.CompilerBackendMode.Scalar)
+          (Scalar)
           spans
           false
           false)
-          [(compiler_backend.ResultCompilerBackendObject.Err diag)
-            (ResultProducerBytes.Err
+          [(Err diag)
+            (Err
               (str_cat.str-cat
                 "object emission failed: "
                 (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
-          [(compiler_backend.ResultCompilerBackendObject.Ok image)
+          [(Ok image)
             (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
               (owned_view.compiler-owned-shared-view image))
-              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Err
-                  message)
-                (ResultProducerBytes.Err message)]
-              [(compiler_tlci_native_image.ResultCompilerTlciNativeLayout.Ok
-                  layout)
+              [(Err message) (Err message)]
+              [(Ok layout)
                 (let
                   [entry-offsets : (__tl_dyn-array i64)
                     (embedded-native-entry-offsets image (array-length names))]
                   (if (not
                     (= (array-length entry-offsets) (array-length names)))
-                    (ResultProducerBytes.Err
-                      "entry count does not match catalog")
+                    (Err "entry count does not match catalog")
                     (match (compiler_tlci_native_image.compiler-tlci-native-emit-imports
                       (& layout))
-                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Err
-                          message)
-                        (ResultProducerBytes.Err message)]
-                      [(compiler_tlci_native_image.ResultCompilerTlciNativeImports.Ok
-                          imports)
+                      [(Err message) (Err message)]
+                      [(Ok imports)
                         (match (compiler_tlci_native_image.compiler-tlci-native-package
                           metadata-text
                           build-hash
@@ -8693,9 +8644,5 @@
                           (owned_view.compiler-owned-shared-view names)
                           entry-offsets
                           (array-length names))
-                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Err
-                              message)
-                            (ResultProducerBytes.Err message)]
-                          [(compiler_tlci_native_image.ResultCompilerTlciNativeBytes.Ok
-                              bytes)
-                            (ResultProducerBytes.Ok bytes)])])))])])])))
+                          [(Err message) (Err message)]
+                          [(Ok bytes) (Ok bytes)])])))])])])))

@@ -226,26 +226,26 @@
 ;; --- types ------------------------------------------------------------------
 (define (ir-text-named-type [name : (& name str)]) : ast.AstType
   (cond
-    [(string.eq name "i64") (ast.AstType.I64)]
-    [(string.eq name "i32") (ast.AstType.I32)]
-    [(string.eq name "i16") (ast.AstType.I16)]
-    [(string.eq name "i8") (ast.AstType.I8)]
-    [(string.eq name "u64") (ast.AstType.U64)]
-    [(string.eq name "u32") (ast.AstType.U32)]
-    [(string.eq name "u16") (ast.AstType.U16)]
-    [(string.eq name "u8") (ast.AstType.U8)]
-    [(string.eq name "f64") (ast.AstType.F64)]
-    [(string.eq name "f32") (ast.AstType.F32)]
-    [(string.eq name "bool") (ast.AstType.Bool)]
-    [(string.eq name "char") (ast.AstType.Char)]
-    [(string.eq name "String") (ast.AstType.String)]
-    [(string.eq name "str") (ast.AstType.Str)]
-    [(string.eq name "bytes") (ast.AstType.Bytes)]
-    [(string.eq name "unit") (ast.AstType.Unit)]
-    [(string.eq name "never") (ast.AstType.Never)]
-    [(string.eq name "Expr") (ast.AstType.Expr)]
-    [(string.eq name "ExprList") (ast.AstType.ExprList)]
-    [else (ast.AstType.Struct (ci.intern (string.copy name)))]))
+    [(string.eq name "i64") (I64)]
+    [(string.eq name "i32") (I32)]
+    [(string.eq name "i16") (I16)]
+    [(string.eq name "i8") (I8)]
+    [(string.eq name "u64") (U64)]
+    [(string.eq name "u32") (U32)]
+    [(string.eq name "u16") (U16)]
+    [(string.eq name "u8") (U8)]
+    [(string.eq name "f64") (F64)]
+    [(string.eq name "f32") (F32)]
+    [(string.eq name "bool") (Bool)]
+    [(string.eq name "char") (Char)]
+    [(string.eq name "String") (String)]
+    [(string.eq name "str") (Str)]
+    [(string.eq name "bytes") (Bytes)]
+    [(string.eq name "unit") (Unit)]
+    [(string.eq name "never") (Never)]
+    [(string.eq name "Expr") (Expr)]
+    [(string.eq name "ExprList") (ExprList)]
+    [else (Struct (ci.intern (string.copy name)))]))
 
 (define (ir-text-type-id! [cur : (&mut cur IrTextCursor)]) : i64
   (ast.ast-node-pool-reader-type-push (ir-text-type! cur)))
@@ -263,10 +263,10 @@
   [cur : (& cur IrTextCursor)]
   [name : (& name str)]) : ast.AstCFunctionMode
   (cond
-    [(string.eq name "nullable") (ast.AstCFunctionMode.Nullable)]
-    [(string.eq name "non-null") (ast.AstCFunctionMode.NonNull)]
-    [(string.eq name "unsafe-nullable") (ast.AstCFunctionMode.UnsafeNullable)]
-    [(string.eq name "unsafe-non-null") (ast.AstCFunctionMode.UnsafeNonNull)]
+    [(string.eq name "nullable") (Nullable)]
+    [(string.eq name "non-null") (NonNull)]
+    [(string.eq name "unsafe-nullable") (UnsafeNullable)]
+    [(string.eq name "unsafe-non-null") (UnsafeNonNull)]
     [else
       (ir-text-error
         cur
@@ -293,7 +293,7 @@
                 (&mut args)
                 (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback)))
               (set! i (+ i 1))))
-          (ast.AstType.Func
+          (Func
             (box args)
             (ast.ast-type-list-get
               (& types)
@@ -307,7 +307,7 @@
         [signature : i64 (ir-text-type-id! cur)]
         (begin
           (ir-text-expect! cur ")")
-          (ast.AstType.CFunc signature mode)))]
+          (CFunc signature mode)))]
     [(string.eq head "Array")
       (let
         [elem : ast.AstType (ir-text-type! cur)]
@@ -376,23 +376,21 @@
 (define (ir-text-value-of [cur : (& cur IrTextCursor)] [word : (& word str)]) : ir.CompilerIrValue
   (cond
     [(string.is-string-prefix-at word "%" 0)
-      (ir.CompilerIrValue.Var (ir-text-int-of cur (ir-text-after word "%")))]
+      (Var (ir-text-int-of cur (ir-text-after word "%")))]
     [(string.is-string-prefix-at word "@" 0)
-      (ir.CompilerIrValue.Global (ir-text-symbol (ir-text-after word "@")))]
+      (Global (ir-text-symbol (ir-text-after word "@")))]
     [(string.is-string-prefix-at word "&@" 0)
-      (ir.CompilerIrValue.GlobalAddr (ir-text-symbol (ir-text-after word "&@")))]
+      (GlobalAddr (ir-text-symbol (ir-text-after word "&@")))]
     [(string.is-string-prefix-at word "fn@" 0)
-      (ir.CompilerIrValue.Function (ir-text-symbol (ir-text-after word "fn@")))]
+      (Function (ir-text-symbol (ir-text-after word "fn@")))]
     [(string.is-string-prefix-at word "runtime-init@" 0)
-      (ir.CompilerIrValue.RuntimeGlobal
-        (ir-text-symbol (ir-text-after word "runtime-init@")))]
+      (RuntimeGlobal (ir-text-symbol (ir-text-after word "runtime-init@")))]
     [(string.is-string-prefix-at word "float-bits:" 0)
-      (ir.CompilerIrValue.F64
-        (cast (ir-text-int-of cur (ir-text-after word "float-bits:")) : u64))]
-    [(string.eq word "true") (ir.CompilerIrValue.Bool true)]
-    [(string.eq word "false") (ir.CompilerIrValue.Bool false)]
-    [(string.eq word "unit") (ir.CompilerIrValue.Unit)]
-    [else (ir.CompilerIrValue.I64 (ir-text-int-of cur word))]))
+      (F64 (cast (ir-text-int-of cur (ir-text-after word "float-bits:")) : u64))]
+    [(string.eq word "true") (Bool true)]
+    [(string.eq word "false") (Bool false)]
+    [(string.eq word "unit") (Unit)]
+    [else (I64 (ir-text-int-of cur word))]))
 
 (define (ir-text-value! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrValue
   (let
@@ -441,8 +439,8 @@
 
 (define (ir-text-maybe-value! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrMaybeValue
   (if (ir-text-at-end? cur)
-    (ir.CompilerIrMaybeValue.No)
-    (ir.CompilerIrMaybeValue.Some (ir-text-value! cur))))
+    (No)
+    (Some (ir-text-value! cur))))
 
 ;; --- operators --------------------------------------------------------------
 (define (ir-text-binops [shift-ty : ast.AstType]) : (__tl_dyn-array
@@ -474,8 +472,7 @@
 ;; The binary operator the renderer spells `name`, or -1.
 (define (ir-text-binop-index [name : (& name str)]) : i64
   (let
-    [ops : (__tl_dyn-array ir.CompilerIrBinOp)
-      (ir-text-binops (ast.AstType.I64))]
+    [ops : (__tl_dyn-array ir.CompilerIrBinOp) (ir-text-binops (I64))]
     [i : i64 0]
     [found : i64 -1]
     (begin
@@ -503,21 +500,21 @@
 
 (define (ir-text-unop [index : i64]) : ir.CompilerIrUnOp
   (match index
-    [0 (ir.CompilerIrUnOp.Neg)]
-    [1 (ir.CompilerIrUnOp.Not)]
-    [2 (ir.CompilerIrUnOp.BitNot)]
-    [3 (ir.CompilerIrUnOp.Sqrt)]
-    [_ (ir.CompilerIrUnOp.BitLength)]))
+    [0 (Neg)]
+    [1 (Not)]
+    [2 (BitNot)]
+    [3 (Sqrt)]
+    [_ (BitLength)]))
 
 (define (ir-text-vector-prefix-op
   [cur : (& cur IrTextCursor)]
   [name : (& name str)]) : ir.CompilerIrVectorPrefixOp
   (cond
-    [(string.eq name "sum") (ir.CompilerIrVectorPrefixOp.Sum)]
-    [(string.eq name "min") (ir.CompilerIrVectorPrefixOp.Min)]
-    [(string.eq name "max") (ir.CompilerIrVectorPrefixOp.Max)]
-    [(string.eq name "all") (ir.CompilerIrVectorPrefixOp.All)]
-    [(string.eq name "any") (ir.CompilerIrVectorPrefixOp.Any)]
+    [(string.eq name "sum") (Sum)]
+    [(string.eq name "min") (Min)]
+    [(string.eq name "max") (Max)]
+    [(string.eq name "all") (All)]
+    [(string.eq name "any") (Any)]
     [else
       (ir-text-error
         cur
@@ -527,9 +524,9 @@
   [cur : (& cur IrTextCursor)]
   [name : (& name str)]) : ir.CompilerIrVectorReduceOp
   (cond
-    [(string.eq name "sum") (ir.CompilerIrVectorReduceOp.Sum)]
-    [(string.eq name "min") (ir.CompilerIrVectorReduceOp.Min)]
-    [(string.eq name "max") (ir.CompilerIrVectorReduceOp.Max)]
+    [(string.eq name "sum") (Sum)]
+    [(string.eq name "min") (Min)]
+    [(string.eq name "max") (Max)]
     [else
       (ir-text-error
         cur
@@ -539,8 +536,8 @@
   [cur : (& cur IrTextCursor)]
   [name : (& name str)]) : ir.CompilerIrMaskReduceOp
   (cond
-    [(string.eq name "all") (ir.CompilerIrMaskReduceOp.All)]
-    [(string.eq name "any") (ir.CompilerIrMaskReduceOp.Any)]
+    [(string.eq name "all") (All)]
+    [(string.eq name "any") (Any)]
     [else
       (ir-text-error
         cur
@@ -548,8 +545,8 @@
 
 (define (ir-text-mask-bin-op [cur : (& cur IrTextCursor)] [name : (& name str)]) : ir.CompilerIrMaskBinOp
   (cond
-    [(string.eq name "and") (ir.CompilerIrMaskBinOp.And)]
-    [(string.eq name "or") (ir.CompilerIrMaskBinOp.Or)]
+    [(string.eq name "and") (And)]
+    [(string.eq name "or") (Or)]
     [else
       (ir-text-error
         cur
@@ -642,7 +639,7 @@
             (ir-text-expect! cur ", carry")
             (ir-text-value! cur))]
         [lanes : i64 (ir-text-lanes! cur)]
-        (ir.CompilerIrInstr.VectorPrefix
+        (VectorPrefix
           (box
             (ir.CompilerIrInstrVectorPrefixPayload
               dst
@@ -657,12 +654,7 @@
           (ir-text-vector-reduce-op cur (ir-text-after op "vector_reduce_"))]
         [value : ir.CompilerIrValue (ir-text-value! cur)]
         [lanes : i64 (ir-text-lanes! cur)]
-        (ir.CompilerIrInstr.VectorReduce
-          dst
-          reduce-op
-          value
-          lanes
-          (ir-text-typed! cur)))]
+        (VectorReduce dst reduce-op value lanes (ir-text-typed! cur)))]
     [(string.is-string-prefix-at op "vector_compare_" 0)
       (let
         [name : String (ir-text-after op "vector_compare_")]
@@ -675,7 +667,7 @@
           (ir-text-error
             cur
             (str_cat.str-cat "unknown operation " (string.copy op)))
-          (ir.CompilerIrInstr.VectorCompare
+          (VectorCompare
             (box
               (ir.CompilerIrInstrVectorComparePayload
                 dst
@@ -696,7 +688,7 @@
           (ir-text-error
             cur
             (str_cat.str-cat "unknown operation " (string.copy op)))
-          (ir.CompilerIrInstr.VectorBinOp
+          (VectorBinOp
             (box
               (ir.CompilerIrInstrVectorBinOpPayload
                 dst
@@ -708,20 +700,20 @@
     [(string.eq op "mask_not")
       (let
         [value : ir.CompilerIrValue (ir-text-value! cur)]
-        (ir.CompilerIrInstr.MaskNot dst value (ir-text-lanes! cur)))]
+        (MaskNot dst value (ir-text-lanes! cur)))]
     [(string.is-string-prefix-at op "mask_reduce_" 0)
       (let
         [reduce-op : ir.CompilerIrMaskReduceOp
           (ir-text-mask-reduce-op cur (ir-text-after op "mask_reduce_"))]
         [value : ir.CompilerIrValue (ir-text-value! cur)]
-        (ir.CompilerIrInstr.MaskReduce dst reduce-op value (ir-text-lanes! cur)))]
+        (MaskReduce dst reduce-op value (ir-text-lanes! cur)))]
     [else
       (let
         [mask-op : ir.CompilerIrMaskBinOp
           (ir-text-mask-bin-op cur (ir-text-after op "mask_"))]
         [lhs : ir.CompilerIrValue (ir-text-value! cur)]
         [rhs : ir.CompilerIrValue (ir-text-comma-value! cur)]
-        (ir.CompilerIrInstr.MaskBinOp dst mask-op lhs rhs (ir-text-lanes! cur)))]))
+        (MaskBinOp dst mask-op lhs rhs (ir-text-lanes! cur)))]))
 
 ;; The operation after `%dst =`.
 (define (ir-text-dst-instr!
@@ -737,37 +729,26 @@
           [lhs : ir.CompilerIrValue (ir-text-value! cur)]
           [rhs : ir.CompilerIrValue (ir-text-comma-value! cur)]
           [ty : ast.AstType (ir-text-typed! cur)]
-          (ir.CompilerIrInstr.BinOp
-            dst
-            (ir-text-binop binop (clone ty))
-            lhs
-            rhs
-            ty))]
+          (BinOp dst (ir-text-binop binop (clone ty)) lhs rhs ty))]
       [(>= unop 0)
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
-          (ir.CompilerIrInstr.UnOp
-            dst
-            (ir-text-unop unop)
-            value
-            (ir-text-typed! cur)))]
+          (UnOp dst (ir-text-unop unop) value (ir-text-typed! cur)))]
       [(string.eq op "mov")
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
-          (ir.CompilerIrInstr.Mov dst value (ir-text-typed! cur)))]
-      [(string.eq op "alloc")
-        (ir.CompilerIrInstr.Alloc dst (ir-text-type! cur))]
-      [(string.eq op "addr_of")
-        (ir.CompilerIrInstr.AddrOf dst (ir-text-var! cur))]
+          (Mov dst value (ir-text-typed! cur)))]
+      [(string.eq op "alloc") (Alloc dst (ir-text-type! cur))]
+      [(string.eq op "addr_of") (AddrOf dst (ir-text-var! cur))]
       [(string.eq op "gep")
         (let
           [base : ir.CompilerIrValue (ir-text-value! cur)]
           [offset : ir.CompilerIrValue (ir-text-comma-value! cur)]
-          (ir.CompilerIrInstr.Gep dst base offset (ir-text-typed! cur)))]
+          (Gep dst base offset (ir-text-typed! cur)))]
       [(string.eq op "load")
         (let
           [source : ir.CompilerIrValue (ir-text-value! cur)]
-          (ir.CompilerIrInstr.Load dst source (ir-text-typed! cur)))]
+          (Load dst source (ir-text-typed! cur)))]
       [(or (string.eq op "cast") (string.eq op "bitcast"))
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
@@ -777,24 +758,24 @@
               (ir-text-expect! cur "to")
               (ir-text-type! cur))]
           (if (string.eq op "cast")
-            (ir.CompilerIrInstr.Cast dst value from to)
-            (ir.CompilerIrInstr.Bitcast dst value from to)))]
+            (Cast dst value from to)
+            (Bitcast dst value from to)))]
       [(string.eq op "lane_id")
         (let
           [lanes : i64 (ir-text-int! cur)]
-          (ir.CompilerIrInstr.LaneId dst lanes (ir-text-typed! cur)))]
+          (LaneId dst lanes (ir-text-typed! cur)))]
       [(string.eq op "splat")
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.Splat dst value lanes (ir-text-typed! cur)))]
+          (Splat dst value lanes (ir-text-typed! cur)))]
       [(string.eq op "select")
         (let
           [mask : ir.CompilerIrValue (ir-text-value! cur)]
           [on-true : ir.CompilerIrValue (ir-text-comma-value! cur)]
           [on-false : ir.CompilerIrValue (ir-text-comma-value! cur)]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.Select
+          (Select
             (box
               (ir.CompilerIrInstrSelectPayload
                 dst
@@ -808,12 +789,7 @@
           [base : ir.CompilerIrValue (ir-text-value! cur)]
           [index : ir.CompilerIrValue (ir-text-comma-value! cur)]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.VectorLoad
-            dst
-            base
-            index
-            lanes
-            (ir-text-typed! cur)))]
+          (VectorLoad dst base index lanes (ir-text-typed! cur)))]
       [(string.eq op "predicated_load")
         (let
           [base : ir.CompilerIrValue (ir-text-value! cur)]
@@ -823,7 +799,7 @@
               (ir-text-expect! cur "mask")
               (ir-text-value! cur))]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.PredicatedLoad
+          (PredicatedLoad
             (box
               (ir.CompilerIrInstrPredicatedLoadPayload
                 dst
@@ -842,7 +818,7 @@
               (ir-text-expect! cur "lane_offset")
               (string.eq (ir-text-word! cur "") "true"))]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.GatherLoad
+          (GatherLoad
             (box
               (ir.CompilerIrInstrGatherLoadPayload
                 dst
@@ -860,15 +836,15 @@
             (begin
               (ir-text-expect! cur ",")
               (if (ir-text-accept! cur "active")
-                (ir.CompilerIrMaybeValue.No)
+                (No)
                 (let
                   [high : ir.CompilerIrValue (ir-text-value! cur)]
                   (begin
                     (ir-text-expect! cur "active")
-                    (ir.CompilerIrMaybeValue.Some high)))))]
+                    (Some high)))))]
           [active-lanes : ir.CompilerIrValue (ir-text-value! cur)]
           [lanes : i64 (ir-text-lanes! cur)]
-          (ir.CompilerIrInstr.VectorShuffle
+          (VectorShuffle
             (box
               (ir.CompilerIrInstrVectorShufflePayload
                 dst
@@ -882,48 +858,46 @@
         (let
           [index : ir.CompilerIrValue (ir-text-value! cur)]
           [length : ir.CompilerIrValue (ir-text-comma-value! cur)]
-          (ir.CompilerIrInstr.TailMask dst index length (ir-text-lanes! cur)))]
+          (TailMask dst index length (ir-text-lanes! cur)))]
       [(or
           (string.is-string-prefix-at op "vector_" 0)
           (string.is-string-prefix-at op "mask_" 0))
         (ir-text-lane-instr! cur dst op)]
-      [(string.eq op "entry_argc") (ir.CompilerIrInstr.EntryArgc dst)]
-      [(string.eq op "entry_argv") (ir.CompilerIrInstr.EntryArgv dst)]
-      [(string.eq op "entry_envp") (ir.CompilerIrInstr.EntryEnvp dst)]
+      [(string.eq op "entry_argc") (EntryArgc dst)]
+      [(string.eq op "entry_argv") (EntryArgv dst)]
+      [(string.eq op "entry_envp") (EntryEnvp dst)]
       [(string.eq op "cpuid")
         (let
           [leaf : ir.CompilerIrValue (ir-text-value! cur)]
           [subleaf : ir.CompilerIrValue (ir-text-comma-value! cur)]
           (begin
             (ir-text-expect! cur "word")
-            (ir.CompilerIrInstr.CpuId dst leaf subleaf (ir-text-int! cur))))]
-      [(string.eq op "xgetbv")
-        (ir.CompilerIrInstr.Xgetbv dst (ir-text-value! cur))]
-      [(string.eq op "syscall")
-        (ir.CompilerIrInstr.Syscall dst (ir-text-call-args! cur))]
+            (CpuId dst leaf subleaf (ir-text-int! cur))))]
+      [(string.eq op "xgetbv") (Xgetbv dst (ir-text-value! cur))]
+      [(string.eq op "syscall") (Syscall dst (ir-text-call-args! cur))]
       [(string.eq op "call")
         (let
           [name : i64 (ir-text-callee-symbol! cur)]
           [args : ir.CompilerIrCallArgs (ir-text-call-args! cur)]
-          (ir.CompilerIrInstr.Call dst name args (ir-text-typed! cur)))]
+          (Call dst name args (ir-text-typed! cur)))]
       [(or (string.eq op "call*") (string.eq op "call_c*"))
         (let
           [callee : ir.CompilerIrValue (ir-text-value! cur)]
           [args : ir.CompilerIrCallArgs (ir-text-call-args! cur)]
           [ty : ast.AstType (ir-text-typed! cur)]
           (if (string.eq op "call*")
-            (ir.CompilerIrInstr.CallIndirect dst callee args ty)
-            (ir.CompilerIrInstr.CallIndirectC dst callee args ty)))]
+            (CallIndirect dst callee args ty)
+            (CallIndirectC dst callee args ty)))]
       [(string.eq op "phi")
         (let
           [inputs : ir.CompilerIrPhiInputSeq (ir-text-phi-inputs! cur)]
-          (ir.CompilerIrInstr.Phi dst inputs (ir-text-typed! cur)))]
+          (Phi dst inputs (ir-text-typed! cur)))]
       [(string.eq op "pack")
         (begin
           (ir-text-expect! cur "[")
           (let
             [values : ir.CompilerIrValueSeq (ir-text-values! cur "]")]
-            (ir.CompilerIrInstr.Pack dst values (ir-text-typed! cur))))]
+            (Pack dst values (ir-text-typed! cur))))]
       [(string.eq op "word")
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
@@ -931,7 +905,7 @@
             (begin
               (ir-text-expect! cur ",")
               (ir-text-int! cur))]
-          (ir.CompilerIrInstr.Word dst value index (ir-text-typed! cur)))]
+          (Word dst value index (ir-text-typed! cur)))]
       [else
         (ir-text-error
           cur
@@ -942,7 +916,7 @@
   [cur : (&mut cur IrTextCursor)]
   [op : (& op str)]) : ir.CompilerIrInstr
   (cond
-    [(string.eq op "jump") (ir.CompilerIrInstr.Jump (ir-text-label! cur))]
+    [(string.eq op "jump") (Jump (ir-text-label! cur))]
     [(string.eq op "branch")
       (let
         [test : ir.CompilerIrValue (ir-text-value! cur)]
@@ -954,9 +928,8 @@
           (begin
             (ir-text-expect! cur ",")
             (ir-text-label! cur))]
-        (ir.CompilerIrInstr.Branch test on-true on-false))]
-    [(string.eq op "return")
-      (ir.CompilerIrInstr.Return (ir-text-maybe-value! cur))]
+        (Branch test on-true on-false))]
+    [(string.eq op "return") (Return (ir-text-maybe-value! cur))]
     [(string.eq op "store")
       (let
         [global : i64
@@ -964,12 +937,12 @@
             (ir-text-expect! cur "@")
             (ir-text-symbol (ir-text-word! cur ",")))]
         [value : ir.CompilerIrValue (ir-text-comma-value! cur)]
-        (ir.CompilerIrInstr.Store global value (ir-text-typed! cur)))]
+        (Store global value (ir-text-typed! cur)))]
     [(string.eq op "store_ptr")
       (let
         [ptr : ir.CompilerIrValue (ir-text-value! cur)]
         [value : ir.CompilerIrValue (ir-text-comma-value! cur)]
-        (ir.CompilerIrInstr.StorePtr ptr value (ir-text-typed! cur)))]
+        (StorePtr ptr value (ir-text-typed! cur)))]
     [(string.eq op "store_owned")
       (let
         [value : ir.CompilerIrValue (ir-text-value! cur)]
@@ -977,14 +950,14 @@
           (begin
             (ir-text-expect! cur "->")
             (ir-text-value! cur))]
-        (ir.CompilerIrInstr.StoreOwned ptr value (ir-text-typed! cur)))]
+        (StoreOwned ptr value (ir-text-typed! cur)))]
     [(string.eq op "copy_bytes")
       (let
         [dst : ir.CompilerIrValue (ir-text-value! cur)]
         [src : ir.CompilerIrValue (ir-text-comma-value! cur)]
         (begin
           (ir-text-expect! cur ",")
-          (ir.CompilerIrInstr.CopyBytes dst src (ir-text-int! cur))))]
+          (CopyBytes dst src (ir-text-int! cur))))]
     [(string.eq op "bounds_check")
       (let
         [index : ir.CompilerIrValue (ir-text-value! cur)]
@@ -997,7 +970,7 @@
             (if (and (> end start) (= (string.char-at cur.line end) '"'))
               (begin
                 (set! cur.pos (+ end 1))
-                (ir.CompilerIrInstr.BoundsCheck
+                (BoundsCheck
                   index
                   length
                   (ir.compiler-ir-label
@@ -1011,7 +984,7 @@
         (if (string.eq op "vector_store")
           (let
             [lanes : i64 (ir-text-lanes! cur)]
-            (ir.CompilerIrInstr.VectorStore
+            (VectorStore
               (box
                 (ir.CompilerIrInstrVectorStorePayload
                   base
@@ -1025,7 +998,7 @@
                 (ir-text-expect! cur "mask")
                 (ir-text-value! cur))]
             [lanes : i64 (ir-text-lanes! cur)]
-            (ir.CompilerIrInstr.PredicatedStore
+            (PredicatedStore
               (box
                 (ir.CompilerIrInstrPredicatedStorePayload
                   base
@@ -1042,7 +1015,7 @@
           (begin
             (ir-text-expect! cur "->")
             (ir-text-value! cur))]
-        (ir.CompilerIrInstr.CallCAbiStoreResult
+        (CallCAbiStoreResult
           (box
             (ir.CompilerIrInstrCallCAbiStoreResultPayload
               base
@@ -1057,7 +1030,7 @@
           (begin
             (ir-text-expect! cur "->")
             (ir-text-value! cur))]
-        (ir.CompilerIrInstr.CallIndirectCAbiStoreResult
+        (CallIndirectCAbiStoreResult
           (box
             (ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
               base
@@ -1068,12 +1041,12 @@
       (let
         [name : i64 (ir-text-callee-symbol! cur)]
         [args : ir.CompilerIrCallArgs (ir-text-call-args! cur)]
-        (ir.CompilerIrInstr.TailCall name args (ir-text-typed! cur)))]
+        (TailCall name args (ir-text-typed! cur)))]
     [(string.eq op "tailcall*")
       (let
         [callee : ir.CompilerIrValue (ir-text-value! cur)]
         [args : ir.CompilerIrCallArgs (ir-text-call-args! cur)]
-        (ir.CompilerIrInstr.TailCallIndirect callee args (ir-text-typed! cur)))]
+        (TailCallIndirect callee args (ir-text-typed! cur)))]
     [(string.eq op "switch")
       (let
         [index : ir.CompilerIrValue (ir-text-value! cur)]
@@ -1084,7 +1057,7 @@
         [cases : ir.CompilerIrSwitchCaseSeq (ir-text-switch-cases! cur)]
         (begin
           (ir-text-expect! cur "default")
-          (ir.CompilerIrInstr.Switch index base cases (ir-text-label! cur))))]
+          (Switch index base cases (ir-text-label! cur))))]
     [else
       (ir-text-error
         cur
@@ -1140,7 +1113,7 @@
         [label : i64
           (ir.compiler-ir-label
             (string.substring line 0 (- (string.string-length line) 1)))]
-        (ir.CompilerIrBlock.Block label (ir-text-instr-lines! doc)))
+        (Block label (ir-text-instr-lines! doc)))
       (ir-text-fail line "expected a block label"))))
 
 (define (ir-text-blocks! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrBlockList
@@ -1226,13 +1199,7 @@
       (let
         [blocks : ir.CompilerIrBlockList (ir-text-blocks! doc)]
         (if (string.eq (ir-text-lines-take! doc) "}")
-          (ir.CompilerIrFunction.Function
-            name
-            params
-            ret
-            vars
-            blocks
-            ir.CompilerIrFunctionAbi.Ordinary)
+          (Function name params ret vars blocks Ordinary)
           (ir-text-fail cur.line "function without a closing `}`"))))))
 
 (define (ir-text-global-line [line : String]) : ir.CompilerIrGlobal
@@ -1245,7 +1212,7 @@
     [ty : ast.AstType (ir-text-typed! (&mut cur))]
     (begin
       (ir-text-expect! (&mut cur) "=")
-      (ir.CompilerIrGlobal.Global name ty (ir-text-value! (&mut cur))))))
+      (Global name ty (ir-text-value! (&mut cur))))))
 
 ;; --- entry points -----------------------------------------------------------
 ;: Read one instruction line, such as `%3 = add %1, %2 : i64`.
@@ -1322,7 +1289,7 @@
         (ir.compiler-ir-function-builder-push!
           (&mut functions)
           (ir-text-function! (&mut doc))))
-      (ir.CompilerIrProgram.Program
+      (Program
         (ir.compiler-ir-global-builder-to-seq globals)
         (ir.compiler-ir-function-builder-to-seq functions)
         (ir.compiler-ir-extern-seq-empty)))))

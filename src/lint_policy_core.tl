@@ -31,21 +31,21 @@
 
 (define (lint-policy-layer-rank [layer : (& layer LintPolicyLayer)]) : i64
   (match layer
-    [(LintPolicyLayer.Builtin) 0]
-    [(LintPolicyLayer.Project) 1]
-    [(LintPolicyLayer.TargetProfile) 2]
-    [(LintPolicyLayer.Cli) 3]
-    [(LintPolicyLayer.ModuleItem) 4]
-    [(LintPolicyLayer.Local) 5]))
+    [(Builtin) 0]
+    [(Project) 1]
+    [(TargetProfile) 2]
+    [(Cli) 3]
+    [(ModuleItem) 4]
+    [(Local) 5]))
 
 (define (lint-policy-layer-name [layer : LintPolicyLayer]) : String
   (match layer
-    [(LintPolicyLayer.Builtin) "built-in"]
-    [(LintPolicyLayer.Project) "project"]
-    [(LintPolicyLayer.TargetProfile) "target/profile"]
-    [(LintPolicyLayer.Cli) "cli"]
-    [(LintPolicyLayer.ModuleItem) "module/item"]
-    [(LintPolicyLayer.Local) "local"]))
+    [(Builtin) "built-in"]
+    [(Project) "project"]
+    [(TargetProfile) "target/profile"]
+    [(Cli) "cli"]
+    [(ModuleItem) "module/item"]
+    [(Local) "local"]))
 
 (defenum LintPolicyAssignmentMode
   (Exact)
@@ -57,12 +57,12 @@
 
 (define (lint-policy-subject-name [subject : (& subject LintPolicySubject)]) : String
   (match subject
-    [(LintPolicySubject.Rule name) (string.copy name)]
-    [(LintPolicySubject.Group name) (string.copy name)]))
+    [(Rule name) (string.copy name)]
+    [(Group name) (string.copy name)]))
 
 (define (lint-policy-subject-is-rule? [subject : (& subject LintPolicySubject)]) : bool
   (match subject
-    [(LintPolicySubject.Rule _) true]
+    [(Rule _) true]
     [_ false]))
 
 ;: Parser-neutral source origin retained verbatim through policy resolution.
@@ -309,7 +309,7 @@
   [layer : LintPolicyLayer]
   [origin : LintPolicyOrigin]) : LintPolicyDiagnostic
   (lint-policy-diagnostic
-    LintPolicyDiagnosticKind.UnknownRule
+    UnknownRule
     (owned_view.compiler-owned-shared-view name)
     layer
     origin
@@ -320,7 +320,7 @@
   [layer : LintPolicyLayer]
   [origin : LintPolicyOrigin]) : LintPolicyDiagnostic
   (lint-policy-diagnostic
-    LintPolicyDiagnosticKind.UnknownGroup
+    UnknownGroup
     (owned_view.compiler-owned-shared-view name)
     layer
     origin
@@ -354,7 +354,7 @@
                   (lint-policy-diagnostics-add
                     out
                     (lint-policy-diagnostic
-                      LintPolicyDiagnosticKind.DuplicateGroup
+                      DuplicateGroup
                       (owned_view.compiler-owned-shared-view group.name)
                       group.layer
                       (owned_view.compiler-owned-shared-view group.origin)
@@ -371,7 +371,7 @@
                   (lint-policy-diagnostics-add
                     out
                     (lint-policy-diagnostic
-                      LintPolicyDiagnosticKind.DuplicateGroup
+                      DuplicateGroup
                       (owned_view.compiler-owned-shared-view group.name)
                       group.layer
                       group.origin
@@ -402,7 +402,7 @@
                 (match (lint-policy-group-members-ref
                   group.members
                   member-index)
-                  [(LintPolicyGroupMember.Rule name)
+                  [(Rule name)
                     (if (< (lint-policy-rule-index rules name) 0)
                       (begin
                         (set! (array-ref valid group-index) false)
@@ -415,7 +415,7 @@
                               group.layer
                               group.origin))))
                       unit)]
-                  [(LintPolicyGroupMember.Group name)
+                  [(Group name)
                     (if (and
                       (= (lint_core.lint-built-in-group-mask name) 0)
                       (< (lint-policy-group-indexed index-map name) 0))
@@ -467,8 +467,8 @@
           (while (and (not done) (< member-index group.members.len))
             (begin
               (match (lint-policy-group-members-ref group.members member-index)
-                [(LintPolicyGroupMember.Rule _) unit]
-                [(LintPolicyGroupMember.Group name)
+                [(Rule _) unit]
+                [(Group name)
                   (let
                     [child : i64 (lint-policy-group-indexed index-map name)]
                     (when
@@ -511,7 +511,7 @@
                                 (lint-policy-diagnostics-add
                                   out
                                   (lint-policy-diagnostic
-                                    LintPolicyDiagnosticKind.GroupCycle
+                                    GroupCycle
                                     (owned_view.compiler-owned-shared-view
                                       group.name)
                                     group.layer
@@ -532,7 +532,7 @@
                 (lint-policy-diagnostics-add
                   out
                   (lint-policy-diagnostic
-                    LintPolicyDiagnosticKind.InvalidGroupReference
+                    InvalidGroupReference
                     (owned_view.compiler-owned-shared-view group.name)
                     group.layer
                     group.origin
@@ -673,7 +673,7 @@
   (if (>= index members.len)
     false
     (match (lint-policy-group-members-ref members index)
-      [(LintPolicyGroupMember.Rule name)
+      [(Rule name)
         (if (string.eq name rule.rule-id)
           true
           (lint-policy-group-members-contain-rule?
@@ -687,7 +687,7 @@
             rule
             rule-index
             (+ index 1)))]
-      [(LintPolicyGroupMember.Group name)
+      [(Group name)
         (let
           [mask : i64 (lint_core.lint-built-in-group-mask name)]
           [child : i64 (lint-policy-group-indexed index-map name)]
@@ -766,7 +766,7 @@
               (LintPolicyDecision
                 rule.rule-id
                 rule.default-level
-                LintPolicyLayer.Builtin
+                Builtin
                 -1
                 (lint-policy-built-in-origin)))
             (set! index (+ index 1)))))
@@ -777,12 +777,12 @@
   [rule-id : (& rule-id str)]
   [index : i64]) : LintMaybePolicyDecision
   (if (>= index decisions.len)
-    LintMaybePolicyDecision.NotFound
+    NotFound
     (let
       [decision : LintPolicyDecision
         (lint-policy-decisions-ref decisions index)]
       (if (string.eq decision.rule-id rule-id)
-        (LintMaybePolicyDecision.Found decision)
+        (Found decision)
         (lint-policy-decision-find-from decisions rule-id (+ index 1))))))
 
 (define (lint-policy-decision-find
@@ -806,8 +806,8 @@
   (+
     (* (lint_core.lint-level-rank assignment.level) 2)
     (match assignment.mode
-      [(LintPolicyAssignmentMode.Exact) 0]
-      [(LintPolicyAssignmentMode.Minimum) 1])))
+      [(Exact) 0]
+      [(Minimum) 1])))
 
 (define (lint-policy-validate-assignments
   [rules : (& rules lint_core.LintRuleList)]
@@ -838,7 +838,7 @@
               -1)]
           (begin
             (match assignment.subject
-              [(LintPolicySubject.Rule name)
+              [(Rule name)
                 (if (< (lint-policy-rule-index rules name) 0)
                   (set!
                     out
@@ -850,7 +850,7 @@
                         (owned_view.compiler-owned-shared-view
                           assignment.origin))))
                   unit)]
-              [(LintPolicySubject.Group name)
+              [(Group name)
                 (let
                   [custom : i64 (lint-policy-group-indexed index-map name)]
                   (if (and
@@ -873,7 +873,7 @@
                         (lint-policy-diagnostics-add
                           out
                           (lint-policy-diagnostic
-                            LintPolicyDiagnosticKind.InvalidGroupReference
+                            InvalidGroupReference
                             (owned_view.compiler-owned-shared-view name)
                             assignment.layer
                             (owned_view.compiler-owned-shared-view
@@ -892,7 +892,7 @@
                     (lint-policy-diagnostics-add
                       out
                       (lint-policy-diagnostic
-                        LintPolicyDiagnosticKind.ContradictoryAssignment
+                        ContradictoryAssignment
                         (owned_view.compiler-owned-shared-view subject-name)
                         assignment.layer
                         assignment.origin
@@ -943,7 +943,7 @@
     [requested-rank : i64 (lint_core.lint-level-rank assignment.level)]
     [is-minimum : bool
       (match assignment.mode
-        [(LintPolicyAssignmentMode.Minimum) true]
+        [(Minimum) true]
         [_ false])]
     [forbid-lowering : bool
       (and (= current-rank 3) (not is-minimum) (< requested-rank current-rank))]
@@ -952,7 +952,7 @@
         (lint-policy-diagnostics-add
           state.diagnostics
           (lint-policy-diagnostic
-            LintPolicyDiagnosticKind.ForbidLowering
+            ForbidLowering
             (owned_view.compiler-owned-shared-view current.rule-id)
             assignment.layer
             (owned_view.compiler-owned-shared-view assignment.origin)
@@ -966,7 +966,7 @@
             current.rule-id
             current.level
             assignment
-            LintPolicyTraceOutcome.Rejected
+            Rejected
             "forbid cannot be lowered"))
         (+ state.expanded-rule-updates 1))
       (if (and is-minimum (>= current-rank requested-rank))
@@ -979,7 +979,7 @@
               current.rule-id
               current.level
               assignment
-              LintPolicyTraceOutcome.Shadowed
+              Shadowed
               "minimum already satisfied"))
           (+ state.expanded-rule-updates 1))
         (begin
@@ -1000,7 +1000,7 @@
                 current.rule-id
                 assignment.level
                 assignment
-                LintPolicyTraceOutcome.Applied
+                Applied
                 (if is-minimum
                   "minimum raised effective level"
                   "exact assignment")))
@@ -1049,8 +1049,8 @@
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
   (match assignment.subject
-    [(LintPolicySubject.Rule _) state]
-    [(LintPolicySubject.Group name)
+    [(Rule _) state]
+    [(Group name)
       (if (not
         (lint-policy-group-assignment-valid? groups index-map valid-groups name))
         (LintPolicyApplyState
@@ -1060,9 +1060,9 @@
             (lint-policy-trace-entry
               assignment-index
               ""
-              (lint_core.LintLevel.Allow)
+              (Allow)
               assignment
-              LintPolicyTraceOutcome.Rejected
+              Rejected
               "unknown or invalid group"))
           state.expanded-rule-updates)
         (let
@@ -1103,7 +1103,7 @@
                     ""
                     assignment.level
                     assignment
-                    LintPolicyTraceOutcome.Shadowed
+                    Shadowed
                     "group expands to no rules"))
                 out.expanded-rule-updates)))))]))
 
@@ -1114,8 +1114,8 @@
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
   (match assignment.subject
-    [(LintPolicySubject.Group _) state]
-    [(LintPolicySubject.Rule name)
+    [(Group _) state]
+    [(Rule name)
       (let
         [rule-index : i64 (lint-policy-rule-index rules name)]
         (if (< rule-index 0)
@@ -1126,9 +1126,9 @@
               (lint-policy-trace-entry
                 assignment-index
                 name
-                (lint_core.LintLevel.Allow)
+                (Allow)
                 assignment
-                LintPolicyTraceOutcome.Rejected
+                Rejected
                 "unknown rule"))
             state.expanded-rule-updates)
           (lint-policy-apply-to-rule
@@ -1208,9 +1208,9 @@
                   (lint-policy-trace-entry
                     index
                     ""
-                    (lint_core.LintLevel.Allow)
+                    (Allow)
                     assignment
-                    LintPolicyTraceOutcome.Inactive
+                    Inactive
                     "cfg input not selected"))))
             (set! index (+ index 1)))))
       out)))
@@ -1301,13 +1301,7 @@
   [mode : LintPolicyAssignmentMode]
   [selected : bool]
   [origin : LintPolicyOrigin]) : LintPolicyAssignment
-  (LintPolicyAssignment
-    (LintPolicySubject.Rule name)
-    level
-    layer
-    mode
-    selected
-    origin))
+  (LintPolicyAssignment (Rule name) level layer mode selected origin))
 
 (define (lint-policy-level-enabled? [level : lint_core.LintLevel]) : bool
   (> (lint_core.lint-level-rank level) 0))
@@ -1316,9 +1310,8 @@
   [resolution : (& resolution LintPolicyResolution)]
   [rule-id : (& rule-id str)]) : bool
   (match (lint-policy-decision-find resolution rule-id)
-    [(LintMaybePolicyDecision.NotFound) false]
-    [(LintMaybePolicyDecision.Found decision)
-      (lint-policy-level-enabled? decision.level)]))
+    [(NotFound) false]
+    [(Found decision) (lint-policy-level-enabled? decision.level)]))
 
 (define (lint-policy-legacy-assignment-add
   [slots : (&mut slots (__tl_dyn-array LintPolicyAssignment))]
@@ -1330,9 +1323,9 @@
       (array-ref slots len)
       (lint-policy-rule-assignment
         name
-        (lint_core.LintLevel.Warn)
-        LintPolicyLayer.Cli
-        LintPolicyAssignmentMode.Minimum
+        (Warn)
+        Cli
+        Minimum
         true
         (lint-policy-origin "legacy-cli" reason)))
     (+ len 1)))

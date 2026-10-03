@@ -224,7 +224,7 @@
             (>= signature 0)
             (< signature count)
             (match (ast.ast-node-pool-context-type-get pools signature)
-              [(ast.AstType.Func _ _) true]
+              [(Func _ _) true]
               [_ false]))]
         (begin
           (unless
@@ -358,108 +358,108 @@
     [context : (&mut context SurfaceAstWriteContext)]
     [ty : ast.AstType]) : unit
     (match ty
-      [(ast.AstType.I64) (surface-ast-write-i64! out 0)]
-      [(ast.AstType.I32) (surface-ast-write-i64! out 1)]
-      [(ast.AstType.I16) (surface-ast-write-i64! out 2)]
-      [(ast.AstType.I8) (surface-ast-write-i64! out 3)]
-      [(ast.AstType.U64) (surface-ast-write-i64! out 4)]
-      [(ast.AstType.U32) (surface-ast-write-i64! out 5)]
-      [(ast.AstType.U16) (surface-ast-write-i64! out 6)]
-      [(ast.AstType.U8) (surface-ast-write-i64! out 7)]
-      [(ast.AstType.F64) (surface-ast-write-i64! out 8)]
-      [(ast.AstType.F32) (surface-ast-write-i64! out 9)]
-      [(ast.AstType.Bool) (surface-ast-write-i64! out 10)]
-      [(ast.AstType.Char) (surface-ast-write-i64! out 11)]
-      [(ast.AstType.String) (surface-ast-write-i64! out 12)]
-      [(ast.AstType.Str) (surface-ast-write-i64! out 13)]
-      [(ast.AstType.Bytes) (surface-ast-write-i64! out 14)]
-      [(ast.AstType.Unit) (surface-ast-write-i64! out 15)]
-      [(ast.AstType.Never) (surface-ast-write-i64! out 16)]
-      [(ast.AstType.Expr) (surface-ast-write-i64! out 17)]
-      [(ast.AstType.ExprList) (surface-ast-write-i64! out 18)]
-      [(ast.AstType.Func args ret)
+      [(I64) (surface-ast-write-i64! out 0)]
+      [(I32) (surface-ast-write-i64! out 1)]
+      [(I16) (surface-ast-write-i64! out 2)]
+      [(I8) (surface-ast-write-i64! out 3)]
+      [(U64) (surface-ast-write-i64! out 4)]
+      [(U32) (surface-ast-write-i64! out 5)]
+      [(U16) (surface-ast-write-i64! out 6)]
+      [(U8) (surface-ast-write-i64! out 7)]
+      [(F64) (surface-ast-write-i64! out 8)]
+      [(F32) (surface-ast-write-i64! out 9)]
+      [(Bool) (surface-ast-write-i64! out 10)]
+      [(Char) (surface-ast-write-i64! out 11)]
+      [(String) (surface-ast-write-i64! out 12)]
+      [(Str) (surface-ast-write-i64! out 13)]
+      [(Bytes) (surface-ast-write-i64! out 14)]
+      [(Unit) (surface-ast-write-i64! out 15)]
+      [(Never) (surface-ast-write-i64! out 16)]
+      [(Expr) (surface-ast-write-i64! out 17)]
+      [(ExprList) (surface-ast-write-i64! out 18)]
+      [(Func args ret)
         (begin
           (surface-ast-write-i64! out 19)
           (surface-ast-write-type-list! out (deref args))
           (surface-ast-write-i64! out ret))]
-      [(ast.AstType.Tuple items)
+      [(Tuple items)
         (begin
           (surface-ast-write-i64! out 20)
           (surface-ast-write-type-list! out (deref items)))]
-      [(ast.AstType.Array elem count)
+      [(Array elem count)
         (begin
           (surface-ast-write-i64! out 21)
           (surface-ast-write-i64! out elem)
           (surface-ast-write-i64! out count))]
-      [(ast.AstType.DynArray elem)
+      [(DynArray elem)
         (begin
           (surface-ast-write-i64! out 22)
           (surface-ast-write-i64! out elem))]
-      [(ast.AstType.Box elem)
+      [(Box elem)
         (begin
           (surface-ast-write-i64! out 23)
           (surface-ast-write-i64! out elem))]
-      [(ast.AstType.Region region inner)
+      [(Region region inner)
         (begin
           (surface-ast-write-i64! out 24)
           (surface-ast-write-name! out context region)
           (surface-ast-write-i64! out inner))]
-      [(ast.AstType.Ref region inner)
+      [(Ref region inner)
         (begin
           (surface-ast-write-i64! out 25)
           (surface-ast-write-name! out context region)
           (surface-ast-write-i64! out inner))]
-      [(ast.AstType.MutRef region inner)
+      [(MutRef region inner)
         (begin
           (surface-ast-write-i64! out 26)
           (surface-ast-write-name! out context region)
           (surface-ast-write-i64! out inner))]
-      [(ast.AstType.Invalidate lifetime inner)
+      [(Invalidate lifetime inner)
         (begin
           (surface-ast-write-i64! out 39)
           (surface-ast-write-name! out context lifetime)
           (surface-ast-write-i64! out inner))]
-      [(ast.AstType.Enum name)
+      [(Enum name)
         (begin
           (surface-ast-write-i64! out 27)
           (surface-ast-write-name! out context name))]
-      [(ast.AstType.EnumArgs name lifetimes)
+      [(EnumArgs name lifetimes)
         (begin
           (surface-ast-write-i64! out 28)
           (surface-ast-write-name! out context name)
           (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
-      [(ast.AstType.Struct name)
+      [(Struct name)
         (begin
           (surface-ast-write-i64! out 29)
           (surface-ast-write-name! out context name))]
-      [(ast.AstType.StructArgs name lifetimes)
+      [(StructArgs name lifetimes)
         (begin
           (surface-ast-write-i64! out 30)
           (surface-ast-write-name! out context name)
           (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
-      [(ast.AstType.Var name)
+      [(Var name)
         (begin
           (surface-ast-write-i64! out 31)
           (surface-ast-write-name! out context name))]
-      [(ast.AstType.VarArgs name lifetimes)
+      [(VarArgs name lifetimes)
         (begin
           (surface-ast-write-i64! out 32)
           (surface-ast-write-name! out context name)
           (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
-      [(ast.AstType.CFunc signature mode)
+      [(CFunc signature mode)
         (begin
           (surface-ast-write-i64! out 38)
           (surface-ast-write-i64! out signature)
           (surface-ast-write-i64! out (ast.ast-c-function-mode-key mode)))]
-      [(ast.AstType.Ptr elem)
+      [(Ptr elem)
         (begin
           (surface-ast-write-i64! out 33)
           (surface-ast-write-i64! out elem))]
-      [(ast.AstType.MutPtr elem)
+      [(MutPtr elem)
         (begin
           (surface-ast-write-i64! out 34)
           (surface-ast-write-i64! out elem))]
-      [(ast.AstType.Slice elem)
+      [(Slice elem)
         (begin
           (surface-ast-write-i64! out 36)
           (surface-ast-write-i64! out elem))])))
@@ -468,66 +468,57 @@
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstType.I64]
-      [(= tag 1) ast.AstType.I32]
-      [(= tag 2) ast.AstType.I16]
-      [(= tag 3) ast.AstType.I8]
-      [(= tag 4) ast.AstType.U64]
-      [(= tag 5) ast.AstType.U32]
-      [(= tag 6) ast.AstType.U16]
-      [(= tag 7) ast.AstType.U8]
-      [(= tag 8) ast.AstType.F64]
-      [(= tag 9) ast.AstType.F32]
-      [(= tag 10) ast.AstType.Bool]
-      [(= tag 11) ast.AstType.Char]
-      [(= tag 12) ast.AstType.String]
-      [(= tag 13) ast.AstType.Str]
-      [(= tag 14) ast.AstType.Bytes]
-      [(= tag 15) ast.AstType.Unit]
-      [(= tag 16) ast.AstType.Never]
-      [(= tag 17) ast.AstType.Expr]
-      [(= tag 18) ast.AstType.ExprList]
+      [(= tag 0) I64]
+      [(= tag 1) I32]
+      [(= tag 2) I16]
+      [(= tag 3) I8]
+      [(= tag 4) U64]
+      [(= tag 5) U32]
+      [(= tag 6) U16]
+      [(= tag 7) U8]
+      [(= tag 8) F64]
+      [(= tag 9) F32]
+      [(= tag 10) Bool]
+      [(= tag 11) Char]
+      [(= tag 12) String]
+      [(= tag 13) Str]
+      [(= tag 14) Bytes]
+      [(= tag 15) Unit]
+      [(= tag 16) Never]
+      [(= tag 17) Expr]
+      [(= tag 18) ExprList]
       [(= tag 19)
-        (ast.AstType.Func
+        (Func
           (box (surface-ast-read-type-list! reader))
           (surface-ast-read-i64! reader))]
-      [(= tag 20)
-        (ast.AstType.Tuple (box (surface-ast-read-type-list! reader)))]
+      [(= tag 20) (Tuple (box (surface-ast-read-type-list! reader)))]
       [(= tag 21)
-        (ast.AstType.Array
-          (surface-ast-read-i64! reader)
-          (surface-ast-read-i64! reader))]
-      [(= tag 22) (ast.AstType.DynArray (surface-ast-read-i64! reader))]
-      [(= tag 23) (ast.AstType.Box (surface-ast-read-i64! reader))]
+        (Array (surface-ast-read-i64! reader) (surface-ast-read-i64! reader))]
+      [(= tag 22) (DynArray (surface-ast-read-i64! reader))]
+      [(= tag 23) (Box (surface-ast-read-i64! reader))]
       [(= tag 24)
-        (ast.AstType.Region
-          (surface-ast-read-name! reader)
-          (surface-ast-read-i64! reader))]
+        (Region (surface-ast-read-name! reader) (surface-ast-read-i64! reader))]
       [(= tag 25)
-        (ast.AstType.Ref
-          (surface-ast-read-name! reader)
-          (surface-ast-read-i64! reader))]
+        (Ref (surface-ast-read-name! reader) (surface-ast-read-i64! reader))]
       [(= tag 26)
-        (ast.AstType.MutRef
-          (surface-ast-read-name! reader)
-          (surface-ast-read-i64! reader))]
+        (MutRef (surface-ast-read-name! reader) (surface-ast-read-i64! reader))]
       [(= tag 39)
         (ast.ast-ty-invalidate-id
           (surface-ast-read-name! reader)
           (surface-ast-read-i64! reader))]
-      [(= tag 27) (ast.AstType.Enum (surface-ast-read-name! reader))]
+      [(= tag 27) (Enum (surface-ast-read-name! reader))]
       [(= tag 28)
-        (ast.AstType.EnumArgs
+        (EnumArgs
           (surface-ast-read-name! reader)
           (box (surface-ast-read-lifetime-list! reader)))]
-      [(= tag 29) (ast.AstType.Struct (surface-ast-read-name! reader))]
+      [(= tag 29) (Struct (surface-ast-read-name! reader))]
       [(= tag 30)
-        (ast.AstType.StructArgs
+        (StructArgs
           (surface-ast-read-name! reader)
           (box (surface-ast-read-lifetime-list! reader)))]
-      [(= tag 31) (ast.AstType.Var (surface-ast-read-name! reader))]
+      [(= tag 31) (Var (surface-ast-read-name! reader))]
       [(= tag 32)
-        (ast.AstType.VarArgs
+        (VarArgs
           (surface-ast-read-name! reader)
           (box (surface-ast-read-lifetime-list! reader)))]
       [(= tag 38)
@@ -542,22 +533,18 @@
                 (surface-ast-reader-fail!
                   reader
                   "surface ast: invalid C function type")
-                ast.AstType.Unit)]
-            [(= mode 0)
-              (ast.AstType.CFunc signature ast.AstCFunctionMode.Nullable)]
-            [(= mode 1)
-              (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull)]
-            [(= mode 2)
-              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNullable)]
-            [else
-              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNonNull)]))]
-      [(= tag 33) (ast.AstType.Ptr (surface-ast-read-i64! reader))]
-      [(= tag 34) (ast.AstType.MutPtr (surface-ast-read-i64! reader))]
-      [(= tag 36) (ast.AstType.Slice (surface-ast-read-i64! reader))]
+                Unit)]
+            [(= mode 0) (CFunc signature Nullable)]
+            [(= mode 1) (CFunc signature NonNull)]
+            [(= mode 2) (CFunc signature UnsafeNullable)]
+            [else (CFunc signature UnsafeNonNull)]))]
+      [(= tag 33) (Ptr (surface-ast-read-i64! reader))]
+      [(= tag 34) (MutPtr (surface-ast-read-i64! reader))]
+      [(= tag 36) (Slice (surface-ast-read-i64! reader))]
       [else
         (begin
           (surface-ast-reader-fail! reader "surface ast: invalid type tag")
-          ast.AstType.Unit)])))
+          Unit)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -566,8 +553,8 @@
     [context : (&mut context SurfaceAstWriteContext)]
     [maybe-ty : ast.AstMaybeType]) : unit
     (match maybe-ty
-      [(ast.AstMaybeType.No) (surface-ast-write-i64! out 0)]
-      [(ast.AstMaybeType.Some ty)
+      [(No) (surface-ast-write-i64! out 0)]
+      [(Some ty)
         (begin
           (surface-ast-write-i64! out 1)
           (surface-ast-write-type! out context ty))])))
@@ -576,14 +563,14 @@
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstMaybeType.No]
-      [(= tag 1) (ast.AstMaybeType.Some (surface-ast-read-type! reader))]
+      [(= tag 0) No]
+      [(= tag 1) (Some (surface-ast-read-type! reader))]
       [else
         (begin
           (surface-ast-reader-fail!
             reader
             "surface ast: invalid optional type tag")
-          ast.AstMaybeType.No)])))
+          No)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -592,47 +579,44 @@
     [context : (&mut context SurfaceAstWriteContext)]
     [literal : ast.AstLiteral]) : unit
     (match literal
-      [(ast.AstLiteral.Int value text)
+      [(Int value text)
         (begin
           (surface-ast-write-i64! out 0)
           (surface-ast-write-i64! out value)
           (surface-ast-write-string! out text))]
-      [(ast.AstLiteral.Float text)
+      [(Float text)
         (begin
           (surface-ast-write-i64! out 1)
           (surface-ast-write-string! out text))]
-      [(ast.AstLiteral.Bool value)
+      [(Bool value)
         (begin
           (surface-ast-write-i64! out 2)
           (surface-ast-write-bool! out value))]
-      [(ast.AstLiteral.Char value)
+      [(Char value)
         (begin
           (surface-ast-write-i64! out 3)
           (surface-ast-write-i64! out (cast value : i64)))]
-      [(ast.AstLiteral.String name)
+      [(String name)
         (begin
           (surface-ast-write-i64! out 4)
           (surface-ast-write-name! out context name))]
-      [(ast.AstLiteral.Unit) (surface-ast-write-i64! out 5)])))
+      [(Unit) (surface-ast-write-i64! out 5)])))
 
 (define (surface-ast-read-literal! [reader : (&mut reader SurfaceAstReader)]) : ast.AstLiteral
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
       [(= tag 0)
-        (ast.AstLiteral.Int
-          (surface-ast-read-i64! reader)
-          (surface-ast-read-string! reader))]
-      [(= tag 1) (ast.AstLiteral.Float (surface-ast-read-string! reader))]
-      [(= tag 2) (ast.AstLiteral.Bool (surface-ast-read-bool! reader))]
-      [(= tag 3)
-        (ast.AstLiteral.Char (cast (surface-ast-read-i64! reader) : char))]
-      [(= tag 4) (ast.AstLiteral.String (surface-ast-read-name! reader))]
-      [(= tag 5) ast.AstLiteral.Unit]
+        (Int (surface-ast-read-i64! reader) (surface-ast-read-string! reader))]
+      [(= tag 1) (Float (surface-ast-read-string! reader))]
+      [(= tag 2) (Bool (surface-ast-read-bool! reader))]
+      [(= tag 3) (Char (cast (surface-ast-read-i64! reader) : char))]
+      [(= tag 4) (String (surface-ast-read-name! reader))]
+      [(= tag 5) Unit]
       [else
         (begin
           (surface-ast-reader-fail! reader "surface ast: invalid literal tag")
-          ast.AstLiteral.Unit)])))
+          Unit)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -641,8 +625,8 @@
     [context : (&mut context SurfaceAstWriteContext)]
     [lifetime : ast.AstBorrowLifetime]) : unit
     (match lifetime
-      [(ast.AstBorrowLifetime.Inferred) (surface-ast-write-i64! out 0)]
-      [(ast.AstBorrowLifetime.Named name)
+      [(Inferred) (surface-ast-write-i64! out 0)]
+      [(Named name)
         (begin
           (surface-ast-write-i64! out 1)
           (surface-ast-write-name! out context name))])))
@@ -652,14 +636,14 @@
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstBorrowLifetime.Inferred]
-      [(= tag 1) (ast.AstBorrowLifetime.Named (surface-ast-read-name! reader))]
+      [(= tag 0) Inferred]
+      [(= tag 1) (Named (surface-ast-read-name! reader))]
       [else
         (begin
           (surface-ast-reader-fail!
             reader
             "surface ast: invalid borrow lifetime tag")
-          ast.AstBorrowLifetime.Inferred)])))
+          Inferred)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -669,53 +653,53 @@
     (surface-ast-write-i64!
       out
       (match op
-        [(ast.AstBinOp.Add) 0]
-        [(ast.AstBinOp.Sub) 1]
-        [(ast.AstBinOp.Mul) 2]
-        [(ast.AstBinOp.Div) 3]
-        [(ast.AstBinOp.Mod) 4]
-        [(ast.AstBinOp.Eq) 5]
-        [(ast.AstBinOp.Ne) 6]
-        [(ast.AstBinOp.Lt) 7]
-        [(ast.AstBinOp.Le) 8]
-        [(ast.AstBinOp.Gt) 9]
-        [(ast.AstBinOp.Ge) 10]
-        [(ast.AstBinOp.And) 11]
-        [(ast.AstBinOp.Or) 12]
-        [(ast.AstBinOp.BitAnd) 13]
-        [(ast.AstBinOp.BitOr) 14]
-        [(ast.AstBinOp.BitXor) 15]
-        [(ast.AstBinOp.Shl) 16]
-        [(ast.AstBinOp.Shr) 17]))))
+        [(Add) 0]
+        [(Sub) 1]
+        [(Mul) 2]
+        [(Div) 3]
+        [(Mod) 4]
+        [(Eq) 5]
+        [(Ne) 6]
+        [(Lt) 7]
+        [(Le) 8]
+        [(Gt) 9]
+        [(Ge) 10]
+        [(And) 11]
+        [(Or) 12]
+        [(BitAnd) 13]
+        [(BitOr) 14]
+        [(BitXor) 15]
+        [(Shl) 16]
+        [(Shr) 17]))))
 
 (define (surface-ast-read-bin-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstBinOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstBinOp.Add]
-      [(= tag 1) ast.AstBinOp.Sub]
-      [(= tag 2) ast.AstBinOp.Mul]
-      [(= tag 3) ast.AstBinOp.Div]
-      [(= tag 4) ast.AstBinOp.Mod]
-      [(= tag 5) ast.AstBinOp.Eq]
-      [(= tag 6) ast.AstBinOp.Ne]
-      [(= tag 7) ast.AstBinOp.Lt]
-      [(= tag 8) ast.AstBinOp.Le]
-      [(= tag 9) ast.AstBinOp.Gt]
-      [(= tag 10) ast.AstBinOp.Ge]
-      [(= tag 11) ast.AstBinOp.And]
-      [(= tag 12) ast.AstBinOp.Or]
-      [(= tag 13) ast.AstBinOp.BitAnd]
-      [(= tag 14) ast.AstBinOp.BitOr]
-      [(= tag 15) ast.AstBinOp.BitXor]
-      [(= tag 16) ast.AstBinOp.Shl]
-      [(= tag 17) ast.AstBinOp.Shr]
+      [(= tag 0) Add]
+      [(= tag 1) Sub]
+      [(= tag 2) Mul]
+      [(= tag 3) Div]
+      [(= tag 4) Mod]
+      [(= tag 5) Eq]
+      [(= tag 6) Ne]
+      [(= tag 7) Lt]
+      [(= tag 8) Le]
+      [(= tag 9) Gt]
+      [(= tag 10) Ge]
+      [(= tag 11) And]
+      [(= tag 12) Or]
+      [(= tag 13) BitAnd]
+      [(= tag 14) BitOr]
+      [(= tag 15) BitXor]
+      [(= tag 16) Shl]
+      [(= tag 17) Shr]
       [else
         (begin
           (surface-ast-reader-fail!
             reader
             "surface ast: invalid binary operator")
-          ast.AstBinOp.Add)])))
+          Add)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -725,23 +709,23 @@
     (surface-ast-write-i64!
       out
       (match op
-        [(ast.AstUnOp.Neg) 0]
-        [(ast.AstUnOp.Not) 1]
-        [(ast.AstUnOp.BitNot) 2]))))
+        [(Neg) 0]
+        [(Not) 1]
+        [(BitNot) 2]))))
 
 (define (surface-ast-read-un-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstUnOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstUnOp.Neg]
-      [(= tag 1) ast.AstUnOp.Not]
-      [(= tag 2) ast.AstUnOp.BitNot]
+      [(= tag 0) Neg]
+      [(= tag 1) Not]
+      [(= tag 2) BitNot]
       [else
         (begin
           (surface-ast-reader-fail!
             reader
             "surface ast: invalid unary operator")
-          ast.AstUnOp.Neg)])))
+          Neg)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -751,24 +735,24 @@
     (surface-ast-write-i64!
       out
       (match op
-        [(ast.AstReduceOp.Sum) 0]
-        [(ast.AstReduceOp.Min) 1]
-        [(ast.AstReduceOp.Max) 2]
-        [(ast.AstReduceOp.All) 3]
-        [(ast.AstReduceOp.Any) 4]))))
+        [(Sum) 0]
+        [(Min) 1]
+        [(Max) 2]
+        [(All) 3]
+        [(Any) 4]))))
 
 (define (surface-ast-read-reduce-op! [reader : (&mut reader SurfaceAstReader)]) : ast.AstReduceOp
   (let
     [tag : i64 (surface-ast-read-i64! reader)]
     (cond
-      [(= tag 0) ast.AstReduceOp.Sum]
-      [(= tag 1) ast.AstReduceOp.Min]
-      [(= tag 2) ast.AstReduceOp.Max]
-      [(= tag 3) ast.AstReduceOp.All]
-      [(= tag 4) ast.AstReduceOp.Any]
+      [(= tag 0) Sum]
+      [(= tag 1) Min]
+      [(= tag 2) Max]
+      [(= tag 3) All]
+      [(= tag 4) Any]
       [else
         (begin
           (surface-ast-reader-fail!
             reader
             "surface ast: invalid reduce operator")
-          ast.AstReduceOp.Sum)])))
+          Sum)])))

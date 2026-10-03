@@ -5038,21 +5038,19 @@
   [identity : InternSyntaxTextIdentity]
   [text : String]) : InternSourceNameResolution
   (cond
-    [(not (= identity.table-id session.table-id))
-      (InternSourceNameResolution.WrongOwner)]
+    [(not (= identity.table-id session.table-id)) (WrongOwner)]
     [(not (= (array-ref session.table-id-cell 0) session.table-id))
-      (InternSourceNameResolution.WrongOwner)]
+      (WrongOwner)]
     [(not (= identity.reset-generation session.reset-generation))
-      (InternSourceNameResolution.StaleGeneration)]
+      (StaleGeneration)]
     [(not
         (= (array-ref session.reset-generation-cell 0) session.reset-generation))
-      (InternSourceNameResolution.StaleGeneration)]
+      (StaleGeneration)]
     [(or (< identity.id 0) (>= identity.id (array-length session.pool-slots)))
-      (InternSourceNameResolution.InvalidIdentity)]
-    [(< identity.id session.source-count)
-      (InternSourceNameResolution.ParsedIdentity identity.id)]
+      (InvalidIdentity)]
+    [(< identity.id session.source-count) (ParsedIdentity identity.id)]
     [else
-      (InternSourceNameResolution.GeneratedIdentity
+      (GeneratedIdentity
         identity.id
         (intern-source-name-session-lookup session text))]))
 

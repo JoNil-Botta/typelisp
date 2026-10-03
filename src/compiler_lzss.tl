@@ -44,10 +44,9 @@
     [prefix : String (compiler-lzss-envelope-prefix)]
     [prefix-len : i64 (string.string-length prefix)]
     (cond
-      [(< raw-limit 0)
-        (CompilerLzssFrame.Err "compiler lzss: invalid raw length limit")]
+      [(< raw-limit 0) (Err "compiler lzss: invalid raw length limit")]
       [(not (compiler-lzss-prefix? payload prefix))
-        (CompilerLzssFrame.Err "compiler lzss: bad envelope prefix")]
+        (Err "compiler lzss: bad envelope prefix")]
       [else
         (let
           [payload-len : i64 (array-length payload)]
@@ -71,18 +70,14 @@
                   (set! digits (+ digits 1))
                   (set! index (+ index 1)))))
             (cond
-              [overflow
-                (CompilerLzssFrame.Err
-                  "compiler lzss: raw length overflows i64")]
-              [(= digits 0)
-                (CompilerLzssFrame.Err "compiler lzss: missing raw length")]
+              [overflow (Err "compiler lzss: raw length overflows i64")]
+              [(= digits 0) (Err "compiler lzss: missing raw length")]
               [(or
                   (>= index payload-len)
                   (!= (array-ref payload index) (cast 10 : u8)))
-                (CompilerLzssFrame.Err "compiler lzss: malformed raw length")]
+                (Err "compiler lzss: malformed raw length")]
               [(> raw-len raw-limit)
-                (CompilerLzssFrame.Err
-                  "compiler lzss: raw length exceeds consumer limit")]
+                (Err "compiler lzss: raw length exceeds consumer limit")]
               [else
                 (let
                   [compressed-start : i64 (+ index 1)]
@@ -95,9 +90,8 @@
                       (>= compressed-len 1024819115206086200)
                       (<= raw-len (* compressed-len 9)))]
                   (if ratio-safe
-                    (CompilerLzssFrame.Ok raw-len compressed-start)
-                    (CompilerLzssFrame.Err
-                      "compiler lzss: impossible raw length")))])))])))
+                    (Ok raw-len compressed-start)
+                    (Err "compiler lzss: impossible raw length")))])))])))
 
 ;: Copy one back-reference: `length` bytes starting `distance` bytes before
 ;: `out-index` to `out-index`, in the output buffer whose data pointer is
@@ -228,18 +222,17 @@
                                 (set! out-index (+ out-index length)))])))))
                   (set! bit (+ bit 1))))))))
       (cond
-        [(not valid) (CompilerLzssBytes.Err error)]
-        [(!= out-index raw-len)
-          (CompilerLzssBytes.Err "compiler lzss: expanded length mismatch")]
+        [(not valid) (Err error)]
+        [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]
         [(!= compressed-index compressed-len)
-          (CompilerLzssBytes.Err "compiler lzss: trailing compressed bytes")]
-        [else (CompilerLzssBytes.Ok out)]))))
+          (Err "compiler lzss: trailing compressed bytes")]
+        [else (Ok out)]))))
 
 ;: Decode one complete compiler-owned envelope after bounded validation.
 (define (compiler-lzss-decode
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : CompilerLzssBytes
   (match (compiler-lzss-frame payload raw-limit)
-    [(CompilerLzssFrame.Err message) (CompilerLzssBytes.Err message)]
-    [(CompilerLzssFrame.Ok raw-len compressed-start)
+    [(Err message) (Err message)]
+    [(Ok raw-len compressed-start)
       (compiler-lzss-decode-tokens payload compressed-start raw-len)]))

@@ -265,20 +265,17 @@
     [(or
         (= (tlci-string-length image-identity) 0)
         (= (tlci-string-length running-identity) 0))
-      TlciProducerIdentityAdmission.Missing]
+      Missing]
     [(or
         (string.eq image-identity tlci-legacy-package-producer-identity)
         (string.eq image-identity "unknown")
         (string.eq running-identity tlci-legacy-package-producer-identity)
         (string.eq running-identity "unknown"))
-      TlciProducerIdentityAdmission.Legacy]
-    [(not (tlci-producer-identity-valid? image-identity))
-      TlciProducerIdentityAdmission.Malformed]
-    [(not (tlci-producer-identity-valid? running-identity))
-      TlciProducerIdentityAdmission.Malformed]
-    [(string.eq image-identity running-identity)
-      TlciProducerIdentityAdmission.ExactMatch]
-    [else TlciProducerIdentityAdmission.Mismatch]))
+      Legacy]
+    [(not (tlci-producer-identity-valid? image-identity)) Malformed]
+    [(not (tlci-producer-identity-valid? running-identity)) Malformed]
+    [(string.eq image-identity running-identity) ExactMatch]
+    [else Mismatch]))
 
 ;; Additive package payloads live in the v2 rodata section behind a small
 ;; directory/trailer envelope. Native-only v2 images keep their byte layout:
@@ -394,8 +391,8 @@
 
 (define (tlci-image-classify [image : (& image TlciImage)]) : TlciImageClassification
   (if (= (array-length image.code) 0)
-    TlciImageClassification.MetadataOnly
-    TlciImageClassification.CodeBearing))
+    MetadataOnly
+    CodeBearing))
 
 ;; Platform is an execution-time trust boundary only for native code. Parsed
 ;; metadata remains portable, including metadata from another host platform.
@@ -403,29 +400,27 @@
 (define (tlci-image-admit-host [image : TlciImage] [host-platform : i64]) : TlciImageHostAdmission
   (cond
     [(not (tlci-host-platform-supported? image.host-platform))
-      (TlciImageHostAdmission.Rejected
+      (Rejected
         (str_cat.str-cat
           "tlci: package `"
           image.metadata.package-name
           "` image uses unsupported host platform "
           (string.int->string image.host-platform)))]
     [(not (tlci-host-platform-supported? host-platform))
-      (TlciImageHostAdmission.Rejected
-        "tlci: loader host platform is unsupported")]
+      (Rejected "tlci: loader host platform is unsupported")]
     [else
       (match (tlci-image-classify image)
-        [(TlciImageClassification.MetadataOnly)
-          TlciImageHostAdmission.MetadataOnly]
-        [(TlciImageClassification.CodeBearing)
+        [(MetadataOnly) MetadataOnly]
+        [(CodeBearing)
           (cond
             [(= image.host-platform tlci-host-platform-x86-64-legacy)
-              (TlciImageHostAdmission.Rejected
+              (Rejected
                 (str_cat.str-cat
                   "tlci: package `"
                   image.metadata.package-name
                   "` code-bearing image uses legacy/ambiguous host platform"))]
             [(not (= image.host-platform host-platform))
-              (TlciImageHostAdmission.Rejected
+              (Rejected
                 (str_cat.str-cat
                   "tlci: package `"
                   image.metadata.package-name
@@ -433,7 +428,7 @@
                   (tlci-host-platform-name image.host-platform)
                   ", host="
                   (tlci-host-platform-name host-platform)))]
-            [else TlciImageHostAdmission.CodeBearing])])]))
+            [else CodeBearing])])]))
 
 (define tlci-callback-abi-version : i64
   2)
@@ -1084,59 +1079,48 @@
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
     [(not (= table.magic tlci-host-callback-table-magic))
-      (ResultTlciHostAbi.Err "tlci host ABI: bad host callback table magic")]
+      (Err "tlci host ABI: bad host callback table magic")]
     [(not (= table.abi-version tlci-host-abi-version))
-      (ResultTlciHostAbi.Err (tlci-host-abi-version-error table.abi-version))]
+      (Err (tlci-host-abi-version-error table.abi-version))]
     [(< table.byte-size tlci-host-callback-table-size)
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: host callback table byte-size is smaller than v2")]
+      (Err "tlci host ABI: host callback table byte-size is smaller than v2")]
     [(not (= table.reserved0 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: host callback table reserved0 must be zero")]
+      (Err "tlci host ABI: host callback table reserved0 must be zero")]
     [(not (= table.reserved1 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: host callback table reserved1 must be zero")]
+      (Err "tlci host ABI: host callback table reserved1 must be zero")]
     [(not (= table.reserved2 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: host callback table reserved2 must be zero")]
+      (Err "tlci host ABI: host callback table reserved2 must be zero")]
     [(= table.abort-callback 0)
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: host abort callback must be nonzero")]
+      (Err "tlci host ABI: host abort callback must be nonzero")]
     [(not (string.eq (tlci-host-callback-registry-error (& table)) ""))
-      (ResultTlciHostAbi.Err
+      (Err
         (str_cat.str-cat
           "tlci host ABI: "
           (tlci-host-callback-registry-error (& table))))]
-    [else (ResultTlciHostAbi.Ok)]))
+    [else (Ok)]))
 
 (define (tlci-validate-image-registration
   [registration : TlciImageRegistration]) : ResultTlciHostAbi
   (cond
     [(not (= registration.magic tlci-image-registration-magic))
-      (ResultTlciHostAbi.Err "tlci host ABI: bad image registration magic")]
+      (Err "tlci host ABI: bad image registration magic")]
     [(not (= registration.abi-version tlci-host-abi-version))
-      (ResultTlciHostAbi.Err
-        (tlci-host-abi-version-error registration.abi-version))]
+      (Err (tlci-host-abi-version-error registration.abi-version))]
     [(< registration.byte-size tlci-image-registration-size)
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: image registration byte-size is smaller than v2")]
+      (Err "tlci host ABI: image registration byte-size is smaller than v2")]
     [(not (= registration.reserved0 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: image registration reserved0 must be zero")]
+      (Err "tlci host ABI: image registration reserved0 must be zero")]
     [(not (= registration.reserved1 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: image registration reserved1 must be zero")]
+      (Err "tlci host ABI: image registration reserved1 must be zero")]
     [(and
         (= registration.macro-entry-table 0)
         (not (= registration.macro-entry-count 0)))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: macro entry count requires a table")]
+      (Err "tlci host ABI: macro entry count requires a table")]
     [(and
         (not (= registration.macro-entry-table 0))
         (= registration.macro-entry-count 0))
-      (ResultTlciHostAbi.Err
-        "tlci host ABI: macro entry table requires a count")]
-    [else (ResultTlciHostAbi.Ok)]))
+      (Err "tlci host ABI: macro entry table requires a count")]
+    [else (Ok)]))
 
 (define (tlci-empty-bytes) : (__tl_dyn-array u8)
   (__tl_make-array u8 0))
@@ -1379,11 +1363,11 @@
       (tlci-native-package-entries input)
       (tlci-native-package-symbols)
       (clone input.imports)))
-    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
-    [(ResultTlciBytes.Ok bytes)
+    [(Err message) (Err message)]
+    [(Ok bytes)
       (begin
         (tlci-native-package-patch! (&mut bytes) input)
-        (ResultTlciBytes.Ok bytes))]))
+        (Ok bytes))]))
 
 (define (tlci-byte-at [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
@@ -1757,7 +1741,7 @@
   (let
     [count : i64 (array-length sections)]
     (if (= count 0)
-      (ResultTlciAuxBytes.Ok (tlci-copy-bytes base))
+      (Ok (tlci-copy-bytes base))
       (let
         [offsets : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -1804,7 +1788,7 @@
                       (set! previous-kind kind)
                       (set! index (+ index 1))))]))))
         (if (not ok)
-          (ResultTlciAuxBytes.Err message)
+          (Err message)
           (let
             [directory-offset : i64 (tlci-align-offset out.len 8)]
             (begin
@@ -1830,19 +1814,18 @@
                   (tlci-push-u64! (&mut out) directory-offset)
                   (tlci-push-u64! (&mut out) count)
                   (tlci-push-u64! (&mut out) total-len)
-                  (ResultTlciAuxBytes.Ok
-                    (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))))
+                  (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))))
 
 (define (tlci-aux-directory [rodata : (& rodata (__tl_dyn-array u8))]) : ResultTlciAuxDirectory
   (let
     [rodata-len : i64 (array-length rodata)]
     (if (< rodata-len tlci-aux-trailer-size)
-      (ResultTlciAuxDirectory.Missing)
+      (Missing)
       (let
         [trailer-offset : i64 (- rodata-len tlci-aux-trailer-size)]
         [magic : i64 (tlci-read-u64 rodata trailer-offset)]
         (if (not (= magic tlci-aux-magic))
-          (ResultTlciAuxDirectory.Missing)
+          (Missing)
           (let
             [version : i64 (tlci-read-u64 rodata (+ trailer-offset 8))]
             [base-len : i64 (tlci-read-u64 rodata (+ trailer-offset 16))]
@@ -1852,31 +1835,26 @@
             [declared-len : i64 (tlci-read-u64 rodata (+ trailer-offset 40))]
             (cond
               [(not (= version tlci-aux-format-version))
-                (ResultTlciAuxDirectory.Err
-                  "tlci: unsupported auxiliary section format version")]
+                (Err "tlci: unsupported auxiliary section format version")]
               [(not (= declared-len rodata-len))
-                (ResultTlciAuxDirectory.Err
-                  "tlci: auxiliary section length does not match rodata")]
+                (Err "tlci: auxiliary section length does not match rodata")]
               [(or
                   (<= count 0)
                   (> count (/ trailer-offset tlci-aux-record-size)))
-                (ResultTlciAuxDirectory.Err
-                  "tlci: malformed auxiliary section count")]
+                (Err "tlci: malformed auxiliary section count")]
               [(or
                   (< base-len 0)
                   (> base-len directory-offset)
                   (> directory-offset trailer-offset)
                   (not (= (% directory-offset 8) 0)))
-                (ResultTlciAuxDirectory.Err
-                  "tlci: malformed auxiliary section directory offset")]
+                (Err "tlci: malformed auxiliary section directory offset")]
               [(not
                   (=
                     (+ directory-offset (* count tlci-aux-record-size))
                     trailer-offset))
-                (ResultTlciAuxDirectory.Err
-                  "tlci: malformed auxiliary section directory length")]
+                (Err "tlci: malformed auxiliary section directory length")]
               [else
-                (ResultTlciAuxDirectory.Ok
+                (Ok
                   (TlciAuxDirectory
                     base-len
                     directory-offset
@@ -1921,12 +1899,11 @@
   [rodata : (& rodata (__tl_dyn-array u8))]
   [wanted-kind : i64]) : ResultTlciAuxLookup
   (match (tlci-aux-directory rodata)
-    [(ResultTlciAuxDirectory.Missing) (ResultTlciAuxLookup.Missing)]
-    [(ResultTlciAuxDirectory.Err message) (ResultTlciAuxLookup.Err message)]
-    [(ResultTlciAuxDirectory.Ok directory)
+    [(Missing) (Missing)]
+    [(Err message) (Err message)]
+    [(Ok directory)
       (if (not (tlci-aux-records-valid? rodata directory))
-        (ResultTlciAuxLookup.Err
-          "tlci: malformed or corrupt auxiliary section directory")
+        (Err "tlci: malformed or corrupt auxiliary section directory")
         (let
           [index : i64 0]
           (begin
@@ -1937,14 +1914,14 @@
                 [kind : i64 (tlci-read-u64 rodata record)]
                 (if (= kind wanted-kind)
                   (return
-                    (ResultTlciAuxLookup.Ok
+                    (Ok
                       (tlci-read-u64 rodata (+ record 8))
                       (tlci-slice-bytes
                         rodata
                         (tlci-read-u64 rodata (+ record 16))
                         (tlci-read-u64 rodata (+ record 24)))))
                   (set! index (+ index 1)))))
-            (ResultTlciAuxLookup.Missing))))]))
+            (Missing))))]))
 
 (define (tlci-package-source-binding-digest-valid? [digest : i64]) : bool
   (and (>= digest 0) (< digest 2147483647)))
@@ -1962,90 +1939,82 @@
 (define (tlci-package-source-binding-read
   [rodata : (& rodata (__tl_dyn-array u8))]) : TlciPackageSourceBindingRead
   (match (tlci-aux-find rodata tlci-aux-kind-package-source-binding)
-    [(ResultTlciAuxLookup.Missing)
-      (TlciPackageSourceBindingRead.MissingOrLegacy)]
-    [(ResultTlciAuxLookup.Err message)
-      (TlciPackageSourceBindingRead.Malformed message)]
-    [(ResultTlciAuxLookup.Ok schema payload)
+    [(Missing) (MissingOrLegacy)]
+    [(Err message) (Malformed message)]
+    [(Ok schema payload)
       (if (not (= schema tlci-package-source-binding-schema-version))
         ;; Do not inspect a payload whose schema is not understood.
-        (TlciPackageSourceBindingRead.UnsupportedSchema schema)
+        (UnsupportedSchema schema)
         (if (not (= (array-length payload) 8))
-          (TlciPackageSourceBindingRead.Malformed
+          (Malformed
             "tlci: package source binding payload must be exactly 8 bytes")
           (let
             [digest : i64 (tlci-read-u64 payload 0)]
             (if (not (tlci-package-source-binding-digest-valid? digest))
-              (TlciPackageSourceBindingRead.Malformed
-                "tlci: package source binding digest is out of range")
-              (TlciPackageSourceBindingRead.Bound digest)))))]))
+              (Malformed "tlci: package source binding digest is out of range")
+              (Bound digest)))))]))
 
 (define (tlci-package-source-binding-admit
   [rodata : (& rodata (__tl_dyn-array u8))]
   [expected-digest : i64]) : TlciPackageSourceBindingAdmission
   (if (not (tlci-package-source-binding-digest-valid? expected-digest))
-    (TlciPackageSourceBindingAdmission.Malformed
-      "tlci: expected package source binding digest is out of range")
+    (Malformed "tlci: expected package source binding digest is out of range")
     (match (tlci-package-source-binding-read rodata)
-      [(TlciPackageSourceBindingRead.Bound actual)
+      [(Bound actual)
         (if (= expected-digest actual)
-          (TlciPackageSourceBindingAdmission.Match actual)
-          (TlciPackageSourceBindingAdmission.Mismatch expected-digest actual))]
-      [(TlciPackageSourceBindingRead.MissingOrLegacy)
-        (TlciPackageSourceBindingAdmission.MissingOrLegacy)]
-      [(TlciPackageSourceBindingRead.UnsupportedSchema schema)
-        (TlciPackageSourceBindingAdmission.UnsupportedSchema schema)]
-      [(TlciPackageSourceBindingRead.Malformed message)
-        (TlciPackageSourceBindingAdmission.Malformed message)])))
+          (Match actual)
+          (Mismatch expected-digest actual))]
+      [(MissingOrLegacy) (MissingOrLegacy)]
+      [(UnsupportedSchema schema) (UnsupportedSchema schema)]
+      [(Malformed message) (Malformed message)])))
 
 (define (tlci-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
 
 (define (tlci-field-string-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciString
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vhead)
-        [(reader.SexprView.Str val-id)
+        [(Str val-id)
           (match (reader.sexpr-view vrest)
-            [(reader.SexprView.Nil)
-              (ResultTlciString.Ok (ci.intern-id-str val-id))]
+            [(Nil) (Ok (ci.intern-id-str val-id))]
             [_
-              (ResultTlciString.Err
+              (Err
                 (str_cat.str-cat
                   "tlci metadata: field `"
                   fname
                   "` takes one string value"))])]
         [_
-          (ResultTlciString.Err
+          (Err
             (str_cat.str-cat
               "tlci metadata: field `"
               fname
               "` must be a string"))])]
     [_
-      (ResultTlciString.Err
+      (Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-field-i64-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciI64
   (match (reader.sexpr-view ftail)
-    [(reader.SexprView.Cons vhead vrest)
+    [(Cons vhead vrest)
       (match (reader.sexpr-view vhead)
-        [(reader.SexprView.Int val _)
+        [(Int val _)
           (match (reader.sexpr-view vrest)
-            [(reader.SexprView.Nil) (ResultTlciI64.Ok val)]
+            [(Nil) (Ok val)]
             [_
-              (ResultTlciI64.Err
+              (Err
                 (str_cat.str-cat
                   "tlci metadata: field `"
                   fname
                   "` takes one integer value"))])]
         [_
-          (ResultTlciI64.Err
+          (Err
             (str_cat.str-cat
               "tlci metadata: field `"
               fname
               "` must be an integer"))])]
     [_
-      (ResultTlciI64.Err
+      (Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be an integer"))]))
 
 (define (tlci-string-compare [left : (& left str)] [right : (& right str)]) : i64
@@ -2080,8 +2049,8 @@
 
 (define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
   (match (reader.sexpr-view items)
-    [(reader.SexprView.Nil) 0]
-    [(reader.SexprView.Cons _ rest)
+    [(Nil) 0]
+    [(Cons _ rest)
       (let
         [tail-len : i64 (tlci-sexpr-list-length rest)]
         (if (< tail-len 0)
@@ -2094,12 +2063,12 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [count : i64
       (match (reader.data-result signature)
-        [(reader.ResultSexpr.Err _) -1]
-        [(reader.ResultSexpr.Ok form)
+        [(Err _) -1]
+        [(Ok form)
           (match (reader.sexpr-view form)
-            [(reader.SexprView.Cons head rest)
+            [(Cons head rest)
               (match (reader.sexpr-view head)
-                [(reader.SexprView.Sym arrow)
+                [(Sym arrow)
                   (if (string.eq (tlci-symbol-text arrow) "->")
                     (let
                       [item-count : i64 (tlci-sexpr-list-length rest)]
@@ -2349,31 +2318,25 @@
   [symbol : String]
   [has-symbol : bool]) : ResultTlciSpmdSpecialization
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-abi)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `abi`")]
+          (Err "tlci metadata: specialization missing required field `abi`")]
         [(not has-backend)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `backend`")]
+          (Err "tlci metadata: specialization missing required field `backend`")]
         [(not has-lanes)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `lanes`")]
+          (Err "tlci metadata: specialization missing required field `lanes`")]
         [(not has-args)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `args`")]
+          (Err "tlci metadata: specialization missing required field `args`")]
         [(not has-result)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `result`")]
+          (Err "tlci metadata: specialization missing required field `result`")]
         [(not has-index-param)
-          (ResultTlciSpmdSpecialization.Err
+          (Err
             "tlci metadata: specialization missing required field `index-param`")]
         [(not has-symbol)
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization missing required field `symbol`")]
+          (Err "tlci metadata: specialization missing required field `symbol`")]
         [else
-          (ResultTlciSpmdSpecialization.Ok
+          (Ok
             (TlciSpmdSpecialization
               abi
               backend
@@ -2382,22 +2345,20 @@
               result
               index-param
               symbol))])]
-    [(reader.SexprView.Cons field rest)
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "abi")
                   (if has-abi
-                    (ResultTlciSpmdSpecialization.Err
-                      "tlci metadata: duplicate specialization field `abi`")
+                    (Err "tlci metadata: duplicate specialization field `abi`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           value
@@ -2416,14 +2377,13 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "backend")
                   (if has-backend
-                    (ResultTlciSpmdSpecialization.Err
+                    (Err
                       "tlci metadata: duplicate specialization field `backend`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2442,12 +2402,11 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "lanes")
                   (if has-lanes
-                    (ResultTlciSpmdSpecialization.Err
+                    (Err
                       "tlci metadata: duplicate specialization field `lanes`")
                     (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
-                      [(ResultTlciI64.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciI64.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2466,14 +2425,12 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "args")
                   (if has-args
-                    (ResultTlciSpmdSpecialization.Err
-                      "tlci metadata: duplicate specialization field `args`")
+                    (Err "tlci metadata: duplicate specialization field `args`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2492,14 +2449,13 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "result")
                   (if has-result
-                    (ResultTlciSpmdSpecialization.Err
+                    (Err
                       "tlci metadata: duplicate specialization field `result`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2518,12 +2474,11 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "index-param")
                   (if has-index-param
-                    (ResultTlciSpmdSpecialization.Err
+                    (Err
                       "tlci metadata: duplicate specialization field `index-param`")
                     (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
-                      [(ResultTlciI64.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciI64.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2542,14 +2497,13 @@
                           has-symbol)]))]
                 [(string.eq (tlci-symbol-text fname) "symbol")
                   (if has-symbol
-                    (ResultTlciSpmdSpecialization.Err
+                    (Err
                       "tlci metadata: duplicate specialization field `symbol`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdSpecialization.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-specialization-fields
                           rest
                           abi
@@ -2567,20 +2521,16 @@
                           value
                           true)]))]
                 [else
-                  (ResultTlciSpmdSpecialization.Err
+                  (Err
                     (str_cat.str-cat
                       "tlci metadata: unknown specialization field `"
                       (tlci-symbol-text fname)
                       "`"))])]
             [_
-              (ResultTlciSpmdSpecialization.Err
+              (Err
                 "tlci metadata: specialization fields must start with a name")])]
-        [_
-          (ResultTlciSpmdSpecialization.Err
-            "tlci metadata: specialization fields must be lists")])]
-    [_
-      (ResultTlciSpmdSpecialization.Err
-        "tlci metadata: specialization fields must be lists")]))
+        [_ (Err "tlci metadata: specialization fields must be lists")])]
+    [_ (Err "tlci metadata: specialization fields must be lists")]))
 
 (define (tlci-spmd-specialization-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdSpecialization
   (tlci-spmd-specialization-fields
@@ -2608,33 +2558,27 @@
   [has-signature : bool]
   [specializations : TlciSpmdSpecializations]) : ResultTlciSpmdCallable
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-name)
-          (ResultTlciSpmdCallable.Err
-            "tlci metadata: helper missing required field `name`")]
+          (Err "tlci metadata: helper missing required field `name`")]
         [(not has-signature)
-          (ResultTlciSpmdCallable.Err
-            "tlci metadata: helper missing required field `signature`")]
-        [else
-          (ResultTlciSpmdCallable.Ok
-            (TlciSpmdCallable name signature specializations))])]
-    [(reader.SexprView.Cons field rest)
+          (Err "tlci metadata: helper missing required field `signature`")]
+        [else (Ok (TlciSpmdCallable name signature specializations))])]
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "name")
                   (if has-name
-                    (ResultTlciSpmdCallable.Err
-                      "tlci metadata: duplicate helper field `name`")
+                    (Err "tlci metadata: duplicate helper field `name`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdCallable.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-helper-fields
                           rest
                           value
@@ -2644,14 +2588,12 @@
                           specializations)]))]
                 [(string.eq (tlci-symbol-text fname) "signature")
                   (if has-signature
-                    (ResultTlciSpmdCallable.Err
-                      "tlci metadata: duplicate helper field `signature`")
+                    (Err "tlci metadata: duplicate helper field `signature`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciSpmdCallable.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-spmd-helper-fields
                           rest
                           name
@@ -2661,9 +2603,8 @@
                           specializations)]))]
                 [(string.eq (tlci-symbol-text fname) "specialization")
                   (match (tlci-spmd-specialization-from-field ftail)
-                    [(ResultTlciSpmdSpecialization.Err message)
-                      (ResultTlciSpmdCallable.Err message)]
-                    [(ResultTlciSpmdSpecialization.Ok specialization)
+                    [(Err message) (Err message)]
+                    [(Ok specialization)
                       (tlci-spmd-helper-fields
                         rest
                         name
@@ -2674,25 +2615,20 @@
                           specializations
                           specialization))])]
                 [else
-                  (ResultTlciSpmdCallable.Err
+                  (Err
                     (str_cat.str-cat
                       "tlci metadata: unknown helper field `"
                       (tlci-symbol-text fname)
                       "`"))])]
-            [_
-              (ResultTlciSpmdCallable.Err
-                "tlci metadata: helper fields must start with a name")])]
-        [_
-          (ResultTlciSpmdCallable.Err
-            "tlci metadata: helper fields must be lists")])]
-    [_
-      (ResultTlciSpmdCallable.Err "tlci metadata: helper fields must be lists")]))
+            [_ (Err "tlci metadata: helper fields must start with a name")])]
+        [_ (Err "tlci metadata: helper fields must be lists")])]
+    [_ (Err "tlci metadata: helper fields must be lists")]))
 
 (define (tlci-spmd-helper-from-form [form : reader.SpannedSexpr]) : ResultTlciSpmdCallable
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym name)
+        [(Sym name)
           (if (string.eq (tlci-symbol-text name) "helper")
             (let
               [field-count : i64 (tlci-sexpr-list-length (clone rest))]
@@ -2706,34 +2642,28 @@
                   (if (< field-count 0)
                     0
                     field-count))))
-            (ResultTlciSpmdCallable.Err
+            (Err
               (str_cat.str-cat
                 "tlci metadata: expected `helper`, got `"
                 (tlci-symbol-text name)
                 "`")))]
         [_
-          (ResultTlciSpmdCallable.Err
-            "tlci metadata: spmd-callables entries must start with `helper`")])]
-    [_
-      (ResultTlciSpmdCallable.Err
-        "tlci metadata: spmd-callables entries must be helper lists")]))
+          (Err "tlci metadata: spmd-callables entries must start with `helper`")])]
+    [_ (Err "tlci metadata: spmd-callables entries must be helper lists")]))
 
 (define (tlci-spmd-callables-from-fields
   [fields : reader.SpannedSexpr]
   [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil) (ResultTlciSpmdCallables.Ok items)]
-    [(reader.SexprView.Cons item rest)
+    [(Nil) (Ok items)]
+    [(Cons item rest)
       (match (tlci-spmd-helper-from-form item)
-        [(ResultTlciSpmdCallable.Err message)
-          (ResultTlciSpmdCallables.Err message)]
-        [(ResultTlciSpmdCallable.Ok callable)
+        [(Err message) (Err message)]
+        [(Ok callable)
           (tlci-spmd-callables-from-fields
             rest
             (tlci-spmd-callables-push items callable))])]
-    [_
-      (ResultTlciSpmdCallables.Err
-        "tlci metadata: spmd-callables must contain helper lists")]))
+    [_ (Err "tlci metadata: spmd-callables must contain helper lists")]))
 
 (define (tlci-spmd-callables-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdCallables
   (let
@@ -2752,65 +2682,54 @@
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-name)
-          (ResultTlciMetadata.Err
-            "tlci metadata: package missing required field `name`")]
+          (Err "tlci metadata: package missing required field `name`")]
         [(not has-version)
-          (ResultTlciMetadata.Err
-            "tlci metadata: package missing required field `version`")]
+          (Err "tlci metadata: package missing required field `version`")]
         [(string.eq name "")
-          (ResultTlciMetadata.Err
-            "tlci metadata: package name must not be empty")]
+          (Err "tlci metadata: package name must not be empty")]
         [(string.eq version "")
-          (ResultTlciMetadata.Err
-            "tlci metadata: package version must not be empty")]
+          (Err "tlci metadata: package version must not be empty")]
         [else
-          (ResultTlciMetadata.Ok
+          (Ok
             (TlciMetadata
               (string.copy (& tlci-metadata-version))
               name
               version
               (tlci-spmd-callables-empty)))])]
-    [(reader.SexprView.Cons field rest)
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (if (string.eq (tlci-symbol-text fname) "name")
                 (if has-name
-                  (ResultTlciMetadata.Err
-                    "tlci metadata: duplicate package field `name`")
+                  (Err "tlci metadata: duplicate package field `name`")
                   (match (tlci-field-string-value
                     ftail
                     (tlci-symbol-text fname))
-                    [(ResultTlciString.Err message)
-                      (ResultTlciMetadata.Err message)]
-                    [(ResultTlciString.Ok value)
+                    [(Err message) (Err message)]
+                    [(Ok value)
                       (tlci-package-fields rest value true version has-version)]))
                 (if (string.eq (tlci-symbol-text fname) "version")
                   (if has-version
-                    (ResultTlciMetadata.Err
-                      "tlci metadata: duplicate package field `version`")
+                    (Err "tlci metadata: duplicate package field `version`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-package-fields rest name has-name value true)]))
-                  (ResultTlciMetadata.Err
+                  (Err
                     (str_cat.str-cat
                       "tlci metadata: unknown package field `"
                       (tlci-symbol-text fname)
                       "`"))))]
-            [_
-              (ResultTlciMetadata.Err
-                "tlci metadata: package fields must start with a name")])]
-        [_
-          (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")])]
-    [_ (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")]))
+            [_ (Err "tlci metadata: package fields must start with a name")])]
+        [_ (Err "tlci metadata: package fields must be lists")])]
+    [_ (Err "tlci metadata: package fields must be lists")]))
 
 (define (tlci-package-from-field [ftail : reader.SpannedSexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
@@ -2825,48 +2744,42 @@
   [spmd-callables : TlciSpmdCallables]
   [has-spmd-callables : bool]) : ResultTlciMetadata
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
+    [(Nil)
       (cond
         [(not has-version)
-          (ResultTlciMetadata.Err
-            "tlci metadata: missing required field `version`")]
+          (Err "tlci metadata: missing required field `version`")]
         [(not
             (or
               (string.eq version tlci-metadata-version)
               (string.eq version tlci-metadata-version-v2)))
-          (ResultTlciMetadata.Err
+          (Err
             (str_cat.str-cat "tlci metadata: unsupported version `" version "`"))]
         [(not has-package)
-          (ResultTlciMetadata.Err
-            "tlci metadata: missing required field `package`")]
+          (Err "tlci metadata: missing required field `package`")]
         [(and (string.eq version tlci-metadata-version) has-spmd-callables)
-          (ResultTlciMetadata.Err
-            "tlci metadata: field `spmd-callables` requires version `v2`")]
+          (Err "tlci metadata: field `spmd-callables` requires version `v2`")]
         [(not
             (string.eq
               (tlci-spmd-callables-validation-error (clone spmd-callables))
               ""))
-          (ResultTlciMetadata.Err
-            (tlci-spmd-callables-validation-error (clone spmd-callables)))]
+          (Err (tlci-spmd-callables-validation-error (clone spmd-callables)))]
         [else
-          (ResultTlciMetadata.Ok
+          (Ok
             (TlciMetadata version package-name package-version spmd-callables))])]
-    [(reader.SexprView.Cons field rest)
+    [(Cons field rest)
       (match (reader.sexpr-view field)
-        [(reader.SexprView.Cons fhead ftail)
+        [(Cons fhead ftail)
           (match (reader.sexpr-view fhead)
-            [(reader.SexprView.Sym fname)
+            [(Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "version")
                   (if has-version
-                    (ResultTlciMetadata.Err
-                      "tlci metadata: duplicate field `version`")
+                    (Err "tlci metadata: duplicate field `version`")
                     (match (tlci-field-string-value
                       ftail
                       (tlci-symbol-text fname))
-                      [(ResultTlciString.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciString.Ok value)
+                      [(Err message) (Err message)]
+                      [(Ok value)
                         (tlci-metadata-fields
                           rest
                           value
@@ -2878,12 +2791,10 @@
                           has-spmd-callables)]))]
                 [(string.eq (tlci-symbol-text fname) "package")
                   (if has-package
-                    (ResultTlciMetadata.Err
-                      "tlci metadata: duplicate field `package`")
+                    (Err "tlci metadata: duplicate field `package`")
                     (match (tlci-package-from-field ftail)
-                      [(ResultTlciMetadata.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciMetadata.Ok parsed)
+                      [(Err message) (Err message)]
+                      [(Ok parsed)
                         (tlci-metadata-fields
                           rest
                           version
@@ -2895,12 +2806,10 @@
                           has-spmd-callables)]))]
                 [(string.eq (tlci-symbol-text fname) "spmd-callables")
                   (if has-spmd-callables
-                    (ResultTlciMetadata.Err
-                      "tlci metadata: duplicate field `spmd-callables`")
+                    (Err "tlci metadata: duplicate field `spmd-callables`")
                     (match (tlci-spmd-callables-from-field ftail)
-                      [(ResultTlciSpmdCallables.Err message)
-                        (ResultTlciMetadata.Err message)]
-                      [(ResultTlciSpmdCallables.Ok parsed)
+                      [(Err message) (Err message)]
+                      [(Ok parsed)
                         (tlci-metadata-fields
                           rest
                           version
@@ -2911,22 +2820,20 @@
                           parsed
                           true)]))]
                 [else
-                  (ResultTlciMetadata.Err
+                  (Err
                     (str_cat.str-cat
                       "tlci metadata: unknown field `"
                       (tlci-symbol-text fname)
                       "`"))])]
-            [_
-              (ResultTlciMetadata.Err
-                "tlci metadata: fields must start with a field name")])]
-        [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")])]
-    [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
+            [_ (Err "tlci metadata: fields must start with a field name")])]
+        [_ (Err "tlci metadata: fields must be lists")])]
+    [_ (Err "tlci metadata: fields must be lists")]))
 
 (define (tlci-metadata-from-form [form : reader.SpannedSexpr]) : ResultTlciMetadata
   (match (reader.sexpr-view form)
-    [(reader.SexprView.Cons head rest)
+    [(Cons head rest)
       (match (reader.sexpr-view head)
-        [(reader.SexprView.Sym name)
+        [(Sym name)
           (if (string.eq (tlci-symbol-text name) "typelisp-tlci-metadata")
             (tlci-metadata-fields
               rest
@@ -2937,26 +2844,21 @@
               false
               (tlci-spmd-callables-empty)
               false)
-            (ResultTlciMetadata.Err
+            (Err
               (str_cat.str-cat
                 "expected `typelisp-tlci-metadata` form, got `"
                 (tlci-symbol-text name)
                 "`")))]
-        [_
-          (ResultTlciMetadata.Err
-            "tlci metadata: form must start with `typelisp-tlci-metadata`")])]
-    [_
-      (ResultTlciMetadata.Err
-        "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
+        [_ (Err "tlci metadata: form must start with `typelisp-tlci-metadata`")])]
+    [_ (Err "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultTlciMetadata
       (match (reader.data-result source)
-        [(reader.ResultSexpr.Err message)
-          (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
-        [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)])]
+        [(Err message) (Err (str_cat.str-cat "tlci metadata: " message))]
+        [(Ok form) (tlci-metadata-from-form form)])]
     (begin
       (reader.sp-node-pool-truncate! mark)
       result)))
@@ -3190,24 +3092,23 @@
   (cond
     [(not
         (string.eq (tlci-metadata-validation-error (clone image.metadata)) ""))
-      (ResultTlciBytes.Err
-        (tlci-metadata-validation-error (clone image.metadata)))]
+      (Err (tlci-metadata-validation-error (clone image.metadata)))]
     [(string.eq image.compiler-build-hash "")
-      (ResultTlciBytes.Err "tlci: compiler build hash must not be empty")]
+      (Err "tlci: compiler build hash must not be empty")]
     [(not (= (% (array-length image.fixups) tlci-section-fixup-record-size) 0))
-      (ResultTlciBytes.Err "tlci: malformed fixup table length")]
+      (Err "tlci: malformed fixup table length")]
     [(not (= (% (array-length image.entries) tlci-section-entry-record-size) 0))
-      (ResultTlciBytes.Err "tlci: malformed entry table length")]
+      (Err "tlci: malformed entry table length")]
     [(not
         (= (% (array-length image.symbols) tlci-section-symbol-record-size) 0))
-      (ResultTlciBytes.Err "tlci: malformed symbol table length")]
+      (Err "tlci: malformed symbol table length")]
     [(not
         (string.eq
           (tlci-import-section-validation-error
             image.imports
             (tlci-import-section-count image.imports))
           ""))
-      (ResultTlciBytes.Err
+      (Err
         (str_cat.str-cat
           "tlci: malformed import section: "
           (tlci-import-section-validation-error
@@ -3323,15 +3224,14 @@
                 (&mut out-bytes)
                 tlci-hash-field-offset
                 (tlci-content-hash out-bytes))
-              (ResultTlciBytes.Ok out-bytes)))))]))
+              (Ok out-bytes)))))]))
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
     [(= image.host-platform tlci-host-platform-x86-64-legacy)
-      (ResultTlciBytes.Err
-        "tlci: new images must record a non-legacy host platform")]
+      (Err "tlci: new images must record a non-legacy host platform")]
     [(not (tlci-host-platform-supported? image.host-platform))
-      (ResultTlciBytes.Err "tlci: unsupported host platform")]
+      (Err "tlci: unsupported host platform")]
     [else (tlci-emit-image-v2-legacy-compatible image)]))
 
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
@@ -3350,16 +3250,15 @@
   (= (% len record-size) 0))
 
 (define (tlci-section-error [name : String]) : ResultTlciImage
-  (ResultTlciImage.Err
-    (str_cat.str-cat "tlci: section `" name "` extends past end")))
+  (Err (str_cat.str-cat "tlci: section `" name "` extends past end")))
 
 (define (tlci-parse-image [bytes : (__tl_dyn-array u8)]) : ResultTlciImage
   (let
     [actual-size : i64 (array-length bytes)]
     (if (< actual-size tlci-header-size)
-      (ResultTlciImage.Err "tlci: truncated header")
+      (Err "tlci: truncated header")
       (if (not (tlci-magic-ok? bytes))
-        (ResultTlciImage.Err "tlci: bad magic")
+        (Err "tlci: bad magic")
         (let
           [version : i64 (tlci-read-u64 bytes tlci-format-version-field-offset)]
           [host-platform : i64 (tlci-read-u64 bytes 16)]
@@ -3407,25 +3306,21 @@
             (tlci-section-end symbols-end imports-offset imports-len)]
           (cond
             [(not (= version tlci-format-version))
-              (ResultTlciImage.Err
+              (Err
                 (str_cat.str-cat
                   "tlci: unsupported format version "
                   (string.int->string version)))]
             [(not (tlci-host-platform-supported? host-platform))
-              (ResultTlciImage.Err "tlci: unsupported host platform")]
+              (Err "tlci: unsupported host platform")]
             [(not (= callback-abi tlci-callback-abi-version))
-              (ResultTlciImage.Err "tlci: unsupported callback ABI version")]
+              (Err "tlci: unsupported callback ABI version")]
             [(not (= declared-size actual-size))
-              (ResultTlciImage.Err
-                "tlci: file size field does not match input length")]
+              (Err "tlci: file size field does not match input length")]
             [(not (tlci-section-range-ok? actual-size hash-offset hash-len))
               (tlci-section-error "compiler-build-hash")]
-            [(= hash-len 0)
-              (ResultTlciImage.Err
-                "tlci: compiler build hash must not be empty")]
+            [(= hash-len 0) (Err "tlci: compiler build hash must not be empty")]
             [(not (= hash-offset tlci-header-size))
-              (ResultTlciImage.Err
-                "tlci: compiler build hash must start after header")]
+              (Err "tlci: compiler build hash must start after header")]
             [(not
                 (tlci-section-range-ok?
                   actual-size
@@ -3433,71 +3328,62 @@
                   metadata-len))
               (tlci-section-error "metadata")]
             [(= metadata-len 0)
-              (ResultTlciImage.Err "tlci: metadata section must not be empty")]
+              (Err "tlci: metadata section must not be empty")]
             [(not (tlci-section-aligned? metadata-offset metadata-len 8))
-              (ResultTlciImage.Err
-                "tlci: metadata section must be 8-byte aligned")]
+              (Err "tlci: metadata section must be 8-byte aligned")]
             [(not (tlci-section-ordered? hash-end metadata-offset metadata-len))
-              (ResultTlciImage.Err
-                "tlci: metadata section overlaps previous section")]
+              (Err "tlci: metadata section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size rodata-offset rodata-len))
               (tlci-section-error "rodata")]
             [(not
                 (tlci-section-aligned? rodata-offset rodata-len tlci-page-align))
-              (ResultTlciImage.Err "tlci: rodata section must be page-aligned")]
+              (Err "tlci: rodata section must be page-aligned")]
             [(not (tlci-section-ordered? metadata-end rodata-offset rodata-len))
-              (ResultTlciImage.Err
-                "tlci: rodata section overlaps previous section")]
+              (Err "tlci: rodata section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size code-offset code-len))
               (tlci-section-error "code")]
             [(not (tlci-section-aligned? code-offset code-len tlci-page-align))
-              (ResultTlciImage.Err "tlci: code section must be page-aligned")]
+              (Err "tlci: code section must be page-aligned")]
             [(not (tlci-section-ordered? rodata-end code-offset code-len))
-              (ResultTlciImage.Err
-                "tlci: code section overlaps previous section")]
+              (Err "tlci: code section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size fixups-offset fixups-len))
               (tlci-section-error "fixups")]
             [(not (tlci-section-aligned? fixups-offset fixups-len 8))
-              (ResultTlciImage.Err "tlci: fixup table must be 8-byte aligned")]
+              (Err "tlci: fixup table must be 8-byte aligned")]
             [(not (tlci-section-ordered? code-end fixups-offset fixups-len))
-              (ResultTlciImage.Err
-                "tlci: fixup table overlaps previous section")]
+              (Err "tlci: fixup table overlaps previous section")]
             [(not
                 (tlci-section-range-ok? actual-size entries-offset entries-len))
               (tlci-section-error "entries")]
             [(not (tlci-section-aligned? entries-offset entries-len 8))
-              (ResultTlciImage.Err "tlci: entry table must be 8-byte aligned")]
+              (Err "tlci: entry table must be 8-byte aligned")]
             [(not (tlci-section-ordered? fixups-end entries-offset entries-len))
-              (ResultTlciImage.Err
-                "tlci: entry table overlaps previous section")]
+              (Err "tlci: entry table overlaps previous section")]
             [(not
                 (tlci-section-range-ok? actual-size symbols-offset symbols-len))
               (tlci-section-error "symbols")]
             [(not (tlci-section-aligned? symbols-offset symbols-len 8))
-              (ResultTlciImage.Err "tlci: symbol table must be 8-byte aligned")]
+              (Err "tlci: symbol table must be 8-byte aligned")]
             [(not
                 (tlci-section-ordered? entries-end symbols-offset symbols-len))
-              (ResultTlciImage.Err
-                "tlci: symbol table overlaps previous section")]
+              (Err "tlci: symbol table overlaps previous section")]
             [(not
                 (tlci-table-len-ok? fixups-len tlci-section-fixup-record-size))
-              (ResultTlciImage.Err "tlci: malformed fixup table length")]
+              (Err "tlci: malformed fixup table length")]
             [(not
                 (tlci-table-len-ok? entries-len tlci-section-entry-record-size))
-              (ResultTlciImage.Err "tlci: malformed entry table length")]
+              (Err "tlci: malformed entry table length")]
             [(not
                 (tlci-table-len-ok? symbols-len tlci-section-symbol-record-size))
-              (ResultTlciImage.Err "tlci: malformed symbol table length")]
+              (Err "tlci: malformed symbol table length")]
             [(not
                 (tlci-section-range-ok? actual-size imports-offset imports-len))
               (tlci-section-error "imports")]
             [(not (tlci-section-aligned? imports-offset imports-len 8))
-              (ResultTlciImage.Err
-                "tlci: import section must be 8-byte aligned")]
+              (Err "tlci: import section must be 8-byte aligned")]
             [(not
                 (tlci-section-ordered? symbols-end imports-offset imports-len))
-              (ResultTlciImage.Err
-                "tlci: import section overlaps previous section")]
+              (Err "tlci: import section overlaps previous section")]
             [(not
                 (let
                   [imports : (__tl_dyn-array u8)
@@ -3505,7 +3391,7 @@
                   (string.eq
                     (tlci-import-section-validation-error imports imports-count)
                     "")))
-              (ResultTlciImage.Err
+              (Err
                 (let
                   [imports : (__tl_dyn-array u8)
                     (tlci-slice-bytes bytes imports-offset imports-len)]
@@ -3513,19 +3399,18 @@
                     "tlci: malformed import section: "
                     (tlci-import-section-validation-error imports imports-count))))]
             [(not (= declared-size content-end))
-              (ResultTlciImage.Err "tlci: file has trailing bytes")]
+              (Err "tlci: file has trailing bytes")]
             [(not (= expected-hash (tlci-content-hash bytes)))
-              (ResultTlciImage.Err "tlci: content hash mismatch")]
+              (Err "tlci: content hash mismatch")]
             [else
               (let
                 [metadata-text : String
                   (tlci-bytes->string bytes metadata-offset metadata-len)]
                 (match (tlci-metadata-parse metadata-text)
-                  [(ResultTlciMetadata.Err message)
-                    (ResultTlciImage.Err
-                      (str_cat.str-cat "tlci: malformed metadata: " message))]
-                  [(ResultTlciMetadata.Ok metadata)
-                    (ResultTlciImage.Ok
+                  [(Err message)
+                    (Err (str_cat.str-cat "tlci: malformed metadata: " message))]
+                  [(Ok metadata)
+                    (Ok
                       (TlciImage
                         host-platform
                         callback-abi

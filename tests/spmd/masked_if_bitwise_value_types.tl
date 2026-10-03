@@ -9,38 +9,35 @@
     [out : (__tl_dyn-array i8) (__tl_make-array i8 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : i8))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : i8 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (if (= (bit-and x 3) 0)
-                (bit-xor 3 x)
-                (bit-or 2 (bit-xor 5 x)))))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : i8 (array-ref xs i)]
-          [want : i8
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (if (= (bit-and x 3) 0)
-                (bit-xor 3 x)
-                (bit-or 2 (bit-xor 5 x))))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : i8))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : i8 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (if (= (bit-and x 3) 0)
+              (bit-xor 3 x)
+              (bit-or 2 (bit-xor 5 x)))))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : i8 (array-ref xs i)]
+        [want : i8
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (if (= (bit-and x 3) 0)
+              (bit-xor 3 x)
+              (bit-or 2 (bit-xor 5 x))))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-u8) : bool
   (let
@@ -49,38 +46,35 @@
     [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : u8))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : u8 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : u8 (array-ref xs i)]
-          [want : u8
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : u8))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : u8 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : u8 (array-ref xs i)]
+        [want : u8
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-i16) : bool
   (let
@@ -89,38 +83,35 @@
     [out : (__tl_dyn-array i16) (__tl_make-array i16 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : i16))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : i16 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : i16 (array-ref xs i)]
-          [want : i16
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : i16))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : i16 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : i16 (array-ref xs i)]
+        [want : i16
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-u16) : bool
   (let
@@ -129,38 +120,35 @@
     [out : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : u16))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : u16 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : u16 (array-ref xs i)]
-          [want : u16
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : u16))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : u16 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : u16 (array-ref xs i)]
+        [want : u16
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-i32) : bool
   (let
@@ -169,38 +157,35 @@
     [out : (__tl_dyn-array i32) (__tl_make-array i32 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : i32))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : i32 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : i32 (array-ref xs i)]
-          [want : i32
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : i32))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : i32 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : i32 (array-ref xs i)]
+        [want : i32
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-u32) : bool
   (let
@@ -209,38 +194,35 @@
     [out : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : u32))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : u32 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : u32 (array-ref xs i)]
-          [want : u32
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : u32))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : u32 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : u32 (array-ref xs i)]
+        [want : u32
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-i64) : bool
   (let
@@ -249,38 +231,35 @@
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (+ i 3))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : i64 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : i64 (array-ref xs i)]
-          [want : i64
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (+ i 3))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : i64 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : i64 (array-ref xs i)]
+        [want : i64
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-u64) : bool
   (let
@@ -289,47 +268,43 @@
     [out : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 3) : u64))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (let
-          [x : u64 (array-ref xs j)]
-          (set!
-            (array-ref out j)
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))])))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [x : u64 (array-ref xs i)]
-          [want : u64
-            (if (= (bit-and x 1) 0)
-              (bit-or 1 x)
-              (match (bit-and x 3)
-                [0 (bit-xor 3 x)]
-                [_ (bit-or 2 (bit-xor 5 x))]))]
-          (begin
-            (if (!= (array-ref out i) want)
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 3) : u64))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (let
+        [x : u64 (array-ref xs j)]
+        (set!
+          (array-ref out j)
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))])))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [x : u64 (array-ref xs i)]
+        [want : u64
+          (if (= (bit-and x 1) 0)
+            (bit-or 1 x)
+            (match (bit-and x 3)
+              [0 (bit-xor 3 x)]
+              [_ (bit-or 2 (bit-xor 5 x))]))]
+        (if (!= (array-ref out i) want)
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (main) : i64
-  (begin
-    (unless (case-i8) (return 1))
-    (unless (case-u8) (return 2))
-    (unless (case-i16) (return 3))
-    (unless (case-u16) (return 4))
-    (unless (case-i32) (return 5))
-    (unless (case-u32) (return 6))
-    (unless (case-i64) (return 7))
-    (unless (case-u64) (return 8))
-    42))
+  (unless (case-i8) (return 1))
+  (unless (case-u8) (return 2))
+  (unless (case-i16) (return 3))
+  (unless (case-u16) (return 4))
+  (unless (case-i32) (return 5))
+  (unless (case-u32) (return 6))
+  (unless (case-i64) (return 7))
+  (unless (case-u64) (return 8))
+  42)

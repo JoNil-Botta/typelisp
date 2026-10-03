@@ -17,11 +17,9 @@
   (set! held (Cell (__tl_make-array i64 n) n)))
 
 (define (observe [c : (& Cell)]) : i64
-  (begin
-    (install! 9)
-    c.len))
+  (install! 9)
+  c.len)
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}\n" (observe (& held)))
-    42))
+  (io.print-format "{}\n" (observe (& held)))
+  42)

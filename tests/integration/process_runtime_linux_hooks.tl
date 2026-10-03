@@ -37,42 +37,37 @@
 (define (reset!) : unit
   (let
     [index : i64 0]
-    (begin
-      (while (< index (array-length counts))
-        (begin
-          (set! (array-ref counts index) 0)
-          (set! index (+ index 1))))
-      (set! fail-kind-a 0)
-      (set! fail-call-a 0)
-      (set! fail-errno-a 0)
-      (set! fail-kind-b 0)
-      (set! fail-call-b 0)
-      (set! fail-errno-b 0)
-      (set! write-max 0)
-      (set! read-max 0)
-      (set! child-fail-kind 0)
-      (set! child-fail-errno 0)
-      (set! marker-mode-value 0)
-      (set! last-child-pid-value -1)
-      (set! last-child-stdout-value -1)
-      (set! last-child-stderr-value -1))))
+    (while (< index (array-length counts))
+      (set! (array-ref counts index) 0)
+      (set! index (+ index 1)))
+    (set! fail-kind-a 0)
+    (set! fail-call-a 0)
+    (set! fail-errno-a 0)
+    (set! fail-kind-b 0)
+    (set! fail-call-b 0)
+    (set! fail-errno-b 0)
+    (set! write-max 0)
+    (set! read-max 0)
+    (set! child-fail-kind 0)
+    (set! child-fail-errno 0)
+    (set! marker-mode-value 0)
+    (set! last-child-pid-value -1)
+    (set! last-child-stdout-value -1)
+    (set! last-child-stderr-value -1)))
 
 (define (fail-on! [kind : i64] [call : i64] [errno-code : i64]) : unit
-  (begin
-    (set! fail-kind-a kind)
-    (set! fail-call-a call)
-    (set! fail-errno-a errno-code)))
+  (set! fail-kind-a kind)
+  (set! fail-call-a call)
+  (set! fail-errno-a errno-code))
 
 (define (fail-second-on! [kind : i64] [call : i64] [errno-code : i64]) : unit
-  (begin
-    (set! fail-kind-b kind)
-    (set! fail-call-b call)
-    (set! fail-errno-b errno-code)))
+  (set! fail-kind-b kind)
+  (set! fail-call-b call)
+  (set! fail-errno-b errno-code))
 
 (define (child-fail-on! [kind : i64] [errno-code : i64]) : unit
-  (begin
-    (set! child-fail-kind kind)
-    (set! child-fail-errno errno-code)))
+  (set! child-fail-kind kind)
+  (set! child-fail-errno errno-code))
 
 (define (set-write-max! [count : i64]) : unit
   (set! write-max count))
@@ -91,12 +86,11 @@
 (define (injected-result [kind : i64]) : i64
   (let
     [call : i64 (+ (array-ref counts kind) 1)]
-    (begin
-      (set! (array-ref counts kind) call)
-      (cond
-        [(and (= kind fail-kind-a) (= call fail-call-a)) (- 0 fail-errno-a)]
-        [(and (= kind fail-kind-b) (= call fail-call-b)) (- 0 fail-errno-b)]
-        [else no-injection]))))
+    (set! (array-ref counts kind) call)
+    (cond
+      [(and (= kind fail-kind-a) (= call fail-call-a)) (- 0 fail-errno-a)]
+      [(and (= kind fail-kind-b) (= call fail-call-b)) (- 0 fail-errno-b)]
+      [else no-injection])))
 
 (define (write-request-count [count : i64]) : i64
   (if (and (> write-max 0) (> count write-max))
@@ -117,10 +111,9 @@
   marker-mode-value)
 
 (define (record-child! [pid : i64] [stdout-fd : i64] [stderr-fd : i64]) : unit
-  (begin
-    (set! last-child-pid-value pid)
-    (set! last-child-stdout-value stdout-fd)
-    (set! last-child-stderr-value stderr-fd)))
+  (set! last-child-pid-value pid)
+  (set! last-child-stdout-value stdout-fd)
+  (set! last-child-stderr-value stderr-fd))
 
 (define (last-child-pid) : i64
   last-child-pid-value)

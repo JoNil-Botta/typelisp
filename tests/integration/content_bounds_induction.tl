@@ -39,13 +39,11 @@
     [keys (i64vec.slots-mut keys-vec)]
     [slot (i64vec.slots slot-vec)]
     [i : i64 0]
-    (begin
-      (set! (array-ref keys count) 0)
-      (while (< i count)
-        (begin
-          (set! (array-ref scatter (array-ref slot i)) i)
-          (set! i (+ i 1))))
-      count)))
+    (set! (array-ref keys count) 0)
+    (while (< i count)
+      (set! (array-ref scatter (array-ref slot i)) i)
+      (set! i (+ i 1)))
+    count))
 
 ;; The load side: `scatter[j]` is an index into a length-equal sibling.
 (define (ind-walk
@@ -57,31 +55,27 @@
     [marks (i64vec.slots-mut marks-vec)]
     [j : i64 0]
     [acc : i64 0]
-    (begin
-      (set! (array-ref marks 0) 1)
-      (while (< j total)
-        (let
-          [e : i64 (array-ref scatter j)]
-          (begin
-            (set! (array-ref marks e) (+ (array-ref marks e) 1))
-            (set! acc (+ acc (array-ref marks e)))
-            (set! j (+ j 1)))))
-      acc)))
+    (set! (array-ref marks 0) 1)
+    (while (< j total)
+      (let
+        [e : i64 (array-ref scatter j)]
+        (set! (array-ref marks e) (+ (array-ref marks e) 1))
+        (set! acc (+ acc (array-ref marks e)))
+        (set! j (+ j 1))))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [m : i64 (* n 2)]
     [i : i64 0]
-    (begin
-      (set! ind-keys (zero-vec n))
-      (set! ind-marks (zero-vec n))
-      (set! ind-scatter (zero-vec m))
-      (set! ind-slot (zero-vec m))
-      (while (< i m)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut ind-slot)) i) i)
-          (set! i (+ i 1))))
-      (ind-fill (&mut ind-scatter) (&mut ind-keys) (& ind-slot) (- n 1))
-      (io.print-format "{}\n" (ind-walk (& ind-scatter) (&mut ind-marks) m))
-      42)))
+    (set! ind-keys (zero-vec n))
+    (set! ind-marks (zero-vec n))
+    (set! ind-scatter (zero-vec m))
+    (set! ind-slot (zero-vec m))
+    (while (< i m)
+      (set! (array-ref (i64vec.slots-mut (&mut ind-slot)) i) i)
+      (set! i (+ i 1)))
+    (ind-fill (&mut ind-scatter) (&mut ind-keys) (& ind-slot) (- n 1))
+    (io.print-format "{}\n" (ind-walk (& ind-scatter) (&mut ind-marks) m))
+    42))

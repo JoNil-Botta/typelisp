@@ -18,35 +18,31 @@
     [pos : i64 0]
     [k : i64 0]
     [ok : bool true]
-    (begin
-      (while (and (< k segments) ok)
-        (begin
-          (if (or (>= pos n) (not (= (string.string-ref path pos) '/')))
-            (set! ok false)
-            (let
-              [b : i64 0]
-              (begin
-                (while (and (< b m) ok)
-                  (if (or
-                    (>= (+ pos (+ b 1)) n)
-                    (not
-                      (=
-                        (string.string-ref path (+ pos (+ b 1)))
-                        (string.string-ref want b))))
-                    (set! ok false)
-                    (set! b (+ b 1))))
-                (set! pos (+ pos (+ m 1))))))
-          (set! k (+ k 1))))
-      (if ok
-        (+ (* k 100) pos)
-        (- 0 (+ (* k 100) pos))))))
+    (while (and (< k segments) ok)
+      (if (or (>= pos n) (not (= (string.string-ref path pos) '/')))
+        (set! ok false)
+        (let
+          [b : i64 0]
+          (while (and (< b m) ok)
+            (if (or
+              (>= (+ pos (+ b 1)) n)
+              (not
+                (=
+                  (string.string-ref path (+ pos (+ b 1)))
+                  (string.string-ref want b))))
+              (set! ok false)
+              (set! b (+ b 1))))
+          (set! pos (+ pos (+ m 1)))))
+      (set! k (+ k 1)))
+    (if ok
+      (+ (* k 100) pos)
+      (- 0 (+ (* k 100) pos)))))
 
 (define (main) : i64
-  (begin
-    (io.println "{}" (match-words "/ab/ab/ab" "ab" 3))
-    (io.println "{}" (match-words "/ab/ax/ab" "ab" 3))
-    (io.println "{}" (match-words "/ab-ab/ab" "ab" 3))
-    (io.println "{}" (match-words "/ab/a" "ab" 3))
-    (io.println "{}" (match-words "" "ab" 0))
-    (io.println "{}" (match-words "/ab/ab" "" 2))
-    42))
+  (io.println "{}" (match-words "/ab/ab/ab" "ab" 3))
+  (io.println "{}" (match-words "/ab/ax/ab" "ab" 3))
+  (io.println "{}" (match-words "/ab-ab/ab" "ab" 3))
+  (io.println "{}" (match-words "/ab/a" "ab" 3))
+  (io.println "{}" (match-words "" "ab" 0))
+  (io.println "{}" (match-words "/ab/ab" "" 2))
+  42)

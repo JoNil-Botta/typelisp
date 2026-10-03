@@ -44,17 +44,16 @@
     ;; no CLI args: arg-count = 1 (program name), so a = 5, b = 4.
     [a : i64 (+ (io.arg-count) 4)]
     [b : i64 (+ (io.arg-count) 3)]
-    (begin
-      (if (> b 100)
-        (begin
-          (poke2 dead-early a b)
-          (poke3 div-arm a b 0)
-          unit)
+    (if (> b 100)
+      (begin
+        (poke2 dead-early a b)
+        (poke3 div-arm a b 0)
         unit)
-      ;; dead-early(5,4): t = 27, bump(27) = 28 -> 55
-      (unless (= (dead-early a b) 55) (return 1))
-      ;; div-arm(5,4,0) = 9; (5,4,1) = 1; (5,4,2) = 5%4 = 1
-      (unless (= (div-arm a b 0) 9) (return 2))
-      (unless (= (div-arm a b 1) 1) (return 3))
-      (unless (= (div-arm a b 2) 1) (return 4))
-      42)))
+      unit)
+    ;; dead-early(5,4): t = 27, bump(27) = 28 -> 55
+    (unless (= (dead-early a b) 55) (return 1))
+    ;; div-arm(5,4,0) = 9; (5,4,1) = 1; (5,4,2) = 5%4 = 1
+    (unless (= (div-arm a b 0) 9) (return 2))
+    (unless (= (div-arm a b 1) 1) (return 3))
+    (unless (= (div-arm a b 2) 1) (return 4))
+    42))

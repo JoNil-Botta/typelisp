@@ -57,25 +57,22 @@
     (let
       [i : i64 0]
       [hit : i64 0]
-      (begin
-        (while (and (< i n) (= hit 0))
-          (begin
-            (when
-              (or
-                (!= (array-ref a i) (array-ref b (+ base i)))
-                (!= (array-ref c i) (array-ref d (+ base i))))
-              (set! hit 1))
-            (set! i (+ i 1))))
+      (while (and (< i n) (= hit 0))
         (when
-          (= hit 1)
-          (let
-            [k : i64 0]
-            (while (< k n)
-              (begin
-                (set! (array-ref b (+ base k)) (array-ref a k))
-                (set! (array-ref d (+ base k)) (array-ref c k))
-                (set! k (+ k 1))))))
-        hit))))
+          (or
+            (!= (array-ref a i) (array-ref b (+ base i)))
+            (!= (array-ref c i) (array-ref d (+ base i))))
+          (set! hit 1))
+        (set! i (+ i 1)))
+      (when
+        (= hit 1)
+        (let
+          [k : i64 0]
+          (while (< k n)
+            (set! (array-ref b (+ base k)) (array-ref a k))
+            (set! (array-ref d (+ base k)) (array-ref c k))
+            (set! k (+ k 1)))))
+      hit)))
 
 ;; Nearest refused neighbour: the loaded element is read twice, so it is not
 ;; single-use, the fold cannot retire it, and it keeps a home of its own. The
@@ -96,32 +93,29 @@
       [i : i64 0]
       [hit : i64 0]
       [sum : i64 0]
-      (begin
-        (while (and (< i n) (= hit 0))
-          ;; each element is loaded ONCE, ahead of the compare, so the compare
-          ;; and the sum share that load on every path through the `or`
-          (let
-            [bi : i64 (array-ref b (+ base i))]
-            [di : i64 (array-ref d (+ base i))]
-            (begin
-              (when
-                (or (!= (array-ref a i) bi) (!= (array-ref c i) di))
-                (set! hit 1))
-              (set! sum (+ sum bi))
-              (set! sum (+ sum di))
-              (set! i (+ i 1)))))
-        (when
-          (= hit 1)
-          (let
-            [k : i64 0]
-            (while (< k n)
-              (begin
-                (set! (array-ref b (+ base k)) (array-ref a k))
-                (set! (array-ref d (+ base k)) (array-ref c k))
-                (set! k (+ k 1))))))
-        (if (< sum 0)
-          (- 0 hit)
-          hit)))))
+      (while (and (< i n) (= hit 0))
+        ;; each element is loaded ONCE, ahead of the compare, so the compare
+        ;; and the sum share that load on every path through the `or`
+        (let
+          [bi : i64 (array-ref b (+ base i))]
+          [di : i64 (array-ref d (+ base i))]
+          (when
+            (or (!= (array-ref a i) bi) (!= (array-ref c i) di))
+            (set! hit 1))
+          (set! sum (+ sum bi))
+          (set! sum (+ sum di))
+          (set! i (+ i 1))))
+      (when
+        (= hit 1)
+        (let
+          [k : i64 0]
+          (while (< k n)
+            (set! (array-ref b (+ base k)) (array-ref a k))
+            (set! (array-ref d (+ base k)) (array-ref c k))
+            (set! k (+ k 1)))))
+      (if (< sum 0)
+        (- 0 hit)
+        hit))))
 
 (define (main) : i64
   (let
@@ -131,52 +125,45 @@
     [d : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     [ok : i64 0]
     [trial : i64 0]
-    (begin
-      (while (< trial 4)
-        (let
-          [i : i64 0]
-          [left : i64 0]
-          [right : i64 0]
-          (begin
-            (while (< i 8)
-              (begin
-                (set! (array-ref a i) i)
-                (set! (array-ref c i) (* i 3))
-                (set! i (+ i 1))))
-            (set! i 0)
-            (while (< i 16)
-              (begin
-                (set! (array-ref b i) 0)
-                (set! (array-ref d i) 0)
-                (set! i (+ i 1))))
-            (when
-              (> trial 0)
-              (let
-                [k : i64 0]
-                (while (< k 8)
-                  (begin
-                    (set! (array-ref b (+ 8 k)) (array-ref a k))
-                    (set! (array-ref d (+ 8 k)) (array-ref c k))
-                    (set! k (+ k 1))))))
-            (set! left (changed? (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
-            (set! i 0)
-            (while (< i 16)
-              (begin
-                (set! (array-ref b i) 0)
-                (set! (array-ref d i) 0)
-                (set! i (+ i 1))))
-            (when
-              (> trial 0)
-              (let
-                [k : i64 0]
-                (while (< k 8)
-                  (begin
-                    (set! (array-ref b (+ 8 k)) (array-ref a k))
-                    (set! (array-ref d (+ 8 k)) (array-ref c k))
-                    (set! k (+ k 1))))))
-            (set! right (refused (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
-            (when (= left right) (set! ok (+ ok 1)))
-            (set! trial (+ trial 1)))))
-      (if (= ok 4)
-        42
-        1))))
+    (while (< trial 4)
+      (let
+        [i : i64 0]
+        [left : i64 0]
+        [right : i64 0]
+        (while (< i 8)
+          (set! (array-ref a i) i)
+          (set! (array-ref c i) (* i 3))
+          (set! i (+ i 1)))
+        (set! i 0)
+        (while (< i 16)
+          (set! (array-ref b i) 0)
+          (set! (array-ref d i) 0)
+          (set! i (+ i 1)))
+        (when
+          (> trial 0)
+          (let
+            [k : i64 0]
+            (while (< k 8)
+              (set! (array-ref b (+ 8 k)) (array-ref a k))
+              (set! (array-ref d (+ 8 k)) (array-ref c k))
+              (set! k (+ k 1)))))
+        (set! left (changed? (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
+        (set! i 0)
+        (while (< i 16)
+          (set! (array-ref b i) 0)
+          (set! (array-ref d i) 0)
+          (set! i (+ i 1)))
+        (when
+          (> trial 0)
+          (let
+            [k : i64 0]
+            (while (< k 8)
+              (set! (array-ref b (+ 8 k)) (array-ref a k))
+              (set! (array-ref d (+ 8 k)) (array-ref c k))
+              (set! k (+ k 1)))))
+        (set! right (refused (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
+        (when (= left right) (set! ok (+ ok 1)))
+        (set! trial (+ trial 1))))
+    (if (= ok 4)
+      42
+      1)))

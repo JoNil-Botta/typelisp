@@ -36,34 +36,32 @@
     [d : i64 4]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 100)
-        (begin
-          (set! acc (+ acc (probe i)))
-          ; the call every value spans
-          (set! acc (+ acc (+ a i)))
-          ; a,b,c,d stay hot (4-5 refs each)
-          (set! acc (+ acc (* 2 a)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (+ b i)))
-          (set! acc (+ acc (* 2 b)))
-          (set! b (+ b 1))
-          (set! acc (+ acc (+ c i)))
-          (set! acc (+ acc (* 2 c)))
-          (set! c (+ c 1))
-          (set! acc (+ acc (+ d i)))
-          (set! acc (+ acc (* 2 d)))
-          (set! d (+ d 1))
-          (set! acc (+ acc (* v i)))
-          ; v's call-free 3-use region
-          (set! acc (+ acc (* v a)))
-          (set! acc (+ acc (* v b)))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (+ acc (+ a (+ b (+ c (+ d v)))))]
-        (if (> rounds 1)
-          (+ r (churn v (- rounds 1)))
-          r)))))
+    (while (< i 100)
+      (set! acc (+ acc (probe i)))
+      ; the call every value spans
+      (set! acc (+ acc (+ a i)))
+      ; a,b,c,d stay hot (4-5 refs each)
+      (set! acc (+ acc (* 2 a)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (+ b i)))
+      (set! acc (+ acc (* 2 b)))
+      (set! b (+ b 1))
+      (set! acc (+ acc (+ c i)))
+      (set! acc (+ acc (* 2 c)))
+      (set! c (+ c 1))
+      (set! acc (+ acc (+ d i)))
+      (set! acc (+ acc (* 2 d)))
+      (set! d (+ d 1))
+      (set! acc (+ acc (* v i)))
+      ; v's call-free 3-use region
+      (set! acc (+ acc (* v a)))
+      (set! acc (+ acc (* v b)))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (+ acc (+ a (+ b (+ c (+ d v)))))]
+      (if (> rounds 1)
+        (+ r (churn v (- rounds 1)))
+        r))))
 
 (define (main) : i64
   (let

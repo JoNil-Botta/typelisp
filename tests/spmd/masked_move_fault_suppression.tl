@@ -21,12 +21,11 @@
     (let
       [descriptor : i64 (cast (tl_alloc (cast 16 : u64)) : i64)]
       [handle : i64 (cast (tl_alloc (cast 8 : u64)) : i64)]
-      (begin
-        (write-i64! descriptor data)
-        (write-i64! (+ descriptor 8) len)
-        (write-i64! handle descriptor)
-        (unsafe
-          (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64)))))))))
+      (write-i64! descriptor data)
+      (write-i64! (+ descriptor 8) len)
+      (write-i64! handle descriptor)
+      (unsafe
+        (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64))))))))
 
 (cfg
   linux
@@ -68,24 +67,23 @@
               [source : (__tl_dyn-array i64) (array-i64-from-raw source-data 4)]
               [destination : (__tl_dyn-array i64)
                 (array-i64-from-raw destination-data 4)]
-              (begin
-                (write-i64! source-data 17)
-                (write-i64! (+ source-data 8) 29)
-                (write-i64! destination-data 0)
-                (write-i64! (+ destination-data 8) 0)
-                (masked-copy source destination)
-                (let
-                  [first : i64 (read-i64 destination-data)]
-                  [second : i64 (read-i64 (+ destination-data 8))]
-                  [_source-free : i64
-                    (unsafe
-                      (syscall 11 source-map 4096))]
-                  [_destination-free : i64
-                    (unsafe
-                      (syscall 11 destination-map 4096))]
-                  (if (and (= first 17) (= second 29))
-                    42
-                    4))))))))))
+              (write-i64! source-data 17)
+              (write-i64! (+ source-data 8) 29)
+              (write-i64! destination-data 0)
+              (write-i64! (+ destination-data 8) 0)
+              (masked-copy source destination)
+              (let
+                [first : i64 (read-i64 destination-data)]
+                [second : i64 (read-i64 (+ destination-data 8))]
+                [_source-free : i64
+                  (unsafe
+                    (syscall 11 source-map 4096))]
+                [_destination-free : i64
+                  (unsafe
+                    (syscall 11 destination-map 4096))]
+                (if (and (= first 17) (= second 29))
+                  42
+                  4)))))))))
 
 (cfg
   windows

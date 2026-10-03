@@ -20,9 +20,8 @@
   s)
 
 (define (slice-mut-sum [p0 : i64] [p1 : i64] [s : (&mut s (Slice i64))]) : i64
-  (begin
-    (set! (array-ref s 0) (+ p0 p1))
-    (+ (array-ref s 0) (array-length s))))
+  (set! (array-ref s 0) (+ p0 p1))
+  (+ (array-ref s 0) (array-length s)))
 
 (define (slice-ref-value [_value : (& value i64)]) : i64
   1)
@@ -38,11 +37,10 @@
     (+ v.a (+ v.b v.c))))
 
 (define (triple-mut [s : (&mut s (Slice SliceTriple))]) : i64
-  (begin
-    (set! (array-ref s 0) (SliceTriple 7 8 9))
-    (let
-      [v : SliceTriple (array-ref s 0)]
-      (+ v.a (+ v.b v.c)))))
+  (set! (array-ref s 0) (SliceTriple 7 8 9))
+  (let
+    [v : SliceTriple (array-ref s 0)]
+    (+ v.a (+ v.b v.c))))
 
 (define (nested-sum [s : (& s (Slice (Array i64 2)))]) : i64
   (+ (array-ref (array-ref s 0) 1) (array-ref (array-ref s 1) 0)))
@@ -61,21 +59,20 @@
   [e : (&mut e (Slice i64))]
   [f : (&mut f (Slice i64))]
   [g : (&mut g (Slice i64))]) : i64
-  (begin
-    (set! (array-ref a 0) 1)
-    (set! (array-ref b 0) 2)
-    (set! (array-ref c 0) 3)
-    (set! (array-ref d 0) 4)
-    (set! (array-ref e 0) 5)
-    (set! (array-ref f 0) 6)
-    (set! (array-ref g 0) 7)
+  (set! (array-ref a 0) 1)
+  (set! (array-ref b 0) 2)
+  (set! (array-ref c 0) 3)
+  (set! (array-ref d 0) 4)
+  (set! (array-ref e 0) 5)
+  (set! (array-ref f 0) 6)
+  (set! (array-ref g 0) 7)
+  (+
+    (+ (array-ref a 0) (array-ref b 0))
     (+
-      (+ (array-ref a 0) (array-ref b 0))
+      (+ (array-ref c 0) (array-ref d 0))
       (+
-        (+ (array-ref c 0) (array-ref d 0))
-        (+
-          (+ (array-ref e 0) (array-ref f 0))
-          (+ (array-ref g 0) (+ (length a) (length g))))))))
+        (+ (array-ref e 0) (array-ref f 0))
+        (+ (array-ref g 0) (+ (length a) (length g)))))))
 
 (define (slice-indirect-seven-call
   [a : (&mut a (Slice i64))]

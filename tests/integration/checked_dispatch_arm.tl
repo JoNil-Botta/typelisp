@@ -84,14 +84,10 @@
   (let
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r rows)
-        (begin
-          (set!
-            acc
-            (bit-xor acc (da-dispatch tab (bit-and r 7) (+ r 1) (+ r 5))))
-          (set! r (+ r 1))))
-      acc)))
+    (while (< r rows)
+      (set! acc (bit-xor acc (da-dispatch tab (bit-and r 7) (+ r 1) (+ r 5))))
+      (set! r (+ r 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -99,13 +95,11 @@
     [i : i64 0]
     [total : i64 0]
     [cold : i64 0]
-    (begin
-      (while (< i 16)
-        (begin
-          (set! (array-ref tab i) (+ (* i 7) 3))
-          (set! i (+ i 1))))
-      (set! total (da-walk (& tab) 64))
-      (set! cold (+ (da-probe (& tab) 2) (da-dispatch (& tab) 1 3 4)))
-      (unless (= total 2944) (return 1))
-      (unless (= cold 15475) (return 2))
-      42)))
+    (while (< i 16)
+      (set! (array-ref tab i) (+ (* i 7) 3))
+      (set! i (+ i 1)))
+    (set! total (da-walk (& tab) 64))
+    (set! cold (+ (da-probe (& tab) 2) (da-dispatch (& tab) 1 3 4)))
+    (unless (= total 2944) (return 1))
+    (unless (= cold 15475) (return 2))
+    42))

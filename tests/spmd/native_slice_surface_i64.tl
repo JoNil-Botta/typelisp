@@ -10,9 +10,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (i64v.push-ref! v (+ (* i scale) bias))
-        (set! i (+ i 1))))))
+      (i64v.push-ref! v (+ (* i scale) bias))
+      (set! i (+ i 1)))))
 
 (define (fill-vector-foreach
   [a : (& a i64v.Vec)]
@@ -53,14 +52,12 @@
     (let
       [av : i64 (array-ref a i)]
       [bv : i64 (array-ref b i)]
-      (begin
-        (set! (array-ref out i) (+ av bv))
-        (while (> (array-ref remaining i) 0)
-          (begin
-            (set!
-              (array-ref out i)
-              (+ (array-ref out i) (+ (array-ref a i) (array-ref b i))))
-            (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))))
+      (set! (array-ref out i) (+ av bv))
+      (while (> (array-ref remaining i) 0)
+        (set!
+          (array-ref out i)
+          (+ (array-ref out i) (+ (array-ref a i) (array-ref b i))))
+        (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))
 
 (define (masked-vector-slice-case
   [a : (& a i64v.Vec)]
@@ -71,33 +68,30 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (i64v.set-ref! remaining i (+ 1 (bit-and i 3)))
-          (i64v.set-ref! out i -777)
-          (set! i (+ i 1))))
+    (while (< i n)
+      (i64v.set-ref! remaining i (+ 1 (bit-and i 3)))
+      (i64v.set-ref! out i -777)
+      (set! i (+ i 1)))
+    (let
+      [a-view : (& a (Slice i64)) (slice-view (i64v.view a) 0 n)]
+      [b-view : (& b (Slice i64)) (slice-view (i64v.view b) 0 n)]
+      [remaining-view : (&mut remaining (Slice i64))
+        (slice-mut-view (i64v.view-mut remaining) 0 n)]
+      [out-view : (&mut out (Slice i64))
+        (slice-mut-view (i64v.view-mut out) 0 n)]
+      (masked-slice-foreach a-view b-view remaining-view out-view n))
+    (set! i 0)
+    (while (and ok (< i n))
       (let
-        [a-view : (& a (Slice i64)) (slice-view (i64v.view a) 0 n)]
-        [b-view : (& b (Slice i64)) (slice-view (i64v.view b) 0 n)]
-        [remaining-view : (&mut remaining (Slice i64))
-          (slice-mut-view (i64v.view-mut remaining) 0 n)]
-        [out-view : (&mut out (Slice i64))
-          (slice-mut-view (i64v.view-mut out) 0 n)]
-        (masked-slice-foreach a-view b-view remaining-view out-view n))
-      (set! i 0)
-      (while (and ok (< i n))
-        (let
-          [sum : i64 (+ (i64v.get a i 0) (i64v.get b i 0))]
-          [trips : i64 (+ 1 (bit-and i 3))]
-          (begin
-            (if (and
-              (= (i64v.get remaining i -1) 0)
-              (= (i64v.get out i -1) (* (+ trips 1) sum)))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+        [sum : i64 (+ (i64v.get a i 0) (i64v.get b i 0))]
+        [trips : i64 (+ 1 (bit-and i 3))]
+        (if (and
+          (= (i64v.get remaining i -1) 0)
+          (= (i64v.get out i -1) (* (+ trips 1) sum)))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (reduce-slice-sum [values : (& values (Slice i64))] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref values i)))
@@ -110,20 +104,18 @@
     [i : i64 0]
     [expected : i64 0]
     [ok : bool true]
-    (begin
-      (spmd-scan
-        sum
-        ([j : i64 0 n] [prefix : i64 0])
-        (array-ref values j)
-        (set! (array-ref out j) prefix))
-      (while (and ok (< i n))
-        (begin
-          (set! expected (+ expected (array-ref values i)))
-          (if (= (array-ref out i) expected)
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (spmd-scan
+      sum
+      ([j : i64 0 n] [prefix : i64 0])
+      (array-ref values j)
+      (set! (array-ref out j) prefix))
+    (while (and ok (< i n))
+      (set! expected (+ expected (array-ref values i)))
+      (if (= (array-ref out i) expected)
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (slice-case
   [a : (& a (Slice i64))]
@@ -133,15 +125,13 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (fill-slice-foreach a b out n)
-      (while (and ok (< i n))
-        (begin
-          (if (= (array-ref out i) (+ (array-ref a i) (array-ref b i)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (fill-slice-foreach a b out n)
+    (while (and ok (< i n))
+      (if (= (array-ref out i) (+ (array-ref a i) (array-ref b i)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (vector-slice-case
   [a : (& a i64v.Vec)]
@@ -166,14 +156,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i n))
-        (begin
-          (if (= (i64v.get out i 0) (+ (i64v.get a i 0) (i64v.get b i 0)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (and ok (< i n))
+      (if (= (i64v.get out i 0) (+ (i64v.get a i 0) (i64v.get b i 0)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (fill-split-halves!
   [left : (&mut left (Slice i64))]
@@ -195,9 +183,8 @@
           (slice-split-at-mut view 7)]
         [left : (&mut items (Slice i64)) (tuple-ref halves 0)]
         [right : (&mut items (Slice i64)) (tuple-ref halves 1)]
-        (begin
-          (fill-split-halves! left right 7)
-          (+ (array-ref left 6) (array-ref right 6))))]
+        (fill-split-halves! left right 7)
+        (+ (array-ref left 6) (array-ref right 6)))]
     (and
       (= score 33)
       (= (array-ref items 0) 1)
@@ -259,82 +246,81 @@
     [remaining : i64v.Vec (i64v.with-capacity capacity)]
     [masked-out : i64v.Vec (i64v.with-capacity capacity)]
     [ok : bool true]
-    (begin
-      (init-vec (&mut a) capacity 2 1)
-      (init-vec (&mut b) capacity 3 2)
-      (init-vec (&mut out) capacity 0 -777)
-      (init-vec (&mut remaining) capacity 0 0)
-      (init-vec (&mut masked-out) capacity 0 -777)
-      ;; Generated vector backing remains a first-class borrowed SPMD surface.
-      (fill-vector-foreach (& a) (& b) (&mut out) 17)
-      (if (vector-prefix-ok? (& a) (& b) (& out) 17)
-        unit
-        (set! ok false))
-      ;; Zero-length end views, sub-gangs, exact gangs for both SIMD widths,
-      ;; and multiple-gang tails all use the same native Slice kernel.
-      (if (vector-slice-case (& a) (& b) (&mut out) 40 40 40 0)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 2 4 6 1)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 3 5 7 3)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 4 6 8 4)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 1 2 5 8)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 2 3 5 9)
-        unit
-        (set! ok false))
-      (if (vector-slice-case (& a) (& b) (&mut out) 1 2 5 17)
-        unit
-        (set! ok false))
-      ;; Zero width, a sub-gang, a gang tail, and a multi-gang tail all use the
-      ;; masked/varying native-Slice loop above.
-      (if (masked-vector-slice-case
-        (& a)
-        (& b)
-        (&mut remaining)
-        (&mut masked-out)
-        0)
-        unit
-        (set! ok false))
-      (if (masked-vector-slice-case
-        (& a)
-        (& b)
-        (&mut remaining)
-        (&mut masked-out)
-        1)
-        unit
-        (set! ok false))
-      (if (masked-vector-slice-case
-        (& a)
-        (& b)
-        (&mut remaining)
-        (&mut masked-out)
-        9)
-        unit
-        (set! ok false))
-      (if (masked-vector-slice-case
-        (& a)
-        (& b)
-        (&mut remaining)
-        (&mut masked-out)
-        33)
-        unit
-        (set! ok false))
-      (if (= (reduce-slice-sum (slice-view (i64v.view (& a)) 3 9) 9) 135)
-        unit
-        (set! ok false))
-      (if (and
-        ok
-        (= (i64v.get (& out) 0 0) 3)
-        (= (i64v.get (& out) 39 0) -777)
-        (fixed-slice-case)
-        (split-spmd-case))
-        42
-        1))))
+    (init-vec (&mut a) capacity 2 1)
+    (init-vec (&mut b) capacity 3 2)
+    (init-vec (&mut out) capacity 0 -777)
+    (init-vec (&mut remaining) capacity 0 0)
+    (init-vec (&mut masked-out) capacity 0 -777)
+    ;; Generated vector backing remains a first-class borrowed SPMD surface.
+    (fill-vector-foreach (& a) (& b) (&mut out) 17)
+    (if (vector-prefix-ok? (& a) (& b) (& out) 17)
+      unit
+      (set! ok false))
+    ;; Zero-length end views, sub-gangs, exact gangs for both SIMD widths,
+    ;; and multiple-gang tails all use the same native Slice kernel.
+    (if (vector-slice-case (& a) (& b) (&mut out) 40 40 40 0)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 2 4 6 1)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 3 5 7 3)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 4 6 8 4)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 1 2 5 8)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 2 3 5 9)
+      unit
+      (set! ok false))
+    (if (vector-slice-case (& a) (& b) (&mut out) 1 2 5 17)
+      unit
+      (set! ok false))
+    ;; Zero width, a sub-gang, a gang tail, and a multi-gang tail all use the
+    ;; masked/varying native-Slice loop above.
+    (if (masked-vector-slice-case
+      (& a)
+      (& b)
+      (&mut remaining)
+      (&mut masked-out)
+      0)
+      unit
+      (set! ok false))
+    (if (masked-vector-slice-case
+      (& a)
+      (& b)
+      (&mut remaining)
+      (&mut masked-out)
+      1)
+      unit
+      (set! ok false))
+    (if (masked-vector-slice-case
+      (& a)
+      (& b)
+      (&mut remaining)
+      (&mut masked-out)
+      9)
+      unit
+      (set! ok false))
+    (if (masked-vector-slice-case
+      (& a)
+      (& b)
+      (&mut remaining)
+      (&mut masked-out)
+      33)
+      unit
+      (set! ok false))
+    (if (= (reduce-slice-sum (slice-view (i64v.view (& a)) 3 9) 9) 135)
+      unit
+      (set! ok false))
+    (if (and
+      ok
+      (= (i64v.get (& out) 0 0) 3)
+      (= (i64v.get (& out) 39 0) -777)
+      (fixed-slice-case)
+      (split-spmd-case))
+      42
+      1)))

@@ -17,11 +17,10 @@
   (let
     [ps : points.Vec (points.new)]
     [ss : shades.Vec (shades.new)]
-    (begin
-      (points.push! ps (Point 40 2))
-      (shades.push! ss (Dark))
-      (if (and
-        (points.contains? (& ps) (Point 40 2))
-        (shades.contains? (& ss) (Dark)))
-        42
-        1))))
+    (points.push! ps (Point 40 2))
+    (shades.push! ss (Dark))
+    (if (and
+      (points.contains? (& ps) (Point 40 2))
+      (shades.contains? (& ss) (Dark)))
+      42
+      1)))

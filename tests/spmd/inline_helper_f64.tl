@@ -12,12 +12,10 @@
   (let
     [i : i64 0]
     [sum : f64 0.0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! sum (+ sum (array-ref xs i)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i n)
+      (set! sum (+ sum (array-ref xs i)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (let
@@ -25,12 +23,10 @@
     [xs : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [out : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (cast (+ i 1) : f64))
-          (set! i (+ i 1))))
-      (fill-inline-f64 (& xs) (&mut out) n)
-      (if (= (sum-array (& out) n) 195.0)
-        42
-        1))))
+    (while (< i n)
+      (set! (array-ref xs i) (cast (+ i 1) : f64))
+      (set! i (+ i 1)))
+    (fill-inline-f64 (& xs) (&mut out) n)
+    (if (= (sum-array (& out) n) 195.0)
+      42
+      1)))

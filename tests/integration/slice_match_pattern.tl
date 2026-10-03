@@ -119,29 +119,24 @@
   (match xs
     [(slice) unit]
     [(slice x & rest)
-      (begin
-        (when
-          (> (array-length rest) 0)
-          (set! (array-ref rest 0) (+ (array-ref rest 0) x)))
-        (bump-all! rest))]))
+      (when
+        (> (array-length rest) 0)
+        (set! (array-ref rest 0) (+ (array-ref rest 0) x)))
+      (bump-all! rest)]))
 
 (define (count-all! [counters : (&mut (Slice Counter))]) : unit
   (match counters
     [(slice) unit]
     [(slice counter & rest)
-      (begin
-        (set!
-          counter.count
-          (+ counter.count (string.string-length counter.name)))
-        (count-all! rest))]))
+      (set! counter.count (+ counter.count (string.string-length counter.name)))
+      (count-all! rest)]))
 
 ;; A non-Copy element of a mutable view binds as `&mut`, so it can be replaced.
 (define (replace-first! [words : (&mut (Slice String))]) : i64
   (match words
     [(slice first & rest)
-      (begin
-        (set! (deref first) "replaced")
-        (array-length rest))]
+      (set! (deref first) "replaced")
+      (array-length rest)]
     [(slice) 0]))
 
 (define (wide-slice-score) : i64
@@ -188,104 +183,92 @@
 (define (vector-score) : i64
   (let
     [values : i64vec.Vec (i64vec.new)]
-    (begin
-      (i64vec.push! values 30)
-      (i64vec.push! values 12)
-      (match (i64vec.view (& values))
-        [(slice a b) (+ a b)]
-        [_ -1]))))
+    (i64vec.push! values 30)
+    (i64vec.push! values 12)
+    (match (i64vec.view (& values))
+      [(slice a b) (+ a b)]
+      [_ -1])))
 
 (define (main) : i64
-  (begin
+  (let
+    [items : (Array i64 4) (array 1 2 3 4)]
+    (unless (= (sum (& items)) 10) (return 1)))
+  (let
+    [empty : (Array i64 0) (init)]
+    (unless (= (sum (& empty)) 0) (return 2)))
+  (unless (= (wide-slice-score) 4153) (return 3))
+  (let
+    [one : (Array i64 3) (array 1 7 9)]
+    [two : (Array i64 3) (array 2 7 9)]
+    [three : (Array i64 2) (array 3 7)]
+    (unless (= (literal-head (& one)) 7) (return 4))
+    (unless (= (literal-head (& two)) 16) (return 5))
+    (unless (= (literal-head (& three)) -1) (return 6)))
+  (let
+    [tokens : (Array Token 3) (array (Num 5) Plus (Num 7))]
+    [items : (Array Item 3) (array (Word "abc") Gap (Word "z"))]
+    (unless (= (count-tokens (& tokens)) 112) (return 7))
+    (unless (= (count-items (& items)) 4001) (return 20)))
+  (let
+    [words : (Array String 3) (array "skip" "skip" "three")]
+    (unless (= (string-head (& words)) 5) (return 8)))
+  (let
+    [items : (Array i64 3) (array 1 2 3)]
+    (unless (= (array-ref-score (& items)) 321) (return 9)))
+  (let
+    [items : (Array i64 4) (array 10 1 2 3)]
+    (unless (= (array-rest-score (& items)) 16) (return 10)))
+  (let
+    [points : (Array Point 2) (array (Point 2 3) (Point 4 5))]
+    (unless (= (point-score (& points)) 26) (return 11)))
+  (let
+    [cells : (Array i64 3) (array 3 4 5)]
+    [rows : (Array (& cells (Slice i64)) 3)
+      (array
+        (slice-view cells 0 2)
+        (slice-view cells 0 0)
+        (slice-view cells 2 1))]
+    (unless (= (nested-score (& rows)) 1008) (return 12)))
+  (let
+    [values : (Array i64 3) (array 20 22 99)]
+    (unless (= (node-score (Leaf 9)) 9) (return 13))
+    (unless (= (node-score (Items (slice-view values 0 0))) -1) (return 14))
+    (unless (= (node-score (Items (slice-view values 0 1))) 40) (return 15))
+    (unless (= (node-score (Items (slice-view values 0 3))) 42) (return 16))
     (let
-      [items : (Array i64 4) (array 1 2 3 4)]
-      (unless (= (sum (& items)) 10) (return 1)))
-    (let
-      [empty : (Array i64 0) (init)]
-      (unless (= (sum (& empty)) 0) (return 2)))
-    (unless (= (wide-slice-score) 4153) (return 3))
-    (let
-      [one : (Array i64 3) (array 1 7 9)]
-      [two : (Array i64 3) (array 2 7 9)]
-      [three : (Array i64 2) (array 3 7)]
-      (begin
-        (unless (= (literal-head (& one)) 7) (return 4))
-        (unless (= (literal-head (& two)) 16) (return 5))
-        (unless (= (literal-head (& three)) -1) (return 6))))
-    (let
-      [tokens : (Array Token 3) (array (Num 5) Plus (Num 7))]
-      [items : (Array Item 3) (array (Word "abc") Gap (Word "z"))]
-      (begin
-        (unless (= (count-tokens (& tokens)) 112) (return 7))
-        (unless (= (count-items (& items)) 4001) (return 20))))
-    (let
-      [words : (Array String 3) (array "skip" "skip" "three")]
-      (unless (= (string-head (& words)) 5) (return 8)))
-    (let
-      [items : (Array i64 3) (array 1 2 3)]
-      (unless (= (array-ref-score (& items)) 321) (return 9)))
-    (let
-      [items : (Array i64 4) (array 10 1 2 3)]
-      (unless (= (array-rest-score (& items)) 16) (return 10)))
-    (let
-      [points : (Array Point 2) (array (Point 2 3) (Point 4 5))]
-      (unless (= (point-score (& points)) 26) (return 11)))
-    (let
-      [cells : (Array i64 3) (array 3 4 5)]
-      [rows : (Array (& cells (Slice i64)) 3)
-        (array
-          (slice-view cells 0 2)
-          (slice-view cells 0 0)
-          (slice-view cells 2 1))]
-      (unless (= (nested-score (& rows)) 1008) (return 12)))
-    (let
-      [values : (Array i64 3) (array 20 22 99)]
-      (begin
-        (unless (= (node-score (Leaf 9)) 9) (return 13))
-        (unless (= (node-score (Items (slice-view values 0 0))) -1) (return 14))
-        (unless (= (node-score (Items (slice-view values 0 1))) 40) (return 15))
-        (unless (= (node-score (Items (slice-view values 0 3))) 42) (return 16))
-        (let
-          [node : (Node values) (Items (slice-view values 0 3))]
-          (unless (= (borrowed-node-score (& node)) 141) (return 17)))))
-    (let
-      [items : (Array i64 4) (array 1 1 1 1)]
-      (begin
-        (bump-all! (&mut items))
-        (unless (= (array-ref items 3) 4) (return 18))))
-    (let
-      [counters : (Array Counter 2) (array (Counter "ab" 1) (Counter "xyz" 2))]
-      (begin
-        (count-all! (&mut counters))
-        (unless
-          (= (+ (array-ref counters 0).count (array-ref counters 1).count) 8)
-          (return 19))))
-    (unless (= (vector-score) 42) (return 21))
-    (let
-      [words : (Array String 3) (array "a" "bb" "ccc")]
-      (begin
-        (unless (= (replace-first! (&mut words)) 2) (return 33))
-        (unless (= (string.string-length (array-ref words 0)) 8) (return 34))))
-    (let
-      [x : (Array i64 3) (array 1 2 3)]
-      [y : (Array i64 3) (array 7 5 0)]
-      [z : (Array i64 3) (array 2 2 2)]
-      [units : (Array unit 4) (init)]
-      (begin
-        (unless (= (array-literal-score (& x)) 5) (return 29))
-        (unless (= (array-literal-score (& y)) 700) (return 30))
-        (unless (= (array-literal-score (& z)) -6) (return 31))
-        (unless (= (count-units (& units)) 4) (return 32))))
-    (let
-      [items : (Array i64 3) (array 7 8 9)]
-      [empty : (Array i64 0) (init)]
-      (begin
-        (unless (= (generated-slice-head (slice-view items 1 2)) 8) (return 22))
-        (unless
-          (= (generated-slice-head (slice-view empty 0 0)) -1)
-          (return 23))
-        (unless (= (generated-sum (& items)) 24) (return 24))
-        (unless (= (comptime-score) 15) (return 25))
-        (unless (= (shadow 5 (slice-view items 0 1)) 7) (return 27))
-        (unless (= (shadow 5 (slice-view empty 0 0)) 5) (return 28))))
-    42))
+      [node : (Node values) (Items (slice-view values 0 3))]
+      (unless (= (borrowed-node-score (& node)) 141) (return 17))))
+  (let
+    [items : (Array i64 4) (array 1 1 1 1)]
+    (bump-all! (&mut items))
+    (unless (= (array-ref items 3) 4) (return 18)))
+  (let
+    [counters : (Array Counter 2) (array (Counter "ab" 1) (Counter "xyz" 2))]
+    (count-all! (&mut counters))
+    (unless
+      (= (+ (array-ref counters 0).count (array-ref counters 1).count) 8)
+      (return 19)))
+  (unless (= (vector-score) 42) (return 21))
+  (let
+    [words : (Array String 3) (array "a" "bb" "ccc")]
+    (unless (= (replace-first! (&mut words)) 2) (return 33))
+    (unless (= (string.string-length (array-ref words 0)) 8) (return 34)))
+  (let
+    [x : (Array i64 3) (array 1 2 3)]
+    [y : (Array i64 3) (array 7 5 0)]
+    [z : (Array i64 3) (array 2 2 2)]
+    [units : (Array unit 4) (init)]
+    (unless (= (array-literal-score (& x)) 5) (return 29))
+    (unless (= (array-literal-score (& y)) 700) (return 30))
+    (unless (= (array-literal-score (& z)) -6) (return 31))
+    (unless (= (count-units (& units)) 4) (return 32)))
+  (let
+    [items : (Array i64 3) (array 7 8 9)]
+    [empty : (Array i64 0) (init)]
+    (unless (= (generated-slice-head (slice-view items 1 2)) 8) (return 22))
+    (unless (= (generated-slice-head (slice-view empty 0 0)) -1) (return 23))
+    (unless (= (generated-sum (& items)) 24) (return 24))
+    (unless (= (comptime-score) 15) (return 25))
+    (unless (= (shadow 5 (slice-view items 0 1)) 7) (return 27))
+    (unless (= (shadow 5 (slice-view empty 0 0)) 5) (return 28)))
+  42)

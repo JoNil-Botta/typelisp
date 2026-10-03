@@ -43,9 +43,8 @@
     ; UNGUARDED: cells come from whatever arena is current.
     (let
       [cells : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      (begin
-        (set! (array-ref cells 0) value)
-        (CellHolder cells)))
+      (set! (array-ref cells 0) value)
+      (CellHolder cells))
     ; GUARDED: cells come from the arena that outlives every scratch generation.
     (let
       [prev : i64 (arena.tl_arena_current)]
@@ -60,9 +59,8 @@
           (set! long-lived-arena head)
           (unsafe
             (arena.tl_arena_set prev)))]
-      (begin
-        (set! (array-ref cells 0) value)
-        (CellHolder cells)))))
+      (set! (array-ref cells 0) value)
+      (CellHolder cells))))
 
 (define (holder-install! [holder : CellHolder]) : unit
   (set! global-holder.cells holder.cells))
@@ -100,44 +98,41 @@
     [retired : i64 0]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index rounds)
-        (let
-          [next : i64 (generation-run (+ index 100))]
-          (begin
-            (if (= retired 0)
-              unit
-              (unsafe
-                (arena.tl_arena_destroy retired)))
-            (set! retired current)
-            (set! current next)
-            ; The global was re-pointed by the generation just run; write
-            ; through it and read it back after the older generation died.
-            (holder-capture! (+ index 200))
-            (if (= (holder-read) (+ index 200))
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (if (= retired 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy retired)))
-      (if (= current 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
-      ok)))
+    (while (< index rounds)
+      (let
+        [next : i64 (generation-run (+ index 100))]
+        (if (= retired 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy retired)))
+        (set! retired current)
+        (set! current next)
+        ; The global was re-pointed by the generation just run; write
+        ; through it and read it back after the older generation died.
+        (holder-capture! (+ index 200))
+        (if (= (holder-read) (+ index 200))
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (if (= retired 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy retired)))
+    (if (= current 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy current)))
+    ok))
 
 (define (main) : i64
-  (begin
-    ; Guarded: the cells the global aliases are long-lived, so every
-    ; write-through after a destroy is safe.
-    (set! pin-cells-to-long-lived true)
-    (if (ring-cycle 8)
-      (begin
-        ; Re-point the global at storage the fixture owns for the rest of the
-        ; run, so nothing observable is left aliasing a destroyed arena.
-        (holder-install! (holder-new 0))
-        (holder-capture! 42)
-        (holder-read))
-      0)))
+  ; Guarded: the cells the global aliases are long-lived, so every
+  ; write-through after a destroy is safe.
+  (set! pin-cells-to-long-lived true)
+  (if (ring-cycle 8)
+    (begin
+      ; Re-point the global at storage the fixture owns for the rest of the
+      ; run, so nothing observable is left aliasing a destroyed arena.
+      (holder-install! (holder-new 0))
+      (holder-capture! 42)
+      (holder-read))
+    0))

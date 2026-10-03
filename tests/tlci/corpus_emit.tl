@@ -30,36 +30,35 @@
       (__tl_make-array u8 tlci_core.tlci-section-entry-record-size)]
     [symbols : (__tl_dyn-array u8)
       (__tl_make-array u8 tlci_core.tlci-section-symbol-record-size)]
-    (begin
-      ;; One inert load-base fixup, entry, and symbol record. The fixture is
-      ;; parsed and inspected, never mapped or executed.
-      (tlci_core.tlci-set-u64! (&mut fixups) 0 0)
-      (tlci_core.tlci-set-u64! (&mut entries) 0 0)
-      (tlci_core.tlci-set-u64! (&mut entries) 8 0)
-      (tlci_core.tlci-set-u64! (&mut entries) 16 0)
-      (tlci_core.tlci-set-u64! (&mut symbols) 0 0)
-      (tlci_core.tlci-set-u64! (&mut symbols) 8 0)
-      (tlci_core.tlci-set-u64! (&mut symbols) 16 2)
-      (tlci_core.tlci-set-u64! (&mut symbols) 24 0)
-      (tlci_core.tlci-set-u64! (&mut symbols) 32 3)
-      (tlci_core.tlci-make-image
-        tlci_core.tlci-host-platform-x86-64-legacy
-        tlci_core.tlci-callback-abi-version
-        "tlci-v2-corpus"
-        (tlci_core.tlci-make-metadata "v1" "corpus.sections" "1.0.0")
-        (__tl_make-array
-          (tlci_core.tlci-byte 222)
-          (tlci_core.tlci-byte 173)
-          (tlci_core.tlci-byte 190)
-          (tlci_core.tlci-byte 239))
-        (__tl_make-array
-          (tlci_core.tlci-byte 195)
-          (tlci_core.tlci-byte 144)
-          (tlci_core.tlci-byte 144))
-        fixups
-        entries
-        symbols
-        (tlci_core.tlci-empty-bytes)))))
+    ;; One inert load-base fixup, entry, and symbol record. The fixture is
+    ;; parsed and inspected, never mapped or executed.
+    (tlci_core.tlci-set-u64! (&mut fixups) 0 0)
+    (tlci_core.tlci-set-u64! (&mut entries) 0 0)
+    (tlci_core.tlci-set-u64! (&mut entries) 8 0)
+    (tlci_core.tlci-set-u64! (&mut entries) 16 0)
+    (tlci_core.tlci-set-u64! (&mut symbols) 0 0)
+    (tlci_core.tlci-set-u64! (&mut symbols) 8 0)
+    (tlci_core.tlci-set-u64! (&mut symbols) 16 2)
+    (tlci_core.tlci-set-u64! (&mut symbols) 24 0)
+    (tlci_core.tlci-set-u64! (&mut symbols) 32 3)
+    (tlci_core.tlci-make-image
+      tlci_core.tlci-host-platform-x86-64-legacy
+      tlci_core.tlci-callback-abi-version
+      "tlci-v2-corpus"
+      (tlci_core.tlci-make-metadata "v1" "corpus.sections" "1.0.0")
+      (__tl_make-array
+        (tlci_core.tlci-byte 222)
+        (tlci_core.tlci-byte 173)
+        (tlci_core.tlci-byte 190)
+        (tlci_core.tlci-byte 239))
+      (__tl_make-array
+        (tlci_core.tlci-byte 195)
+        (tlci_core.tlci-byte 144)
+        (tlci_core.tlci-byte 144))
+      fixups
+      entries
+      symbols
+      (tlci_core.tlci-empty-bytes))))
 
 (define (tlci-v2-corpus-imports-image) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
@@ -79,15 +78,13 @@
   [result : tlci_core.ResultTlciBytes]) : i64
   (match result
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok bytes)
       (let
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-        (begin
-          (io.write-file path (byte_buf.as-bytes (& contents)))
-          0))]))
+        (io.write-file path (byte_buf.as-bytes (& contents)))
+        0)]))
 
 (define (main) : i64
   (if (= (io.arg-count) 1)

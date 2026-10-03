@@ -1401,14 +1401,11 @@
 (define (main) : i64
   (let
     [index : i64 0]
-    (begin
-      (while (< index 254)
-        (begin
-          (unless (pow-check-f64 index) (return (+ 10 index)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 186)
-        (begin
-          (unless (pow-check-f32 index) (return (+ 100010 index)))
-          (set! index (+ index 1))))
-      0)))
+    (while (< index 254)
+      (unless (pow-check-f64 index) (return (+ 10 index)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 186)
+      (unless (pow-check-f32 index) (return (+ 100010 index)))
+      (set! index (+ index 1)))
+    0))

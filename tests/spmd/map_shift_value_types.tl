@@ -12,32 +12,29 @@
     [right : (__tl_dyn-array i32) (__tl_make-array i32 capacity)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref xs i) (cast (- i 9) : i32))
-          (set!
-            (array-ref counts i)
-            (if (< i n)
-              (cast (% i 31) : i32)
-              (cast 32 : i32)))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (begin
-          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
-          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (unless
-            (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (unless
-            (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i capacity)
+      (set! (array-ref xs i) (cast (- i 9) : i32))
+      (set!
+        (array-ref counts i)
+        (if (< i n)
+          (cast (% i 31) : i32)
+          (cast 32 : i32)))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (begin
+        (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+        (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
+    (set! i 0)
+    (while (and ok (< i n))
+      (unless
+        (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (unless
+        (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-u32) : bool
   (let
@@ -49,32 +46,29 @@
     [right : (__tl_dyn-array u32) (__tl_make-array u32 capacity)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref xs i) (cast (+ (* i 17) 3) : u32))
-          (set!
-            (array-ref counts i)
-            (if (< i n)
-              (cast (% i 31) : u32)
-              (cast 32 : u32)))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (begin
-          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
-          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (unless
-            (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (unless
-            (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i capacity)
+      (set! (array-ref xs i) (cast (+ (* i 17) 3) : u32))
+      (set!
+        (array-ref counts i)
+        (if (< i n)
+          (cast (% i 31) : u32)
+          (cast 32 : u32)))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (begin
+        (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+        (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
+    (set! i 0)
+    (while (and ok (< i n))
+      (unless
+        (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (unless
+        (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-i64) : bool
   (let
@@ -86,32 +80,29 @@
     [right : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref xs i) (- i 7))
-          (set!
-            (array-ref counts i)
-            (if (< i n)
-              (% i 63)
-              (cast 64 : i64)))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (begin
-          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
-          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (unless
-            (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (unless
-            (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i capacity)
+      (set! (array-ref xs i) (- i 7))
+      (set!
+        (array-ref counts i)
+        (if (< i n)
+          (% i 63)
+          (cast 64 : i64)))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (begin
+        (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+        (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
+    (set! i 0)
+    (while (and ok (< i n))
+      (unless
+        (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (unless
+        (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-u64) : bool
   (let
@@ -123,32 +114,29 @@
     [right : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref xs i) (cast (+ (* i 31) 5) : u64))
-          (set!
-            (array-ref counts i)
-            (if (< i n)
-              (cast (% i 63) : u64)
-              (cast 64 : u64)))
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (begin
-          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
-          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (unless
-            (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (unless
-            (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i capacity)
+      (set! (array-ref xs i) (cast (+ (* i 31) 5) : u64))
+      (set!
+        (array-ref counts i)
+        (if (< i n)
+          (cast (% i 63) : u64)
+          (cast 64 : u64)))
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (begin
+        (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+        (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
+    (set! i 0)
+    (while (and ok (< i n))
+      (unless
+        (= (array-ref left i) (shl (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (unless
+        (= (array-ref right i) (shr (array-ref xs i) (array-ref counts i)))
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (cond

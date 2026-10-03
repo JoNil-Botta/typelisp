@@ -13,19 +13,17 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i trips)
-        (begin
-          (when
-            (>= i first)
-            (set!
-              sum
-              (+
-                sum
-                (unsafe
-                  (ptr-read (int->ptr address : (Ptr i64)))))))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i trips)
+      (when
+        (>= i first)
+        (set!
+          sum
+          (+
+            sum
+            (unsafe
+              (ptr-read (int->ptr address : (Ptr i64)))))))
+      (set! i (+ i 1)))
+    sum))
 
 ;; The same skipped read `words` past a live local, through `ptr-addr-of` and
 ;; `ptr-offset`.
@@ -34,20 +32,18 @@
     [cell : i64 7]
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i 10)
-        (begin
-          (when
-            (>= i first)
-            (set!
-              sum
-              (+
-                sum
-                (unsafe
-                  (ptr-read
-                    (ptr-offset (ptr-cast (ptr-addr-of cell) : (Ptr i64)) words))))))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i 10)
+      (when
+        (>= i first)
+        (set!
+          sum
+          (+
+            sum
+            (unsafe
+              (ptr-read
+                (ptr-offset (ptr-cast (ptr-addr-of cell) : (Ptr i64)) words))))))
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (let
@@ -59,13 +55,12 @@
     [data : u64
       (unsafe
         (ptr->int (ptr-cast (__tl_array-data items) : (Ptr i64))))]
-    (begin
-      (set! (array-ref items 0) 5)
-      (set! (array-ref items 3) 8)
-      (io.print-format "{}\n" (raw-read-if null skip 10))
-      (io.print-format "{}\n" (raw-read-if low skip 10))
-      (io.print-format "{}\n" (raw-read-if null 0 0))
-      (io.print-format "{}\n" (offset-read-if far skip))
-      (io.print-format "{}\n" (raw-read-if data 0 10))
-      (io.print-format "{}\n" (raw-read-if (+ data 24) 8 10))
-      42)))
+    (set! (array-ref items 0) 5)
+    (set! (array-ref items 3) 8)
+    (io.print-format "{}\n" (raw-read-if null skip 10))
+    (io.print-format "{}\n" (raw-read-if low skip 10))
+    (io.print-format "{}\n" (raw-read-if null 0 0))
+    (io.print-format "{}\n" (offset-read-if far skip))
+    (io.print-format "{}\n" (raw-read-if data 0 10))
+    (io.print-format "{}\n" (raw-read-if (+ data 24) 8 10))
+    42))

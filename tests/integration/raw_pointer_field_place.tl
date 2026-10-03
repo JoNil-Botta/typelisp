@@ -38,23 +38,22 @@
 (define (new-state-address) : i64
   (let
     [cell : (__tl_dyn-array State) (__tl_make-array State 1)]
-    (begin
-      (set!
-        (array-ref cell 0)
-        (State
-          0
-          "ab"
-          (Inner 5 6 false)
-          (array 1 2 3 4)
-          (__tl_make-array i64 3)
-          (Pair 7 8)
-          0
-          0
-          0))
-      (cast
-        (unsafe
-          (ptr->int (__tl_array-data cell)))
-        : i64))))
+    (set!
+      (array-ref cell 0)
+      (State
+        0
+        "ab"
+        (Inner 5 6 false)
+        (array 1 2 3 4)
+        (__tl_make-array i64 3)
+        (Pair 7 8)
+        0
+        0
+        0))
+    (cast
+      (unsafe
+        (ptr->int (__tl_array-data cell)))
+      : i64)))
 
 ;; Several single-field stores and loads through one pointer; large enough to
 ;; stay out of line at opt 2, so its assembly shape can be checked.
@@ -62,13 +61,12 @@
   (let
     [p : (MutPtr State) (state-ptr address)]
     (unsafe
-      (begin
-        (set! (deref p).count (+ (deref p).count 1))
-        (set! (deref p).total (+ (deref p).total value))
-        (set! (deref p).small small)
-        (set! (deref p).tag tag)
-        (set! (deref p).inner.a (* (deref p).inner.a 2))
-        (set! (deref p).inner.flag (> value 0))))))
+      (set! (deref p).count (+ (deref p).count 1))
+      (set! (deref p).total (+ (deref p).total value))
+      (set! (deref p).small small)
+      (set! (deref p).tag tag)
+      (set! (deref p).inner.a (* (deref p).inner.a 2))
+      (set! (deref p).inner.flag (> value 0)))))
 
 ;; Reads through a read-only pointer.
 (define (score [address : i64]) : i64
@@ -107,19 +105,18 @@
 (define (ordered-store [address : i64]) : i64
   (let
     [order : i64 0]
-    (begin
-      (unsafe
-        (set!
-          (deref
-            (begin
-              (set! order (* order 10))
-              (set! order (+ order 1))
-              (state-ptr address))).count
+    (unsafe
+      (set!
+        (deref
           (begin
             (set! order (* order 10))
-            (set! order (+ order 2))
-            order)))
-      order)))
+            (set! order (+ order 1))
+            (state-ptr address))).count
+        (begin
+          (set! order (* order 10))
+          (set! order (+ order 2))
+          order)))
+    order))
 
 (define (check [ok : bool] [points : i64]) : i64
   (if ok
@@ -133,49 +130,47 @@
     [old-name : String
       (unsafe
         (deref p).name)]
-    (begin
-      (record! address 10 3 4)
-      (record! address 20 5 6)
-      (rename! address "hello")
-      (unsafe
-        (begin
-          (set! (array-ref (deref p).slots 2) 30)
-          (set! (array-ref (deref p).items 1) 40)
-          (set! (deref p).pair.hi 9)
-          (set! (deref p).inner.b (+ (deref p).inner.b 1))))
-      (let
-        [state : State
-          (unsafe
-            (ptr-read (state-view address)))]
-        (+
-          (check (= (score address) (+ 2 30 5 6 20 1)) 3)
-          (check (= state.count 2) 3)
-          (check (= state.total 30) 3)
-          (check (= state.inner.a 20) 3)
-          (check (= state.inner.b 7) 3)
-          (check (= (name-length address) 5) 3)
-          ;; The overwritten String is not dropped: a copy read earlier stays
-          ;; valid, as with `ptr-write!`.
-          (check (= (string.string-length (& old-name)) 2) 3)
-          (check
-            (=
-              (unsafe
-                (array-ref (deref p).slots 2))
-              30)
-            3)
-          (check (= (array-ref state.slots 3) 4) 3)
-          (check
-            (=
-              (unsafe
-                (array-ref (deref p).items 1))
-              40)
-            3)
-          (check (= (pair-sum address) 16) 3)
-          (check (= (ordered-store address) 12) 3)
-          (check (= (score address) (+ 12 30 5 6 20 1)) 3)
-          (check
-            (=
-              (unsafe
-                (deref p).pair.lo)
-              7)
-            3))))))
+    (record! address 10 3 4)
+    (record! address 20 5 6)
+    (rename! address "hello")
+    (unsafe
+      (set! (array-ref (deref p).slots 2) 30)
+      (set! (array-ref (deref p).items 1) 40)
+      (set! (deref p).pair.hi 9)
+      (set! (deref p).inner.b (+ (deref p).inner.b 1)))
+    (let
+      [state : State
+        (unsafe
+          (ptr-read (state-view address)))]
+      (+
+        (check (= (score address) (+ 2 30 5 6 20 1)) 3)
+        (check (= state.count 2) 3)
+        (check (= state.total 30) 3)
+        (check (= state.inner.a 20) 3)
+        (check (= state.inner.b 7) 3)
+        (check (= (name-length address) 5) 3)
+        ;; The overwritten String is not dropped: a copy read earlier stays
+        ;; valid, as with `ptr-write!`.
+        (check (= (string.string-length (& old-name)) 2) 3)
+        (check
+          (=
+            (unsafe
+              (array-ref (deref p).slots 2))
+            30)
+          3)
+        (check (= (array-ref state.slots 3) 4) 3)
+        (check
+          (=
+            (unsafe
+              (array-ref (deref p).items 1))
+            40)
+          3)
+        (check (= (pair-sum address) 16) 3)
+        (check (= (ordered-store address) 12) 3)
+        (check (= (score address) (+ 12 30 5 6 20 1)) 3)
+        (check
+          (=
+            (unsafe
+              (deref p).pair.lo)
+            7)
+          3)))))

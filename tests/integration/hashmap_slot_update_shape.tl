@@ -31,13 +31,12 @@
   (let
     [sm : scalar.Map (scalar.with-capacity 4)]
     [gm : general.Map (general.with-capacity 4)]
-    (begin
-      (scalar.insert! sm 1 10)
-      (general.insert! gm "one" 10)
-      (scalar-update (&mut sm) 1 30 0)
-      (general-update (&mut gm) "one" 30 0)
-      (if (and
-        (= (scalar.get-value-or (& sm) 1 -1) 30)
-        (= (general.lookup-value-or (general.get (& gm) "one") -1) 30))
-        42
-        1))))
+    (scalar.insert! sm 1 10)
+    (general.insert! gm "one" 10)
+    (scalar-update (&mut sm) 1 30 0)
+    (general-update (&mut gm) "one" 30 0)
+    (if (and
+      (= (scalar.get-value-or (& sm) 1 -1) 30)
+      (= (general.lookup-value-or (general.get (& gm) "one") -1) 30))
+      42
+      1)))

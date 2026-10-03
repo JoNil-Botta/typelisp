@@ -26,20 +26,18 @@
     (let
       [a : i64 0]
       [i : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (if (> (* i 3) pivot)
-              (if (> (* i 5) pivot)
-                (if (> (* i 7) pivot)
-                  (if (> (* i 11) pivot)
-                    (set! a (+ a i))
-                    (set! a (- a 1)))
-                  (set! a (* a 2)))
-                (set! a (+ a 3)))
-              (set! a (- a 5)))
-            (set! i (+ i 1))))
-        a))))
+      (while (< i n)
+        (if (> (* i 3) pivot)
+          (if (> (* i 5) pivot)
+            (if (> (* i 7) pivot)
+              (if (> (* i 11) pivot)
+                (set! a (+ a i))
+                (set! a (- a 1)))
+              (set! a (* a 2)))
+            (set! a (+ a 3)))
+          (set! a (- a 5)))
+        (set! i (+ i 1)))
+      a)))
 
 ;; DIAMOND: sequential merges whose incoming values differ per edge and stay
 ;; live into the next diamond, so those merges keep real work and are NOT
@@ -51,25 +49,23 @@
     (let
       [acc : i64 0]
       [i : i64 0]
-      (begin
-        (while (< i n)
-          (let
-            [a : i64
-              (if (> (* i 3) pivot)
-                (* i 5)
-                (- pivot i))]
-            [b : i64
-              (if (> a pivot)
-                (+ a 7)
-                (- a 11))]
-            [c : i64
-              (if (< b 0)
-                (* b 3)
-                (+ b 13))]
-            (begin
-              (set! acc (+ acc (+ a (+ b c))))
-              (set! i (+ i 1)))))
-        acc))))
+      (while (< i n)
+        (let
+          [a : i64
+            (if (> (* i 3) pivot)
+              (* i 5)
+              (- pivot i))]
+          [b : i64
+            (if (> a pivot)
+              (+ a 7)
+              (- a 11))]
+          [c : i64
+            (if (< b 0)
+              (* b 3)
+              (+ b 13))]
+          (set! acc (+ acc (+ a (+ b c))))
+          (set! i (+ i 1))))
+      acc)))
 
 ;; SELF-LOOP: an empty infinite loop lowers to a block whose only instruction is
 ;; a jump to its own label. Forwarding must refuse it -- a block that hands its
@@ -79,12 +75,11 @@
   false)
 
 (define (spin-probe [seed : i64]) : i64
-  (begin
-    (if jump-only-forward-spin
-      (while true
-        unit)
+  (if jump-only-forward-spin
+    (while true
       unit)
-    (+ seed 1)))
+    unit)
+  (+ seed 1))
 
 (define (main) : i64
   (let

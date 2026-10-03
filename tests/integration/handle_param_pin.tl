@@ -19,13 +19,11 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref xs i)))
-          (set! acc (+ acc n))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref xs i)))
+      (set! acc (+ acc n))
+      (set! i (+ i 1)))
+    acc))
 
 ;; Never executed (n < 100 always); its only job is to take sum-arr's address.
 (define (poke
@@ -40,17 +38,15 @@
     [n : i64 (+ (io.arg-count) 3)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 3))
-          (set! i (+ i 1))))
-      (let
-        [r : i64
-          (if (> n 100)
-            (poke sum-arr xs n)
-            (sum-arr xs n))]
-        ;; array sum = 3*(0+1+2+3) = 18; n added per iteration = 16. total 34.
-        (if (= r 34)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (* i 3))
+      (set! i (+ i 1)))
+    (let
+      [r : i64
+        (if (> n 100)
+          (poke sum-arr xs n)
+          (sum-arr xs n))]
+      ;; array sum = 3*(0+1+2+3) = 18; n added per iteration = 16. total 34.
+      (if (= r 34)
+        42
+        1))))

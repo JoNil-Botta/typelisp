@@ -15,21 +15,18 @@
   0)
 
 (define (make-value [text : String]) : DisplayValue
-  (begin
-    (set! value-evaluations (+ value-evaluations 1))
-    (DisplayValue text)))
+  (set! value-evaluations (+ value-evaluations 1))
+  (DisplayValue text))
 
 (define (to-string [_value : (& value DisplayValue)]) : String
-  (begin
-    (set! fallback-hook-calls (+ fallback-hook-calls 1))
-    "fallback"))
+  (set! fallback-hook-calls (+ fallback-hook-calls 1))
+  "fallback")
 
 (define (format-write
   [_value : (& value DisplayValue)]
   [formatter : (&mut formatter format.Formatter)]) : unit
-  (begin
-    (set! direct-hook-calls (+ direct-hook-calls 1))
-    (format.formatter-write-string! formatter "direct")))
+  (set! direct-hook-calls (+ direct-hook-calls 1))
+  (format.formatter-write-string! formatter "direct"))
 
 (define (ok? [result : format.FormatResult]) : bool
   (match result

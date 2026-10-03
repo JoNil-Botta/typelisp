@@ -25,28 +25,25 @@
 (define (bag-with-two) : VecItemBag
   (let
     [items : vec_item_vec.Vec (vec_item_vec.with-capacity 2)]
-    (begin
-      (vec_item_vec.push! items (VecItem 7 (string.copy "first")))
-      (vec_item_vec.push! items (VecItem 9 (string.copy "second")))
-      (VecItemBag items))))
+    (vec_item_vec.push! items (VecItem 7 (string.copy "first")))
+    (vec_item_vec.push! items (VecItem 9 (string.copy "second")))
+    (VecItemBag items)))
 
 (define (bag-sum [bag : (& bag VecItemBag)]) : i64
   (let
     [i : i64 0]
     [n : i64 (vec_item_vec.len (& bag.items))]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (__tl-project-field
-                (array-ref (vec_item_vec.slots (& bag.items)) i)
-                n)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set!
+        acc
+        (+
+          acc
+          (__tl-project-field
+            (array-ref (vec_item_vec.slots (& bag.items)) i)
+            n)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

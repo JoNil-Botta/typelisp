@@ -17,14 +17,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (let
-            [r : i64 (bump i)]
-            (set! acc (+ acc (* r 3))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (let
+        [r : i64 (bump i)]
+        (set! acc (+ acc (* r 3))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

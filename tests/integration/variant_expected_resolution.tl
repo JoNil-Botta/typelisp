@@ -62,30 +62,29 @@
     [holder : Holder (Holder (Fail 3) (High 2))]
     [wrapped : Wrap (Nested (Holder (Pass 1) Low))]
     [outer : Wrap (Outer (Fail 50))]
-    (begin
-      (set! mutable (Pass 4))
-      (set! holder.outcome (Pass 6))
-      (+
-        (lib.outcome-value (returned 10))
-        (lib.outcome-value (tail true 7))
-        (lib.outcome-value (tail false 4))
-        (lib.outcome-value typed)
-        (lib.outcome-value mutable)
-        (lib.outcome-value holder.outcome)
-        (level-value holder.level)
-        (lib.flag-value (flag))
-        (match wrapped
-          [(Nested (Holder outcome level))
-            (+ (lib.outcome-value outcome) (level-value level))]
-          [_ 100])
-        (match outer
-          [(Outer (Fail value)) (- value 50)]
-          [_ 100])
-        (lib.outcome-value (Fail 2))
-        (match (maybe 3)
-          [(Some value) value]
-          [None 100])
-        (match (maybe 0)
-          [(Some _) 100]
-          [None 0])
-        (local-value (Pass 10))))))
+    (set! mutable (Pass 4))
+    (set! holder.outcome (Pass 6))
+    (+
+      (lib.outcome-value (returned 10))
+      (lib.outcome-value (tail true 7))
+      (lib.outcome-value (tail false 4))
+      (lib.outcome-value typed)
+      (lib.outcome-value mutable)
+      (lib.outcome-value holder.outcome)
+      (level-value holder.level)
+      (lib.flag-value (flag))
+      (match wrapped
+        [(Nested (Holder outcome level))
+          (+ (lib.outcome-value outcome) (level-value level))]
+        [_ 100])
+      (match outer
+        [(Outer (Fail value)) (- value 50)]
+        [_ 100])
+      (lib.outcome-value (Fail 2))
+      (match (maybe 3)
+        [(Some value) value]
+        [None 100])
+      (match (maybe 0)
+        [(Some _) 100]
+        [None 0])
+      (local-value (Pass 10)))))

@@ -7,20 +7,19 @@
 (import stdlib.string)
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}" "[")
-    (io.print-format "{}" (string.append "" ""))
-    (io.print-format "{}" "]\n")
-    (io.print-format "{}" (string.append "" "right"))
-    (io.print-format "{}" "\n")
-    (io.print-format "{}" (string.append "left" ""))
-    (io.print-format "{}" "\n")
-    (io.print-format "{}" (string.append "foo" "bar"))
-    (io.print-format "{}" "\n")
-    (io.print-format
-      "{}"
-      (string.concat
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
-    (io.print-format "{}" "\n")
-    0))
+  (io.print-format "{}" "[")
+  (io.print-format "{}" (string.append "" ""))
+  (io.print-format "{}" "]\n")
+  (io.print-format "{}" (string.append "" "right"))
+  (io.print-format "{}" "\n")
+  (io.print-format "{}" (string.append "left" ""))
+  (io.print-format "{}" "\n")
+  (io.print-format "{}" (string.append "foo" "bar"))
+  (io.print-format "{}" "\n")
+  (io.print-format
+    "{}"
+    (string.concat
+      "abcdefghijklmnopqrstuvwxyz"
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+  (io.print-format "{}" "\n")
+  0)

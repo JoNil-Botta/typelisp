@@ -11,19 +11,17 @@
     (let
       [x : f32 (array-ref x-values i)]
       [y : f32 (array-ref y-values i)]
-      (begin
-        (set! (array-ref z-re i) x)
-        (set! (array-ref z-im i) y)
-        (while (> (array-ref remaining i) 0)
-          (let
-            [old-re : f32 (array-ref z-re i)]
-            [old-im : f32 (array-ref z-im i)]
-            [new-re : f32 (- (* old-re old-re) (* old-im old-im))]
-            [new-im : f32 (* (+ old-re old-re) old-im)]
-            (begin
-              (set! (array-ref z-re i) (+ x new-re))
-              (set! (array-ref z-im i) (+ y new-im))
-              (set! (array-ref remaining i) (+ (array-ref remaining i) -1)))))))))
+      (set! (array-ref z-re i) x)
+      (set! (array-ref z-im i) y)
+      (while (> (array-ref remaining i) 0)
+        (let
+          [old-re : f32 (array-ref z-re i)]
+          [old-im : f32 (array-ref z-im i)]
+          [new-re : f32 (- (* old-re old-re) (* old-im old-im))]
+          [new-im : f32 (* (+ old-re old-re) old-im)]
+          (set! (array-ref z-re i) (+ x new-re))
+          (set! (array-ref z-im i) (+ y new-im))
+          (set! (array-ref remaining i) (+ (array-ref remaining i) -1)))))))
 
 (define (expected-z-re [iterations : i32]) : f32
   (cond
@@ -42,30 +40,27 @@
     [z-im : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref remaining i) (cast (% i 4) : i32))
-          (set! (array-ref x-values i) (cast 1.0 : f32))
-          (set! (array-ref y-values i) (cast 0.0 : f32))
-          (set! i (+ i 1))))
-      (fill-recurrence
-        (&mut remaining)
-        (& x-values)
-        (& y-values)
-        (&mut z-re)
-        (&mut z-im)
-        n)
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (if (and
-            (= (array-ref remaining i) 0)
-            (= (array-ref z-re i) (expected-z-re (cast (% i 4) : i32)))
-            (= (array-ref z-im i) (cast 0.0 : f32)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      (if ok
-        42
-        1))))
+    (while (< i n)
+      (set! (array-ref remaining i) (cast (% i 4) : i32))
+      (set! (array-ref x-values i) (cast 1.0 : f32))
+      (set! (array-ref y-values i) (cast 0.0 : f32))
+      (set! i (+ i 1)))
+    (fill-recurrence
+      (&mut remaining)
+      (& x-values)
+      (& y-values)
+      (&mut z-re)
+      (&mut z-im)
+      n)
+    (set! i 0)
+    (while (< i n)
+      (if (and
+        (= (array-ref remaining i) 0)
+        (= (array-ref z-re i) (expected-z-re (cast (% i 4) : i32)))
+        (= (array-ref z-im i) (cast 0.0 : f32)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    (if ok
+      42
+      1)))

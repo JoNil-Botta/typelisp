@@ -32,54 +32,48 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [x : i64 (array-ref xs i)]
-          [m : i64
-            (if (< x cap)
-              x
-              cap)]
-          (begin
-            (set! acc (+ acc m))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (let
+        [x : i64 (array-ref xs i)]
+        [m : i64
+          (if (< x cap)
+            x
+            cap)]
+        (set! acc (+ acc m))
+        (set! i (+ i 1))))
+    acc))
 
 (define (sfl-max-scan [xs : (__tl_dyn-array i64)] [n : i64] [floor : i64])
   (:export-symbol "tl_sfl_max_scan") : i64
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [x : i64 (array-ref xs i)]
-          [m : i64
-            (if (> x floor)
-              x
-              floor)]
-          (begin
-            (set! acc (+ acc m))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (let
+        [x : i64 (array-ref xs i)]
+        [m : i64
+          (if (> x floor)
+            x
+            floor)]
+        (set! acc (+ acc m))
+        (set! i (+ i 1))))
+    acc))
 
 (define (sfl-umin-scan [xs : (__tl_dyn-array u64)] [n : i64] [cap : u64])
   (:export-symbol "tl_sfl_umin_scan") : u64
   (let
     [acc : u64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [x : u64 (array-ref xs i)]
-          [m : u64
-            (if (< x cap)
-              x
-              cap)]
-          (begin
-            (set! acc (+ acc m))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (let
+        [x : u64 (array-ref xs i)]
+        [m : u64
+          (if (< x cap)
+            x
+            cap)]
+        (set! acc (+ acc m))
+        (set! i (+ i 1))))
+    acc))
 
 (define (sfl-copy
   [dst : (__tl_dyn-array u8)]
@@ -90,14 +84,12 @@
   (:export-symbol "tl_sfl_copy") : unit
   (let
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref dst (+ dst-start index))
-            (array-ref src (+ src-start index)))
-          (set! index (+ index 1))))
-      unit)))
+    (while (< index count)
+      (set!
+        (array-ref dst (+ dst-start index))
+        (array-ref src (+ src-start index)))
+      (set! index (+ index 1)))
+    unit))
 
 ;; Variable-index geps at all four scales the SIB byte can spell -- the ones the
 ;; staged emitter now composes straight off a register-homed index.
@@ -112,17 +104,15 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [j : i64 (+ i k)]
-          (begin
-            (set! acc (+ acc (cast (array-ref b j) : i64)))
-            (set! acc (+ acc (cast (array-ref h j) : i64)))
-            (set! acc (+ acc (cast (array-ref w j) : i64)))
-            (set! acc (+ acc (array-ref q j)))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (let
+        [j : i64 (+ i k)]
+        (set! acc (+ acc (cast (array-ref b j) : i64)))
+        (set! acc (+ acc (cast (array-ref h j) : i64)))
+        (set! acc (+ acc (cast (array-ref w j) : i64)))
+        (set! acc (+ acc (array-ref q j)))
+        (set! i (+ i 1))))
+    acc))
 
 (define (main) : i64
   (let

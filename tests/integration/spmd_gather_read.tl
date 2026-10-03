@@ -14,18 +14,16 @@
     [xs-slots (i64v.slots-mut xs)]
     [i : i64 0]
     (while (< i source-len)
-      (begin
-        (set! (array-ref xs-slots i) (+ 100 (* i 3)))
-        (set! i (+ i 1))))))
+      (set! (array-ref xs-slots i) (+ 100 (* i 3)))
+      (set! i (+ i 1)))))
 
 (define (init-index [ix : (&mut ix i64v.Vec)] [n : i64] [source-len : i64]) : unit
   (let
     [ix-slots (i64v.slots-mut ix)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref ix-slots i) (% (+ (* i 5) 3) source-len))
-        (set! i (+ i 1))))))
+      (set! (array-ref ix-slots i) (% (+ (* i 5) 3) source-len))
+      (set! i (+ i 1)))))
 
 (define (fill-gather-foreach
   [xs : (& xs i64v.Vec)]
@@ -51,11 +49,8 @@
     [out-slots (i64v.slots-mut out)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out-slots i)
-          (array-ref xs-slots (array-ref ix-slots i)))
-        (set! i (+ i 1))))))
+      (set! (array-ref out-slots i) (array-ref xs-slots (array-ref ix-slots i)))
+      (set! i (+ i 1)))))
 
 (define (eq-i64 [a : (& a i64v.Vec)] [b : (& b i64v.Vec)] [n : i64]) : bool
   (let
@@ -63,14 +58,12 @@
     [b-slots (i64v.slots b)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a-slots i) (array-ref b-slots i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a-slots i) (array-ref b-slots i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-gather [n : i64]) : bool
   (let
@@ -79,12 +72,11 @@
     [ix : i64v.Vec (i64z.make n)]
     [got : i64v.Vec (i64z.make n)]
     [want : i64v.Vec (i64z.make n)]
-    (begin
-      (init-source (&mut xs) source-len)
-      (init-index (&mut ix) n source-len)
-      (fill-gather-foreach (& xs) (& ix) (&mut got) n)
-      (fill-gather-scalar (& xs) (& ix) (&mut want) n)
-      (eq-i64 (& got) (& want) n))))
+    (init-source (&mut xs) source-len)
+    (init-index (&mut ix) n source-len)
+    (fill-gather-foreach (& xs) (& ix) (&mut got) n)
+    (fill-gather-scalar (& xs) (& ix) (&mut want) n)
+    (eq-i64 (& got) (& want) n)))
 
 (define (init-lane-offsets [offsets : (&mut offsets i64v.Vec)]) : unit
   (let
@@ -92,11 +84,10 @@
     [offset-slots (i64v.slots-mut offsets)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        ;; Repeated, negative, zero, and positive offsets exercise the checked
-        ;; logical-lane order without making an index array in memory.
-        (set! (array-ref offset-slots i) (- (% (* i 3) 6) 3))
-        (set! i (+ i 1))))))
+      ;; Repeated, negative, zero, and positive offsets exercise the checked
+      ;; logical-lane order without making an index array in memory.
+      (set! (array-ref offset-slots i) (- (% (* i 3) 6) 3))
+      (set! i (+ i 1)))))
 
 (define (fill-lane-offset-gather
   [xs : (& xs i64v.Vec)]
@@ -144,13 +135,12 @@
     [out-slots (i64v.slots-mut out)]
     [i : i64 start]
     (while (< i end)
-      (begin
-        (set!
-          (array-ref out-slots i)
-          (array-ref
-            xs-slots
-            (+ i (array-ref offset-slots (array-ref lane-slots i)))))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out-slots i)
+        (array-ref
+          xs-slots
+          (+ i (array-ref offset-slots (array-ref lane-slots i)))))
+      (set! i (+ i 1)))))
 
 (define (case-lane-offset-gather [n : i64] [reversed : bool]) : bool
   (let
@@ -166,30 +156,24 @@
     [lane-ids : i64v.Vec (i64z.make source-len)]
     [got : i64v.Vec (i64z.make source-len)]
     [want : i64v.Vec (i64z.make source-len)]
-    (begin
-      (init-source (&mut xs) source-len)
-      (init-lane-offsets (&mut offsets))
-      (let
-        [lane-slots (i64v.slots-mut (&mut lane-ids))]
-        (foreach
-          ([i : i64 start end])
-          (set! (array-ref lane-slots i) (program-index))))
-      (if reversed
-        (fill-reversed-lane-offset-gather
-          (& xs)
-          (& offsets)
-          (&mut got)
-          start
-          end)
-        (fill-lane-offset-gather (& xs) (& offsets) (&mut got) start end))
-      (fill-lane-offset-gather-scalar
-        (& xs)
-        (& offsets)
-        (& lane-ids)
-        (&mut want)
-        start
-        end)
-      (eq-i64 (& got) (& want) source-len))))
+    (init-source (&mut xs) source-len)
+    (init-lane-offsets (&mut offsets))
+    (let
+      [lane-slots (i64v.slots-mut (&mut lane-ids))]
+      (foreach
+        ([i : i64 start end])
+        (set! (array-ref lane-slots i) (program-index))))
+    (if reversed
+      (fill-reversed-lane-offset-gather (& xs) (& offsets) (&mut got) start end)
+      (fill-lane-offset-gather (& xs) (& offsets) (&mut got) start end))
+    (fill-lane-offset-gather-scalar
+      (& xs)
+      (& offsets)
+      (& lane-ids)
+      (&mut want)
+      start
+      end)
+    (eq-i64 (& got) (& want) source-len)))
 
 (define (case-i32-gather [n : i64]) : bool
   (let
@@ -200,39 +184,35 @@
     [want : i32v.Vec (i32z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (init-index (&mut ix) n source-len)
-      (while (< i source-len)
-        (begin
-          (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
-          (set! i (+ i 1))))
+    (init-index (&mut ix) n source-len)
+    (while (< i source-len)
+      (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
+      (set! i (+ i 1)))
+    (let
+      [ix-slots (i64v.slots (& ix))]
+      [src (i32v.slots (& xs))]
+      [dst (i32v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [ix-slots (i64v.slots (& ix))]
-        [src (i32v.slots (& xs))]
-        [dst (i32v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [source-index : i64 (i64v.get (& ix) i 0)]
-          (begin
-            (i32v.set-ref!
-              (&mut want)
-              i
-              (i32v.get (& xs) source-index (cast 0 : i32)))
-            (set! i (+ i 1)))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (if (=
-            (i32v.get (& got) i (cast 0 : i32))
-            (i32v.get (& want) i (cast 0 : i32)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+        [source-index : i64 (i64v.get (& ix) i 0)]
+        (i32v.set-ref!
+          (&mut want)
+          i
+          (i32v.get (& xs) source-index (cast 0 : i32)))
+        (set! i (+ i 1))))
+    (set! i 0)
+    (while (< i n)
+      (if (=
+        (i32v.get (& got) i (cast 0 : i32))
+        (i32v.get (& want) i (cast 0 : i32)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-f32-gather [n : i64]) : bool
   (let
@@ -243,39 +223,35 @@
     [want : f32v.Vec (f32z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (init-index (&mut ix) n source-len)
-      (while (< i source-len)
-        (begin
-          (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
-          (set! i (+ i 1))))
+    (init-index (&mut ix) n source-len)
+    (while (< i source-len)
+      (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
+      (set! i (+ i 1)))
+    (let
+      [ix-slots (i64v.slots (& ix))]
+      [src (f32v.slots (& xs))]
+      [dst (f32v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [ix-slots (i64v.slots (& ix))]
-        [src (f32v.slots (& xs))]
-        [dst (f32v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [source-index : i64 (i64v.get (& ix) i 0)]
-          (begin
-            (f32v.set-ref!
-              (&mut want)
-              i
-              (f32v.get (& xs) source-index (cast 0 : f32)))
-            (set! i (+ i 1)))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (if (=
-            (f32v.get (& got) i (cast 0 : f32))
-            (f32v.get (& want) i (cast 0 : f32)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+        [source-index : i64 (i64v.get (& ix) i 0)]
+        (f32v.set-ref!
+          (&mut want)
+          i
+          (f32v.get (& xs) source-index (cast 0 : f32)))
+        (set! i (+ i 1))))
+    (set! i 0)
+    (while (< i n)
+      (if (=
+        (f32v.get (& got) i (cast 0 : f32))
+        (f32v.get (& want) i (cast 0 : f32)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-f64-gather [n : i64]) : bool
   (let
@@ -286,39 +262,35 @@
     [want : f64v.Vec (f64z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (init-index (&mut ix) n source-len)
-      (while (< i source-len)
-        (begin
-          (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
-          (set! i (+ i 1))))
+    (init-index (&mut ix) n source-len)
+    (while (< i source-len)
+      (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
+      (set! i (+ i 1)))
+    (let
+      [ix-slots (i64v.slots (& ix))]
+      [src (f64v.slots (& xs))]
+      [dst (f64v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [ix-slots (i64v.slots (& ix))]
-        [src (f64v.slots (& xs))]
-        [dst (f64v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [source-index : i64 (i64v.get (& ix) i 0)]
-          (begin
-            (f64v.set-ref!
-              (&mut want)
-              i
-              (f64v.get (& xs) source-index (cast 0 : f64)))
-            (set! i (+ i 1)))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (if (=
-            (f64v.get (& got) i (cast 0 : f64))
-            (f64v.get (& want) i (cast 0 : f64)))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+        [source-index : i64 (i64v.get (& ix) i 0)]
+        (f64v.set-ref!
+          (&mut want)
+          i
+          (f64v.get (& xs) source-index (cast 0 : f64)))
+        (set! i (+ i 1))))
+    (set! i 0)
+    (while (< i n)
+      (if (=
+        (f64v.get (& got) i (cast 0 : f64))
+        (f64v.get (& want) i (cast 0 : f64)))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-numeric-gathers [n : i64]) : bool
   (and (case-i32-gather n) (case-f32-gather n) (case-f64-gather n)))
@@ -332,41 +304,37 @@
     [got : i32v.Vec (i32z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i 16)
-        (begin
-          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i source-len)
-        (begin
-          (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
-          (set! i (+ i 1))))
+    (while (< i 16)
+      (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i source-len)
+      (i32v.set-ref! (&mut xs) i (cast (+ 11 (* i 7)) : i32))
+      (set! i (+ i 1)))
+    (let
+      [dst (i64v.slots-mut (&mut lane-ids))]
+      (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
+    (let
+      [offset-slots (i64v.slots (& offsets))]
+      [src (i32v.slots (& xs))]
+      [dst (i32v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set!
+          (array-ref dst j)
+          (array-ref src (+ j (array-ref offset-slots (program-index)))))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
-      (let
-        [offset-slots (i64v.slots (& offsets))]
-        [src (i32v.slots (& xs))]
-        [dst (i32v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set!
-            (array-ref dst j)
-            (array-ref src (+ j (array-ref offset-slots (program-index)))))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [lane : i64 (i64v.get (& lane-ids) i 0)]
-          [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
-          (begin
-            (if (=
-              (i32v.get (& got) i (cast 0 : i32))
-              (i32v.get (& xs) source-index (cast 0 : i32)))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+        [lane : i64 (i64v.get (& lane-ids) i 0)]
+        [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
+        (if (=
+          (i32v.get (& got) i (cast 0 : i32))
+          (i32v.get (& xs) source-index (cast 0 : i32)))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-f32-lane-offset-gather [n : i64]) : bool
   (let
@@ -377,41 +345,37 @@
     [got : f32v.Vec (f32z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i 16)
-        (begin
-          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i source-len)
-        (begin
-          (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
-          (set! i (+ i 1))))
+    (while (< i 16)
+      (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i source-len)
+      (f32v.set-ref! (&mut xs) i (cast (+ 21 (* i 5)) : f32))
+      (set! i (+ i 1)))
+    (let
+      [dst (i64v.slots-mut (&mut lane-ids))]
+      (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
+    (let
+      [offset-slots (i64v.slots (& offsets))]
+      [src (f32v.slots (& xs))]
+      [dst (f32v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set!
+          (array-ref dst j)
+          (array-ref src (+ j (array-ref offset-slots (program-index)))))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
-      (let
-        [offset-slots (i64v.slots (& offsets))]
-        [src (f32v.slots (& xs))]
-        [dst (f32v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set!
-            (array-ref dst j)
-            (array-ref src (+ j (array-ref offset-slots (program-index)))))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [lane : i64 (i64v.get (& lane-ids) i 0)]
-          [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
-          (begin
-            (if (=
-              (f32v.get (& got) i (cast 0 : f32))
-              (f32v.get (& xs) source-index (cast 0 : f32)))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+        [lane : i64 (i64v.get (& lane-ids) i 0)]
+        [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
+        (if (=
+          (f32v.get (& got) i (cast 0 : f32))
+          (f32v.get (& xs) source-index (cast 0 : f32)))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-f64-lane-offset-gather [n : i64]) : bool
   (let
@@ -422,41 +386,37 @@
     [got : f64v.Vec (f64z.make n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i 16)
-        (begin
-          (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i source-len)
-        (begin
-          (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
-          (set! i (+ i 1))))
+    (while (< i 16)
+      (i64v.set-ref! (&mut offsets) i (% (* i 3) 4))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i source-len)
+      (f64v.set-ref! (&mut xs) i (cast (+ 31 (* i 9)) : f64))
+      (set! i (+ i 1)))
+    (let
+      [dst (i64v.slots-mut (&mut lane-ids))]
+      (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
+    (let
+      [offset-slots (i64v.slots (& offsets))]
+      [src (f64v.slots (& xs))]
+      [dst (f64v.slots-mut (&mut got))]
+      (foreach
+        ([j : i64 0 n])
+        (set!
+          (array-ref dst j)
+          (array-ref src (+ j (array-ref offset-slots (program-index)))))))
+    (set! i 0)
+    (while (< i n)
       (let
-        [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
-      (let
-        [offset-slots (i64v.slots (& offsets))]
-        [src (f64v.slots (& xs))]
-        [dst (f64v.slots-mut (&mut got))]
-        (foreach
-          ([j : i64 0 n])
-          (set!
-            (array-ref dst j)
-            (array-ref src (+ j (array-ref offset-slots (program-index)))))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [lane : i64 (i64v.get (& lane-ids) i 0)]
-          [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
-          (begin
-            (if (=
-              (f64v.get (& got) i (cast 0 : f64))
-              (f64v.get (& xs) source-index (cast 0 : f64)))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+        [lane : i64 (i64v.get (& lane-ids) i 0)]
+        [source-index : i64 (+ i (i64v.get (& offsets) lane 0))]
+        (if (=
+          (f64v.get (& got) i (cast 0 : f64))
+          (f64v.get (& xs) source-index (cast 0 : f64)))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (case-numeric-lane-offset-gathers [n : i64]) : bool
   (and
@@ -467,44 +427,43 @@
 (define (all-cases) : bool
   (let
     [ok : bool true]
-    (begin
-      (if (case-gather 0)
-        unit
-        (set! ok false))
-      (if (case-gather 1)
-        unit
-        (set! ok false))
-      (if (case-gather 3)
-        unit
-        (set! ok false))
-      (if (case-gather 13)
-        unit
-        (set! ok false))
-      (if (case-gather 33)
-        unit
-        (set! ok false))
-      (if (case-numeric-gathers 33)
-        unit
-        (set! ok false))
-      (if (case-lane-offset-gather 0 false)
-        unit
-        (set! ok false))
-      (if (case-lane-offset-gather 3 false)
-        unit
-        (set! ok false))
-      (if (case-lane-offset-gather 8 false)
-        unit
-        (set! ok false))
-      (if (case-lane-offset-gather 13 true)
-        unit
-        (set! ok false))
-      (if (case-lane-offset-gather 33 false)
-        unit
-        (set! ok false))
-      (if (case-numeric-lane-offset-gathers 33)
-        unit
-        (set! ok false))
-      ok)))
+    (if (case-gather 0)
+      unit
+      (set! ok false))
+    (if (case-gather 1)
+      unit
+      (set! ok false))
+    (if (case-gather 3)
+      unit
+      (set! ok false))
+    (if (case-gather 13)
+      unit
+      (set! ok false))
+    (if (case-gather 33)
+      unit
+      (set! ok false))
+    (if (case-numeric-gathers 33)
+      unit
+      (set! ok false))
+    (if (case-lane-offset-gather 0 false)
+      unit
+      (set! ok false))
+    (if (case-lane-offset-gather 3 false)
+      unit
+      (set! ok false))
+    (if (case-lane-offset-gather 8 false)
+      unit
+      (set! ok false))
+    (if (case-lane-offset-gather 13 true)
+      unit
+      (set! ok false))
+    (if (case-lane-offset-gather 33 false)
+      unit
+      (set! ok false))
+    (if (case-numeric-lane-offset-gathers 33)
+      unit
+      (set! ok false))
+    ok))
 
 (define (main) : i64
   (if (all-cases)

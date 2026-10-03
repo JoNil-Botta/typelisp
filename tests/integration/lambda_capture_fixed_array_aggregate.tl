@@ -72,9 +72,8 @@
     [f : (-> i64)
       (lambda () : i64
         (array-ref chunk.items 0))]
-    (begin
-      (set! (array-ref chunk.items 0) 5)
-      (= (f) 42))))
+    (set! (array-ref chunk.items 0) 5)
+    (= (f) 42)))
 
 (define (case-aggregate-array-field) : bool
   (let
@@ -87,11 +86,10 @@
     (= (f) 11)))
 
 (define (main) : i64
-  (begin
-    (unless (case-string-array) (return 1))
-    (unless (case-point-array) (return 2))
-    (unless (case-nested-array) (return 3))
-    (unless (case-fixed-array-field) (return 4))
-    (unless (case-fixed-array-field-mutated-after-capture) (return 5))
-    (unless (case-aggregate-array-field) (return 6))
-    42))
+  (unless (case-string-array) (return 1))
+  (unless (case-point-array) (return 2))
+  (unless (case-nested-array) (return 3))
+  (unless (case-fixed-array-field) (return 4))
+  (unless (case-fixed-array-field-mutated-after-capture) (return 5))
+  (unless (case-aggregate-array-field) (return 6))
+  42)

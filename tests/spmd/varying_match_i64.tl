@@ -16,15 +16,14 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (match (% i 4)
-            [0 10]
-            [1 (+ i 20)]
-            [2 30]
-            [x (+ x 40)]))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (match (% i 4)
+          [0 10]
+          [1 (+ i 20)]
+          [2 30]
+          [x (+ x 40)]))
+      (set! i (+ i 1)))))
 
 (define (arrays-eq
   [a : (& a (__tl_dyn-array i64))]
@@ -33,23 +32,20 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (let
     [n : i64 13]
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
-    (begin
-      (fill-match (&mut got) n)
-      (fill-scalar (&mut want) n)
-      (if (arrays-eq (& got) (& want) n)
-        42
-        1))))
+    (fill-match (&mut got) n)
+    (fill-scalar (&mut want) n)
+    (if (arrays-eq (& got) (& want) n)
+      42
+      1)))

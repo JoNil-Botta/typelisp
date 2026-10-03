@@ -21,20 +21,17 @@
 (define (atomic-thread-worker [owner : i64]) : i64
   (let
     [home : i64 (arena.tl_arena_current)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set owner))
+    (unsafe
+      (arena.tl_arena_set owner))
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 4096)]
+      (set! (array-ref items 0) 21)
+      (set! (array-ref items 1) 21)
       (let
-        [items : (__tl_dyn-array i64) (__tl_make-array i64 4096)]
-        (begin
-          (set! (array-ref items 0) 21)
-          (set! (array-ref items 1) 21)
-          (let
-            [sum : i64 (+ (array-ref items 0) (array-ref items 1))]
-            (begin
-              (unsafe
-                (arena.tl_arena_set home))
-              sum)))))))
+        [sum : i64 (+ (array-ref items 0) (array-ref items 1))]
+        (unsafe
+          (arena.tl_arena_set home))
+        sum))))
 
 ;: Spawn one worker over `owner`, join it, and surface the joined value.
 (define (atomic-thread-run [owner : i64]) : i64
@@ -57,6 +54,5 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [result : i64 (atomic-thread-run (arena.raw-handle owner))]
-    (begin
-      (arena.destroy-safe! owner)
-      result)))
+    (arena.destroy-safe! owner)
+    result))

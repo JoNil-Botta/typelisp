@@ -34,8 +34,7 @@
       42)))
 
 (define (main) : i64
-  (begin
-    (unless (case-tuple-immediate) (return 1))
-    (unless (case-tuple-returned) (return 2))
-    (unless (case-tuple-mixed) (return 3))
-    42))
+  (unless (case-tuple-immediate) (return 1))
+  (unless (case-tuple-returned) (return 2))
+  (unless (case-tuple-mixed) (return 3))
+  42)

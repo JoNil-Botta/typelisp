@@ -18,28 +18,26 @@
         [shared-items : (Array i64 2) (array 4 5)]
         [mut-items : (Array i64 2) (array 1 2)]
         [total : i64 0]
-        (begin
-          (for [item items] (set! total (+ total item)))
-          (for [item (& shared-items)] (set! total (+ total (deref item))))
-          (for
-            [item (&mut mut-items)]
-            (set! (deref item) (+ (deref item) 1))
-            (set! total (+ total (deref item))))
-          (for [item slice-items] (set! total (+ total (deref item))))
-          (set! (array-ref out-slots lane) (+ total lane)))))))
+        (for [item items] (set! total (+ total item)))
+        (for [item (& shared-items)] (set! total (+ total (deref item))))
+        (for
+          [item (&mut mut-items)]
+          (set! (deref item) (+ (deref item) 1))
+          (set! total (+ total (deref item))))
+        (for [item slice-items] (set! total (+ total (deref item))))
+        (set! (array-ref out-slots lane) (+ total lane))))))
 
 (define (main) : i64
   (let
     [out : i64v.Vec (i64z.make 4)]
     [slice-items : (Array i64 3) (array 6 7 100)]
-    (begin
-      (fill (slice-view (& slice-items) 0 2) (&mut out) 4)
-      (let
-        [out-slots (i64v.slots (& out))]
-        (if (and
-          (= (array-ref out-slots 0) 30)
-          (= (array-ref out-slots 1) 31)
-          (= (array-ref out-slots 2) 32)
-          (= (array-ref out-slots 3) 33))
-          42
-          1)))))
+    (fill (slice-view (& slice-items) 0 2) (&mut out) 4)
+    (let
+      [out-slots (i64v.slots (& out))]
+      (if (and
+        (= (array-ref out-slots 0) 30)
+        (= (array-ref out-slots 1) 31)
+        (= (array-ref out-slots 2) 32)
+        (= (array-ref out-slots 3) 33))
+        42
+        1))))

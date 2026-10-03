@@ -20,26 +20,24 @@
     [cell : (Box i64) (box 8)]
     [outer : (Box (Box i64)) (box (box 9))]
     [owned-tuple : (Tuple (Box i64) i64) (tuple (box 15) 16)]
-    (begin
-      (write-ref! (&mut scalar) 10)
-      (set! pair.left 11)
-      (write-tuple-ref! (&mut tuple-value) 12)
-      (set! (array-ref items 0) 13)
-      (set! (deref cell) 14)
-      (let
-        [inner : (Box i64) (deref outer)]
-        [borrowed : (& cell i64) (& (deref cell))]
-        [moved-element : (Box i64) (tuple-ref owned-tuple 0)]
-        (begin
-          (set! (tuple-ref owned-tuple 0) (box 17))
-          (if (and
-            (= (read-ref (& scalar)) 10)
-            (= pair.left 11)
-            (= (tuple-ref tuple-value 1) 12)
-            (= (array-ref items 0) 13)
-            (= (deref borrowed) 14)
-            (= (deref inner) 9)
-            (= (deref moved-element) 15)
-            (= (deref (tuple-ref owned-tuple 0)) 17))
-            42
-            1))))))
+    (write-ref! (&mut scalar) 10)
+    (set! pair.left 11)
+    (write-tuple-ref! (&mut tuple-value) 12)
+    (set! (array-ref items 0) 13)
+    (set! (deref cell) 14)
+    (let
+      [inner : (Box i64) (deref outer)]
+      [borrowed : (& cell i64) (& (deref cell))]
+      [moved-element : (Box i64) (tuple-ref owned-tuple 0)]
+      (set! (tuple-ref owned-tuple 0) (box 17))
+      (if (and
+        (= (read-ref (& scalar)) 10)
+        (= pair.left 11)
+        (= (tuple-ref tuple-value 1) 12)
+        (= (array-ref items 0) 13)
+        (= (deref borrowed) 14)
+        (= (deref inner) 9)
+        (= (deref moved-element) 15)
+        (= (deref (tuple-ref owned-tuple 0)) 17))
+        42
+        1))))

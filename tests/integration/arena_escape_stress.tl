@@ -18,9 +18,8 @@
   (cast 67108864 : u64))
 
 (define (force-overflow) : unit
-  (begin
-    (tl_alloc (overflow-bytes))
-    unit))
+  (tl_alloc (overflow-bytes))
+  unit)
 
 (define (payload [seed : i64] [idx : i64]) : String
   (string.append
@@ -32,18 +31,16 @@
   [index : i64]
   [count : i64]
   [seed : i64]) : unit
-  (if (= index count)
-    unit
-    (begin
-      (set! (array-ref items index) (payload seed (- count index)))
-      (fill-items items (+ index 1) count seed))))
+  (unless
+    (= index count)
+    (set! (array-ref items index) (payload seed (- count index)))
+    (fill-items items (+ index 1) count seed)))
 
 (define (make-items [count : i64] [seed : i64]) : (__tl_dyn-array String)
   (let
     [items : (__tl_dyn-array String) (__tl_make-array String count)]
-    (begin
-      (fill-items (&mut items) 0 count seed)
-      items)))
+    (fill-items (&mut items) 0 count seed)
+    items))
 
 (define (items-ok-from?
   [items : (& items (__tl_dyn-array String))]
@@ -66,74 +63,62 @@
   (let
     [enclosing : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
-    (begin
-      (unsafe
-        (arena.set! scratch))
+    (unsafe
+      (arena.set! scratch))
+    (let
+      [raw : String (payload seed 999)]
+      (force-overflow)
       (let
-        [raw : String (payload seed 999)]
-        (begin
-          (force-overflow)
-          (let
-            [scratch-head : arena.Arena (arena.current)]
-            (begin
-              (unsafe
-                (arena.set! enclosing))
-              (let
-                [escaped : String (string.copy raw)]
-                (begin
-                  (unsafe
-                    (arena.destroy scratch-head))
-                  escaped)))))))))
+        [scratch-head : arena.Arena (arena.current)]
+        (unsafe
+          (arena.set! enclosing))
+        (let
+          [escaped : String (string.copy raw)]
+          (unsafe
+            (arena.destroy scratch-head))
+          escaped)))))
 
 (define (escape-items [count : i64] [seed : i64]) : (__tl_dyn-array String)
   (let
     [enclosing : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
-    (begin
-      (unsafe
-        (arena.set! scratch))
+    (unsafe
+      (arena.set! scratch))
+    (let
+      [raw : (__tl_dyn-array String) (make-items count seed)]
+      (force-overflow)
       (let
-        [raw : (__tl_dyn-array String) (make-items count seed)]
-        (begin
-          (force-overflow)
-          (let
-            [scratch-head : arena.Arena (arena.current)]
-            (begin
-              (unsafe
-                (arena.set! enclosing))
-              (let
-                [escaped : (__tl_dyn-array String) (clone raw)]
-                (begin
-                  (unsafe
-                    (arena.destroy scratch-head))
-                  escaped)))))))))
+        [scratch-head : arena.Arena (arena.current)]
+        (unsafe
+          (arena.set! enclosing))
+        (let
+          [escaped : (__tl_dyn-array String) (clone raw)]
+          (unsafe
+            (arena.destroy scratch-head))
+          escaped)))))
 
 (define (escape-items-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : (__tl_dyn-array
     String)
   (let
     [enclosing : arena.Arena (arena.current)]
-    (begin
-      (unsafe
-        (arena.set! scratch))
+    (unsafe
+      (arena.set! scratch))
+    (let
+      [mark : arena.ArenaMark (arena.mark)]
+      [raw : (__tl_dyn-array String) (make-items count seed)]
+      (force-overflow)
       (let
-        [mark : arena.ArenaMark (arena.mark)]
-        [raw : (__tl_dyn-array String) (make-items count seed)]
-        (begin
-          (force-overflow)
-          (let
-            [scratch-head : arena.Arena (arena.current)]
-            (begin
-              (unsafe
-                (arena.set! enclosing))
-              (let
-                [escaped : (__tl_dyn-array String) (clone raw)]
-                [new-enclosing : arena.Arena (arena.current)]
-                (begin
-                  (unsafe
-                    (arena.set! scratch-head)
-                    (arena.rewind mark)
-                    (arena.set! new-enclosing))
-                  escaped)))))))))
+        [scratch-head : arena.Arena (arena.current)]
+        (unsafe
+          (arena.set! enclosing))
+        (let
+          [escaped : (__tl_dyn-array String) (clone raw)]
+          [new-enclosing : arena.Arena (arena.current)]
+          (unsafe
+            (arena.set! scratch-head)
+            (arena.rewind mark)
+            (arena.set! new-enclosing))
+          escaped)))))
 
 (define (string-cycles [n : i64] [acc : i64]) : i64
   (if (= n 0)
@@ -174,18 +159,16 @@
   (let
     [scratch : arena.Arena (arena.make)]
     [score : i64 (rewind-item-cycles-inner scratch n 0)]
-    (begin
-      (unsafe
-        (arena.destroy scratch))
-      score)))
+    (unsafe
+      (arena.destroy scratch))
+    score))
 
 (define (main) : i64
   (let
     [string-score : i64 (string-cycles 3 0)]
     [item-score : i64 (item-cycles 3 0)]
     [rewind-score : i64 (rewind-item-cycles 3)]
-    (begin
-      (unless (> string-score 0) (return 1))
-      (unless (= item-score 3) (return 2))
-      (unless (= rewind-score 3) (return 3))
-      42)))
+    (unless (> string-score 0) (return 1))
+    (unless (= item-score 3) (return 2))
+    (unless (= rewind-score 3) (return 3))
+    42))

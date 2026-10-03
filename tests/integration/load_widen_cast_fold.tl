@@ -49,40 +49,37 @@
     (refused bytes i (+ poke 1))
     (let
       [b : u8 (array-ref bytes i)]
-      (begin
-        (set! (array-ref bytes i) b)
-        (let
-          [c : i64 (cast b : i64)]
-          (cond
-            [(= c 32) 1]
-            [(= c 9) 2]
-            [(= c 40) 3]
-            [(= c 41) 4]
-            [(and (>= c 48) (<= c 57)) 5]
-            [(and (>= c 97) (<= c 122)) 6]
-            [(= c 45) 7]
-            [else 8]))))))
+      (set! (array-ref bytes i) b)
+      (let
+        [c : i64 (cast b : i64)]
+        (cond
+          [(= c 32) 1]
+          [(= c 9) 2]
+          [(= c 40) 3]
+          [(= c 41) 4]
+          [(and (>= c 48) (<= c 57)) 5]
+          [(and (>= c 97) (<= c 122)) 6]
+          [(= c 45) 7]
+          [else 8])))))
 
 (define (main) : i64
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [i : i64 0]
     [ok : i64 0]
-    (begin
-      (set! (array-ref bytes 0) (cast 32 : u8))
-      (set! (array-ref bytes 1) (cast 9 : u8))
-      (set! (array-ref bytes 2) (cast 40 : u8))
-      (set! (array-ref bytes 3) (cast 41 : u8))
-      (set! (array-ref bytes 4) (cast 55 : u8))
-      (set! (array-ref bytes 5) (cast 120 : u8))
-      (set! (array-ref bytes 6) (cast 45 : u8))
-      (set! (array-ref bytes 7) (cast 200 : u8))
-      (while (< i 8)
-        (begin
-          (if (= (classify (& bytes) i 0) (refused (&mut bytes) i 0))
-            (set! ok (+ ok 1))
-            unit)
-          (set! i (+ i 1))))
-      (if (= ok 8)
-        42
-        1))))
+    (set! (array-ref bytes 0) (cast 32 : u8))
+    (set! (array-ref bytes 1) (cast 9 : u8))
+    (set! (array-ref bytes 2) (cast 40 : u8))
+    (set! (array-ref bytes 3) (cast 41 : u8))
+    (set! (array-ref bytes 4) (cast 55 : u8))
+    (set! (array-ref bytes 5) (cast 120 : u8))
+    (set! (array-ref bytes 6) (cast 45 : u8))
+    (set! (array-ref bytes 7) (cast 200 : u8))
+    (while (< i 8)
+      (if (= (classify (& bytes) i 0) (refused (&mut bytes) i 0))
+        (set! ok (+ ok 1))
+        unit)
+      (set! i (+ i 1)))
+    (if (= ok 8)
+      42
+      1)))

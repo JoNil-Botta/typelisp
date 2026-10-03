@@ -23,8 +23,7 @@
   (+ (weigh (& frame)) (+ frame.origin.x (+ frame.origin.y frame.tag))))
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}\n" (report))
-    (install! 6 7 8)
-    (io.print-format "{}\n" (report))
-    42))
+  (io.print-format "{}\n" (report))
+  (install! 6 7 8)
+  (io.print-format "{}\n" (report))
+  42)

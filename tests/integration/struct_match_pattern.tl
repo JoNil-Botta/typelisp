@@ -33,11 +33,8 @@
       [(geom.QPoint x y) (+ x y)])))
 
 (define (main) : i64
-  (begin
-    (unless (= (sum-point (Point 20 22)) 42) (return 1))
-    (unless
-      (= (sum-pair-ends (Pair (Point 5 100) (Point 200 37))) 42)
-      (return 2))
-    (unless (= (sum-shape (At (Point 19 23))) 42) (return 3))
-    (unless (= (sum-qualified) 13) (return 4))
-    42))
+  (unless (= (sum-point (Point 20 22)) 42) (return 1))
+  (unless (= (sum-pair-ends (Pair (Point 5 100) (Point 200 37))) 42) (return 2))
+  (unless (= (sum-shape (At (Point 19 23))) 42) (return 3))
+  (unless (= (sum-qualified) 13) (return 4))
+  42)

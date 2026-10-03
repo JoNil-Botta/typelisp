@@ -16,12 +16,11 @@
     (let
       [descriptor : i64 (cast (tl_alloc (cast 16 : u64)) : i64)]
       [handle : i64 (cast (tl_alloc (cast 8 : u64)) : i64)]
-      (begin
-        (write-i64! descriptor data)
-        (write-i64! (+ descriptor 8) len)
-        (write-i64! handle descriptor)
-        (unsafe
-          (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64)))))))))
+      (write-i64! descriptor data)
+      (write-i64! (+ descriptor 8) len)
+      (write-i64! handle descriptor)
+      (unsafe
+        (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64))))))))
 
 (define (masked-cache-copy
   [source : (& source (__tl_dyn-array i64))]
@@ -57,20 +56,19 @@
             (let
               [source : (__tl_dyn-array i64) (array-i64-from-raw source-data 4)]
               [destination : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-              (begin
-                (write-i64! source-data 17)
-                (write-i64! (+ source-data 8) 29)
-                (masked-cache-copy (& source) (&mut destination))
-                (let
-                  [source-free : i64
-                    (unsafe
-                      (syscall 11 source-map 4096))]
-                  (and
-                    (= source-free 0)
-                    (= (array-ref destination 0) 18)
-                    (= (array-ref destination 1) 30)
-                    (= (array-ref destination 2) 7)
-                    (= (array-ref destination 3) 7)))))))))))
+              (write-i64! source-data 17)
+              (write-i64! (+ source-data 8) 29)
+              (masked-cache-copy (& source) (&mut destination))
+              (let
+                [source-free : i64
+                  (unsafe
+                    (syscall 11 source-map 4096))]
+                (and
+                  (= source-free 0)
+                  (= (array-ref destination 0) 18)
+                  (= (array-ref destination 1) 30)
+                  (= (array-ref destination 2) 7)
+                  (= (array-ref destination 3) 7))))))))))
 
 (cfg
   windows
@@ -87,35 +85,30 @@
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) i)
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (set!
-          (array-ref out j)
-          (if (= (bit-and (array-ref xs j) 1) 1)
-            (begin
-              (set! (array-ref xs j) (+ (array-ref xs j) 7))
-              (array-ref xs j))
-            (array-ref xs j))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (let
-            [expected : i64
-              (if (= (bit-and i 1) 1)
-                (+ i 7)
-                i)]
-            (if (or
-              (!= (array-ref xs i) expected)
-              (!= (array-ref out i) expected))
-              (set! ok false)
-              unit))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (set! (array-ref xs i) i)
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (set!
+        (array-ref out j)
+        (if (= (bit-and (array-ref xs j) 1) 1)
+          (begin
+            (set! (array-ref xs j) (+ (array-ref xs j) 7))
+            (array-ref xs j))
+          (array-ref xs j))))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [expected : i64
+          (if (= (bit-and i 1) 1)
+            (+ i 7)
+            i)]
+        (if (or (!= (array-ref xs i) expected) (!= (array-ref out i) expected))
+          (set! ok false)
+          unit))
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (if (and (fault-suppression-case) (mutation-case))

@@ -30,16 +30,14 @@
     [e : i64 (+ seed 5)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; array-ref through the loop-invariant base `items` every iteration,
-          ;; plus the invariants a..e: the base must stay in a register across the
-          ;; loop or it is reloaded every iteration.
-          (set! acc (+ acc (array-ref items i)))
-          (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; array-ref through the loop-invariant base `items` every iteration,
+      ;; plus the invariants a..e: the base must stay in a register across the
+      ;; loop or it is reloaded every iteration.
+      (set! acc (+ acc (array-ref items i)))
+      (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -48,17 +46,15 @@
     [seed : i64 ac]
     [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      ;; items[k] = k*10
-      (while (< i n)
-        (begin
-          (set! (array-ref items i) (* i 10))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (sum-array items n seed)]
-        ;; closed form: sum_{k=0}^{n-1}(k*10) + n*(a+b+c+d+e)
-        ;;            = 5*n*(n-1)            + n*(5*seed + 15)
-        [expected : i64 (+ (* 5 (* n (- n 1))) (* n (+ (* 5 seed) 15)))]
-        (if (= r expected)
-          42
-          1)))))
+    ;; items[k] = k*10
+    (while (< i n)
+      (set! (array-ref items i) (* i 10))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (sum-array items n seed)]
+      ;; closed form: sum_{k=0}^{n-1}(k*10) + n*(a+b+c+d+e)
+      ;;            = 5*n*(n-1)            + n*(5*seed + 15)
+      [expected : i64 (+ (* 5 (* n (- n 1))) (* n (+ (* 5 seed) 15)))]
+      (if (= r expected)
+        42
+        1))))

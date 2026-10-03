@@ -40,14 +40,10 @@
   (let
     [word : i64 0]
     [b : i64 7]
-    (begin
-      (while (>= b 0)
-        (begin
-          (set!
-            word
-            (bit-or (shl word 8) (cast (array-ref src (+ at b)) : i64)))
-          (set! b (- b 1))))
-      word)))
+    (while (>= b 0)
+      (set! word (bit-or (shl word 8) (cast (array-ref src (+ at b)) : i64)))
+      (set! b (- b 1)))
+    word))
 
 (define (rccrv-mix
   [src : (& src (__tl_dyn-array u8))]
@@ -58,19 +54,16 @@
     [i : i64 0]
     [words : i64 (- len 7)]
     [tail : i64 0]
-    (begin
-      (while (< i words)
-        (begin
-          (set!
-            h
-            (* (bit-xor h (rccrv-load-word src (+ start i))) rccrv-multiplier))
-          (set! i (+ i 8))))
-      (while (< i len)
-        (begin
-          (set! tail (+ (* tail 256) (cast (array-ref src (+ start i)) : i64)))
-          (set! i (+ i 1))))
-      (set! h (* (bit-xor h tail) rccrv-multiplier))
-      (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))
+    (while (< i words)
+      (set!
+        h
+        (* (bit-xor h (rccrv-load-word src (+ start i))) rccrv-multiplier))
+      (set! i (+ i 8)))
+    (while (< i len)
+      (set! tail (+ (* tail 256) (cast (array-ref src (+ start i)) : i64)))
+      (set! i (+ i 1)))
+    (set! h (* (bit-xor h tail) rccrv-multiplier))
+    (bit-xor h (cast (shr (cast h : u64) 29) : i64))))
 
 (define (main) : i64
   (let
@@ -78,19 +71,16 @@
     [src : (__tl_dyn-array u8) (__tl_make-array u8 40)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i 40)
-        (begin
-          (set! (array-ref src i) (cast (+ (* i n) 65) : u8))
-          (set! i (+ i 1))))
-      ;; Every length from 1 to 29 covers the word loop alone, the tail loop
-      ;; alone, and both together, so the final mix is reached from all three
-      ;; predecessors of the return block.
-      (set! i 1)
-      (while (< i 30)
-        (begin
-          (set! acc (+ (* acc 31) (rccrv-mix (& src) 0 i)))
-          (set! i (+ i 1))))
-      (if (= acc 4218076827798351321)
-        42
-        1))))
+    (while (< i 40)
+      (set! (array-ref src i) (cast (+ (* i n) 65) : u8))
+      (set! i (+ i 1)))
+    ;; Every length from 1 to 29 covers the word loop alone, the tail loop
+    ;; alone, and both together, so the final mix is reached from all three
+    ;; predecessors of the return block.
+    (set! i 1)
+    (while (< i 30)
+      (set! acc (+ (* acc 31) (rccrv-mix (& src) 0 i)))
+      (set! i (+ i 1)))
+    (if (= acc 4218076827798351321)
+      42
+      1)))

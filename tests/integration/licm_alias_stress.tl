@@ -23,14 +23,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; read the value written on an EARLIER iteration when i > n-1-i.
-          (set! acc (+ acc (array-ref xs i)))
-          (set! (array-ref xs (- (- n 1) i)) (+ i 1))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; read the value written on an EARLIER iteration when i > n-1-i.
+      (set! acc (+ acc (array-ref xs i)))
+      (set! (array-ref xs (- (- n 1) i)) (+ i 1))
+      (set! i (+ i 1)))
+    acc))
 
 (define (nested-flip
   [xss : (__tl_dyn-array (__tl_dyn-array i64))]
@@ -40,15 +38,13 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (% i 2) 0)
-            (set! (array-ref xss 0) a)
-            (set! (array-ref xss 0) b))
-          (set! acc (+ acc (array-length (array-ref xss 0))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (if (= (% i 2) 0)
+        (set! (array-ref xss 0) a)
+        (set! (array-ref xss 0) b))
+      (set! acc (+ acc (array-length (array-ref xss 0))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -58,21 +54,20 @@
     [b : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [xss : (__tl_dyn-array (__tl_dyn-array i64))
       (__tl_make-array (__tl_dyn-array i64) 1)]
-    (begin
-      (set! (array-ref xss 0) a)
-      ;; n = 6 (no args). rotate-sum walk:
-      ;;   i=0: acc += xs[0] (0), write xs[5]=1
-      ;;   i=1: acc += xs[1] (0), write xs[4]=2
-      ;;   i=2: acc += xs[2] (0), write xs[3]=3
-      ;;   i=3: acc += xs[3] (3), write xs[2]=4
-      ;;   i=4: acc += xs[4] (2), write xs[1]=5
-      ;;   i=5: acc += xs[5] (1), write xs[0]=6
-      ;; acc = 6. A stale (hoisted-value) read of xs[3]/xs[4]/xs[5] gives 0.
-      (let
-        [r1 : i64 (rotate-sum xs n)]
-        ;; nested-flip over n=6: lengths 2,3,2,3,2,3 -> 15. A wrongly hoisted
-        ;; inner-descriptor len gives 12 or 18.
-        [r2 : i64 (nested-flip xss a b n)]
-        (if (and (= r1 6) (= r2 15))
-          42
-          1)))))
+    (set! (array-ref xss 0) a)
+    ;; n = 6 (no args). rotate-sum walk:
+    ;;   i=0: acc += xs[0] (0), write xs[5]=1
+    ;;   i=1: acc += xs[1] (0), write xs[4]=2
+    ;;   i=2: acc += xs[2] (0), write xs[3]=3
+    ;;   i=3: acc += xs[3] (3), write xs[2]=4
+    ;;   i=4: acc += xs[4] (2), write xs[1]=5
+    ;;   i=5: acc += xs[5] (1), write xs[0]=6
+    ;; acc = 6. A stale (hoisted-value) read of xs[3]/xs[4]/xs[5] gives 0.
+    (let
+      [r1 : i64 (rotate-sum xs n)]
+      ;; nested-flip over n=6: lengths 2,3,2,3,2,3 -> 15. A wrongly hoisted
+      ;; inner-descriptor len gives 12 or 18.
+      [r2 : i64 (nested-flip xss a b n)]
+      (if (and (= r1 6) (= r2 15))
+        42
+        1))))

@@ -6,6 +6,5 @@
 (define (main) : i64
   (let
     [separator : String (format.format "|")]
-    (begin
-      (io.println "{}{}{}" (first.Token 1) separator (second.Token 2))
-      0)))
+    (io.println "{}{}{}" (first.Token 1) separator (second.Token 2))
+    0))

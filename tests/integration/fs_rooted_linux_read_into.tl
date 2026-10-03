@@ -120,117 +120,116 @@
       (let
         [buffer : byte_buf.ByteBuf (byte_buf.from-string "........")]
         [status : i64 0]
-        (begin
-          (rooted.linux-rooted-test-reset!)
-          (let
-            [negative : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                -1
-                rooted.linux-rooted-never-cancelled)]
-            [over-view : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                9
-                rooted.linux-rooted-never-cancelled)]
-            [oversized : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                1048577
-                rooted.linux-rooted-never-cancelled)]
-            [zero : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                0
-                rooted.linux-rooted-never-cancelled)]
-            [cancelled : rooted.FsLinuxRootedReadIntoResult
-              (read-into (&mut reader) (&mut buffer) 1 cancel-now)]
-            (if (or
-              (not (read-result-is? (& negative) 17 0 false false))
-              (not (read-result-is? (& over-view) 17 0 false false))
-              (not (read-result-is? (& oversized) 17 0 false false))
-              (not (read-result-is? (& zero) 0 0 false false))
-              (not (read-result-is? (& cancelled) 9 0 false false))
-              (not
-                (=
-                  (rooted.linux-rooted-test-call-count
-                    rooted.fs-linux-rooted-syscall-kind-read)
-                  0))
-              (not (sentinel-eight? (& buffer))))
-              (set! status 11)
-              unit))
-          (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-set-read-max! 3)
-          (let
-            [first : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                7
-                rooted.linux-rooted-never-cancelled)]
-            (if (or
-              (not (read-result-is? (& first) 0 3 false true))
-              (not (byte-is? (& buffer) 0 112))
-              (not (byte-is? (& buffer) 1 97))
-              (not (byte-is? (& buffer) 2 121))
-              (not (byte-is? (& buffer) 3 46)))
-              (set! status 12)
-              unit))
-          (rooted.linux-rooted-test-reset!)
-          (let
-            [second : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                4
-                rooted.linux-rooted-never-cancelled)]
-            (if (or
-              (not (read-result-is? (& second) 0 4 false false))
-              (not (byte-is? (& buffer) 0 108))
-              (not (byte-is? (& buffer) 1 111))
-              (not (byte-is? (& buffer) 2 97))
-              (not (byte-is? (& buffer) 3 100))
-              (not (byte-is? (& buffer) 4 46)))
-              (set! status 13)
-              unit))
-          (let
-            [eof-read : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                8
-                rooted.linux-rooted-never-cancelled)]
-            (if (not (read-result-is? (& eof-read) 0 0 true false))
-              (set! status 14)
-              unit))
-          (if (not
-            (=
-              (result-code (rooted.linux-rooted-read-file-close! (&mut reader)))
-              0))
-            (set! status 15)
-            unit)
-          (rooted.linux-rooted-test-reset!)
-          (let
-            [closed : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                1
-                rooted.linux-rooted-never-cancelled)]
-            (if (or
-              (not (read-result-is? (& closed) 14 0 false false))
-              (not
-                (=
-                  (rooted.linux-rooted-test-call-count
-                    rooted.fs-linux-rooted-syscall-kind-read)
-                  0)))
-              (set! status 16)
-              unit))
-          status)))))
+        (rooted.linux-rooted-test-reset!)
+        (let
+          [negative : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              -1
+              rooted.linux-rooted-never-cancelled)]
+          [over-view : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              9
+              rooted.linux-rooted-never-cancelled)]
+          [oversized : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              1048577
+              rooted.linux-rooted-never-cancelled)]
+          [zero : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              0
+              rooted.linux-rooted-never-cancelled)]
+          [cancelled : rooted.FsLinuxRootedReadIntoResult
+            (read-into (&mut reader) (&mut buffer) 1 cancel-now)]
+          (if (or
+            (not (read-result-is? (& negative) 17 0 false false))
+            (not (read-result-is? (& over-view) 17 0 false false))
+            (not (read-result-is? (& oversized) 17 0 false false))
+            (not (read-result-is? (& zero) 0 0 false false))
+            (not (read-result-is? (& cancelled) 9 0 false false))
+            (not
+              (=
+                (rooted.linux-rooted-test-call-count
+                  rooted.fs-linux-rooted-syscall-kind-read)
+                0))
+            (not (sentinel-eight? (& buffer))))
+            (set! status 11)
+            unit))
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-set-read-max! 3)
+        (let
+          [first : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              7
+              rooted.linux-rooted-never-cancelled)]
+          (if (or
+            (not (read-result-is? (& first) 0 3 false true))
+            (not (byte-is? (& buffer) 0 112))
+            (not (byte-is? (& buffer) 1 97))
+            (not (byte-is? (& buffer) 2 121))
+            (not (byte-is? (& buffer) 3 46)))
+            (set! status 12)
+            unit))
+        (rooted.linux-rooted-test-reset!)
+        (let
+          [second : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              4
+              rooted.linux-rooted-never-cancelled)]
+          (if (or
+            (not (read-result-is? (& second) 0 4 false false))
+            (not (byte-is? (& buffer) 0 108))
+            (not (byte-is? (& buffer) 1 111))
+            (not (byte-is? (& buffer) 2 97))
+            (not (byte-is? (& buffer) 3 100))
+            (not (byte-is? (& buffer) 4 46)))
+            (set! status 13)
+            unit))
+        (let
+          [eof-read : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              8
+              rooted.linux-rooted-never-cancelled)]
+          (if (not (read-result-is? (& eof-read) 0 0 true false))
+            (set! status 14)
+            unit))
+        (if (not
+          (=
+            (result-code (rooted.linux-rooted-read-file-close! (&mut reader)))
+            0))
+          (set! status 15)
+          unit)
+        (rooted.linux-rooted-test-reset!)
+        (let
+          [closed : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              1
+              rooted.linux-rooted-never-cancelled)]
+          (if (or
+            (not (read-result-is? (& closed) 14 0 false false))
+            (not
+              (=
+                (rooted.linux-rooted-test-call-count
+                  rooted.fs-linux-rooted-syscall-kind-read)
+                0)))
+            (set! status 16)
+            unit))
+        status))))
 
 (define (check-faults [directory : (& directory rooted.FsLinuxRootedDirectory)]) : i64
   (with
@@ -245,67 +244,66 @@
       (let
         [buffer : byte_buf.ByteBuf (byte_buf.from-string "........")]
         [status : i64 0]
-        (begin
-          (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on!
-            rooted.fs-linux-rooted-syscall-kind-read
-            1
-            5)
-          (let
-            [failed : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                7
-                rooted.linux-rooted-never-cancelled)]
-            (if (or
-              (not (read-result-is? (& failed) 19 0 false false))
-              (not (sentinel-eight? (& buffer))))
-              (set! status 21)
-              unit))
-          (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on!
-            rooted.fs-linux-rooted-syscall-kind-read
-            1
-            4)
-          (let
-            [cancelled : rooted.FsLinuxRootedReadIntoResult
-              (read-into (&mut reader) (&mut buffer) 7 cancel-after-first-read)]
-            (if (or
-              (not (read-result-is? (& cancelled) 9 0 false false))
-              (not
-                (=
-                  (rooted.linux-rooted-test-call-count
-                    rooted.fs-linux-rooted-syscall-kind-read)
-                  1))
-              (not (sentinel-eight? (& buffer))))
-              (set! status 22)
-              unit))
-          (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on!
-            rooted.fs-linux-rooted-syscall-kind-read
-            1
-            4)
-          (let
-            [retried : rooted.FsLinuxRootedReadIntoResult
-              (read-into
-                (&mut reader)
-                (&mut buffer)
-                7
-                rooted.linux-rooted-never-cancelled)]
-            (if (or
-              (not (read-result-is? (& retried) 0 7 false false))
-              (not
-                (=
-                  (rooted.linux-rooted-test-call-count
-                    rooted.fs-linux-rooted-syscall-kind-read)
-                  2))
-              (not (byte-is? (& buffer) 0 112))
-              (not (byte-is? (& buffer) 6 100))
-              (not (byte-is? (& buffer) 7 46)))
-              (set! status 23)
-              unit))
-          status)))))
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on!
+          rooted.fs-linux-rooted-syscall-kind-read
+          1
+          5)
+        (let
+          [failed : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              7
+              rooted.linux-rooted-never-cancelled)]
+          (if (or
+            (not (read-result-is? (& failed) 19 0 false false))
+            (not (sentinel-eight? (& buffer))))
+            (set! status 21)
+            unit))
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on!
+          rooted.fs-linux-rooted-syscall-kind-read
+          1
+          4)
+        (let
+          [cancelled : rooted.FsLinuxRootedReadIntoResult
+            (read-into (&mut reader) (&mut buffer) 7 cancel-after-first-read)]
+          (if (or
+            (not (read-result-is? (& cancelled) 9 0 false false))
+            (not
+              (=
+                (rooted.linux-rooted-test-call-count
+                  rooted.fs-linux-rooted-syscall-kind-read)
+                1))
+            (not (sentinel-eight? (& buffer))))
+            (set! status 22)
+            unit))
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on!
+          rooted.fs-linux-rooted-syscall-kind-read
+          1
+          4)
+        (let
+          [retried : rooted.FsLinuxRootedReadIntoResult
+            (read-into
+              (&mut reader)
+              (&mut buffer)
+              7
+              rooted.linux-rooted-never-cancelled)]
+          (if (or
+            (not (read-result-is? (& retried) 0 7 false false))
+            (not
+              (=
+                (rooted.linux-rooted-test-call-count
+                  rooted.fs-linux-rooted-syscall-kind-read)
+                2))
+            (not (byte-is? (& buffer) 0 112))
+            (not (byte-is? (& buffer) 6 100))
+            (not (byte-is? (& buffer) 7 46)))
+            (set! status 23)
+            unit))
+        status))))
 
 (define (main) : i64
   (if (< (io.arg-count) 2)

@@ -25,12 +25,10 @@
   (let
     [word : i64 0]
     [b : i64 7]
-    (begin
-      (while (>= b 0)
-        (begin
-          (set! word (+ (* word 2) (byte-at v (+ at b))))
-          (set! b (- b 1))))
-      word)))
+    (while (>= b 0)
+      (set! word (+ (* word 2) (byte-at v (+ at b))))
+      (set! b (- b 1)))
+    word))
 
 ;; The two-loop kernel: `words` is `len - 7`, so the word loop and the byte
 ;; tail between them walk exactly `[start, start + len)`.
@@ -40,16 +38,13 @@
     [i : i64 0]
     [words : i64 (- len 7)]
     [tail : i64 0]
-    (begin
-      (while (< i words)
-        (begin
-          (set! h (+ (* h 31) (load-word v (+ start i))))
-          (set! i (+ i 8))))
-      (while (< i len)
-        (begin
-          (set! tail (+ (* tail 256) (byte-at v (+ start i))))
-          (set! i (+ i 1))))
-      (+ (* h 31) tail))))
+    (while (< i words)
+      (set! h (+ (* h 31) (load-word v (+ start i))))
+      (set! i (+ i 8)))
+    (while (< i len)
+      (set! tail (+ (* tail 256) (byte-at v (+ start i))))
+      (set! i (+ i 1)))
+    (+ (* h 31) tail)))
 
 (define (main) : i64
   (let
@@ -58,24 +53,21 @@
     [i : i64 0]
     [acc : i64 0]
     [start : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref (u8vec.slots-mut (&mut v)) i) (cast (+ i 1) : u8))
-          (set! i (+ i 1))))
-      ;; Every span shape the guard has a corner for: empty, one byte, shorter
-      ;; than a word, exactly one word, ending at the container's end, and the
-      ;; whole container.
-      (set! start 0)
-      (while (<= start n)
-        (begin
-          (set! acc (+ (* acc 7) (span-hash (& v) start 0)))
-          (set! acc (+ (* acc 7) (span-hash (& v) start (- n start))))
-          (set! start (+ start 1))))
-      (set! acc (+ (* acc 7) (span-hash (& v) 0 1)))
-      (set! acc (+ (* acc 7) (span-hash (& v) 1 7)))
-      (set! acc (+ (* acc 7) (span-hash (& v) 1 8)))
-      (set! acc (+ (* acc 7) (span-hash (& v) (- n 8) 8)))
-      (set! acc (+ (* acc 7) (span-hash (& v) 0 n)))
-      (io.print-format "{}\n" acc)
-      42)))
+    (while (< i n)
+      (set! (array-ref (u8vec.slots-mut (&mut v)) i) (cast (+ i 1) : u8))
+      (set! i (+ i 1)))
+    ;; Every span shape the guard has a corner for: empty, one byte, shorter
+    ;; than a word, exactly one word, ending at the container's end, and the
+    ;; whole container.
+    (set! start 0)
+    (while (<= start n)
+      (set! acc (+ (* acc 7) (span-hash (& v) start 0)))
+      (set! acc (+ (* acc 7) (span-hash (& v) start (- n start))))
+      (set! start (+ start 1)))
+    (set! acc (+ (* acc 7) (span-hash (& v) 0 1)))
+    (set! acc (+ (* acc 7) (span-hash (& v) 1 7)))
+    (set! acc (+ (* acc 7) (span-hash (& v) 1 8)))
+    (set! acc (+ (* acc 7) (span-hash (& v) (- n 8) 8)))
+    (set! acc (+ (* acc 7) (span-hash (& v) 0 n)))
+    (io.print-format "{}\n" acc)
+    42))

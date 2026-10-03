@@ -28,16 +28,13 @@
       [lo : i64 0]
       [hi : i64 0]
       [i : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (if (< (* i 7) pivot)
-              (begin
-                (set! lo (+ lo (* i 3)))
-                (set! hi (+ hi (* lo 5))))
-              unit)
-            (set! i (+ i 1))))
-        (+ lo hi)))))
+      (while (< i n)
+        (when
+          (< (* i 7) pivot)
+          (set! lo (+ lo (* i 3)))
+          (set! hi (+ hi (* lo 5))))
+        (set! i (+ i 1)))
+      (+ lo hi))))
 
 ;; KEEP: both arms carry work, so the then arm's `jmp merge` crosses the else
 ;; arm's real instructions. That jump is NOT a fallthrough and must survive.
@@ -48,18 +45,16 @@
       [lo : i64 0]
       [hi : i64 0]
       [i : i64 0]
-      (begin
-        (while (< i n)
+      (while (< i n)
+        (if (< (* i 7) pivot)
           (begin
-            (if (< (* i 7) pivot)
-              (begin
-                (set! lo (+ lo (* i 3)))
-                (set! hi (+ hi (* lo 5))))
-              (begin
-                (set! hi (- hi (* i 11)))
-                (set! lo (- lo (* hi 13)))))
-            (set! i (+ i 1))))
-        (+ lo hi)))))
+            (set! lo (+ lo (* i 3)))
+            (set! hi (+ hi (* lo 5))))
+          (begin
+            (set! hi (- hi (* i 11)))
+            (set! lo (- lo (* hi 13)))))
+        (set! i (+ i 1)))
+      (+ lo hi))))
 
 (define (main) : i64
   (let

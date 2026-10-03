@@ -97,32 +97,31 @@
 (define (main) : i64
   (let
     [b : i64 (- (io.arg-count) 1)]
-    (begin
-      (unless
-        (match (p2 (+ b 5))
-          [(Ok v) v]
-          [(Err _) false])
-        (return 1))
-      (unless
-        (match (p2 (- b 5))
-          [(Ok _) false]
-          [(Err p) (and (= p.a -5) (= p.b -10))])
-        (return 2))
-      (unless
-        (match (s2 (- b 3))
-          [Ok false]
-          [(Err s) (and (= s.a -3) (= s.b 7))])
-        (return 3))
-      (unless (= (kscore (k2 b)) 5) (return 4))
-      (unless (= (kscore (k2 (- b 9))) -87) (return 5))
-      (unless
-        (match (k2 (+ b 9))
-          [(Ok x y z) (= (+ x y z) 27)]
-          [(Err _) false])
-        (return 6))
-      (unless
-        (match (t2 (- b 42))
-          [Ok false]
-          [(Err m) (string.eq m "-42")])
-        (return 7))
-      42)))
+    (unless
+      (match (p2 (+ b 5))
+        [(Ok v) v]
+        [(Err _) false])
+      (return 1))
+    (unless
+      (match (p2 (- b 5))
+        [(Ok _) false]
+        [(Err p) (and (= p.a -5) (= p.b -10))])
+      (return 2))
+    (unless
+      (match (s2 (- b 3))
+        [Ok false]
+        [(Err s) (and (= s.a -3) (= s.b 7))])
+      (return 3))
+    (unless (= (kscore (k2 b)) 5) (return 4))
+    (unless (= (kscore (k2 (- b 9))) -87) (return 5))
+    (unless
+      (match (k2 (+ b 9))
+        [(Ok x y z) (= (+ x y z) 27)]
+        [(Err _) false])
+      (return 6))
+    (unless
+      (match (t2 (- b 42))
+        [Ok false]
+        [(Err m) (string.eq m "-42")])
+      (return 7))
+    42))

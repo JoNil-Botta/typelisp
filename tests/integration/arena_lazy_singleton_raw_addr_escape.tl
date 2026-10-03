@@ -80,9 +80,8 @@
           (unsafe
             (arena.tl_arena_set prev))
           unit)]
-      (begin
-        (set! (array-ref session-addr-cell 0) addr)
-        (set! (array-ref session-open-flag 0) 1)))))
+      (set! (array-ref session-addr-cell 0) addr)
+      (set! (array-ref session-open-flag 0) 1))))
 
 ; The dispatch-path read: it only ever sees the integer.
 (define (session-dispatch) : i64
@@ -106,17 +105,16 @@
     [ok : bool true]
     [_work : unit
       (while (< step batch-size)
-        (begin
-          ; Ordinary per-declaration garbage in the generation.
-          (set! (array-ref (__tl_make-array i64 16) 0) step)
-          (if (>= index open-batch)
-            (begin
-              (session-open! owner-arena)
-              (if (= (session-dispatch) session-magic)
-                unit
-                (set! ok false)))
-            unit)
-          (set! step (+ step 1))))]
+        ; Ordinary per-declaration garbage in the generation.
+        (set! (array-ref (__tl_make-array i64 16) 0) step)
+        (if (>= index open-batch)
+          (begin
+            (session-open! owner-arena)
+            (if (= (session-dispatch) session-magic)
+              unit
+              (set! ok false)))
+          unit)
+        (set! step (+ step 1)))]
     [_leave : unit
       (unsafe
         (arena.tl_arena_set prev))]
@@ -133,34 +131,32 @@
     [retired : i64 0]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index batches)
-        (let
-          [next : i64 (arena.tl_arena_make)]
-          (begin
-            (if (= retired 0)
-              unit
-              (unsafe
-                (arena.tl_arena_destroy retired)))
-            (set! retired current)
-            (set! current next)
-            (if (batch-run next owner-arena index open-batch batch-size)
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (if (= retired 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy retired)))
-      (if (= current 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
-      ; Every generation is gone now. The singleton is still live for the rest
-      ; of the run, and this is the read that faults without an owner.
-      (if (= (session-dispatch) session-magic)
-        ok
-        false))))
+    (while (< index batches)
+      (let
+        [next : i64 (arena.tl_arena_make)]
+        (if (= retired 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy retired)))
+        (set! retired current)
+        (set! current next)
+        (if (batch-run next owner-arena index open-batch batch-size)
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (if (= retired 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy retired)))
+    (if (= current 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy current)))
+    ; Every generation is gone now. The singleton is still live for the rest
+    ; of the run, and this is the read that faults without an owner.
+    (if (= (session-dispatch) session-magic)
+      ok
+      false)))
 
 (define (main) : i64
   (if (ring-run 8 4 1)

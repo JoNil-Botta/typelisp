@@ -18,13 +18,12 @@
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]
-          (begin
-            (vec.push-ref! (&mut items) first)
-            (if (= (vec.len (& items)) 1)
-              (begin
-                (vec.get (& items) 0 fallback)
-                42)
-              0)))))))
+          (vec.push-ref! (&mut items) first)
+          (if (= (vec.len (& items)) 1)
+            (begin
+              (vec.get (& items) 0 fallback)
+              42)
+            0))))))
 
 (import (vector-user i64) as user)
 (import (vector-user Pair) as pair-user)

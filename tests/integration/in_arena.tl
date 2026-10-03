@@ -5,11 +5,10 @@
 (define (build-kept [scratch : arena.Arena]) : String
   (in-arena
     scratch
-    (begin
-      (test.assert-true
-        (arena.eq? (arena.current) scratch)
-        "in-arena active target")
-      (string.append "arena:" (string.int->string 42)))))
+    (test.assert-true
+      (arena.eq? (arena.current) scratch)
+      "in-arena active target")
+    (string.append "arena:" (string.int->string 42))))
 
 (define (main) : i64
   (let
@@ -21,11 +20,10 @@
     [noise : String (string.append home-anchor (string.int->string 8))]
     [expected-kept : String "arena:42"]
     [expected-noise : String "78"]
-    (begin
-      (test.assert-true (arena.eq? after home) "in-arena restores active arena")
-      (test.assert-string-eq (& kept) (& expected-kept) "in-arena kept result")
-      (test.assert-string-eq
-        (& noise)
-        (& expected-noise)
-        "enclosing arena allocation")
-      42)))
+    (test.assert-true (arena.eq? after home) "in-arena restores active arena")
+    (test.assert-string-eq (& kept) (& expected-kept) "in-arena kept result")
+    (test.assert-string-eq
+      (& noise)
+      (& expected-noise)
+      "enclosing arena allocation")
+    42))

@@ -499,46 +499,43 @@
     [i : i64 0]
     [negative-zero64 : f64 (math.f64-from-bits 0x8000000000000000)]
     [negative-zero32 : f32 (math.f32-from-bits (cast 0x80000000 : u32))]
-    (begin
-      (while (< i 59)
-        (begin
-          (unless (trig-check-f64 i) (return (+ 10 i)))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 45)
-        (begin
-          (unless (trig-check-f32 i) (return (+ 100 i)))
-          (set! i (+ i 1))))
-      (unless
-        (= (math.f64-to-bits (math.f64-sin negative-zero64)) 0x8000000000000000)
-        (return 201))
-      (unless
-        (= (math.f64-to-bits (math.f64-tan negative-zero64)) 0x8000000000000000)
-        (return 202))
-      (unless
-        (= (math.f64-to-bits (math.f64-cos negative-zero64)) 0x3ff0000000000000)
-        (return 203))
-      (unless
-        (=
-          (math.f32-to-bits (math.f32-sin negative-zero32))
-          (cast 0x80000000 : u32))
-        (return 204))
-      (unless
-        (=
-          (math.f32-to-bits (math.f32-tan negative-zero32))
-          (cast 0x80000000 : u32))
-        (return 205))
-      (unless
-        (=
-          (math.f32-to-bits (math.f32-cos negative-zero32))
-          (cast 0x3f800000 : u32))
-        (return 206))
-      (if (and
-        (math.f64-nan? (math.f64-sin (math.f64-positive-infinity)))
-        (math.f64-nan? (math.f64-cos (math.f64-negative-infinity)))
-        (math.f64-nan? (math.f64-tan (math.f64-quiet-nan)))
-        (math.f32-nan? (math.f32-sin (math.f32-positive-infinity)))
-        (math.f32-nan? (math.f32-cos (math.f32-negative-infinity)))
-        (math.f32-nan? (math.f32-tan (math.f32-quiet-nan))))
-        0
-        207))))
+    (while (< i 59)
+      (unless (trig-check-f64 i) (return (+ 10 i)))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 45)
+      (unless (trig-check-f32 i) (return (+ 100 i)))
+      (set! i (+ i 1)))
+    (unless
+      (= (math.f64-to-bits (math.f64-sin negative-zero64)) 0x8000000000000000)
+      (return 201))
+    (unless
+      (= (math.f64-to-bits (math.f64-tan negative-zero64)) 0x8000000000000000)
+      (return 202))
+    (unless
+      (= (math.f64-to-bits (math.f64-cos negative-zero64)) 0x3ff0000000000000)
+      (return 203))
+    (unless
+      (=
+        (math.f32-to-bits (math.f32-sin negative-zero32))
+        (cast 0x80000000 : u32))
+      (return 204))
+    (unless
+      (=
+        (math.f32-to-bits (math.f32-tan negative-zero32))
+        (cast 0x80000000 : u32))
+      (return 205))
+    (unless
+      (=
+        (math.f32-to-bits (math.f32-cos negative-zero32))
+        (cast 0x3f800000 : u32))
+      (return 206))
+    (if (and
+      (math.f64-nan? (math.f64-sin (math.f64-positive-infinity)))
+      (math.f64-nan? (math.f64-cos (math.f64-negative-infinity)))
+      (math.f64-nan? (math.f64-tan (math.f64-quiet-nan)))
+      (math.f32-nan? (math.f32-sin (math.f32-positive-infinity)))
+      (math.f32-nan? (math.f32-cos (math.f32-negative-infinity)))
+      (math.f32-nan? (math.f32-tan (math.f32-quiet-nan))))
+      0
+      207)))

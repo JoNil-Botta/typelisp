@@ -55,9 +55,8 @@
     (Big 0 0 0 x)))
 
 (define (early-big [x : i64]) : Big
-  (begin
-    (when (> x 5) (return (Big 9 9 9 x)))
-    (make-big x)))
+  (when (> x 5) (return (Big 9 9 9 x)))
+  (make-big x))
 
 (define (make-shape [x : i64]) : Shape
   (if (> x 0)
@@ -102,29 +101,21 @@
   (let
     [acc : Big (Big 0 0 0 0)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (make-big (+ acc.d i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (make-big (+ acc.d i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (loop-carried-tuple [n : i64]) : (Tuple i64 i64 i64 i64)
   (let
     [acc : (Tuple i64 i64 i64 i64) (tuple 0 0 0 0)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            acc
-            (tuple
-              i
-              (tuple-ref acc 0)
-              (tuple-ref acc 1)
-              (+ (tuple-ref acc 3) i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set!
+        acc
+        (tuple i (tuple-ref acc 0) (tuple-ref acc 1) (+ (tuple-ref acc 3) i)))
+      (set! i (+ i 1)))
+    acc))
 
 ;; Deep enough to overwrite any frame storage a returned value could alias.
 (define (clobber [n : i64]) : i64
@@ -143,14 +134,13 @@
     [n : Nested (make-nested 3)]
     [g : Big (generated-big 4)]
     [after : i64 (profile.alloc-total)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 1))
-      (unless (= (+ s.a s.b) 3) (return 2))
-      (unless (= (+ b.a b.d) 7) (return 3))
-      (unless (= (+ n.left.d (+ n.right.b n.tag)) 13) (return 4))
-      (unless (= (+ g.a g.d) 111) (return 5))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 1))
+    (unless (= (+ s.a s.b) 3) (return 2))
+    (unless (= (+ b.a b.d) 7) (return 3))
+    (unless (= (+ n.left.d (+ n.right.b n.tag)) 13) (return 4))
+    (unless (= (+ g.a g.d) 111) (return 5))
+    0))
 
 (define (case-control-flow) : i64
   (let
@@ -162,15 +152,14 @@
     [tail : Big (tail-big 5)]
     [carried : Big (loop-carried-big 4)]
     [after : i64 (profile.alloc-total)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 11))
-      (unless (= (+ taken.a other.d) 5) (return 12))
-      (unless (= (+ early.a early.d) 18) (return 13))
-      (unless (= (+ late.a late.d) 7) (return 14))
-      (unless (= (+ tail.a tail.d) 15) (return 15))
-      (unless (= carried.a 15) (return 16))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 11))
+    (unless (= (+ taken.a other.d) 5) (return 12))
+    (unless (= (+ early.a early.d) 18) (return 13))
+    (unless (= (+ late.a late.d) 7) (return 14))
+    (unless (= (+ tail.a tail.d) 15) (return 15))
+    (unless (= carried.a 15) (return 16))
+    0))
 
 (define (case-enum) : i64
   (let
@@ -179,13 +168,12 @@
     [dot : Big (match-big (make-shape (- 0 2)))]
     [empty : Big (match-big (make-shape 0))]
     [after : i64 (profile.alloc-total)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 21))
-      (unless (= (+ circle.a circle.d) 7) (return 22))
-      (unless (= (+ dot.a dot.b) (- 0 3)) (return 23))
-      (unless (= (+ empty.a empty.d) 0) (return 24))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 21))
+    (unless (= (+ circle.a circle.d) 7) (return 22))
+    (unless (= (+ dot.a dot.b) (- 0 3)) (return 23))
+    (unless (= (+ empty.a empty.d) 0) (return 24))
+    0))
 
 (define (case-structural) : i64
   (let
@@ -198,24 +186,21 @@
     [carried : (Tuple i64 i64 i64 i64) (loop-carried-tuple 5)]
     [after : i64 (profile.alloc-total)]
     [nested-big : Big (tuple-ref nested 0)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 31))
-      (unless (= (+ (tuple-ref wide 0) (tuple-ref wide 3)) 5) (return 32))
-      (unless (= (+ (tuple-ref pair 0) (tuple-ref pair 1)) 11) (return 33))
-      (unless
-        (=
-          (+
-            nested-big.d
-            (+ (tuple-ref (tuple-ref nested 1) 1) (tuple-ref nested 2)))
-          25)
-        (return 34))
-      (unless (= (+ (array-ref cells 0) (array-ref cells 3)) 9) (return 35))
-      (unless (= (+ (tuple-ref tail 0) (tuple-ref tail 3)) 23) (return 36))
-      (unless
-        (= (+ (tuple-ref carried 0) (tuple-ref carried 3)) 14)
-        (return 37))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 31))
+    (unless (= (+ (tuple-ref wide 0) (tuple-ref wide 3)) 5) (return 32))
+    (unless (= (+ (tuple-ref pair 0) (tuple-ref pair 1)) 11) (return 33))
+    (unless
+      (=
+        (+
+          nested-big.d
+          (+ (tuple-ref (tuple-ref nested 1) 1) (tuple-ref nested 2)))
+        25)
+      (return 34))
+    (unless (= (+ (array-ref cells 0) (array-ref cells 3)) 9) (return 35))
+    (unless (= (+ (tuple-ref tail 0) (tuple-ref tail 3)) 23) (return 36))
+    (unless (= (+ (tuple-ref carried 0) (tuple-ref carried 3)) 14) (return 37))
+    0))
 
 (define (case-move-only) : i64
   (let
@@ -225,16 +210,15 @@
     [direct : Named (wrap-named first 3)]
     [forwarded : Named (forward-named second 4)]
     [after : i64 (profile.alloc-total)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 41))
-      (unless
-        (= (+ (string.string-length direct.label) direct.pad2) 7)
-        (return 42))
-      (unless
-        (= (+ (string.string-length forwarded.label) forwarded.pad0) 11)
-        (return 43))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 41))
+    (unless
+      (= (+ (string.string-length direct.label) direct.pad2) 7)
+      (return 42))
+    (unless
+      (= (+ (string.string-length forwarded.label) forwarded.pad0) 11)
+      (return 43))
+    0))
 
 (define (case-closure) : i64
   (let
@@ -249,12 +233,11 @@
     [made : Big (make 2)]
     [paired : (Tuple i64 i64 i64 i64) (make-pair 3)]
     [after : i64 (profile.alloc-total)]
-    (begin
-      (clobber 16)
-      (unless (= after before) (return 51))
-      (unless (= (+ made.a made.d) 34) (return 52))
-      (unless (= (+ (tuple-ref paired 0) (tuple-ref paired 3)) 36) (return 53))
-      0)))
+    (clobber 16)
+    (unless (= after before) (return 51))
+    (unless (= (+ made.a made.d) 34) (return 52))
+    (unless (= (+ (tuple-ref paired 0) (tuple-ref paired 3)) 36) (return 53))
+    0))
 
 (define (main) : i64
   (let
@@ -264,11 +247,10 @@
     [structural : i64 (case-structural)]
     [move-only : i64 (case-move-only)]
     [closure : i64 (case-closure)]
-    (begin
-      (unless (= nominal 0) (return nominal))
-      (unless (= control 0) (return control))
-      (unless (= enums 0) (return enums))
-      (unless (= structural 0) (return structural))
-      (unless (= move-only 0) (return move-only))
-      (unless (= closure 0) (return closure))
-      42)))
+    (unless (= nominal 0) (return nominal))
+    (unless (= control 0) (return control))
+    (unless (= enums 0) (return enums))
+    (unless (= structural 0) (return structural))
+    (unless (= move-only 0) (return move-only))
+    (unless (= closure 0) (return closure))
+    42))

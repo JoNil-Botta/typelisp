@@ -30,30 +30,27 @@
 (define (array-bag-handle-score) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 7)
-      (set! (array-ref items 1) 9)
-      (let
-        [bag : ArrayBag (ArrayBag items)]
-        [handle : (ArrayBagHandle bag) (array-bag-handle (&mut bag) 1)]
-        (begin
-          (array-bag-handle-write (&mut handle) 40)
-          (array-bag-handle-read (& handle)))))))
+    (set! (array-ref items 0) 7)
+    (set! (array-ref items 1) 9)
+    (let
+      [bag : ArrayBag (ArrayBag items)]
+      [handle : (ArrayBagHandle bag) (array-bag-handle (&mut bag) 1)]
+      (array-bag-handle-write (&mut handle) 40)
+      (array-bag-handle-read (& handle)))))
 
 (define (main) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [fixed : (Array i64 2) (array 0 0)]
-    (begin
-      (set! (array-ref items 0) 1)
-      (put-first (&mut items) 40)
-      (push-tail (&mut items) 2)
-      (put-fixed (&mut fixed) 41)
-      (if (and
-        (= (array-length items) 2)
-        (= (array-bag-handle-score) 42)
-        (= (array-ref items 0) 40)
-        (= (array-ref items 1) 2)
-        (= (array-ref fixed 1) 41))
-        42
-        1))))
+    (set! (array-ref items 0) 1)
+    (put-first (&mut items) 40)
+    (push-tail (&mut items) 2)
+    (put-fixed (&mut fixed) 41)
+    (if (and
+      (= (array-length items) 2)
+      (= (array-bag-handle-score) 42)
+      (= (array-ref items 0) 40)
+      (= (array-ref items 1) 2)
+      (= (array-ref fixed 1) 41))
+      42
+      1)))

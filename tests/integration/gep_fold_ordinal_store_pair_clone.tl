@@ -66,23 +66,21 @@
   (let
     [i : i64 0]
     [acc : i64 seed]
-    (begin
-      (while (< i (- n 3))
-        (begin
-          (set!
-            acc
-            (gfo-classify
-              (+
-                (+
-                  (cast (array-ref src i) : i64)
-                  (cast (array-ref src (+ i 1)) : i64))
-                (+
-                  (cast (array-ref src (+ i 2)) : i64)
-                  (cast (array-ref src (+ i 3)) : i64)))
-              acc))
-          (set! (array-ref out i) (Int acc))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i (- n 3))
+      (set!
+        acc
+        (gfo-classify
+          (+
+            (+
+              (cast (array-ref src i) : i64)
+              (cast (array-ref src (+ i 1)) : i64))
+            (+
+              (cast (array-ref src (+ i 2)) : i64)
+              (cast (array-ref src (+ i 3)) : i64)))
+          acc))
+      (set! (array-ref out i) (Int acc))
+      (set! i (+ i 1)))
+    acc))
 
 ;; The same arithmetic with no call in it, so nothing is cloned into it.
 (define (gfo-scan-fused
@@ -95,30 +93,28 @@
     [acc : i64 seed]
     [c : i64 0]
     [x : i64 0]
-    (begin
-      (while (< i (- n 3))
+    (while (< i (- n 3))
+      (set!
+        c
+        (+
+          (+
+            (cast (array-ref src i) : i64)
+            (cast (array-ref src (+ i 1)) : i64))
+          (+
+            (cast (array-ref src (+ i 2)) : i64)
+            (cast (array-ref src (+ i 3)) : i64))))
+      (if (= (- c (* (/ c 2) 2)) 0)
         (begin
-          (set!
-            c
-            (+
-              (+
-                (cast (array-ref src i) : i64)
-                (cast (array-ref src (+ i 1)) : i64))
-              (+
-                (cast (array-ref src (+ i 2)) : i64)
-                (cast (array-ref src (+ i 3)) : i64))))
-          (if (= (- c (* (/ c 2) 2)) 0)
-            (begin
-              (set! x (+ (* acc 31) c))
-              (set! acc (+ (- x (* (/ x 1000003) 1000003)) 1)))
-            (if (> c 100)
-              (begin
-                (set! x (+ (* acc 31) (- c 100)))
-                (set! acc (+ (- x (* (/ x 1000003) 1000003)) 2)))
-              (set! acc (+ acc c))))
-          (set! (array-ref out i) (Int acc))
-          (set! i (+ i 1))))
-      acc)))
+          (set! x (+ (* acc 31) c))
+          (set! acc (+ (- x (* (/ x 1000003) 1000003)) 1)))
+        (if (> c 100)
+          (begin
+            (set! x (+ (* acc 31) (- c 100)))
+            (set! acc (+ (- x (* (/ x 1000003) 1000003)) 2)))
+          (set! acc (+ acc c))))
+      (set! (array-ref out i) (Int acc))
+      (set! i (+ i 1)))
+    acc))
 
 (define (gfo-tok-value [t : GfoTok]) : i64
   (match t
@@ -132,10 +128,9 @@
     [i : i64 0]
     [x : i64 step]
     (while (< i n)
-      (begin
-        (set! (array-ref src i) (cast (- x (* (/ x 251) 251)) : u8))
-        (set! x (+ (* x 7) 13))
-        (set! i (+ i 1))))))
+      (set! (array-ref src i) (cast (- x (* (/ x 251) 251)) : u8))
+      (set! x (+ (* x 7) 13))
+      (set! i (+ i 1)))))
 
 (define (gfo-tokens-agree?
   [a : (& a (__tl_dyn-array GfoTok))]
@@ -144,16 +139,12 @@
   (let
     [i : i64 0]
     [same : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (=
-            (gfo-tok-value (array-ref a i))
-            (gfo-tok-value (array-ref b i)))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
+    (while (< i n)
+      (if (= (gfo-tok-value (array-ref a i)) (gfo-tok-value (array-ref b i)))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
 
 (define (main) : i64
   (let
@@ -163,12 +154,11 @@
     [fused-toks : (__tl_dyn-array GfoTok) (__tl_make-array GfoTok n)]
     [cloned : i64 0]
     [fused : i64 0]
-    (begin
-      (gfo-fill (&mut src) n 3)
-      (set! cloned (gfo-scan (& src) (&mut cloned-toks) n 1))
-      (set! fused (gfo-scan-fused (& src) (&mut fused-toks) n 1))
-      (if (and
-        (= cloned fused)
-        (gfo-tokens-agree? (& cloned-toks) (& fused-toks) (- n 3)))
-        42
-        1))))
+    (gfo-fill (&mut src) n 3)
+    (set! cloned (gfo-scan (& src) (&mut cloned-toks) n 1))
+    (set! fused (gfo-scan-fused (& src) (&mut fused-toks) n 1))
+    (if (and
+      (= cloned fused)
+      (gfo-tokens-agree? (& cloned-toks) (& fused-toks) (- n 3)))
+      42
+      1)))

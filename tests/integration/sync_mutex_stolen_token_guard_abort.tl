@@ -10,11 +10,10 @@
     [(Shared alias)
       (let
         [token : (Box i64) alias.authority.token]
-        (begin
-          (set! alias.authority.token (box 0))
-          (with
-            ([forged (mutex_i64.Guard token) mutex_i64.unlock])
-            (mutex_i64.get forged))))]))
+        (set! alias.authority.token (box 0))
+        (with
+          ([forged (mutex_i64.Guard token) mutex_i64.unlock])
+          (mutex_i64.get forged)))]))
 
 (define (main) : i64
   (match (mutex_i64.create 7)

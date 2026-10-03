@@ -6,9 +6,8 @@
 (define (profile-vector-i64-ok?) : bool
   (let
     [values : vec_i64.Vec (vec_i64.new)]
-    (begin
-      (vec_i64.push! values 42)
-      (= (vec_i64.get (& values) 0 0) 42))))
+    (vec_i64.push! values 42)
+    (= (vec_i64.get (& values) 0 0) 42)))
 
 (define (main) : i64
   (if (profile-vector-i64-ok?)

@@ -11,17 +11,14 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref out i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref out i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 13]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
-    (begin
-      (fill (&mut out) n)
-      (bit-and (checksum (& out) n) 0xff))))
+    (fill (&mut out) n)
+    (bit-and (checksum (& out) n) 0xff)))

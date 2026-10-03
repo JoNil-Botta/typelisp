@@ -30,9 +30,8 @@
 ;; A 24-byte memory-class array is copied into private callee storage before
 ;; mutation, so the caller's original remains unchanged.
 (define (abi-memory-array-roundtrip [value : (Array i64 3)]) : (Array i64 3)
-  (begin
-    (set! (array-ref value 1) 99)
-    value))
+  (set! (array-ref value 1) 99)
+  value)
 
 ;; SysV mixed INTEGER/SSE register groups and recursive nested layout.
 (define (abi-mixed-tuple-roundtrip [value : (Tuple i64 f64)]) : (Tuple i64 f64)
@@ -42,9 +41,8 @@
   [value : (Tuple (Tuple u8 i32) (Array u16 2))]) : (Tuple
     (Tuple u8 i32)
     (Array u16 2))
-  (begin
-    (set! (array-ref (tuple-ref value 1) 1) 77)
-    value))
+  (set! (array-ref (tuple-ref value 1) 1) 77)
+  value)
 
 ;; Five scalar arguments plus a structural argument force register/stack
 ;; pressure on both target ABIs while the result remains structural.
@@ -149,61 +147,60 @@
     [shallow : (Tuple String i64 i64)
       (abi-shallow-handle-roundtrip (tuple "shallow" 17 25))]
     [score : i64 0]
-    (begin
-      (set! score (+ score (abi-check (= (cast a1-value : i64) 11))))
-      (set! score (+ score (abi-check (= (cast (array-ref a2 0) : i64) 12))))
-      (set! score (+ score (abi-check (= (cast (array-ref a2 1) : i64) 22))))
-      (set! score (+ score (abi-check (= (cast (array-ref a3 0) : i64) 1))))
-      (set! score (+ score (abi-check (= (cast (array-ref a3 1) : i64) 2))))
-      (set! score (+ score (abi-check (= (cast (array-ref a3 2) : i64) 3))))
-      (set! score (+ score (abi-check (= (cast (array-ref a4 0) : i64) 14))))
-      (set! score (+ score (abi-check (= (cast (array-ref a4 2) : i64) 34))))
-      (set! score (+ score (abi-check (= (cast (array-ref a4 3) : i64) 44))))
-      (set! score (+ score (abi-check (= (cast (array-ref a8 0) : i64) 18))))
-      (set! score (+ score (abi-check (= (cast (array-ref a8 7) : i64) 88))))
-      (set! score (+ score (abi-check (= (cast (array-ref a16 15) : i64) 166))))
-      (set! score (+ score (abi-check (= (cast (array-ref a16 0) : i64) 16))))
-      (set! score (+ score (abi-check (= (array-ref memory-returned 1) 99))))
-      (set! score (+ score (abi-check (= (array-ref memory-original 1) 2))))
-      (set! score (+ score (abi-check (= (tuple-ref mixed 0) 40))))
-      (set! score (+ score (abi-check (= (tuple-ref mixed 1) 2.5))))
-      (set!
+    (set! score (+ score (abi-check (= (cast a1-value : i64) 11))))
+    (set! score (+ score (abi-check (= (cast (array-ref a2 0) : i64) 12))))
+    (set! score (+ score (abi-check (= (cast (array-ref a2 1) : i64) 22))))
+    (set! score (+ score (abi-check (= (cast (array-ref a3 0) : i64) 1))))
+    (set! score (+ score (abi-check (= (cast (array-ref a3 1) : i64) 2))))
+    (set! score (+ score (abi-check (= (cast (array-ref a3 2) : i64) 3))))
+    (set! score (+ score (abi-check (= (cast (array-ref a4 0) : i64) 14))))
+    (set! score (+ score (abi-check (= (cast (array-ref a4 2) : i64) 34))))
+    (set! score (+ score (abi-check (= (cast (array-ref a4 3) : i64) 44))))
+    (set! score (+ score (abi-check (= (cast (array-ref a8 0) : i64) 18))))
+    (set! score (+ score (abi-check (= (cast (array-ref a8 7) : i64) 88))))
+    (set! score (+ score (abi-check (= (cast (array-ref a16 15) : i64) 166))))
+    (set! score (+ score (abi-check (= (cast (array-ref a16 0) : i64) 16))))
+    (set! score (+ score (abi-check (= (array-ref memory-returned 1) 99))))
+    (set! score (+ score (abi-check (= (array-ref memory-original 1) 2))))
+    (set! score (+ score (abi-check (= (tuple-ref mixed 0) 40))))
+    (set! score (+ score (abi-check (= (tuple-ref mixed 1) 2.5))))
+    (set!
+      score
+      (+
         score
-        (+
-          score
-          (abi-check
-            (= (cast (array-ref (tuple-ref nested-returned 1) 1) : i64) 77))))
-      (set!
+        (abi-check
+          (= (cast (array-ref (tuple-ref nested-returned 1) 1) : i64) 77))))
+    (set!
+      score
+      (+
         score
-        (+
-          score
-          (abi-check
-            (= (cast (array-ref (tuple-ref nested-original 1) 1) : i64) 8))))
-      (set! score (+ score (abi-check (= (tuple-ref pressure 0) 15))))
-      (set! score (+ score (abi-check (= (tuple-ref pressure 1) 30))))
-      (set! score (+ score (abi-check (= (tuple-ref early-tuple 0) 40))))
-      (set! score (+ score (abi-check (= (tuple-ref early-tuple 1) 2))))
-      (set! score (+ score (abi-check (= (array-ref early-array 0) 40))))
-      (set! score (+ score (abi-check (= (array-ref early-array 2) 1))))
-      (set! score (+ score (abi-check (= (tuple-ref early-tuple-false 0) 1))))
-      (set! score (+ score (abi-check (= (tuple-ref early-tuple-false 1) 1))))
-      (set! score (+ score (abi-check (= (array-ref early-array-false 0) 2))))
-      (set! score (+ score (abi-check (= (array-ref early-array-false 2) 2))))
-      (set! score (+ score (abi-check (= (tuple-ref indirect 1) 33))))
-      (set! score (+ score (abi-check (= (tuple-ref captured 0) 35))))
-      (set! score (+ score (abi-check (= (tuple-ref captured 1) 37))))
-      (set! score (+ score (abi-check (= (tuple-ref dispatched 0) 30))))
-      (set! score (+ score (abi-check (= (tuple-ref dispatched 1) 42))))
-      (set! score (+ score (abi-check (= (tuple-ref tail 0) 40))))
-      (set! score (+ score (abi-check (= (tuple-ref tail 1) 2))))
-      (set!
-        score
-        (+ score (abi-check (string.eq (tuple-ref shallow 0) "shallow"))))
-      (set!
-        score
-        (+ score (abi-check (= (string.string-length (tuple-ref shallow 0)) 7))))
-      (set! score (+ score (abi-check (= (tuple-ref shallow 1) 17))))
-      (set! score (+ score (abi-check (= (tuple-ref shallow 2) 25))))
-      (if (= score 40)
-        42
-        1))))
+        (abi-check
+          (= (cast (array-ref (tuple-ref nested-original 1) 1) : i64) 8))))
+    (set! score (+ score (abi-check (= (tuple-ref pressure 0) 15))))
+    (set! score (+ score (abi-check (= (tuple-ref pressure 1) 30))))
+    (set! score (+ score (abi-check (= (tuple-ref early-tuple 0) 40))))
+    (set! score (+ score (abi-check (= (tuple-ref early-tuple 1) 2))))
+    (set! score (+ score (abi-check (= (array-ref early-array 0) 40))))
+    (set! score (+ score (abi-check (= (array-ref early-array 2) 1))))
+    (set! score (+ score (abi-check (= (tuple-ref early-tuple-false 0) 1))))
+    (set! score (+ score (abi-check (= (tuple-ref early-tuple-false 1) 1))))
+    (set! score (+ score (abi-check (= (array-ref early-array-false 0) 2))))
+    (set! score (+ score (abi-check (= (array-ref early-array-false 2) 2))))
+    (set! score (+ score (abi-check (= (tuple-ref indirect 1) 33))))
+    (set! score (+ score (abi-check (= (tuple-ref captured 0) 35))))
+    (set! score (+ score (abi-check (= (tuple-ref captured 1) 37))))
+    (set! score (+ score (abi-check (= (tuple-ref dispatched 0) 30))))
+    (set! score (+ score (abi-check (= (tuple-ref dispatched 1) 42))))
+    (set! score (+ score (abi-check (= (tuple-ref tail 0) 40))))
+    (set! score (+ score (abi-check (= (tuple-ref tail 1) 2))))
+    (set!
+      score
+      (+ score (abi-check (string.eq (tuple-ref shallow 0) "shallow"))))
+    (set!
+      score
+      (+ score (abi-check (= (string.string-length (tuple-ref shallow 0)) 7))))
+    (set! score (+ score (abi-check (= (tuple-ref shallow 1) 17))))
+    (set! score (+ score (abi-check (= (tuple-ref shallow 2) 25))))
+    (if (= score 40)
+      42
+      1)))

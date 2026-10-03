@@ -130,9 +130,8 @@
 (define (validate [x : i64]) : CheckResult
   (let
     [_ : i64 (try (read x))]
-    (begin
-      (try (check x))
-      Ok)))
+    (try (check x))
+    Ok))
 
 (define (double-checked [x : i64]) : ReadResult
   (let
@@ -180,12 +179,10 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (try (read (- start i)))))
-          (set! i (+ i 1))))
-      (Ok acc))))
+    (while (< i n)
+      (set! acc (+ acc (try (read (- start i)))))
+      (set! i (+ i 1)))
+    (Ok acc)))
 
 (define cleanups : i64
   0)
@@ -220,50 +217,45 @@
   (let
     [base : i64 (- (io.arg-count) 1)]
     [mark : u64 (tl_region_mark)]
-    (begin
-      (unless
-        (= (flag-score (flag-via-macros (+ base 4) (+ base 13))) 1)
-        (return 1))
-      (unless
-        (= (flag-score (flag-via-macros (+ base 1) (+ base 2))) 2)
-        (return 2))
-      (unless (= (flag-score (flag-via-macros (- base 2) 5)) -289) (return 3))
-      (unless (= (flag-score (flag-via-macros 4 (- base 9))) -219) (return 4))
-      (unless (= (flag-score (flag-via-macros base base)) -299) (return 5))
-      (unless (= (check-score (validate (+ base 7))) 0) (return 6))
-      (unless (= (check-score (validate (- base 4))) -269) (return 7))
-      (unless (= (check-score (validate (+ base 200))) -2401) (return 8))
-      (unless (= (read-score (double-checked (+ base 21))) 42) (return 9))
-      (unless (= (read-score (double-checked (+ base 150))) -1901) (return 10))
-      (unless (= (span-score (span (+ base 3) 4)) 304) (return 35))
-      (unless (= (span-score (span 3 (- base 4))) -269) (return 36))
-      (unless (= (word-score (word-sum (+ base 20) 22)) 42) (return 11))
-      (unless (= (word-score (word-sum (+ base 20) -22)) -22) (return 12))
-      (unless (= (word-score (word-sum (- base 5) 22)) -5) (return 13))
-      (unless (= (word-check-score (word-validate (+ base 8))) 0) (return 14))
-      (unless (= (word-check-score (word-validate (- base 8))) -8) (return 15))
-      (unless (= (flag-score (lambda-flag (+ base 3))) 1) (return 16))
-      (unless (= (flag-score (lambda-flag (- base 6))) -249) (return 17))
-      (unless (= (read-score (sum-down 3 (+ base 5))) 12) (return 18))
-      (unless (= (read-score (sum-down 8 (+ base 5))) -299) (return 19))
-      (unless (= (read-score (with-cleanup (+ base 4))) 7) (return 20))
-      (unless (= cleanups 21) (return 21))
-      (unless (= (read-score (with-cleanup (- base 7))) -239) (return 22))
-      (unless (= cleanups 2121) (return 23))
-      (set! cleanups 0)
-      (unless (= (read-score (with-init-cleanup (+ base 4))) 7) (return 24))
-      (unless (= cleanups 43) (return 25))
-      (unless (= (read-score (with-init-cleanup (- base 1))) -299) (return 26))
-      (unless (= cleanups 433) (return 27))
-      (unless (= (read-score (arena-step (+ base 25))) 27) (return 28))
-      (unless (= (read-score (arena-step (- base 25))) -59) (return 29))
-      (unless (= (tl_region_mark) mark) (return 30))
-      (unless (= (maybe-word-score (find-word (+ base 5))) 6) (return 31))
-      (unless (= (maybe-word-score (find-word (- base 5))) -1) (return 32))
-      (unless
-        (= (maybe-diag-score (find-diag-again (+ base 5))) 666)
-        (return 33))
-      (unless
-        (= (maybe-diag-score (find-diag-again (- base 5))) -1)
-        (return 34))
-      42)))
+    (unless
+      (= (flag-score (flag-via-macros (+ base 4) (+ base 13))) 1)
+      (return 1))
+    (unless
+      (= (flag-score (flag-via-macros (+ base 1) (+ base 2))) 2)
+      (return 2))
+    (unless (= (flag-score (flag-via-macros (- base 2) 5)) -289) (return 3))
+    (unless (= (flag-score (flag-via-macros 4 (- base 9))) -219) (return 4))
+    (unless (= (flag-score (flag-via-macros base base)) -299) (return 5))
+    (unless (= (check-score (validate (+ base 7))) 0) (return 6))
+    (unless (= (check-score (validate (- base 4))) -269) (return 7))
+    (unless (= (check-score (validate (+ base 200))) -2401) (return 8))
+    (unless (= (read-score (double-checked (+ base 21))) 42) (return 9))
+    (unless (= (read-score (double-checked (+ base 150))) -1901) (return 10))
+    (unless (= (span-score (span (+ base 3) 4)) 304) (return 35))
+    (unless (= (span-score (span 3 (- base 4))) -269) (return 36))
+    (unless (= (word-score (word-sum (+ base 20) 22)) 42) (return 11))
+    (unless (= (word-score (word-sum (+ base 20) -22)) -22) (return 12))
+    (unless (= (word-score (word-sum (- base 5) 22)) -5) (return 13))
+    (unless (= (word-check-score (word-validate (+ base 8))) 0) (return 14))
+    (unless (= (word-check-score (word-validate (- base 8))) -8) (return 15))
+    (unless (= (flag-score (lambda-flag (+ base 3))) 1) (return 16))
+    (unless (= (flag-score (lambda-flag (- base 6))) -249) (return 17))
+    (unless (= (read-score (sum-down 3 (+ base 5))) 12) (return 18))
+    (unless (= (read-score (sum-down 8 (+ base 5))) -299) (return 19))
+    (unless (= (read-score (with-cleanup (+ base 4))) 7) (return 20))
+    (unless (= cleanups 21) (return 21))
+    (unless (= (read-score (with-cleanup (- base 7))) -239) (return 22))
+    (unless (= cleanups 2121) (return 23))
+    (set! cleanups 0)
+    (unless (= (read-score (with-init-cleanup (+ base 4))) 7) (return 24))
+    (unless (= cleanups 43) (return 25))
+    (unless (= (read-score (with-init-cleanup (- base 1))) -299) (return 26))
+    (unless (= cleanups 433) (return 27))
+    (unless (= (read-score (arena-step (+ base 25))) 27) (return 28))
+    (unless (= (read-score (arena-step (- base 25))) -59) (return 29))
+    (unless (= (tl_region_mark) mark) (return 30))
+    (unless (= (maybe-word-score (find-word (+ base 5))) 6) (return 31))
+    (unless (= (maybe-word-score (find-word (- base 5))) -1) (return 32))
+    (unless (= (maybe-diag-score (find-diag-again (+ base 5))) 666) (return 33))
+    (unless (= (maybe-diag-score (find-diag-again (- base 5))) -1) (return 34))
+    42))

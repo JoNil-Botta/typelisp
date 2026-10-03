@@ -5,6 +5,5 @@
 (define (main) : i64
   (let
     [values : vec.Vec (vec.new)]
-    (begin
-      (vec.push! values 42)
-      (vec.get (& values) 0 0))))
+    (vec.push! values 42)
+    (vec.get (& values) 0 0)))

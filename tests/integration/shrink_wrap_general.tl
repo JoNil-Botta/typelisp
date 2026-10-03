@@ -16,9 +16,8 @@
   0)
 
 (define (sw-sink [x : i64]) : i64
-  (begin
-    (set! sw-calls (+ sw-calls 1))
-    (+ x 1)))
+  (set! sw-calls (+ sw-calls 1))
+  (+ x 1))
 
 ;; Four values live across four calls after the save point: the plan homes them
 ;; in callee-saved registers, so the framed path pops and the bypass must not.
@@ -82,9 +81,8 @@
     (+ (+ a (+ b (+ c d))) (* w3 1000))))
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}\n" (sw-probe 7))
-    (set! sw-armed 3)
-    (io.print-format "{}\n" (sw-probe 7))
-    (io.print-format "{}\n" sw-calls)
-    42))
+  (io.print-format "{}\n" (sw-probe 7))
+  (set! sw-armed 3)
+  (io.print-format "{}\n" (sw-probe 7))
+  (io.print-format "{}\n" sw-calls)
+  42)

@@ -18,9 +18,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref items i) (choice-at i))
-        (set! i (+ i 1))))))
+      (set! (array-ref items i) (choice-at i))
+      (set! i (+ i 1)))))
 
 (define (fill-match
   [items : (& items (__tl_dyn-array Choice))]
@@ -52,24 +51,23 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (let
-          [choice : Choice (array-ref items i)]
-          (set!
-            (array-ref out i)
-            (match choice
-              [Zero 7]
-              [(Add value) (+ value i)]
-              [(Scale value)
-                (match (% i 3)
-                  [0 (* value 2)]
-                  [1 (+ value 10)]
-                  [_ (+ value 20)])]
-              [(Flip value)
-                (if (= (% i 2) 0)
-                  (- 100 value)
-                  (+ 100 value))])))
-        (set! i (+ i 1))))))
+      (let
+        [choice : Choice (array-ref items i)]
+        (set!
+          (array-ref out i)
+          (match choice
+            [Zero 7]
+            [(Add value) (+ value i)]
+            [(Scale value)
+              (match (% i 3)
+                [0 (* value 2)]
+                [1 (+ value 10)]
+                [_ (+ value 20)])]
+            [(Flip value)
+              (if (= (% i 2) 0)
+                (- 100 value)
+                (+ 100 value))])))
+      (set! i (+ i 1)))))
 
 (define (arrays-eq
   [a : (& a (__tl_dyn-array i64))]
@@ -78,14 +76,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (let
@@ -93,10 +89,9 @@
     [items : (__tl_dyn-array Choice) (__tl_make-array Choice n)]
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
-    (begin
-      (init-choices (&mut items) n)
-      (fill-match (& items) (&mut got) n)
-      (fill-scalar (& items) (&mut want) n)
-      (if (arrays-eq (& got) (& want) n)
-        42
-        1))))
+    (init-choices (&mut items) n)
+    (fill-match (& items) (&mut got) n)
+    (fill-scalar (& items) (&mut want) n)
+    (if (arrays-eq (& got) (& want) n)
+      42
+      1)))

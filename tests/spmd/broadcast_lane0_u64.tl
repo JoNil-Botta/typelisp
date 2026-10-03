@@ -6,9 +6,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref xs i) (cast (+ i 1) : u64))
-        (set! i (+ i 1))))))
+      (set! (array-ref xs i) (cast (+ i 1) : u64))
+      (set! i (+ i 1)))))
 
 (define (fill
   [xs : (& xs (__tl_dyn-array u64))]
@@ -22,19 +21,16 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (cast (array-ref out i) : i64)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (cast (array-ref out i) : i64)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 14]
     [xs : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [out : (__tl_dyn-array u64) (__tl_make-array u64 n)]
-    (begin
-      (init (&mut xs) n)
-      (fill (& xs) (&mut out) n)
-      (bit-and (checksum (& out) n) 0xff))))
+    (init (&mut xs) n)
+    (fill (& xs) (&mut out) n)
+    (bit-and (checksum (& out) n) 0xff)))

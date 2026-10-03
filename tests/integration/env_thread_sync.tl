@@ -41,30 +41,26 @@
   (let
     [index : i64 0]
     [failures : i64 0]
-    (begin
-      (while (< index env-sync-writes-per-worker)
-        (let
-          [name : String (env-sync-name job worker index)]
-          [scratch : String
-            (str_cat.str-cat
-              "TL_ENV_SYNC_SCRATCH_W"
-              (string.int->string worker))]
-          [value : String (env-sync-value job worker index)]
-          (begin
-            (if (env.set! (& name) "stale")
-              unit
-              (set! failures (+ failures 1)))
-            (if (env.set! (& scratch) "scratch")
-              unit
-              (set! failures (+ failures 1)))
-            (if (env.set! (& name) (& value))
-              unit
-              (set! failures (+ failures 1)))
-            (if (env.unset! (& scratch))
-              unit
-              (set! failures (+ failures 1)))
-            (set! index (+ index 1)))))
-      failures)))
+    (while (< index env-sync-writes-per-worker)
+      (let
+        [name : String (env-sync-name job worker index)]
+        [scratch : String
+          (str_cat.str-cat "TL_ENV_SYNC_SCRATCH_W" (string.int->string worker))]
+        [value : String (env-sync-value job worker index)]
+        (if (env.set! (& name) "stale")
+          unit
+          (set! failures (+ failures 1)))
+        (if (env.set! (& scratch) "scratch")
+          unit
+          (set! failures (+ failures 1)))
+        (if (env.set! (& name) (& value))
+          unit
+          (set! failures (+ failures 1)))
+        (if (env.unset! (& scratch))
+          unit
+          (set! failures (+ failures 1)))
+        (set! index (+ index 1))))
+    failures))
 
 ;; Read a name no mutator touches while tables are being replaced. Any value
 ;; other than the exact sentinel means a partial or dangling table was observed.
@@ -72,14 +68,12 @@
   (let
     [index : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< index env-sync-reads)
-        (begin
-          (if (env-sync-value-is? "TL_ENV_SYNC_SENTINEL" "steady")
-            unit
-            (set! bad (+ bad 1)))
-          (set! index (+ index 1))))
-      bad)))
+    (while (< index env-sync-reads)
+      (if (env-sync-value-is? "TL_ENV_SYNC_SENTINEL" "steady")
+        unit
+        (set! bad (+ bad 1)))
+      (set! index (+ index 1)))
+    bad))
 
 (define (env-sync-join [handle : thread_i64.Handle]) : i64
   (match (thread_i64.join handle)
@@ -90,24 +84,21 @@
   (let
     [worker : i64 1]
     [ok : bool true]
-    (begin
-      (while (and ok (<= worker 2))
-        (let
-          [index : i64 0]
-          (begin
-            (while (and ok (< index env-sync-writes-per-worker))
-              (begin
-                (set!
-                  ok
-                  (env-sync-value-is?
-                    (env-sync-name job worker index)
-                    (env-sync-value job worker index)))
-                (set! index (+ index 1))))
-            (set! worker (+ worker 1)))))
-      (and
-        ok
-        (not (env.var-exists? "TL_ENV_SYNC_SCRATCH_W1"))
-        (not (env.var-exists? "TL_ENV_SYNC_SCRATCH_W2"))))))
+    (while (and ok (<= worker 2))
+      (let
+        [index : i64 0]
+        (while (and ok (< index env-sync-writes-per-worker))
+          (set!
+            ok
+            (env-sync-value-is?
+              (env-sync-name job worker index)
+              (env-sync-value job worker index)))
+          (set! index (+ index 1)))
+        (set! worker (+ worker 1))))
+    (and
+      ok
+      (not (env.var-exists? "TL_ENV_SYNC_SCRATCH_W1"))
+      (not (env.var-exists? "TL_ENV_SYNC_SCRATCH_W2")))))
 
 ;; One stress job: 0 on success, otherwise a small code naming the failed check.
 (define (env-sync-stress-job [job : i64]) : i64
@@ -150,29 +141,28 @@
     [sentinel? : bool false]
     [absent? : bool true]
     [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [entry : (Ptr u8)
-            (unsafe
-              (ptr-read (ptr-offset environ index)))]
-          (if (ptr-null? entry)
-            (set! done true)
-            (begin
-              (if (not
-                (ptr-null?
-                  (unsafe
-                    (env.match-entry "TL_ENV_SYNC_SENTINEL" entry false))))
-                (set! sentinel? true)
-                unit)
-              (if (not
-                (ptr-null?
-                  (unsafe
-                    (env.match-entry (& absent) entry false))))
-                (set! absent? false)
-                unit)
-              (set! index (+ index 1))))))
-      (and sentinel? absent?))))
+    (while (not done)
+      (let
+        [entry : (Ptr u8)
+          (unsafe
+            (ptr-read (ptr-offset environ index)))]
+        (if (ptr-null? entry)
+          (set! done true)
+          (begin
+            (if (not
+              (ptr-null?
+                (unsafe
+                  (env.match-entry "TL_ENV_SYNC_SENTINEL" entry false))))
+              (set! sentinel? true)
+              unit)
+            (if (not
+              (ptr-null?
+                (unsafe
+                  (env.match-entry (& absent) entry false))))
+              (set! absent? false)
+              unit)
+            (set! index (+ index 1))))))
+    (and sentinel? absent?)))
 
 ;; A child spawned while a replacement is parked inherits the previous table.
 (define (env-sync-child-sees-previous?) : bool
@@ -201,24 +191,22 @@
   [first : thread_i64.Handle]
   [second : thread_i64.Handle]
   [observed : i64]) : i64
-  (begin
+  (unsafe
+    (atomic-store! (env-sync-gate-cell gate-addr 1) 1))
+  (unsafe
+    (env.linux-futex-wake-all (+ gate-addr 8)))
+  (let
+    [first-code : i64 (env-sync-join first)]
+    [second-code : i64 (env-sync-join second)]
     (unsafe
-      (atomic-store! (env-sync-gate-cell gate-addr 1) 1))
-    (unsafe
-      (env.linux-futex-wake-all (+ gate-addr 8)))
-    (let
-      [first-code : i64 (env-sync-join first)]
-      [second-code : i64 (env-sync-join second)]
-      (begin
-        (unsafe
-          (env.linux-publication-gate-set! 0))
-        (cond
-          [(not (= observed 0)) observed]
-          [(not (= first-code 0)) 27]
-          [(not (= second-code 0)) 28]
-          [(not (env-sync-value-is? "TL_ENV_SYNC_GATED" "first")) 29]
-          [(not (env-sync-value-is? "TL_ENV_SYNC_QUEUED" "second")) 30]
-          [else 0])))))
+      (env.linux-publication-gate-set! 0))
+    (cond
+      [(not (= observed 0)) observed]
+      [(not (= first-code 0)) 27]
+      [(not (= second-code 0)) 28]
+      [(not (env-sync-value-is? "TL_ENV_SYNC_GATED" "first")) 29]
+      [(not (env-sync-value-is? "TL_ENV_SYNC_QUEUED" "second")) 30]
+      [else 0])))
 
 ;; Everything another thread can observe while the first mutator is parked with
 ;; its replacement built and unpublished: 0, or the code of the first violation.
@@ -239,44 +227,40 @@
     [gate-addr : i64
       (unsafe
         (cast (ptr->int (ptr-cast (__tl_array-data gate) : (Ptr u8))) : i64))]
-    (begin
-      (unsafe
-        (env.linux-publication-gate-set! gate-addr))
-      (match (thread_i64.spawn
-        (lambda () : i64
-          (if (env.set! "TL_ENV_SYNC_GATED" "first")
-            0
-            1)))
-        [(thread_i64.I64SpawnErr _) 20]
-        [(thread_i64.I64SpawnOk first)
-          (begin
-            ;; Wait until the first mutator has built its table and parked.
-            (while (=
-              (unsafe
-                (atomic-load (env-sync-gate-cell gate-addr 0)))
-              0)
-              (unsafe
-                (env.linux-futex-wait gate-addr 0)))
-            (let
-              [parked : i64 (env-sync-observe-parked)]
-              (match (thread_i64.spawn
-                (lambda () : i64
-                  (if (env.set! "TL_ENV_SYNC_QUEUED" "second")
-                    0
-                    1)))
-                [(thread_i64.I64SpawnErr _) 21]
-                [(thread_i64.I64SpawnOk second)
-                  ;; The queued mutator cannot publish while the first one holds
-                  ;; the lock, whether or not it has reached the lock yet.
-                  (env-sync-gated-finish
-                    gate-addr
-                    first
-                    second
-                    (if (and
-                      (= parked 0)
-                      (env.var-exists? "TL_ENV_SYNC_QUEUED"))
-                      26
-                      parked))])))]))))
+    (unsafe
+      (env.linux-publication-gate-set! gate-addr))
+    (match (thread_i64.spawn
+      (lambda () : i64
+        (if (env.set! "TL_ENV_SYNC_GATED" "first")
+          0
+          1)))
+      [(thread_i64.I64SpawnErr _) 20]
+      [(thread_i64.I64SpawnOk first)
+        ;; Wait until the first mutator has built its table and parked.
+        (while (=
+          (unsafe
+            (atomic-load (env-sync-gate-cell gate-addr 0)))
+          0)
+          (unsafe
+            (env.linux-futex-wait gate-addr 0)))
+        (let
+          [parked : i64 (env-sync-observe-parked)]
+          (match (thread_i64.spawn
+            (lambda () : i64
+              (if (env.set! "TL_ENV_SYNC_QUEUED" "second")
+                0
+                1)))
+            [(thread_i64.I64SpawnErr _) 21]
+            [(thread_i64.I64SpawnOk second)
+              ;; The queued mutator cannot publish while the first one holds
+              ;; the lock, whether or not it has reached the lock yet.
+              (env-sync-gated-finish
+                gate-addr
+                first
+                second
+                (if (and (= parked 0) (env.var-exists? "TL_ENV_SYNC_QUEUED"))
+                  26
+                  parked))]))])))
 
 (define (main) : i64
   (if (not (env.set! "TL_ENV_SYNC_SENTINEL" "steady"))

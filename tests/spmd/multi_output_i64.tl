@@ -7,37 +7,34 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i 20)
-        (begin
-          (set! (array-ref a i) (+ i 3))
-          (set! (array-ref b i) (- 30 i))
-          (set! (array-ref out-x i) 777)
-          (set! (array-ref out-y i) 888)
-          (set! i (+ i 1))))
-      (foreach
-        ([j : i64 0 n])
-        (begin
-          (set! (array-ref out-x j) (+ (* (array-ref a j) 2) (array-ref b j)))
-          (set! (array-ref out-y j) (+ (* (array-ref a j) 2) 5))))
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (if (= (array-ref out-x i) (+ (* (+ i 3) 2) (- 30 i)))
-            unit
-            (set! ok false))
-          (if (= (array-ref out-y i) (+ (* (+ i 3) 2) 5))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      (and
-        ok
-        (if (< n 20)
-          (= (array-ref out-x n) 777)
-          true)
-        (if (< n 20)
-          (= (array-ref out-y n) 888)
-          true)))))
+    (while (< i 20)
+      (set! (array-ref a i) (+ i 3))
+      (set! (array-ref b i) (- 30 i))
+      (set! (array-ref out-x i) 777)
+      (set! (array-ref out-y i) 888)
+      (set! i (+ i 1)))
+    (foreach
+      ([j : i64 0 n])
+      (begin
+        (set! (array-ref out-x j) (+ (* (array-ref a j) 2) (array-ref b j)))
+        (set! (array-ref out-y j) (+ (* (array-ref a j) 2) 5))))
+    (set! i 0)
+    (while (and ok (< i n))
+      (if (= (array-ref out-x i) (+ (* (+ i 3) 2) (- 30 i)))
+        unit
+        (set! ok false))
+      (if (= (array-ref out-y i) (+ (* (+ i 3) 2) 5))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    (and
+      ok
+      (if (< n 20)
+        (= (array-ref out-x n) 777)
+        true)
+      (if (< n 20)
+        (= (array-ref out-y n) 888)
+        true))))
 
 (define (main) : i64
   (let

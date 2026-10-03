@@ -8,8 +8,7 @@
   (let
     [ix : (Array i64 8) (array 0 99 1 -1 2 3 4 5)]
     [out : (Array i64 8) (make-array i64 8)]
-    (begin
-      (foreach
-        ([i : i64 0 8])
-        (set! (array-ref out i) (array-ref table (array-ref ix i))))
-      (array-ref out 0))))
+    (foreach
+      ([i : i64 0 8])
+      (set! (array-ref out i) (array-ref table (array-ref ix i))))
+    (array-ref out 0)))

@@ -7,10 +7,9 @@
     unit))
 
 (define (main) : i64
-  (begin
-    (let
-      [x : unit unit]
-      x)
-    (noop)
-    (branch-unit true)
-    7))
+  (let
+    [x : unit unit]
+    x)
+  (noop)
+  (branch-unit true)
+  7)

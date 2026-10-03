@@ -5,9 +5,8 @@
     [generated-bump : (-> unit)
       (lambda () : unit
         ,body)]
-    (begin
-      (generated-bump)
-      (generated-bump))))
+    (generated-bump)
+    (generated-bump)))
 
 (define (mutable-capture-repeats-and-releases) : bool
   (let
@@ -16,10 +15,9 @@
     [bump : (-> unit)
       (lambda () : unit
         (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))]
-    (begin
-      (bump)
-      (bump)
-      (= (array-ref values 0) 42))))
+    (bump)
+    (bump)
+    (= (array-ref values 0) 42)))
 
 (define (consuming-capture-calls-once) : bool
   (let
@@ -54,10 +52,9 @@
   (let
     [values : (Array i64 1) (array 41)]
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
-    (begin
-      ((lambda () : unit
-          (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1))))
-      (= (array-ref values 0) 42))))
+    ((lambda () : unit
+        (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1))))
+    (= (array-ref values 0) 42)))
 
 (define (immediate-consuming-capture) : bool
   (let
@@ -77,31 +74,27 @@
           [bump : (-> unit)
             (lambda () : unit
               (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))]
-          (begin
-            (bump)
-            (bump))))]
-    (begin
-      (bump-twice)
-      (= (array-ref values 0) 42))))
+          (bump)
+          (bump)))]
+    (bump-twice)
+    (= (array-ref values 0) 42)))
 
 (define (macro-generated-mutable-capture) : bool
   (let
     [values : (Array i64 1) (array 40)]
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
-    (begin
-      (generated-bump-twice
-        (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))
-      (= (array-ref values 0) 42))))
+    (generated-bump-twice
+      (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))
+    (= (array-ref values 0) 42)))
 
 (define (main) : i64
-  (begin
-    (unless (mutable-capture-repeats-and-releases) (return 1))
-    (unless (consuming-capture-calls-once) (return 2))
-    (unless (read-only-owner-capture-repeats) (return 3))
-    (unless (immediate-mutable-capture) (return 4))
-    (unless (immediate-consuming-capture) (return 5))
-    (unless (nested-mutable-capture) (return 6))
-    (unless (macro-generated-mutable-capture) (return 7))
-    (unless (consuming-capture-exclusive-branch true) (return 8))
-    (unless (consuming-capture-exclusive-branch false) (return 9))
-    42))
+  (unless (mutable-capture-repeats-and-releases) (return 1))
+  (unless (consuming-capture-calls-once) (return 2))
+  (unless (read-only-owner-capture-repeats) (return 3))
+  (unless (immediate-mutable-capture) (return 4))
+  (unless (immediate-consuming-capture) (return 5))
+  (unless (nested-mutable-capture) (return 6))
+  (unless (macro-generated-mutable-capture) (return 7))
+  (unless (consuming-capture-exclusive-branch true) (return 8))
+  (unless (consuming-capture-exclusive-branch false) (return 9))
+  42)

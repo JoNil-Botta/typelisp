@@ -42,29 +42,25 @@
     [last : i64 0]
     [spin : i64 0]
     [guard : i64 0]
-    (begin
-      (while (< i stop)
-        (begin
-          (set! (array-ref marks i) (+ (array-ref marks i) v))
-          (set! last (array-ref marks i))
-          (set! i (+ i 1))))
-      ;; Two more passes over the same window, each a no-op on the values but
-      ;; not on the SIZE: three counted loops keep this body above every static
-      ;; inline band, so the call site below survives to be cloned. They stay
-      ;; element-only writes, so the callee's summary is unchanged.
-      (set! i start)
-      (while (< i stop)
-        (begin
-          (set! spin (+ spin (array-ref marks i)))
-          (set! (array-ref marks i) (array-ref marks i))
-          (set! i (+ i 1))))
-      (set! i start)
-      (while (< i stop)
-        (begin
-          (set! guard (+ guard (- (array-ref marks i) (array-ref marks i))))
-          (set! (array-ref marks i) (+ (array-ref marks i) guard))
-          (set! i (+ i 1))))
-      (+ last guard))))
+    (while (< i stop)
+      (set! (array-ref marks i) (+ (array-ref marks i) v))
+      (set! last (array-ref marks i))
+      (set! i (+ i 1)))
+    ;; Two more passes over the same window, each a no-op on the values but
+    ;; not on the SIZE: three counted loops keep this body above every static
+    ;; inline band, so the call site below survives to be cloned. They stay
+    ;; element-only writes, so the callee's summary is unchanged.
+    (set! i start)
+    (while (< i stop)
+      (set! spin (+ spin (array-ref marks i)))
+      (set! (array-ref marks i) (array-ref marks i))
+      (set! i (+ i 1)))
+    (set! i start)
+    (while (< i stop)
+      (set! guard (+ guard (- (array-ref marks i) (array-ref marks i))))
+      (set! (array-ref marks i) (+ (array-ref marks i) guard))
+      (set! i (+ i 1)))
+    (+ last guard)))
 
 (define (walk
   [items : (& items (__tl_dyn-array i64))]
@@ -76,16 +72,14 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref items i)))
-          (set! acc (+ acc (array-ref other i)))
-          (if (> (array-ref extra i) 0)
-            (set! acc (+ acc (bump (&mut marks) i 1 1)))
-            (set! acc (- acc 1)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref items i)))
+      (set! acc (+ acc (array-ref other i)))
+      (if (> (array-ref extra i) 0)
+        (set! acc (+ acc (bump (&mut marks) i 1 1)))
+        (set! acc (- acc 1)))
+      (set! i (+ i 1)))
+    acc))
 
 ;; The same arithmetic with the helper's effect fused in by hand.
 (define (twin
@@ -98,28 +92,24 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
+    (while (< i n)
+      (set! acc (+ acc (array-ref items i)))
+      (set! acc (+ acc (array-ref other i)))
+      (if (> (array-ref extra i) 0)
         (begin
-          (set! acc (+ acc (array-ref items i)))
-          (set! acc (+ acc (array-ref other i)))
-          (if (> (array-ref extra i) 0)
-            (begin
-              (set! (array-ref marks i) (+ (array-ref marks i) 1))
-              (set! acc (+ acc (array-ref marks i))))
-            (set! acc (- acc 1)))
-          (set! i (+ i 1))))
-      acc)))
+          (set! (array-ref marks i) (+ (array-ref marks i) 1))
+          (set! acc (+ acc (array-ref marks i))))
+        (set! acc (- acc 1)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (fill [a : (&mut a (__tl_dyn-array i64))] [n : i64] [v : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref a i) v)
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i n)
+      (set! (array-ref a i) v)
+      (set! i (+ i 1)))
+    unit))
 
 ;; seed + sum over i < n of (items + other + (marks bump | -1)).
 (define (expected
@@ -129,14 +119,12 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (> (array-ref extra i) 0)
-            (set! acc (+ acc 6))
-            (set! acc (+ acc 4)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (if (> (array-ref extra i) 0)
+        (set! acc (+ acc 6))
+        (set! acc (+ acc 4)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -152,23 +140,22 @@
     [tb : i64 0]
     [wc : i64 0]
     [td : i64 0]
-    (begin
-      (fill (&mut items) len 2)
-      (fill (&mut other) len 3)
-      (fill (&mut extra) len 1)
-      ;; Both arms of the branch run.
-      (set! (array-ref extra 1) 0)
-      (set! (array-ref extra 4) 0)
-      ;; Each window gets its own `marks`, so every slot is bumped at most once
-      ;; and the closed form below holds.
-      (set! wa (walk (& items) (& other) (& extra) (&mut marks-a) len 7))
-      (set! tb (twin (& items) (& other) (& extra) (&mut marks-b) len 7))
-      (set! wc (walk (& items) (& other) (& extra) (&mut marks-c) (- len 3) 7))
-      (set! td (twin (& items) (& other) (& extra) (&mut marks-d) (- len 3) 7))
-      (if (and
-        (= wa tb)
-        (= wc td)
-        (= wa (expected (& extra) len 7))
-        (= wc (expected (& extra) (- len 3) 7)))
-        42
-        1))))
+    (fill (&mut items) len 2)
+    (fill (&mut other) len 3)
+    (fill (&mut extra) len 1)
+    ;; Both arms of the branch run.
+    (set! (array-ref extra 1) 0)
+    (set! (array-ref extra 4) 0)
+    ;; Each window gets its own `marks`, so every slot is bumped at most once
+    ;; and the closed form below holds.
+    (set! wa (walk (& items) (& other) (& extra) (&mut marks-a) len 7))
+    (set! tb (twin (& items) (& other) (& extra) (&mut marks-b) len 7))
+    (set! wc (walk (& items) (& other) (& extra) (&mut marks-c) (- len 3) 7))
+    (set! td (twin (& items) (& other) (& extra) (&mut marks-d) (- len 3) 7))
+    (if (and
+      (= wa tb)
+      (= wc td)
+      (= wa (expected (& extra) len 7))
+      (= wc (expected (& extra) (- len 3) 7)))
+      42
+      1)))

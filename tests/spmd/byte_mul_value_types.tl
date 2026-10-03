@@ -63,13 +63,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref a i) (i8-left i))
-        (set! (array-ref b i) (i8-right i))
-        (set! (array-ref c i) (i8-third i))
-        (set! (array-ref ua i) (u8-left i))
-        (set! (array-ref ub i) (u8-right i))
-        (set! i (+ i 1))))))
+      (set! (array-ref a i) (i8-left i))
+      (set! (array-ref b i) (i8-right i))
+      (set! (array-ref c i) (i8-third i))
+      (set! (array-ref ua i) (u8-left i))
+      (set! (array-ref ub i) (u8-right i))
+      (set! i (+ i 1)))))
 
 (define (fill-i8
   [a : (& a (__tl_dyn-array i8))]
@@ -88,9 +87,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))
-        (set! i (+ i 1))))))
+      (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))
+      (set! i (+ i 1)))))
 
 (define (fill-u8
   [a : (& a (__tl_dyn-array u8))]
@@ -109,9 +107,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))
-        (set! i (+ i 1))))))
+      (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))
+      (set! i (+ i 1)))))
 
 (define (fill-masked
   [a : (& a (__tl_dyn-array i8))]
@@ -148,22 +145,21 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref if-out i)
-          (if (< (array-ref a i) 0)
-            (* (array-ref a i) (array-ref b i))
-            (if (= (array-ref a i) 0)
-              (* (array-ref b i) (array-ref c i))
-              (* (array-ref c i) (array-ref a i)))))
-        (set!
-          (array-ref match-out i)
-          (match (array-ref c i)
-            [0 (* (array-ref a i) (array-ref b i))]
-            [-3 (* (array-ref b i) (array-ref c i))]
-            [5 (* (array-ref c i) (array-ref a i))]
-            [_ (* (array-ref b i) (array-ref b i))]))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref if-out i)
+        (if (< (array-ref a i) 0)
+          (* (array-ref a i) (array-ref b i))
+          (if (= (array-ref a i) 0)
+            (* (array-ref b i) (array-ref c i))
+            (* (array-ref c i) (array-ref a i)))))
+      (set!
+        (array-ref match-out i)
+        (match (array-ref c i)
+          [0 (* (array-ref a i) (array-ref b i))]
+          [-3 (* (array-ref b i) (array-ref c i))]
+          [5 (* (array-ref c i) (array-ref a i))]
+          [_ (* (array-ref b i) (array-ref b i))]))
+      (set! i (+ i 1)))))
 
 (define (fill-masked-u8
   [a : (& a (__tl_dyn-array u8))]
@@ -198,22 +194,21 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref if-out i)
-          (if (< (array-ref a i) (cast 128 : u8))
-            (* (array-ref a i) (array-ref b i))
-            (if (= (array-ref a i) (cast 255 : u8))
-              (* (array-ref b i) (array-ref b i))
-              (* (array-ref a i) (array-ref a i)))))
-        (set!
-          (array-ref match-out i)
-          (match (array-ref a i)
-            [0 (* (array-ref a i) (array-ref b i))]
-            [1 (* (array-ref b i) (array-ref b i))]
-            [127 (* (array-ref a i) (array-ref a i))]
-            [_ (* (array-ref b i) (array-ref a i))]))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref if-out i)
+        (if (< (array-ref a i) (cast 128 : u8))
+          (* (array-ref a i) (array-ref b i))
+          (if (= (array-ref a i) (cast 255 : u8))
+            (* (array-ref b i) (array-ref b i))
+            (* (array-ref a i) (array-ref a i)))))
+      (set!
+        (array-ref match-out i)
+        (match (array-ref a i)
+          [0 (* (array-ref a i) (array-ref b i))]
+          [1 (* (array-ref b i) (array-ref b i))]
+          [127 (* (array-ref a i) (array-ref a i))]
+          [_ (* (array-ref b i) (array-ref a i))]))
+      (set! i (+ i 1)))))
 
 (define (fill-while
   [factor : (& factor (__tl_dyn-array i8))]
@@ -223,9 +218,8 @@
   (foreach
     ([i : i64 0 n])
     (while (> (array-ref remaining i) 0)
-      (begin
-        (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
-        (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))
+      (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
+      (set! (array-ref remaining i) (+ (array-ref remaining i) -1)))))
 
 (define (fill-while-scalar
   [factor : (& factor (__tl_dyn-array i8))]
@@ -235,12 +229,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (while (> (array-ref remaining i) 0)
-          (begin
-            (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
-            (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))
-        (set! i (+ i 1))))))
+      (while (> (array-ref remaining i) 0)
+        (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
+        (set! (array-ref remaining i) (+ (array-ref remaining i) -1)))
+      (set! i (+ i 1)))))
 
 (define (fill-while-u8
   [factor : (& factor (__tl_dyn-array u8))]
@@ -250,11 +242,8 @@
   (foreach
     ([i : i64 0 n])
     (while (> (array-ref remaining i) (cast 0 : u8))
-      (begin
-        (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
-        (set!
-          (array-ref remaining i)
-          (+ (array-ref remaining i) (cast 255 : u8)))))))
+      (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
+      (set! (array-ref remaining i) (+ (array-ref remaining i) (cast 255 : u8))))))
 
 (define (fill-while-u8-scalar
   [factor : (& factor (__tl_dyn-array u8))]
@@ -264,14 +253,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (while (> (array-ref remaining i) (cast 0 : u8))
-          (begin
-            (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
-            (set!
-              (array-ref remaining i)
-              (+ (array-ref remaining i) (cast 255 : u8)))))
-        (set! i (+ i 1))))))
+      (while (> (array-ref remaining i) (cast 0 : u8))
+        (set! (array-ref out i) (* (array-ref out i) (array-ref factor i)))
+        (set!
+          (array-ref remaining i)
+          (+ (array-ref remaining i) (cast 255 : u8))))
+      (set! i (+ i 1)))))
 
 (define (arrays-eq-i8
   [a : (& a (__tl_dyn-array i8))]
@@ -280,14 +267,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (arrays-eq-u8
   [a : (& a (__tl_dyn-array u8))]
@@ -296,14 +281,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (run-case [n : i64]) : bool
   (let
@@ -333,54 +316,51 @@
     [u8-while-got : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [u8-while-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
-    (begin
-      (init (&mut a) (&mut b) (&mut c) (&mut ua) (&mut ub) n)
-      (while (< i n)
-        (begin
-          (set! (array-ref remaining i) (cast (% i 4) : i8))
-          (set! (array-ref remaining-want i) (cast (% i 4) : i8))
-          (set! (array-ref while-got i) (cast 1 : i8))
-          (set! (array-ref while-want i) (cast 1 : i8))
-          (set! (array-ref u8-remaining i) (cast (% i 4) : u8))
-          (set! (array-ref u8-remaining-want i) (cast (% i 4) : u8))
-          (set! (array-ref u8-while-got i) (cast 1 : u8))
-          (set! (array-ref u8-while-want i) (cast 1 : u8))
-          (set! i (+ i 1))))
-      (fill-i8 (& a) (& b) (&mut i8-got) n)
-      (fill-i8-scalar (& a) (& b) (&mut i8-want) n)
-      (fill-u8 (& ua) (& ub) (&mut u8-got) n)
-      (fill-u8-scalar (& ua) (& ub) (&mut u8-want) n)
-      (fill-masked (& a) (& b) (& c) (&mut if-got) (&mut match-got) n)
-      (fill-masked-scalar (& a) (& b) (& c) (&mut if-want) (&mut match-want) n)
-      (fill-masked-u8 (& ua) (& ub) (&mut u8-if-got) (&mut u8-match-got) n)
-      (fill-masked-u8-scalar
-        (& ua)
-        (& ub)
-        (&mut u8-if-want)
-        (&mut u8-match-want)
-        n)
-      (fill-while (& a) (&mut remaining) (&mut while-got) n)
-      (fill-while-scalar (& a) (&mut remaining-want) (&mut while-want) n)
-      (fill-while-u8 (& ua) (&mut u8-remaining) (&mut u8-while-got) n)
-      (fill-while-u8-scalar
-        (& ua)
-        (&mut u8-remaining-want)
-        (&mut u8-while-want)
-        n)
-      (and
-        (arrays-eq-i8 (& i8-got) (& i8-want) n)
-        (arrays-eq-u8 (& u8-got) (& u8-want) n)
-        (arrays-eq-i8 (& if-got) (& if-want) n)
-        (arrays-eq-i8 (& match-got) (& match-want) n)
-        (arrays-eq-u8 (& u8-if-got) (& u8-if-want) n)
-        (arrays-eq-u8 (& u8-match-got) (& u8-match-want) n)
-        (arrays-eq-i8 (& while-got) (& while-want) n)
-        (arrays-eq-u8 (& u8-while-got) (& u8-while-want) n)))))
+    (init (&mut a) (&mut b) (&mut c) (&mut ua) (&mut ub) n)
+    (while (< i n)
+      (set! (array-ref remaining i) (cast (% i 4) : i8))
+      (set! (array-ref remaining-want i) (cast (% i 4) : i8))
+      (set! (array-ref while-got i) (cast 1 : i8))
+      (set! (array-ref while-want i) (cast 1 : i8))
+      (set! (array-ref u8-remaining i) (cast (% i 4) : u8))
+      (set! (array-ref u8-remaining-want i) (cast (% i 4) : u8))
+      (set! (array-ref u8-while-got i) (cast 1 : u8))
+      (set! (array-ref u8-while-want i) (cast 1 : u8))
+      (set! i (+ i 1)))
+    (fill-i8 (& a) (& b) (&mut i8-got) n)
+    (fill-i8-scalar (& a) (& b) (&mut i8-want) n)
+    (fill-u8 (& ua) (& ub) (&mut u8-got) n)
+    (fill-u8-scalar (& ua) (& ub) (&mut u8-want) n)
+    (fill-masked (& a) (& b) (& c) (&mut if-got) (&mut match-got) n)
+    (fill-masked-scalar (& a) (& b) (& c) (&mut if-want) (&mut match-want) n)
+    (fill-masked-u8 (& ua) (& ub) (&mut u8-if-got) (&mut u8-match-got) n)
+    (fill-masked-u8-scalar
+      (& ua)
+      (& ub)
+      (&mut u8-if-want)
+      (&mut u8-match-want)
+      n)
+    (fill-while (& a) (&mut remaining) (&mut while-got) n)
+    (fill-while-scalar (& a) (&mut remaining-want) (&mut while-want) n)
+    (fill-while-u8 (& ua) (&mut u8-remaining) (&mut u8-while-got) n)
+    (fill-while-u8-scalar
+      (& ua)
+      (&mut u8-remaining-want)
+      (&mut u8-while-want)
+      n)
+    (and
+      (arrays-eq-i8 (& i8-got) (& i8-want) n)
+      (arrays-eq-u8 (& u8-got) (& u8-want) n)
+      (arrays-eq-i8 (& if-got) (& if-want) n)
+      (arrays-eq-i8 (& match-got) (& match-want) n)
+      (arrays-eq-u8 (& u8-if-got) (& u8-if-want) n)
+      (arrays-eq-u8 (& u8-match-got) (& u8-match-want) n)
+      (arrays-eq-i8 (& while-got) (& while-want) n)
+      (arrays-eq-u8 (& u8-while-got) (& u8-while-want) n))))
 
 (define (main) : i64
-  (begin
-    (unless (run-case 17) (return 1))
-    (unless (run-case 32) (return 2))
-    (unless (run-case 64) (return 3))
-    (unless (run-case 130) (return 4))
-    42))
+  (unless (run-case 17) (return 1))
+  (unless (run-case 32) (return 2))
+  (unless (run-case 64) (return 3))
+  (unless (run-case 130) (return 4))
+  42)

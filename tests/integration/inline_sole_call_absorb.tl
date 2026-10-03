@@ -40,28 +40,27 @@
     [kind : i64 0]
     [weight : i64 1]
     [carry : i64 (+ salt depth)]
-    (begin
-      (cond
-        [(< byte 32) (set! kind 1)]
-        [(< byte 48) (set! kind 2)]
-        [(< byte 58) (set! kind 3)]
-        [(< byte 65) (set! kind 4)]
-        [(< byte 91) (set! kind 5)]
-        [(< byte 97) (set! kind 6)]
-        [(< byte 123) (set! kind 7)]
-        [else (set! kind 8)])
-      (cond
-        [(= kind 3) (set! weight 5)]
-        [(= kind 5) (set! weight 3)]
-        [(= kind 7) (set! weight 2)]
-        [else (set! weight 1)])
-      (if (= prev kind)
-        (set! carry (+ carry 7))
-        (set! carry (+ carry 11)))
-      (if (> total 0)
-        (set! carry (+ carry (% total 13)))
-        (set! carry (+ carry 3)))
-      (+ (* kind 100) (+ (* weight 10) (% carry 10))))))
+    (cond
+      [(< byte 32) (set! kind 1)]
+      [(< byte 48) (set! kind 2)]
+      [(< byte 58) (set! kind 3)]
+      [(< byte 65) (set! kind 4)]
+      [(< byte 91) (set! kind 5)]
+      [(< byte 97) (set! kind 6)]
+      [(< byte 123) (set! kind 7)]
+      [else (set! kind 8)])
+    (cond
+      [(= kind 3) (set! weight 5)]
+      [(= kind 5) (set! weight 3)]
+      [(= kind 7) (set! weight 2)]
+      [else (set! weight 1)])
+    (if (= prev kind)
+      (set! carry (+ carry 7))
+      (set! carry (+ carry 11)))
+    (if (> total 0)
+      (set! carry (+ carry (% total 13)))
+      (set! carry (+ carry 3)))
+    (+ (* kind 100) (+ (* weight 10) (% carry 10)))))
 
 ;; A loop-carrying sole-call helper: refused, and its call survives at opt2.
 (define (sc-scan-run
@@ -72,12 +71,10 @@
     [values (i64vec.slots values-vec)]
     [i : i64 start]
     [run : i64 0]
-    (begin
-      (while (< i limit)
-        (begin
-          (set! run (+ run (array-ref values i)))
-          (set! i (+ i 1))))
-      run)))
+    (while (< i limit)
+      (set! run (+ run (array-ref values i)))
+      (set! i (+ i 1)))
+    run))
 
 ;; Acyclic, but called from inside the driver's loop: refused on the site. It
 ;; is padded to the same shape as `sc-classify` on purpose -- past the cost
@@ -92,31 +89,30 @@
   (let
     [next : i64 acc]
     [mix : i64 (+ salt round)]
-    (begin
-      (cond
-        [(= kind 0) (set! next (+ (* acc 31) value))]
-        [(= kind 1) (set! next (+ (* acc 17) value))]
-        [(= kind 2) (set! next (+ (* acc 13) (* value 3)))]
-        [(= kind 3) (set! next (+ (* acc 7) (* value 5)))]
-        [(= kind 4) (set! next (- (* acc 11) value))]
-        [(= kind 5) (set! next (+ (* acc 23) (* value 2)))]
-        [(= kind 6) (set! next (+ (* acc 29) (- value 1)))]
-        [else (set! next (+ (* acc 3) (+ value 9)))])
-      (cond
-        [(< value 16) (set! mix (+ mix 1))]
-        [(< value 32) (set! mix (+ mix 2))]
-        [(< value 48) (set! mix (+ mix 3))]
-        [(< value 64) (set! mix (+ mix 4))]
-        [(< value 80) (set! mix (+ mix 5))]
-        [(< value 96) (set! mix (+ mix 6))]
-        [(< value 112) (set! mix (+ mix 7))]
-        [else (set! mix (+ mix 8))])
-      (if (= (% mix 3) 0)
-        (set! next (+ next 101))
-        (if (= (% mix 3) 1)
-          (set! next (+ next 211))
-          (set! next (+ next 307))))
-      (% (+ next mix) 1000003))))
+    (cond
+      [(= kind 0) (set! next (+ (* acc 31) value))]
+      [(= kind 1) (set! next (+ (* acc 17) value))]
+      [(= kind 2) (set! next (+ (* acc 13) (* value 3)))]
+      [(= kind 3) (set! next (+ (* acc 7) (* value 5)))]
+      [(= kind 4) (set! next (- (* acc 11) value))]
+      [(= kind 5) (set! next (+ (* acc 23) (* value 2)))]
+      [(= kind 6) (set! next (+ (* acc 29) (- value 1)))]
+      [else (set! next (+ (* acc 3) (+ value 9)))])
+    (cond
+      [(< value 16) (set! mix (+ mix 1))]
+      [(< value 32) (set! mix (+ mix 2))]
+      [(< value 48) (set! mix (+ mix 3))]
+      [(< value 64) (set! mix (+ mix 4))]
+      [(< value 80) (set! mix (+ mix 5))]
+      [(< value 96) (set! mix (+ mix 6))]
+      [(< value 112) (set! mix (+ mix 7))]
+      [else (set! mix (+ mix 8))])
+    (if (= (% mix 3) 0)
+      (set! next (+ next 101))
+      (if (= (% mix 3) 1)
+        (set! next (+ next 211))
+        (set! next (+ next 307))))
+    (% (+ next mix) 1000003)))
 
 (define (sc-driver
   [data-vec : (&mut data i64vec.Vec)]
@@ -128,29 +124,25 @@
     [acc : i64 1]
     [prev : i64 0]
     [classified : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! (array-ref values i) (% (+ (* i 37) salt) 128))
-          (set! i (+ i 1))))
-      ;; The straight-line site: absorbed at opt2.
-      (set! classified (sc-classify 65 prev 2 count salt))
-      (set! i 0)
-      (while (< i count)
-        (let
-          [v : i64 (array-ref values i)]
-          (begin
-            ;; The in-loop site: refused.
-            (set! acc (sc-fold-step acc v (% v 8) salt i))
-            (set! i (+ i 1)))))
-      ;; The loop-carrying callee: refused.
-      (+ classified (+ acc (sc-scan-run (& sc-data) 0 count))))))
+    (while (< i count)
+      (set! (array-ref values i) (% (+ (* i 37) salt) 128))
+      (set! i (+ i 1)))
+    ;; The straight-line site: absorbed at opt2.
+    (set! classified (sc-classify 65 prev 2 count salt))
+    (set! i 0)
+    (while (< i count)
+      (let
+        [v : i64 (array-ref values i)]
+        ;; The in-loop site: refused.
+        (set! acc (sc-fold-step acc v (% v 8) salt i))
+        (set! i (+ i 1))))
+    ;; The loop-carrying callee: refused.
+    (+ classified (+ acc (sc-scan-run (& sc-data) 0 count)))))
 
 (define (main) : i64
   (let
     [count : i64 (string.>int (io.arg 1))]
     [salt : i64 (string.>int (io.arg 2))]
-    (begin
-      (set! sc-data (sc-zero-vec count))
-      (io.print-format "{}\n" (sc-driver (&mut sc-data) count salt))
-      42)))
+    (set! sc-data (sc-zero-vec count))
+    (io.print-format "{}\n" (sc-driver (&mut sc-data) count salt))
+    42))

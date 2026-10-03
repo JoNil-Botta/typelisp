@@ -30,40 +30,35 @@
 
 ;: Arrive at the start barrier and spin until both workers have arrived.
 (define (sync-mutex-integration-barrier! [barrier : i64]) : unit
-  (begin
+  (unsafe
+    (sync.atomic-i64-fetch-add! barrier 0 1))
+  (while (<
     (unsafe
-      (sync.atomic-i64-fetch-add! barrier 0 1))
-    (while (<
-      (unsafe
-        (sync.atomic-i64-load barrier 0))
-      2)
-      unit)))
+      (sync.atomic-i64-load barrier 0))
+    2)
+    unit))
 
 (define (sync-mutex-integration-worker [ctx : i64]) : i64
   (let
     [words : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [count : i64 (sync-mutex-integration-read-i64 ctx 1)]
     [barrier : i64 (sync-mutex-integration-read-i64 ctx 2)]
-    (begin
-      (set! (array-ref words 0) (sync-mutex-integration-read-i64 ctx 0))
-      (with
-        ([mutex
-            (unsafe
-              (mutex_i64.load-raw words 0))
-            mutex_i64.release])
-        (let
-          [i : i64 0]
-          (begin
-            (sync-mutex-integration-barrier! barrier)
-            (while (< i count)
-              (begin
-                (with
-                  ([guard (mutex_i64.lock (& mutex)) mutex_i64.unlock])
-                  (begin
-                    (mutex_i64.add! guard 1)
-                    unit))
-                (set! i (+ i 1))))
-            0))))))
+    (set! (array-ref words 0) (sync-mutex-integration-read-i64 ctx 0))
+    (with
+      ([mutex
+          (unsafe
+            (mutex_i64.load-raw words 0))
+          mutex_i64.release])
+      (let
+        [i : i64 0]
+        (sync-mutex-integration-barrier! barrier)
+        (while (< i count)
+          (with
+            ([guard (mutex_i64.lock (& mutex)) mutex_i64.unlock])
+            (mutex_i64.add! guard 1)
+            unit)
+          (set! i (+ i 1)))
+        0))))
 
 (define (sync-mutex-integration-join-code [result : ThreadJoinResult]) : i64
   (match result
@@ -79,10 +74,9 @@
     [stored : bool
       (unsafe
         (mutex_i64.store-raw! mutex ctx 0))]
-    (begin
-      (set! (array-ref ctx 1) sync-mutex-integration-count)
-      (set! (array-ref ctx 2) barrier)
-      stored)))
+    (set! (array-ref ctx 1) sync-mutex-integration-count)
+    (set! (array-ref ctx 2) barrier)
+    stored))
 
 (define (sync-mutex-integration-total [mutex : (& mutex mutex_i64.Mutex)]) : i64
   (with ([guard (mutex_i64.lock mutex) mutex_i64.unlock]) (mutex_i64.get guard)))

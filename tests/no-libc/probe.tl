@@ -16,18 +16,17 @@
     [cwd : String (fs.current-dir)]
     [empty-random : byte_buf.ByteBuf
       (byte_buf.from-array (__tl_make-array u8 0))]
-    (begin
-      (io.print-format "{}" "no-libc probe\n")
-      (io.println "{}" 1.5)
-      (io.print-format "{}" (string.int->string (+ 40 2)))
-      (io.print-format "{}" "\n")
-      (match (env.get (& name))
-        [(EnvSomeString _) (io.print-format "{}" "have-path\n")]
-        [(EnvNoString) (io.print-format "{}" "no-path\n")])
-      (match (crypto_random.fill-random!
-        (byte_buf.as-mut-bytes (&mut empty-random)))
-        [(OkFillRandom)
-          (if (and exists (> (string-length cwd) 0))
-            0
-            1)]
-        [(ErrFillRandom _) 2]))))
+    (io.print-format "{}" "no-libc probe\n")
+    (io.println "{}" 1.5)
+    (io.print-format "{}" (string.int->string (+ 40 2)))
+    (io.print-format "{}" "\n")
+    (match (env.get (& name))
+      [(EnvSomeString _) (io.print-format "{}" "have-path\n")]
+      [(EnvNoString) (io.print-format "{}" "no-path\n")])
+    (match (crypto_random.fill-random!
+      (byte_buf.as-mut-bytes (&mut empty-random)))
+      [(OkFillRandom)
+        (if (and exists (> (string-length cwd) 0))
+          0
+          1)]
+      [(ErrFillRandom _) 2])))

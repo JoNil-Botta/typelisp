@@ -40,14 +40,13 @@
     (let
       [i : i64 0]
       [hit : bool false]
-      (begin
-        (while (and (< i n) (not hit))
-          (if (= (array-ref xs i) sentinel)
-            (set! hit true)
-            (set! i (+ i 1))))
-        ;; `i` is read on BOTH exit edges: n on the counter door, the
-        ;; sentinel's index on the escape door.
-        i))))
+      (while (and (< i n) (not hit))
+        (if (= (array-ref xs i) sentinel)
+          (set! hit true)
+          (set! i (+ i 1))))
+      ;; `i` is read on BOTH exit edges: n on the counter door, the
+      ;; sentinel's index on the escape door.
+      i)))
 
 (define (scan-pair
   [xs : (& xs (__tl_dyn-array i64))]
@@ -59,16 +58,14 @@
       [i : i64 0]
       [last : i64 (- 0 7)]
       [hit : bool false]
-      (begin
-        (while (and (< i n) (not hit))
-          (begin
-            (set! last (array-ref xs i))
-            (if (= last sentinel)
-              (set! hit true)
-              (set! i (+ i 1)))))
-        ;; `last` is only meaningful on the escape door; the counter door
-        ;; reports the last element scanned, or the seed for an empty range.
-        (+ (* i 100) last)))))
+      (while (and (< i n) (not hit))
+        (set! last (array-ref xs i))
+        (if (= last sentinel)
+          (set! hit true)
+          (set! i (+ i 1))))
+      ;; `last` is only meaningful on the escape door; the counter door
+      ;; reports the last element scanned, or the seed for an empty range.
+      (+ (* i 100) last))))
 
 (define (scan-nested
   [xs : (& xs (__tl_dyn-array i64))]
@@ -79,54 +76,50 @@
     (let
       [r : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< r rounds)
-          (let
-            [i : i64 0]
-            [hit : bool false]
-            (begin
-              (while (and (< i n) (not hit))
-                (if (= (array-ref xs i) r)
-                  (set! hit true)
-                  (set! i (+ i 1))))
-              (set! acc (+ acc i))
-              (set! r (+ r 1)))))
-        acc))))
+      (while (< r rounds)
+        (let
+          [i : i64 0]
+          [hit : bool false]
+          (while (and (< i n) (not hit))
+            (if (= (array-ref xs i) r)
+              (set! hit true)
+              (set! i (+ i 1))))
+          (set! acc (+ acc i))
+          (set! r (+ r 1))))
+      acc)))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      ;; xs = [0, 3, 6, 9, 12, 15] for n = 6 (no args).
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 3))
-          (set! i (+ i 1))))
-      (let
-        ;; escape door: xs[2] = 6, so i stops at 2.
-        [a : i64 (scan-limit (& xs) n 6)]
-        ;; counter door: 7 is absent, so i runs to n = 6.
-        [b : i64 (scan-limit (& xs) n 7)]
-        ;; empty range: neither door runs a trip, i stays 0.
-        [c : i64 (scan-limit (& xs) 0 6)]
-        ;; escape door: stops at index 1 with last = 3 -> 1*100 + 3 = 103.
-        [d : i64 (scan-pair (& xs) n 3)]
-        ;; counter door: last is xs[5] = 15 -> 6*100 + 15 = 615.
-        [e : i64 (scan-pair (& xs) n 7)]
-        ;; empty range: the seed survives -> 0*100 + -7 = -7.
-        [f : i64 (scan-pair (& xs) 0 3)]
-        ;; rounds 0,1,2: r=0 hits at index 0, r=1 misses (i=6),
-        ;; r=2 misses (i=6) -> 0 + 6 + 6 = 12.
-        [g : i64 (scan-nested (& xs) n 3)]
-        (if (and
-          (= a 2)
-          (= b 6)
-          (= c 0)
-          (= d 103)
-          (= e 615)
-          (= f (- 0 7))
-          (= g 12))
-          42
-          1)))))
+    ;; xs = [0, 3, 6, 9, 12, 15] for n = 6 (no args).
+    (while (< i n)
+      (set! (array-ref xs i) (* i 3))
+      (set! i (+ i 1)))
+    (let
+      ;; escape door: xs[2] = 6, so i stops at 2.
+      [a : i64 (scan-limit (& xs) n 6)]
+      ;; counter door: 7 is absent, so i runs to n = 6.
+      [b : i64 (scan-limit (& xs) n 7)]
+      ;; empty range: neither door runs a trip, i stays 0.
+      [c : i64 (scan-limit (& xs) 0 6)]
+      ;; escape door: stops at index 1 with last = 3 -> 1*100 + 3 = 103.
+      [d : i64 (scan-pair (& xs) n 3)]
+      ;; counter door: last is xs[5] = 15 -> 6*100 + 15 = 615.
+      [e : i64 (scan-pair (& xs) n 7)]
+      ;; empty range: the seed survives -> 0*100 + -7 = -7.
+      [f : i64 (scan-pair (& xs) 0 3)]
+      ;; rounds 0,1,2: r=0 hits at index 0, r=1 misses (i=6),
+      ;; r=2 misses (i=6) -> 0 + 6 + 6 = 12.
+      [g : i64 (scan-nested (& xs) n 3)]
+      (if (and
+        (= a 2)
+        (= b 6)
+        (= c 0)
+        (= d 103)
+        (= e 615)
+        (= f (- 0 7))
+        (= g 12))
+        42
+        1))))

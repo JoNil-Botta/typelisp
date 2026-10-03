@@ -34,17 +34,15 @@
     [value : i64 (integration-read-i64 ctx 1)]
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i integration-worker-iterations)
-        (let
-          [buf : (__tl_dyn-array i64) (__tl_make-array i64 16)]
-          (begin
-            (set! (array-ref buf 0) (+ value i))
-            (set! (array-ref buf 15) (+ (array-ref buf 0) 7))
-            (set! sum (+ sum (array-ref buf 15)))
-            (set! i (+ i 1)))))
-      (integration-write-i64! out-addr 0 sum)
-      sum)))
+    (while (< i integration-worker-iterations)
+      (let
+        [buf : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+        (set! (array-ref buf 0) (+ value i))
+        (set! (array-ref buf 15) (+ (array-ref buf 0) 7))
+        (set! sum (+ sum (array-ref buf 15)))
+        (set! i (+ i 1))))
+    (integration-write-i64! out-addr 0 sum)
+    sum))
 
 (define (integration-join-code [result : ThreadJoinResult]) : i64
   (match result
@@ -131,23 +129,14 @@
     [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [ctx-c : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [ctx-d : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref ctx-a 0) (integration-array-i64-addr out-a))
-      (set! (array-ref ctx-a 1) 11)
-      (set! (array-ref ctx-b 0) (integration-array-i64-addr out-b))
-      (set! (array-ref ctx-b 1) 31)
-      (set! (array-ref ctx-c 0) (integration-array-i64-addr out-c))
-      (set! (array-ref ctx-c 1) 41)
-      (set! (array-ref ctx-d 0) (integration-array-i64-addr out-d))
-      (set! (array-ref ctx-d 1) 59)
-      (if (< (thread.default-worker-count) 1)
-        1
-        (integration-run-threads
-          out-a
-          out-b
-          out-c
-          out-d
-          ctx-a
-          ctx-b
-          ctx-c
-          ctx-d)))))
+    (set! (array-ref ctx-a 0) (integration-array-i64-addr out-a))
+    (set! (array-ref ctx-a 1) 11)
+    (set! (array-ref ctx-b 0) (integration-array-i64-addr out-b))
+    (set! (array-ref ctx-b 1) 31)
+    (set! (array-ref ctx-c 0) (integration-array-i64-addr out-c))
+    (set! (array-ref ctx-c 1) 41)
+    (set! (array-ref ctx-d 0) (integration-array-i64-addr out-d))
+    (set! (array-ref ctx-d 1) 59)
+    (if (< (thread.default-worker-count) 1)
+      1
+      (integration-run-threads out-a out-b out-c out-d ctx-a ctx-b ctx-c ctx-d))))

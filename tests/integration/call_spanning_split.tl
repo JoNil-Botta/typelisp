@@ -34,19 +34,17 @@
     [h : i64 (+ n 8)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 4)
-        (begin
-          ;; Use a..h BEFORE the call: this gives each a non-crossing sub-range
-          ;; (a register-resident segment) in addition to crossing the call,
-          ;; which is exactly what the call-spanning rescue splits -- keep the
-          ;; value in a caller-saved reg for the pre-call segment, spill across.
-          (set! acc (+ acc (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))))
-          (set! acc (+ acc (clobber i)))
-          ;; Use a..h AFTER the call: forces the live range to cross the call.
-          (set! acc (+ acc (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i 4)
+      ;; Use a..h BEFORE the call: this gives each a non-crossing sub-range
+      ;; (a register-resident segment) in addition to crossing the call,
+      ;; which is exactly what the call-spanning rescue splits -- keep the
+      ;; value in a caller-saved reg for the pre-call segment, spill across.
+      (set! acc (+ acc (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))))
+      (set! acc (+ acc (clobber i)))
+      ;; Use a..h AFTER the call: forces the live range to cross the call.
+      (set! acc (+ acc (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

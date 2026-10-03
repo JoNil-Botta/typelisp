@@ -6,14 +6,12 @@
   (c i64))
 
 (define (scalar-param-score [n : i64]) : i64
-  (begin
-    (set! n (+ n 1))
-    n))
+  (set! n (+ n 1))
+  n)
 
 (define (aggregate-param-score [value : Big] [seed : i64]) : i64
-  (begin
-    (set! value (Big seed (+ seed 1) (+ seed 2)))
-    value.b))
+  (set! value (Big seed (+ seed 1) (+ seed 2)))
+  value.b)
 
 (define (main) : i64
   (+ (scalar-param-score 40) (aggregate-param-score (Big 9 9 9) 0)))

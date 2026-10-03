@@ -8,11 +8,9 @@
   generated-module-body-normal-import-with-nested-generated-import
   (let
     [items : i64v.Vec (i64v.with-capacity 2)]
-    (begin
-      (i64v.push-ref! (&mut items) 11)
-      (i64v.push-ref! (&mut items) 31)
-      (let
-        [view : (& items (Slice i64)) (i64v.view (& items))]
-        (begin
-          (test.assert-i64-eq (array-length view) 2 "slice len")
-          (test.assert-i64-eq (array-ref view 1) 31 "slice value"))))))
+    (i64v.push-ref! (&mut items) 11)
+    (i64v.push-ref! (&mut items) 31)
+    (let
+      [view : (& items (Slice i64)) (i64v.view (& items))]
+      (test.assert-i64-eq (array-length view) 2 "slice len")
+      (test.assert-i64-eq (array-ref view 1) 31 "slice value"))))

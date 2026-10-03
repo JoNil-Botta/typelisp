@@ -75,24 +75,22 @@
   (= (stack-pair 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 (PairF64 9.0 10.0)) 28.0))
 
 (define (case-global) : bool
-  (begin
-    (set! global-pair (make-pair 12.5 0.5))
-    (set! global-mix (MixIF 17 1.5))
-    (if (= (pair-sum global-pair) 13.0)
-      (if (= (mix-i global-mix) 17)
-        (= (mix-f global-mix) 1.5)
-        false)
-      false)))
+  (set! global-pair (make-pair 12.5 0.5))
+  (set! global-mix (MixIF 17 1.5))
+  (if (= (pair-sum global-pair) 13.0)
+    (if (= (mix-i global-mix) 17)
+      (= (mix-f global-mix) 1.5)
+      false)
+    false))
 
 (define (case-array) : bool
   (let
     [items : (__tl_dyn-array PairF64) (__tl_make-array PairF64 2)]
-    (begin
-      (set! (array-ref items 0) (PairF64 3.0 4.0))
-      (set! (array-ref items 1) (PairF64 5.0 6.0))
-      (if (= (pair-sum (array-ref items 0)) 7.0)
-        (= (__tl-project-field (array-ref items 1) y) 6.0)
-        false))))
+    (set! (array-ref items 0) (PairF64 3.0 4.0))
+    (set! (array-ref items 1) (PairF64 5.0 6.0))
+    (if (= (pair-sum (array-ref items 0)) 7.0)
+      (= (__tl-project-field (array-ref items 1) y) 6.0)
+      false)))
 
 (define (case-capture) : bool
   (let
@@ -103,13 +101,12 @@
     (= (reader) 42.0)))
 
 (define (main) : i64
-  (begin
-    (unless (case-pair-return) (return 1))
-    (unless (case-pair-phi) (return 2))
-    (unless (case-mixed) (return 3))
-    (unless (case-enum) (return 4))
-    (unless (case-stack) (return 5))
-    (unless (case-global) (return 6))
-    (unless (case-array) (return 7))
-    (unless (case-capture) (return 8))
-    42))
+  (unless (case-pair-return) (return 1))
+  (unless (case-pair-phi) (return 2))
+  (unless (case-mixed) (return 3))
+  (unless (case-enum) (return 4))
+  (unless (case-stack) (return 5))
+  (unless (case-global) (return 6))
+  (unless (case-array) (return 7))
+  (unless (case-capture) (return 8))
+  42)

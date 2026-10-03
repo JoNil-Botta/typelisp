@@ -25,36 +25,31 @@
     [qs (__tl_make-array i64 n)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut xs)) i) (* i 3))
-          (set! (array-ref (i64vec.slots-mut (&mut ys)) i) (+ i 1))
-          (set! (array-ref ps i) (* i 2))
-          (set! (array-ref qs i) (+ i 5))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i (+ n 4))
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut zs)) i) i)
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i n)
-        (let
-          [cursor : i64 (+ i bump)]
-          (begin
-            (set! acc (+ acc (array-ref (i64vec.slots (& xs)) cursor)))
-            (set! acc (+ acc (array-ref (i64vec.slots (& ys)) cursor)))
-            (set! acc (+ acc (array-ref ps cursor)))
-            (set! acc (+ acc (array-ref qs cursor)))
-            (set! acc (+ acc (array-ref (i64vec.slots (& zs)) cursor)))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (set! (array-ref (i64vec.slots-mut (&mut xs)) i) (* i 3))
+      (set! (array-ref (i64vec.slots-mut (&mut ys)) i) (+ i 1))
+      (set! (array-ref ps i) (* i 2))
+      (set! (array-ref qs i) (+ i 5))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i (+ n 4))
+      (set! (array-ref (i64vec.slots-mut (&mut zs)) i) i)
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [cursor : i64 (+ i bump)]
+        (set! acc (+ acc (array-ref (i64vec.slots (& xs)) cursor)))
+        (set! acc (+ acc (array-ref (i64vec.slots (& ys)) cursor)))
+        (set! acc (+ acc (array-ref ps cursor)))
+        (set! acc (+ acc (array-ref qs cursor)))
+        (set! acc (+ acc (array-ref (i64vec.slots (& zs)) cursor)))
+        (set! i (+ i 1))))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [bump : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.print-format "{}\n" (ck-run n bump))
-      42)))
+    (io.print-format "{}\n" (ck-run n bump))
+    42))

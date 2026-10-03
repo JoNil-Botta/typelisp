@@ -56,9 +56,8 @@
     [f : (-> i64 i64)
       (lambda ([x : i64]) : i64
         (+ x n))]
-    (begin
-      (set! n 100)
-      (= (f 32) 42))))
+    (set! n 100)
+    (= (f 32) 42)))
 
 (define (case-nested) : bool
   (let
@@ -83,12 +82,11 @@
       142)))
 
 (define (main) : i64
-  (begin
-    (unless (case-immediate) (return 1))
-    (unless (case-passed-as-arg) (return 2))
-    (unless (case-mixed-scalars) (return 3))
-    (unless (case-function-capture) (return 4))
-    (unless (case-snapshot) (return 5))
-    (unless (case-nested) (return 6))
-    (unless (case-shadowed-capture) (return 7))
-    42))
+  (unless (case-immediate) (return 1))
+  (unless (case-passed-as-arg) (return 2))
+  (unless (case-mixed-scalars) (return 3))
+  (unless (case-function-capture) (return 4))
+  (unless (case-snapshot) (return 5))
+  (unless (case-nested) (return 6))
+  (unless (case-shadowed-capture) (return 7))
+  42)

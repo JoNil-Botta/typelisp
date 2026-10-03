@@ -65,18 +65,16 @@
     [sum : i64 0]
     [i : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (begin
-          ;; The callee adds 1000 to both fields of its copy and returns
-          ;; the sum it saw before writing, plus `k`.
-          (set! sum (+ sum (pair-bump pair i)))
-          (set! i (+ i 1))))
-      (unless (= (profile.alloc-total) before) (return 1))
-      (unless (= sum (+ (* rounds 7) (/ (* rounds (- rounds 1)) 2))) (return 2))
-      (unless (= pair.a 3) (return 3))
-      (unless (= pair.b 4) (return 4))
-      0)))
+    (while (< i rounds)
+      ;; The callee adds 1000 to both fields of its copy and returns
+      ;; the sum it saw before writing, plus `k`.
+      (set! sum (+ sum (pair-bump pair i)))
+      (set! i (+ i 1)))
+    (unless (= (profile.alloc-total) before) (return 1))
+    (unless (= sum (+ (* rounds 7) (/ (* rounds (- rounds 1)) 2))) (return 2))
+    (unless (= pair.a 3) (return 3))
+    (unless (= pair.b 4) (return 4))
+    0))
 
 (define (case-triple) : i64
   (let
@@ -84,19 +82,15 @@
     [sum : i64 0]
     [i : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! sum (+ sum (triple-bump triple i)))
-          (set! i (+ i 1))))
-      (unless (= (profile.alloc-total) before) (return 11))
-      (unless
-        (= sum (+ (* rounds 18) (/ (* rounds (- rounds 1)) 2)))
-        (return 12))
-      (unless (= triple.a 5) (return 13))
-      (unless (= triple.b 6) (return 14))
-      (unless (= triple.c 7) (return 15))
-      0)))
+    (while (< i rounds)
+      (set! sum (+ sum (triple-bump triple i)))
+      (set! i (+ i 1)))
+    (unless (= (profile.alloc-total) before) (return 11))
+    (unless (= sum (+ (* rounds 18) (/ (* rounds (- rounds 1)) 2))) (return 12))
+    (unless (= triple.a 5) (return 13))
+    (unless (= triple.b 6) (return 14))
+    (unless (= triple.c 7) (return 15))
+    0))
 
 (define (choice-payload-sum [c : Choice]) : i64
   (match c
@@ -111,22 +105,18 @@
     [none-sum : i64 0]
     [i : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! sum (+ sum (choice-bump choice i)))
-          (set! none-sum (+ none-sum (choice-bump none i)))
-          (set! i (+ i 1))))
-      (unless (= (profile.alloc-total) before) (return 21))
-      (unless
-        (= sum (+ (* rounds 17) (/ (* rounds (- rounds 1)) 2)))
-        (return 22))
-      (unless
-        (= none-sum (+ (* rounds 500) (/ (* rounds (- rounds 1)) 2)))
-        (return 23))
-      (unless (= (choice-payload-sum choice) 17) (return 24))
-      (unless (= (choice-payload-sum none) (- 0 1)) (return 25))
-      0)))
+    (while (< i rounds)
+      (set! sum (+ sum (choice-bump choice i)))
+      (set! none-sum (+ none-sum (choice-bump none i)))
+      (set! i (+ i 1)))
+    (unless (= (profile.alloc-total) before) (return 21))
+    (unless (= sum (+ (* rounds 17) (/ (* rounds (- rounds 1)) 2))) (return 22))
+    (unless
+      (= none-sum (+ (* rounds 500) (/ (* rounds (- rounds 1)) 2)))
+      (return 23))
+    (unless (= (choice-payload-sum choice) 17) (return 24))
+    (unless (= (choice-payload-sum none) (- 0 1)) (return 25))
+    0))
 
 ;; Two aggregate arguments in one call get distinct copies even when both come
 ;; from the same value: the callee overwrites `x` and then reads `y`.
@@ -138,20 +128,18 @@
     [triple-sum : i64 0]
     [i : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! pair-sum (+ pair-sum (pair-clobber-first pair pair)))
-          (set!
-            triple-sum
-            (+ triple-sum (triple-clobber-first triple (Triple i i i))))
-          (set! i (+ i 1))))
-      (unless (= (profile.alloc-total) before) (return 31))
-      (unless (= pair-sum (* rounds 3)) (return 32))
-      (unless (= triple-sum (* 3 (/ (* rounds (- rounds 1)) 2))) (return 33))
-      (unless (= (+ pair.a pair.b) 3) (return 34))
-      (unless (= (+ triple.a (+ triple.b triple.c)) 12) (return 35))
-      0)))
+    (while (< i rounds)
+      (set! pair-sum (+ pair-sum (pair-clobber-first pair pair)))
+      (set!
+        triple-sum
+        (+ triple-sum (triple-clobber-first triple (Triple i i i))))
+      (set! i (+ i 1)))
+    (unless (= (profile.alloc-total) before) (return 31))
+    (unless (= pair-sum (* rounds 3)) (return 32))
+    (unless (= triple-sum (* 3 (/ (* rounds (- rounds 1)) 2))) (return 33))
+    (unless (= (+ pair.a pair.b) 3) (return 34))
+    (unless (= (+ triple.a (+ triple.b triple.c)) 12) (return 35))
+    0))
 
 ;; A call result passed straight on as an aggregate argument, alone and as
 ;; both arguments of one call. On Win64 the 16-byte `pair-make` result comes
@@ -162,23 +150,19 @@
     [pair-sum : i64 0]
     [i : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! sum (+ sum (pair-bump (pair-make i) 0)))
-          (set!
-            pair-sum
-            (+ pair-sum (pair-clobber-first (pair-make i) (pair-make (+ i 1)))))
-          (set! i (+ i 1))))
-      (unless (= (profile.alloc-total) before) (return 40))
-      ;; pair-make i = (i, 2i + 1); its sum is 3i + 1.
-      (unless
-        (= sum (+ rounds (* 3 (/ (* rounds (- rounds 1)) 2))))
-        (return 41))
-      (unless
-        (= pair-sum (+ (* rounds 4) (* 3 (/ (* rounds (- rounds 1)) 2))))
-        (return 42))
-      0)))
+    (while (< i rounds)
+      (set! sum (+ sum (pair-bump (pair-make i) 0)))
+      (set!
+        pair-sum
+        (+ pair-sum (pair-clobber-first (pair-make i) (pair-make (+ i 1)))))
+      (set! i (+ i 1)))
+    (unless (= (profile.alloc-total) before) (return 40))
+    ;; pair-make i = (i, 2i + 1); its sum is 3i + 1.
+    (unless (= sum (+ rounds (* 3 (/ (* rounds (- rounds 1)) 2)))) (return 41))
+    (unless
+      (= pair-sum (+ (* rounds 4) (* 3 (/ (* rounds (- rounds 1)) 2))))
+      (return 42))
+    0))
 
 (define (triple-made? [t : Triple] [seed : i64]) : bool
   (and (= t.a seed) (= t.b (+ seed 100)) (= t.c (+ seed 200))))
@@ -195,29 +179,27 @@
       (array (Triple 0 0 0) (Triple 0 0 0) (Triple 0 0 0) (Triple 0 0 0))]
     [i : i64 1]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (let
-          [cur : Triple (triple-make i)]
-          [cur-indirect : Triple (triple-maker (* i 2))]
-          (begin
-            (unless (triple-made? prev (- i 1)) (return 51))
-            (unless (triple-made? prev-indirect (* (- i 1) 2)) (return 52))
-            (unless (triple-made? cur i) (return 53))
-            (unless (triple-made? cur-indirect (* i 2)) (return 54))
-            (set! (array-ref ring (% i 4)) cur)
-            (set! prev cur)
-            (set! prev-indirect cur-indirect)
-            (set! i (+ i 1)))))
-      (unless (= (profile.alloc-total) before) (return 50))
-      (unless
-        (triple-made? (array-ref ring (% (- rounds 1) 4)) (- rounds 1))
-        (return 55))
-      (unless
-        (triple-made? (array-ref ring (% (- rounds 4) 4)) (- rounds 4))
-        (return 56))
-      (unless (triple-made? prev (- rounds 1)) (return 57))
-      0)))
+    (while (< i rounds)
+      (let
+        [cur : Triple (triple-make i)]
+        [cur-indirect : Triple (triple-maker (* i 2))]
+        (unless (triple-made? prev (- i 1)) (return 51))
+        (unless (triple-made? prev-indirect (* (- i 1) 2)) (return 52))
+        (unless (triple-made? cur i) (return 53))
+        (unless (triple-made? cur-indirect (* i 2)) (return 54))
+        (set! (array-ref ring (% i 4)) cur)
+        (set! prev cur)
+        (set! prev-indirect cur-indirect)
+        (set! i (+ i 1))))
+    (unless (= (profile.alloc-total) before) (return 50))
+    (unless
+      (triple-made? (array-ref ring (% (- rounds 1) 4)) (- rounds 1))
+      (return 55))
+    (unless
+      (triple-made? (array-ref ring (% (- rounds 4) 4)) (- rounds 4))
+      (return 56))
+    (unless (triple-made? prev (- rounds 1)) (return 57))
+    0))
 
 (define (choice-made-sum [c : Choice]) : i64
   (match c
@@ -231,29 +213,27 @@
     [sum : i64 0]
     [i : i64 1]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (let
-          [cur : Choice (choice-make i)]
-          (begin
-            (unless
-              (=
-                (choice-made-sum prev)
-                (if (= (% (- i 1) 2) 0)
-                  (* (- i 1) 4)
-                  (- 0 1)))
-              (return 61))
-            (set! sum (+ sum (choice-made-sum cur)))
-            (set! prev cur)
-            (set! i (+ i 1)))))
-      (unless (= (profile.alloc-total) before) (return 60))
-      ;; Even i in [2, rounds) contribute 4i; odd ones contribute -1.
-      (unless
-        (=
-          sum
-          (- (* 4 (* 2 (/ (* (/ rounds 2) (- (/ rounds 2) 1)) 2))) (/ rounds 2)))
-        (return 62))
-      0)))
+    (while (< i rounds)
+      (let
+        [cur : Choice (choice-make i)]
+        (unless
+          (=
+            (choice-made-sum prev)
+            (if (= (% (- i 1) 2) 0)
+              (* (- i 1) 4)
+              (- 0 1)))
+          (return 61))
+        (set! sum (+ sum (choice-made-sum cur)))
+        (set! prev cur)
+        (set! i (+ i 1))))
+    (unless (= (profile.alloc-total) before) (return 60))
+    ;; Even i in [2, rounds) contribute 4i; odd ones contribute -1.
+    (unless
+      (=
+        sum
+        (- (* 4 (* 2 (/ (* (/ rounds 2) (- (/ rounds 2) 1)) 2))) (/ rounds 2)))
+      (return 62))
+    0))
 
 ;; Mixed integer/float results: two registers on SysV and sret on Win64
 ;; (`IntDouble`), and one register holding a value that TypeLisp keeps in
@@ -264,27 +244,25 @@
     [prev-small : IntFloat (int-float-make 0)]
     [i : i64 1]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< i rounds)
-        (let
-          [wide : IntDouble (int-double-make i)]
-          [small : IntFloat (int-float-make (cast i : i32))]
-          (begin
-            (unless (= prev-wide.a (- i 1)) (return 71))
-            (unless (= prev-wide.b (+ (cast (- i 1) : f64) 0.5)) (return 72))
-            (unless (= (cast prev-small.a : i64) (- i 1)) (return 73))
-            (unless
-              (= prev-small.b (+ (cast (- i 1) : f32) (cast 0.25 : f32)))
-              (return 74))
-            (unless (= wide.a i) (return 75))
-            (unless (= (cast small.a : i64) i) (return 76))
-            (set! prev-wide wide)
-            (set! prev-small small)
-            (set! i (+ i 1)))))
-      (unless (= (profile.alloc-total) before) (return 70))
-      (unless (= prev-wide.a (- rounds 1)) (return 77))
-      (unless (= (cast prev-small.a : i64) (- rounds 1)) (return 78))
-      0)))
+    (while (< i rounds)
+      (let
+        [wide : IntDouble (int-double-make i)]
+        [small : IntFloat (int-float-make (cast i : i32))]
+        (unless (= prev-wide.a (- i 1)) (return 71))
+        (unless (= prev-wide.b (+ (cast (- i 1) : f64) 0.5)) (return 72))
+        (unless (= (cast prev-small.a : i64) (- i 1)) (return 73))
+        (unless
+          (= prev-small.b (+ (cast (- i 1) : f32) (cast 0.25 : f32)))
+          (return 74))
+        (unless (= wide.a i) (return 75))
+        (unless (= (cast small.a : i64) i) (return 76))
+        (set! prev-wide wide)
+        (set! prev-small small)
+        (set! i (+ i 1))))
+    (unless (= (profile.alloc-total) before) (return 70))
+    (unless (= prev-wide.a (- rounds 1)) (return 77))
+    (unless (= (cast prev-small.a : i64) (- rounds 1)) (return 78))
+    0))
 
 (define (main) : i64
   (let

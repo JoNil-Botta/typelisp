@@ -20,26 +20,22 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref xs i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref xs i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 7)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 5))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (sum-loop xs n)]
-        ;; n = 8 (no args): sum = 5*(0+1+...+7) = 140.
-        (if (= r 140)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (* i 5))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (sum-loop xs n)]
+      ;; n = 8 (no args): sum = 5*(0+1+...+7) = 140.
+      (if (= r 140)
+        42
+        1))))

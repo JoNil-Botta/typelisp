@@ -25,52 +25,47 @@
     [c3 : i64 0]
     [i : i64 0]
     [j : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(PhiForwardA x) unit]
-            [(PhiForwardB x y) (set! c3 y)]
-            [(PhiForwardC x y z)
-              (let
-                [slot : i64 -1]
-                [k : i64 0]
+    (while (< i n)
+      (match (array-ref items i)
+        [(PhiForwardA x) unit]
+        [(PhiForwardB x y) (set! c3 y)]
+        [(PhiForwardC x y z)
+          (let
+            [slot : i64 -1]
+            [k : i64 0]
+            (while (< k c2)
+              (if (= (array-ref b0 k) x)
                 (begin
-                  (while (< k c2)
-                    (if (= (array-ref b0 k) x)
-                      (begin
-                        (set! slot k)
-                        (set! k c2))
-                      (set! k (+ k 1))))
-                  (if (< slot 0)
-                    (begin
-                      (set! slot c2)
-                      (set! (array-ref b0 c2) x)
-                      (set! (array-ref b1 c2) z)
-                      (set! c2 (+ c2 1)))
-                    unit)
-                  (set! (array-ref b2 c0) i)
-                  (set! (array-ref b3 c0) (+ i 1))
-                  (set! (array-ref b4 c0) (+ i 2))
-                  (set! (array-ref b5 c0) (+ i 3))
-                  (set! (array-ref b6 slot) (+ i 4))
-                  (set! (array-ref b7 slot) (+ i 5))
-                  (set! (array-ref b8 slot) (+ i 6))
-                  (set! (array-ref b9 c1) (+ i 7))
-                  (set! c0 (+ c0 1))
-                  (set! c1 (+ c1 1))))])
-          (set! i (+ i 1))))
-      (+
-        (array-ref b2 0)
-        (+ (array-ref b3 0) (+ (array-ref b8 0) (+ (array-ref b9 0) (+ c3 j))))))))
+                  (set! slot k)
+                  (set! k c2))
+                (set! k (+ k 1))))
+            (when
+              (< slot 0)
+              (set! slot c2)
+              (set! (array-ref b0 c2) x)
+              (set! (array-ref b1 c2) z)
+              (set! c2 (+ c2 1)))
+            (set! (array-ref b2 c0) i)
+            (set! (array-ref b3 c0) (+ i 1))
+            (set! (array-ref b4 c0) (+ i 2))
+            (set! (array-ref b5 c0) (+ i 3))
+            (set! (array-ref b6 slot) (+ i 4))
+            (set! (array-ref b7 slot) (+ i 5))
+            (set! (array-ref b8 slot) (+ i 6))
+            (set! (array-ref b9 c1) (+ i 7))
+            (set! c0 (+ c0 1))
+            (set! c1 (+ c1 1)))])
+      (set! i (+ i 1)))
+    (+
+      (array-ref b2 0)
+      (+ (array-ref b3 0) (+ (array-ref b8 0) (+ (array-ref b9 0) (+ c3 j)))))))
 
 (define (main) : i64
   (let
     [items : (__tl_dyn-array PhiForwardItem) (__tl_make-array PhiForwardItem 3)]
-    (begin
-      (set! (array-ref items 0) (PhiForwardC 7 8 9))
-      (set! (array-ref items 1) (PhiForwardC 7 8 9))
-      (set! (array-ref items 2) (PhiForwardC 5 6 7))
-      (if (= (phi-forward-repro 3 items) 15)
-        42
-        1))))
+    (set! (array-ref items 0) (PhiForwardC 7 8 9))
+    (set! (array-ref items 1) (PhiForwardC 7 8 9))
+    (set! (array-ref items 2) (PhiForwardC 5 6 7))
+    (if (= (phi-forward-repro 3 items) 15)
+      42
+      1)))

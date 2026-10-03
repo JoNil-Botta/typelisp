@@ -24,12 +24,10 @@
   (let
     [index : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< index (array-length items))
-        (begin
-          (set! sum (+ sum (string.string-length (array-ref items index).text)))
-          (set! index (+ index 1))))
-      sum)))
+    (while (< index (array-length items))
+      (set! sum (+ sum (string.string-length (array-ref items index).text)))
+      (set! index (+ index 1)))
+    sum))
 
 (define (first-text [items : (& source (Slice (Item source)))]) : (& source str)
   (array-ref items 0).text)
@@ -43,13 +41,11 @@
     [sum : i64 0]
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (begin
-          (set! sum (+ sum (total-len items)))
-          (set! sum (+ sum (count (slice-view items 1 2))))
-          (set! index (+ index 1))))
-      (and (= (profile.alloc-total) before) (= sum 8000)))))
+    (while (< index views)
+      (set! sum (+ sum (total-len items)))
+      (set! sum (+ sum (count (slice-view items 1 2))))
+      (set! index (+ index 1)))
+    (and (= (profile.alloc-total) before) (= sum 8000))))
 
 (define (shapes [a : (& a str)] [b : (& b str)]) : i64
   (let

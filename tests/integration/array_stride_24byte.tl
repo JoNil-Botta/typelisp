@@ -11,12 +11,9 @@
 (define (main) : i64
   (let
     [items : (__tl_dyn-array Triple) (__tl_make-array Triple 1)]
-    (begin
-      (set! (array-ref items 0) (Triple 1 2 3))
-      (__tl_array-push! items (Triple 5 7 11))
-      (__tl_array-push! items (Triple 2 4 7))
-      (+
-        (triple-score (array-ref items 0))
-        (+
-          (triple-score (array-ref items 1))
-          (triple-score (array-ref items 2)))))))
+    (set! (array-ref items 0) (Triple 1 2 3))
+    (__tl_array-push! items (Triple 5 7 11))
+    (__tl_array-push! items (Triple 2 4 7))
+    (+
+      (triple-score (array-ref items 0))
+      (+ (triple-score (array-ref items 1)) (triple-score (array-ref items 2))))))

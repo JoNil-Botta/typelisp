@@ -70,9 +70,8 @@
     ([guard (acquire root component) rooted.cleanup-linux-rooted-guard])
     (let
       [code : i64 (result-code (rooted.linux-rooted-guard-result (& guard)))]
-      (begin
-        (rooted.linux-rooted-guard-release! (&mut guard))
-        code))))
+      (rooted.linux-rooted-guard-release! (&mut guard))
+      code)))
 
 (define (create-text
   [directory : (& directory rooted.FsLinuxRootedDirectory)]
@@ -153,15 +152,14 @@
 ;; Leaving a guard's scope without releasing it closes its descriptor, which
 ;; releases the lock.
 (define (check-cleanup-releases [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
-  (begin
-    (with
-      ([scoped (acquire root "scoped-lock") rooted.cleanup-linux-rooted-guard])
-      (if (rooted.linux-rooted-guard-locked? (& scoped))
-        unit
-        unit))
-    (if (= (acquire-code root "scoped-lock") 0)
-      0
-      20)))
+  (with
+    ([scoped (acquire root "scoped-lock") rooted.cleanup-linux-rooted-guard])
+    (if (rooted.linux-rooted-guard-locked? (& scoped))
+      unit
+      unit))
+  (if (= (acquire-code root "scoped-lock") 0)
+    0
+    20))
 
 ;; The harness prepares `dir-sidecar` (directory), `link-sidecar` (symlink),
 ;; `fifo-sidecar` (FIFO), `linked-sidecar` (two names) and `shared-sidecar`
@@ -388,9 +386,8 @@
       [(not (rooted.linux-rooted-result-ok? (create-text root "held" "held")))
         51]
       [else
-        (begin
-          (time.sleep-ms 3000)
-          (release-status (&mut guard) 52))])))
+        (time.sleep-ms 3000)
+        (release-status (&mut guard) 52)])))
 
 ;; One attempt on the shared lock: 0 when acquired and released, 60 on a
 ;; conflict.
@@ -431,26 +428,24 @@
           (& fault-root-path)
           rooted.linux-rooted-never-cancelled)
         rooted.cleanup-linux-rooted-directory])
-    (begin
-      (rooted.linux-rooted-test-reset!)
-      (rooted.linux-rooted-test-fail-on! kind call errno-code)
-      (with
-        ([guard
-            (acquire (& root) (& component))
-            rooted.cleanup-linux-rooted-guard])
-        (let
-          [ok : bool
-            (and
-              (=
-                (result-code (rooted.linux-rooted-guard-result (& guard)))
-                result)
-              (=
-                (result-code (rooted.linux-rooted-guard-close-result (& guard)))
-                close)
-              (not (rooted.linux-rooted-guard-locked? (& guard))))]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+    (rooted.linux-rooted-test-reset!)
+    (rooted.linux-rooted-test-fail-on! kind call errno-code)
+    (with
+      ([guard
+          (acquire (& root) (& component))
+          rooted.cleanup-linux-rooted-guard])
+      (let
+        [ok : bool
+          (and
+            (=
+              (result-code (rooted.linux-rooted-guard-result (& guard)))
+              result)
+            (=
+              (result-code (rooted.linux-rooted-guard-close-result (& guard)))
+              close)
+            (not (rooted.linux-rooted-guard-locked? (& guard))))]
+        (rooted.linux-rooted-test-reset!)
+        ok))))
 
 ;; An operation failure and a cleanup failure in one acquisition: the
 ;; sidecar is already locked by another guard of this process, and the close
@@ -466,30 +461,25 @@
       ([holder
           (acquire (& root) "fault-lock")
           rooted.cleanup-linux-rooted-guard])
-      (begin
-        (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on!
-          rooted.fs-linux-rooted-syscall-kind-close
-          1
-          5)
-        (with
-          ([loser
-              (acquire (& root) "fault-lock")
-              rooted.cleanup-linux-rooted-guard])
-          (let
-            [ok : bool
-              (and
-                (rooted.linux-rooted-guard-locked? (& holder))
-                (=
-                  (result-code (rooted.linux-rooted-guard-result (& loser)))
-                  24)
-                (=
-                  (result-code
-                    (rooted.linux-rooted-guard-close-result (& loser)))
-                  13))]
-            (begin
-              (rooted.linux-rooted-test-reset!)
-              ok)))))))
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on!
+        rooted.fs-linux-rooted-syscall-kind-close
+        1
+        5)
+      (with
+        ([loser
+            (acquire (& root) "fault-lock")
+            rooted.cleanup-linux-rooted-guard])
+        (let
+          [ok : bool
+            (and
+              (rooted.linux-rooted-guard-locked? (& holder))
+              (= (result-code (rooted.linux-rooted-guard-result (& loser))) 24)
+              (=
+                (result-code (rooted.linux-rooted-guard-close-result (& loser)))
+                13))]
+          (rooted.linux-rooted-test-reset!)
+          ok)))))
 
 ;; Acquire `component`, then release it with one injected fault.
 (define (fault-release
@@ -508,21 +498,19 @@
       ([guard
           (acquire (& root) (& component))
           rooted.cleanup-linux-rooted-guard])
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on! kind 1 errno-code)
+      (let
+        [ok : bool
+          (and
+            (rooted.linux-rooted-guard-locked? (& guard))
+            (release-is?
+              (rooted.linux-rooted-guard-release! (&mut guard))
+              unlock
+              close)
+            (not (rooted.linux-rooted-guard-locked? (& guard))))]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on! kind 1 errno-code)
-        (let
-          [ok : bool
-            (and
-              (rooted.linux-rooted-guard-locked? (& guard))
-              (release-is?
-                (rooted.linux-rooted-guard-release! (&mut guard))
-                unlock
-                close)
-              (not (rooted.linux-rooted-guard-locked? (& guard))))]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 ;; Acquire `component`, then revalidate it with one injected fault.
 (define (fault-revalidate
@@ -541,22 +529,20 @@
       ([guard
           (acquire (& root) (& component))
           rooted.cleanup-linux-rooted-guard])
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on! kind 1 errno-code)
+      (let
+        [ok : bool
+          (finish-is?
+            (rooted.linux-rooted-guard-revalidate
+              (& root)
+              (& component)
+              (& guard)
+              rooted.linux-rooted-never-cancelled)
+            operation
+            close)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on! kind 1 errno-code)
-        (let
-          [ok : bool
-            (finish-is?
-              (rooted.linux-rooted-guard-revalidate
-                (& root)
-                (& component)
-                (& guard)
-                rooted.linux-rooted-never-cancelled)
-              operation
-              close)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 (define (run-faults) : i64
   (cond
@@ -665,25 +651,24 @@
     (let
       [mode : String (io.arg 1)]
       [root-path : String (io.arg 2)]
-      (begin
-        (set! fault-root-path (io.arg 2))
-        (with
-          ([root
-              (rooted.linux-rooted-open-root
-                (& root-path)
-                rooted.linux-rooted-never-cancelled)
-              rooted.cleanup-linux-rooted-directory])
-          (if (not (rooted.linux-rooted-directory-open? (& root)))
-            3
-            (let
-              [status : i64
-                (cond
-                  [(string.eq (& mode) "guard") (run-guard (& root))]
-                  [(string.eq (& mode) "hold") (run-hold (& root))]
-                  [(string.eq (& mode) "try") (run-try (& root))]
-                  [(string.eq (& mode) "die") (run-die (& root))]
-                  [(string.eq (& mode) "faults") (run-faults)]
-                  [else 4])]
-              (if (= status 0)
-                42
-                status))))))))
+      (set! fault-root-path (io.arg 2))
+      (with
+        ([root
+            (rooted.linux-rooted-open-root
+              (& root-path)
+              rooted.linux-rooted-never-cancelled)
+            rooted.cleanup-linux-rooted-directory])
+        (if (not (rooted.linux-rooted-directory-open? (& root)))
+          3
+          (let
+            [status : i64
+              (cond
+                [(string.eq (& mode) "guard") (run-guard (& root))]
+                [(string.eq (& mode) "hold") (run-hold (& root))]
+                [(string.eq (& mode) "try") (run-try (& root))]
+                [(string.eq (& mode) "die") (run-die (& root))]
+                [(string.eq (& mode) "faults") (run-faults)]
+                [else 4])]
+            (if (= status 0)
+              42
+              status)))))))

@@ -11,24 +11,20 @@
     (let
       [k : i64 62]
       [found : i64 0]
-      (begin
-        (while (and (>= k 0) (= found 0))
-          (begin
-            (when (not (= (bit-and n (shl 1 k)) 0)) (set! found (+ k 1)))
-            (set! k (- k 1))))
-        found))))
+      (while (and (>= k 0) (= found 0))
+        (when (not (= (bit-and n (shl 1 k)) 0)) (set! found (+ k 1)))
+        (set! k (- k 1)))
+      found)))
 
 ;; The rotated `while` with its own `probe > 0` guard.
 (define (while-bits [n : i64]) : i64
   (let
     [bits : i64 0]
     [probe : i64 n]
-    (begin
-      (while (> probe 0)
-        (begin
-          (set! probe (shr probe 1))
-          (set! bits (+ bits 1))))
-      bits)))
+    (while (> probe 0)
+      (set! probe (shr probe 1))
+      (set! bits (+ bits 1)))
+    bits))
 
 ;; The loop behind an earlier `n <= 0` early return (the false edge proves it).
 (define (guarded-bits [n : i64]) : i64
@@ -37,36 +33,30 @@
     (let
       [bits : i64 0]
       [probe : i64 n]
-      (begin
-        (while (> probe 0)
-          (begin
-            (set! probe (shr probe 1))
-            (set! bits (+ bits 1))))
-        bits))))
+      (while (> probe 0)
+        (set! probe (shr probe 1))
+        (set! bits (+ bits 1)))
+      bits)))
 
 ;; A counter that does not start at zero.
 (define (offset-bits [n : i64]) : i64
   (let
     [bits : i64 100]
     [probe : i64 n]
-    (begin
-      (while (> probe 0)
-        (begin
-          (set! bits (+ bits 1))
-          (set! probe (shr probe 1))))
-      bits)))
+    (while (> probe 0)
+      (set! bits (+ bits 1))
+      (set! probe (shr probe 1)))
+    bits))
 
 ;; Unsigned: a logical shift, and the top bit counts.
 (define (unsigned-bits [n : u64]) : u64
   (let
     [bits : u64 (cast 0 : u64)]
     [probe : u64 n]
-    (begin
-      (while (> probe (cast 0 : u64))
-        (begin
-          (set! probe (shr probe 1))
-          (set! bits (+ bits (cast 1 : u64)))))
-      bits)))
+    (while (> probe (cast 0 : u64))
+      (set! probe (shr probe 1))
+      (set! bits (+ bits (cast 1 : u64))))
+    bits))
 
 (define (unsigned-reference [n : u64]) : i64
   (if (< (cast n : i64) 0)
@@ -89,14 +79,12 @@
     [count : i64 (io.arg-count)]
     [i : i64 1]
     [ok : bool true]
-    (begin
-      (while (< i count)
-        (let
-          [n : i64 (string.>int (io.arg i))]
-          (begin
-            (io.println "{}" (while-bits n))
-            (unless (check n) (set! ok false))
-            (set! i (+ i 1)))))
-      (if ok
-        42
-        1))))
+    (while (< i count)
+      (let
+        [n : i64 (string.>int (io.arg i))]
+        (io.println "{}" (while-bits n))
+        (unless (check n) (set! ok false))
+        (set! i (+ i 1))))
+    (if ok
+      42
+      1)))

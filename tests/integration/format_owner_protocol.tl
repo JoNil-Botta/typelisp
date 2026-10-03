@@ -12,9 +12,8 @@
   0)
 
 (define (make-point-once) : point.Point
-  (begin
-    (set! make-count (+ make-count 1))
-    (point.make "rvalue" 5 6)))
+  (set! make-count (+ make-count 1))
+  (point.make "rvalue" 5 6))
 
 (define (main) : i64
   (let

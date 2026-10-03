@@ -33,12 +33,10 @@
     (sum (+ index 1) (+ acc (peek (& grid) index)))))
 
 (define (report) : i64
-  (begin
-    (fill 0)
-    (+ (sum 0 0) (+ grid.len (array-ref grid.slots 2)))))
+  (fill 0)
+  (+ (sum 0 0) (+ grid.len (array-ref grid.slots 2))))
 
 (define (main) : i64
-  (begin
-    (install! 8)
-    (io.print-format "{}\n" (report))
-    42))
+  (install! 8)
+  (io.print-format "{}\n" (report))
+  42)

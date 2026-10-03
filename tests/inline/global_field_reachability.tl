@@ -28,12 +28,11 @@
   imported-global-field-keeps-owner
   (let
     [snapshot : imported.ImportedOwner imported.imported-owner]
-    (begin
-      (test.assert-i64-eq snapshot.leaf.value 42 "aliased global owner")
-      (test.assert-i64-eq
-        (imported.read-imported-field)
-        42
-        "imported field helper"))))
+    (test.assert-i64-eq snapshot.leaf.value 42 "aliased global owner")
+    (test.assert-i64-eq
+      (imported.read-imported-field)
+      42
+      "imported field helper")))
 
 (define macro-owner : Owner
   (Owner (Leaf 42)))

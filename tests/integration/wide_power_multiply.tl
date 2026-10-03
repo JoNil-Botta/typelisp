@@ -44,31 +44,27 @@
     [i : i64 -257]
     [ok : bool true]
     [argc : i64 (io.arg-count)]
-    (begin
-      (while (< i (+ 256 argc))
-        (let
-          [value : i64 (bit-xor (shl i 50) (+ (* i 65537) argc))]
-          (begin
-            (set!
-              ok
-              (and
-                ok
-                (= (mul-right value) (shl value 34))
-                (= (mul-left value) (shl value 62))
-                (= (mul31 value) (shl value 31))
-                (=
-                  (mul-unsigned (cast value : u64))
-                  (shl (cast value : u64) 34))
-                (= (mul-initialized value) (* value (+ 17179869184 argc)))))
-            (set! i (+ i 1)))))
-      (set! mutable-power 3)
-      (write-ref! (&mut addressed-power) 5)
-      (if (and
-        ok
-        (= (mul-mutable 14) 42)
-        (= (mul-addressed 8) 40)
-        (= (/ 34359738410 power34) 2)
-        (= (% 34359738410 power34) 42)
-        (= (+ power62 1) 4611686018427387905))
-        42
-        1))))
+    (while (< i (+ 256 argc))
+      (let
+        [value : i64 (bit-xor (shl i 50) (+ (* i 65537) argc))]
+        (set!
+          ok
+          (and
+            ok
+            (= (mul-right value) (shl value 34))
+            (= (mul-left value) (shl value 62))
+            (= (mul31 value) (shl value 31))
+            (= (mul-unsigned (cast value : u64)) (shl (cast value : u64) 34))
+            (= (mul-initialized value) (* value (+ 17179869184 argc)))))
+        (set! i (+ i 1))))
+    (set! mutable-power 3)
+    (write-ref! (&mut addressed-power) 5)
+    (if (and
+      ok
+      (= (mul-mutable 14) 42)
+      (= (mul-addressed 8) 40)
+      (= (/ 34359738410 power34) 2)
+      (= (% 34359738410 power34) 42)
+      (= (+ power62 1) 4611686018427387905))
+      42
+      1)))

@@ -34,25 +34,23 @@
     [word : i64 -6148914691236517206]
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (set! (array-ref counts 0) 0)
-      (set! (array-ref counts 1) 17)
-      (set! (array-ref counts 2) 63)
-      (set! (array-ref counts 3) 64)
-      (set! (array-ref counts 4) 1000)
-      (set! (array-ref counts 5) -3)
-      (while (< i 6)
-        (let
-          [n : i64 (array-ref counts i)]
-          (begin
-            (io.println
-              "{} {} {} {} {}"
-              (bit-at word n)
-              (field word n)
-              (mask-bit n)
-              (low-mask n)
-              (either 3 n true))
-            (set! total (+ total (bit-at word n)))
-            (set! i (+ i 1)))))
-      (io.println "{} {}" (wide word 5) (either 3 5 false))
-      (+ 40 total))))
+    (set! (array-ref counts 0) 0)
+    (set! (array-ref counts 1) 17)
+    (set! (array-ref counts 2) 63)
+    (set! (array-ref counts 3) 64)
+    (set! (array-ref counts 4) 1000)
+    (set! (array-ref counts 5) -3)
+    (while (< i 6)
+      (let
+        [n : i64 (array-ref counts i)]
+        (io.println
+          "{} {} {} {} {}"
+          (bit-at word n)
+          (field word n)
+          (mask-bit n)
+          (low-mask n)
+          (either 3 n true))
+        (set! total (+ total (bit-at word n)))
+        (set! i (+ i 1))))
+    (io.println "{} {}" (wide word 5) (either 3 5 false))
+    (+ 40 total)))

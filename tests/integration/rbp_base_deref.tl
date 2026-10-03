@@ -42,30 +42,28 @@
     [c : i64 3]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 5)
-        (begin
-          (set! acc (+ acc (probe6 i)))
-          ; the call every value spans
-          (set! acc (+ acc (+ a i)))
-          ; a,b,c stay hot (>=4 refs each)
-          (set! acc (+ acc (* 2 a)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (+ b i)))
-          (set! acc (+ acc (* 2 b)))
-          (set! b (+ b 1))
-          (set! acc (+ acc (+ c i)))
-          (set! acc (+ acc (* 2 c)))
-          (set! c (+ c 1))
-          ;; v: the array handle base, dereferenced twice per iteration
-          (set! acc (+ acc (array-ref v i)))
-          (set! acc (+ acc (array-ref v (+ i 1))))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (+ acc (+ a (+ b (+ c (array-ref v 0)))))]
-        (if (> rounds 1)
-          (+ r (churn6 v (- rounds 1)))
-          r)))))
+    (while (< i 5)
+      (set! acc (+ acc (probe6 i)))
+      ; the call every value spans
+      (set! acc (+ acc (+ a i)))
+      ; a,b,c stay hot (>=4 refs each)
+      (set! acc (+ acc (* 2 a)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (+ b i)))
+      (set! acc (+ acc (* 2 b)))
+      (set! b (+ b 1))
+      (set! acc (+ acc (+ c i)))
+      (set! acc (+ acc (* 2 c)))
+      (set! c (+ c 1))
+      ;; v: the array handle base, dereferenced twice per iteration
+      (set! acc (+ acc (array-ref v i)))
+      (set! acc (+ acc (array-ref v (+ i 1))))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (+ acc (+ a (+ b (+ c (array-ref v 0)))))]
+      (if (> rounds 1)
+        (+ r (churn6 v (- rounds 1)))
+        r))))
 
 (define (main) : i64
   (let
@@ -73,20 +71,18 @@
     ; n = 8 (no args)
     [v : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref v i) (* i 3))
-          ; v[i] = 3i
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (churn6 v 1)]
-        ;; per iteration t (0..4): a_t=1+t b_t=2+t c_t=3+t probe6(t)=t
-        ;;   acc_t = t + (1+2t) + (2+2t) + (2+2t) + (4+2t) + (3+2t) + (6+2t)
-        ;;         + v[t] + v[t+1]
-        ;;         = 18 + 13t + 3t + 3(t+1) = 21 + 19t
-        ;;   sum_{t=0..4}(21+19t) = 105 + 19*10 = 105 + 190 = 295
-        ;; finals: a=6 b=7 c=8 v[0]=0 -> r = 295 + (6+7+8+0) = 316
-        (if (= r 316)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref v i) (* i 3))
+      ; v[i] = 3i
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (churn6 v 1)]
+      ;; per iteration t (0..4): a_t=1+t b_t=2+t c_t=3+t probe6(t)=t
+      ;;   acc_t = t + (1+2t) + (2+2t) + (2+2t) + (4+2t) + (3+2t) + (6+2t)
+      ;;         + v[t] + v[t+1]
+      ;;         = 18 + 13t + 3t + 3(t+1) = 21 + 19t
+      ;;   sum_{t=0..4}(21+19t) = 105 + 19*10 = 105 + 190 = 295
+      ;; finals: a=6 b=7 c=8 v[0]=0 -> r = 295 + (6+7+8+0) = 316
+      (if (= r 316)
+        42
+        1))))

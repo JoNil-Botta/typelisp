@@ -168,18 +168,16 @@
       ;; A literal: build `(Expr.Num v)` and consume the `Token.Int` token.
       (let
         [v : i64 (current-val vals cur)]
-        (begin
-          (advance cur)
-          (Num v)))
+        (advance cur)
+        (Num v))
       (if (= t (tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
           (expect tags cur (tag-lparen))
           (let
             [inner : Expr (parse-expr tags vals cur)]
-            (begin
-              (expect tags cur (tag-rparen))
-              inner)))
+            (expect tags cur (tag-rparen))
+            inner))
         (io.panic "parser: expected an integer or '('")
         ;; Compatibility-style dead code; builtin `panic` can now satisfy
         ;; the `Expr` result directly.
@@ -196,18 +194,17 @@
   [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-factor tags vals cur)]
-    (begin
-      (while (or
-        (= (current-tag tags cur) (tag-star))
-        (= (current-tag tags cur) (tag-slash)))
-        (if (= (current-tag tags cur) (tag-star))
-          (begin
-            (advance cur)
-            (set! acc (Mul (box acc) (box (parse-factor tags vals cur)))))
-          (begin
-            (advance cur)
-            (set! acc (Div (box acc) (box (parse-factor tags vals cur)))))))
-      acc)))
+    (while (or
+      (= (current-tag tags cur) (tag-star))
+      (= (current-tag tags cur) (tag-slash)))
+      (if (= (current-tag tags cur) (tag-star))
+        (begin
+          (advance cur)
+          (set! acc (Mul (box acc) (box (parse-factor tags vals cur)))))
+        (begin
+          (advance cur)
+          (set! acc (Div (box acc) (box (parse-factor tags vals cur)))))))
+    acc))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
 ;; Parse a term, then while the next token is '+' or '-', consume it, parse the
@@ -221,18 +218,17 @@
   [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-term tags vals cur)]
-    (begin
-      (while (or
-        (= (current-tag tags cur) (tag-plus))
-        (= (current-tag tags cur) (tag-minus)))
-        (if (= (current-tag tags cur) (tag-plus))
-          (begin
-            (advance cur)
-            (set! acc (Add (box acc) (box (parse-term tags vals cur)))))
-          (begin
-            (advance cur)
-            (set! acc (Sub (box acc) (box (parse-term tags vals cur)))))))
-      acc)))
+    (while (or
+      (= (current-tag tags cur) (tag-plus))
+      (= (current-tag tags cur) (tag-minus)))
+      (if (= (current-tag tags cur) (tag-plus))
+        (begin
+          (advance cur)
+          (set! acc (Add (box acc) (box (parse-term tags vals cur)))))
+        (begin
+          (advance cur)
+          (set! acc (Sub (box acc) (box (parse-term tags vals cur)))))))
+    acc))
 
 ;; ---- Evaluator: a recursive tree walk over the real `Expr` AST. ----
 ;; `Expr.Num` yields its literal; each binary node recurses into both children and
@@ -252,24 +248,22 @@
 ;; so the parser is exercised in isolation.) Tokens: Token.Int(2), Token.Plus,
 ;; Token.Int(3), Token.Star, Token.Int(4), Token.End.
 (define (build-sample-tags [tags : (&mut tags i64vec.Vec)]) : i64
-  (begin
-    (i64vec.push-ref! tags (token-tag (Int 2)))
-    (i64vec.push-ref! tags (token-tag Plus))
-    (i64vec.push-ref! tags (token-tag (Int 3)))
-    (i64vec.push-ref! tags (token-tag Star))
-    (i64vec.push-ref! tags (token-tag (Int 4)))
-    (i64vec.push-ref! tags (token-tag End))
-    6))
+  (i64vec.push-ref! tags (token-tag (Int 2)))
+  (i64vec.push-ref! tags (token-tag Plus))
+  (i64vec.push-ref! tags (token-tag (Int 3)))
+  (i64vec.push-ref! tags (token-tag Star))
+  (i64vec.push-ref! tags (token-tag (Int 4)))
+  (i64vec.push-ref! tags (token-tag End))
+  6)
 
 (define (build-sample-vals [vals : (&mut vals i64vec.Vec)]) : i64
-  (begin
-    (i64vec.push-ref! vals (token-int (Int 2)))
-    (i64vec.push-ref! vals 0)
-    (i64vec.push-ref! vals (token-int (Int 3)))
-    (i64vec.push-ref! vals 0)
-    (i64vec.push-ref! vals (token-int (Int 4)))
-    (i64vec.push-ref! vals 0)
-    6))
+  (i64vec.push-ref! vals (token-int (Int 2)))
+  (i64vec.push-ref! vals 0)
+  (i64vec.push-ref! vals (token-int (Int 3)))
+  (i64vec.push-ref! vals 0)
+  (i64vec.push-ref! vals (token-int (Int 4)))
+  (i64vec.push-ref! vals 0)
+  6)
 
 ;; Parse and evaluate "2 + 3 * 4":
 ;;   - parse-expr builds the real Expr tree `(Expr.Add (Expr.Num 2)
@@ -284,9 +278,8 @@
     [tags : i64vec.Vec (i64vec.with-capacity 6)]
     [vals : i64vec.Vec (i64vec.with-capacity 6)]
     [cur : (Array i64 1) (array 0)]
-    (begin
-      (build-sample-tags (&mut tags))
-      (build-sample-vals (&mut vals))
-      (let
-        [expr : Expr (parse-expr (& tags) (& vals) (&mut cur))]
-        (eval (& expr))))))
+    (build-sample-tags (&mut tags))
+    (build-sample-vals (&mut vals))
+    (let
+      [expr : Expr (parse-expr (& tags) (& vals) (&mut cur))]
+      (eval (& expr)))))

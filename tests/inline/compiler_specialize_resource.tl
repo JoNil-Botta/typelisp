@@ -17,16 +17,15 @@
     [init : i64 (spec.spec-owner-expr-push owner (MakeArray ty value))]
     [bindings : ast.AstResourceBindingList (ast.ast-resource-binding-list-new)]
     [body : ast.AstExprList (ast.ast-expr-list-new)]
-    (begin
-      (ast.ast-resource-binding-list-push
-        (&mut bindings)
-        (ast.AstResourceBinding.Binding
-          cbi.compiler-builtin-id-fix-x
-          init
-          value
-          true))
-      (ast.ast-expr-list-push (&mut body) value)
-      (WithResource (box (ast.AstWithResource.WithResource bindings body))))))
+    (ast.ast-resource-binding-list-push
+      (&mut bindings)
+      (ast.AstResourceBinding.Binding
+        cbi.compiler-builtin-id-fix-x
+        init
+        value
+        true))
+    (ast.ast-expr-list-push (&mut body) value)
+    (WithResource (box (ast.AstWithResource.WithResource bindings body)))))
 
 (define (literal-five? [owner : (& owner spec.SpecOwnerContext)] [id : i64]) : bool
   (match (spec.spec-owner-expr-get owner id)
@@ -89,26 +88,22 @@
         (I64 5)
         (spec.spec-value-subst-new))]
     [ambient-count : i64 (ast.ast-node-pool-len)]
-    (begin
-      (match (spec.spec-substitute-types-expr-with-owner
-        (& owner)
-        expr
-        (& types))
-        [(Ok typed)
-          (match (spec.spec-substitute-values-expr-with-owner
-            (& owner)
-            (spec.spec-owner-expr-get (& owner) typed)
-            (& values))
-            [(Ok result)
-              (test.assert-true
-                (rewritten-resource-ok? (& owner) result)
-                "type and value substitution route every resource child through its owner")]
-            [_ (test.assert-true false "value substitution succeeds")])]
-        [_ (test.assert-true false "type substitution succeeds")])
-      (test.assert-i64-eq
-        (ast.ast-node-pool-len)
-        ambient-count
-        "non-installed resource owner leaves ambient pool untouched"))))
+    (match (spec.spec-substitute-types-expr-with-owner (& owner) expr (& types))
+      [(Ok typed)
+        (match (spec.spec-substitute-values-expr-with-owner
+          (& owner)
+          (spec.spec-owner-expr-get (& owner) typed)
+          (& values))
+          [(Ok result)
+            (test.assert-true
+              (rewritten-resource-ok? (& owner) result)
+              "type and value substitution route every resource child through its owner")]
+          [_ (test.assert-true false "value substitution succeeds")])]
+      [_ (test.assert-true false "type substitution succeeds")])
+    (test.assert-i64-eq
+      (ast.ast-node-pool-len)
+      ambient-count
+      "non-installed resource owner leaves ambient pool untouched")))
 
 (test
   resource-discovery-owner-and-sequential-shadowing
@@ -129,50 +124,48 @@
       [(Ok program)
         (let
           [ambient-count : i64 (ast.ast-node-pool-len)]
-          (begin
-            (match (spec.compiler-specialize-program-with-pools-and-intern-state
-              program
-              pools
-              (ci.intern-compat-state-capture-active))
-              [(Ok specialized)
-                (match specialized
-                  [(Program boxed-decls)
-                    (let
-                      [decls : ast.AstDeclList
-                        (ast.ast-decl-list-box-shared-view boxed-decls)]
-                      (begin
-                        (test.assert-true
-                          (spec.compiler-specialize-decl-list-defines?
-                            decls
-                            "__tl_specialized_pick_i64_1_none")
-                          "own initializer sees template")
-                        (test.assert-true
-                          (spec.compiler-specialize-decl-list-defines?
-                            decls
-                            "__tl_specialized_pick_i64_2_none")
-                          "own cleanup sees template")
-                        (test.assert-true
-                          (not
-                            (spec.compiler-specialize-decl-list-defines?
-                              decls
-                              "__tl_specialized_pick_i64_3_none"))
-                          "later initializer sees resource")
-                        (test.assert-true
-                          (not
-                            (spec.compiler-specialize-decl-list-defines?
-                              decls
-                              "__tl_specialized_pick_i64_4_none"))
-                          "body sees resource")
-                        (test.assert-true
-                          (spec.compiler-specialize-decl-list-defines?
-                            decls
-                            "__tl_specialized_pick_i64_5_none")
-                          "sibling restores template")))])]
-              [_ (test.assert-true false "resource discovery succeeds")])
-            (test.assert-i64-eq
-              (ast.ast-node-pool-len)
-              ambient-count
-              "discovery leaves ambient pool untouched")))]
+          (match (spec.compiler-specialize-program-with-pools-and-intern-state
+            program
+            pools
+            (ci.intern-compat-state-capture-active))
+            [(Ok specialized)
+              (match specialized
+                [(Program boxed-decls)
+                  (let
+                    [decls : ast.AstDeclList
+                      (ast.ast-decl-list-box-shared-view boxed-decls)]
+                    (test.assert-true
+                      (spec.compiler-specialize-decl-list-defines?
+                        decls
+                        "__tl_specialized_pick_i64_1_none")
+                      "own initializer sees template")
+                    (test.assert-true
+                      (spec.compiler-specialize-decl-list-defines?
+                        decls
+                        "__tl_specialized_pick_i64_2_none")
+                      "own cleanup sees template")
+                    (test.assert-true
+                      (not
+                        (spec.compiler-specialize-decl-list-defines?
+                          decls
+                          "__tl_specialized_pick_i64_3_none"))
+                      "later initializer sees resource")
+                    (test.assert-true
+                      (not
+                        (spec.compiler-specialize-decl-list-defines?
+                          decls
+                          "__tl_specialized_pick_i64_4_none"))
+                      "body sees resource")
+                    (test.assert-true
+                      (spec.compiler-specialize-decl-list-defines?
+                        decls
+                        "__tl_specialized_pick_i64_5_none")
+                      "sibling restores template"))])]
+            [_ (test.assert-true false "resource discovery succeeds")])
+          (test.assert-i64-eq
+            (ast.ast-node-pool-len)
+            ambient-count
+            "discovery leaves ambient pool untouched"))]
       [_ (test.assert-true false "resource discovery source parses")])))
 
 (test

@@ -23,27 +23,23 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (% (+ (* acc 131) i) 1000000007))
-          (set! i (+ i 1))))
-      (if (> rounds 1)
-        (+ acc (modsum n (- rounds 1)))
-        acc))))
+    (while (< i n)
+      (set! acc (% (+ (* acc 131) i) 1000000007))
+      (set! i (+ i 1)))
+    (if (> rounds 1)
+      (+ acc (modsum n (- rounds 1)))
+      acc)))
 
 (define (digitsum [n0 : i64] [rounds : i64]) : i64
   (let
     [n : i64 n0]
     [acc : i64 0]
-    (begin
-      (while (> n 0)
-        (begin
-          (set! acc (+ acc (% n 10)))
-          (set! n (/ n 10))))
-      (if (> rounds 1)
-        (+ acc (digitsum n0 (- rounds 1)))
-        acc))))
+    (while (> n 0)
+      (set! acc (+ acc (% n 10)))
+      (set! n (/ n 10)))
+    (if (> rounds 1)
+      (+ acc (digitsum n0 (- rounds 1)))
+      acc)))
 
 (define (dividend-copy-pair [value : i64] [rounds : i64]) : i64
   (let
@@ -61,8 +57,7 @@
     [d : i64 (digitsum m 1)]
     [c : i64 (dividend-copy-pair (- n 1) 1)]
     ;; acc after 100 iterations = 926242213; its digit sum = 31.
-    (begin
-      (unless (= m 926242213) (return 1))
-      (unless (= d 31) (return 2))
-      (unless (= c 23) (return 3))
-      42)))
+    (unless (= m 926242213) (return 1))
+    (unless (= d 31) (return 2))
+    (unless (= c 23) (return 3))
+    42))

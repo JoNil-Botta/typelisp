@@ -80,43 +80,36 @@
   (let
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r rows)
-        (let
-          [c : i64 0]
-          (begin
-            (while (< c cols)
-              (begin
-                (set!
-                  acc
-                  (+ acc (sa-bind c (sa-value (bit-and (+ (* r 7) c) 63) r))))
-                (set! c (+ c 1))))
-            (set! r (+ r 1)))))
-      acc)))
+    (while (< r rows)
+      (let
+        [c : i64 0]
+        (while (< c cols)
+          (set! acc (+ acc (sa-bind c (sa-value (bit-and (+ (* r 7) c) 63) r))))
+          (set! c (+ c 1)))
+        (set! r (+ r 1))))
+    acc))
 
 (define (main) : i64
   (let
     [i : i64 0]
     [total : i64 0]
     [cold : i64 0]
-    (begin
-      (set! sa-len 64)
-      (while (< i 64)
-        (begin
-          (set!
-            (array-ref sa-slots i)
-            (if (= (% i 3) 0)
-              (Unknown)
-              (if (= (% i 3) 1)
-                (Const (* i 3) (+ i 5) (- (* i 2) 7))
-                (Over))))
-          (set! i (+ i 1))))
-      (set! total (sa-walk 16 16))
-      ;; The cold second references: one apiece for the accessor and for the
-      ;; wrapper the tier splices it into, so no single-site band can claim
-      ;; either and both keep an out-of-line body for the asm-shape gate to
-      ;; read.
-      (set! cold (+ (sa-peek 4) (+ (sa-peek 9) (sa-bind 1 (sa-value 4 2)))))
-      (unless (= total 16042) (return 1))
-      (unless (= cold 37) (return 2))
-      42)))
+    (set! sa-len 64)
+    (while (< i 64)
+      (set!
+        (array-ref sa-slots i)
+        (if (= (% i 3) 0)
+          (Unknown)
+          (if (= (% i 3) 1)
+            (Const (* i 3) (+ i 5) (- (* i 2) 7))
+            (Over))))
+      (set! i (+ i 1)))
+    (set! total (sa-walk 16 16))
+    ;; The cold second references: one apiece for the accessor and for the
+    ;; wrapper the tier splices it into, so no single-site band can claim
+    ;; either and both keep an out-of-line body for the asm-shape gate to
+    ;; read.
+    (set! cold (+ (sa-peek 4) (+ (sa-peek 9) (sa-bind 1 (sa-value 4 2)))))
+    (unless (= total 16042) (return 1))
+    (unless (= cold 37) (return 2))
+    42))

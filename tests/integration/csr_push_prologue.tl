@@ -31,20 +31,18 @@
     [a : i64 1]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 50)
-        (begin
-          (set! acc (+ acc (probe3 i)))
-          ; the call every value spans
-          (set! acc (+ acc (* a i)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (* v i)))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (+ acc (+ a v))]
-        (if (> rounds 1)
-          (+ r (churn3 v (- rounds 1)))
-          r)))))
+    (while (< i 50)
+      (set! acc (+ acc (probe3 i)))
+      ; the call every value spans
+      (set! acc (+ acc (* a i)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (* v i)))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (+ acc (+ a v))]
+      (if (> rounds 1)
+        (+ r (churn3 v (- rounds 1)))
+        r))))
 
 ;; Deep NON-tail recursion: a, b, c, n all live across the recursive call.
 (define (deeprec [n : i64]) : i64

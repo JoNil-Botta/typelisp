@@ -38,14 +38,12 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (* (array-ref rows i) base)))
-          (set! acc (bit-xor acc (* (array-ref cols i) stride)))
-          (set! acc (+ acc m))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (* (array-ref rows i) base)))
+      (set! acc (bit-xor acc (* (array-ref cols i) stride)))
+      (set! acc (+ acc m))
+      (set! i (+ i 1)))
+    acc))
 
 ;; The loop-holding caller. The builder runs once, at the entry; the loop below
 ;; it is what an absorbed body would tax.
@@ -58,16 +56,14 @@
     [seed : i64 (build-csr rows cols n m 3 5 11)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (bit-and (+ (* (array-ref rows i) seed) (array-ref cols i)) 4095)))
-          (set! i (+ i 1))))
-      (+ acc (bit-and seed 255)))))
+    (while (< i n)
+      (set!
+        acc
+        (+
+          acc
+          (bit-and (+ (* (array-ref rows i) seed) (array-ref cols i)) 4095)))
+      (set! i (+ i 1)))
+    (+ acc (bit-and seed 255))))
 
 ;; The builder's second reference, at a cold site: two references keep every
 ;; single-reference band out, so whatever decides this site is the measured
@@ -84,20 +80,17 @@
     [cols : (__tl_dyn-array i64) (__tl_make-array i64 32)]
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 32)
-        (begin
-          (set! (array-ref rows i) (+ (* i 7) 3))
-          (set! (array-ref cols i) (+ (* i 13) 5))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 64)
-        (begin
-          ;; A loop-variant `m` keeps this call in the loop: with literal
-          ;; arguments the optimizer would cache it and multiply, and `run`
-          ;; would no longer be reached from inside a loop.
-          (set! total (+ total (run (& rows) (& cols) 16 (+ 2 (bit-and i 1)))))
-          (set! i (+ i 1))))
-      (unless (= total 2005696) (return 1))
-      (unless (= (rebuild (& rows) (& cols) 8) 336) (return 2))
-      42)))
+    (while (< i 32)
+      (set! (array-ref rows i) (+ (* i 7) 3))
+      (set! (array-ref cols i) (+ (* i 13) 5))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 64)
+      ;; A loop-variant `m` keeps this call in the loop: with literal
+      ;; arguments the optimizer would cache it and multiply, and `run`
+      ;; would no longer be reached from inside a loop.
+      (set! total (+ total (run (& rows) (& cols) 16 (+ 2 (bit-and i 1)))))
+      (set! i (+ i 1)))
+    (unless (= total 2005696) (return 1))
+    (unless (= (rebuild (& rows) (& cols) 8) 336) (return 2))
+    42))

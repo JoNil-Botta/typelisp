@@ -19,14 +19,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; unit call result: assigned to a fresh dead temp by the lowerer.
-          (poke i)
-          (set! acc (+ acc (* i 3)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; unit call result: assigned to a fresh dead temp by the lowerer.
+      (poke i)
+      (set! acc (+ acc (* i 3)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

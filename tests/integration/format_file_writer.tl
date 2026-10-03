@@ -22,31 +22,30 @@
 (define (main) : i64
   (let
     [path : String ".typelisp-format-file-writer-test.tmp"]
-    (begin
-      (cleanup (& path))
-      (match (io.file-open (& path) (OpenWriteTruncate))
-        [(OkIoFile handle)
-          (let
-            [write-result : format.FormatResult
-              (format.writeln! handle "file={}" (cast 42 : i64))]
-            [close-result : io.ResultIoUnit (io.file-close handle)]
-            [closed-write-result : format.FormatResult
-              (format.write! handle "after-close")]
-            [contents : io.ResultIoBytes (io.try-read-file (& path))]
-            [contents-ok : bool
-              (match contents
-                [(OkIoBytes bytes)
-                  (let
-                    [text : String (byte_buf.to-string bytes)]
-                    (string.eq (& text) "file=42\n"))]
-                [(ErrIoBytes _) false])]
-            [cleanup-ok : bool (cleanup (& path))]
-            (if (and
-              (format-ok? write-result)
-              (close-ok? close-result)
-              (not (format-ok? closed-write-result))
-              contents-ok
-              cleanup-ok)
-              42
-              1))]
-        [(ErrIoFile _) 1]))))
+    (cleanup (& path))
+    (match (io.file-open (& path) (OpenWriteTruncate))
+      [(OkIoFile handle)
+        (let
+          [write-result : format.FormatResult
+            (format.writeln! handle "file={}" (cast 42 : i64))]
+          [close-result : io.ResultIoUnit (io.file-close handle)]
+          [closed-write-result : format.FormatResult
+            (format.write! handle "after-close")]
+          [contents : io.ResultIoBytes (io.try-read-file (& path))]
+          [contents-ok : bool
+            (match contents
+              [(OkIoBytes bytes)
+                (let
+                  [text : String (byte_buf.to-string bytes)]
+                  (string.eq (& text) "file=42\n"))]
+              [(ErrIoBytes _) false])]
+          [cleanup-ok : bool (cleanup (& path))]
+          (if (and
+            (format-ok? write-result)
+            (close-ok? close-result)
+            (not (format-ok? closed-write-result))
+            contents-ok
+            cleanup-ok)
+            42
+            1))]
+      [(ErrIoFile _) 1])))

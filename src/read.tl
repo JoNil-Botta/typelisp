@@ -81,7 +81,7 @@
 ;; segment: one that would cross a boundary starts at the next segment, and
 ;; the skipped rows hold `sp-node-filler` (an `Int` that no origin scan
 ;; matches). A list longer than a segment gets a dedicated array, which the
-;; directory maps from every slot it covers. Only a handoff
+;; directory maps from every slot the list covers. Only a handoff
 ;; (`sp-node-pool-compact-retained!`) moves rows, and the driver calls it
 ;; between phases, when no reader traversal is in progress.
 ;;
@@ -369,8 +369,13 @@
     [first : i64 (shr start sp-node-segment-bits)]
     [slots : i64 (/ (+ length (- rows 1)) rows)]
     [end-slot : i64 (+ first slots)]
+    [allocation-slots : i64 1]
     [reuse-slot : i64 -1]
     [candidate : i64 first]
+    ;; Geometric array capacity bounds retained allocation when successive
+    ;; forms grow beyond the preceding long list's storage.
+    (while (< allocation-slots slots)
+      (set! allocation-slots (* allocation-slots 2)))
     (while (and
       (= reuse-slot -1)
       (< candidate end-slot)
@@ -391,7 +396,7 @@
       (let
         [long : (__tl_dyn-array SpannedSexpr)
           (if (= reuse-slot -1)
-            (__tl_make-array SpannedSexpr (* slots rows))
+            (__tl_make-array SpannedSexpr (* allocation-slots rows))
             (sp-node-pool-segment reuse-slot))]
         [long-start : i64
           (if (= reuse-slot -1)

@@ -336,7 +336,8 @@ children stays valid while the parser and the macro expander keep pushing rows.
 A list never straddles a segment (the rows it skips hold an inert filler), and
 a list longer than a segment gets one dedicated array. Truncated long-list
 storage reuses a sufficiently large array found in its covered directory slots,
-restoring fragmented mappings; repeated large forms retain bounded storage. The load handoff copies
+restoring fragmented mappings. Long arrays grow geometrically, keeping both
+repeated and increasing forms' storage bounded. The load handoff copies
 the live prefix into an exclusive owner, in whole segments, without changing
 row ids; a handoff is the only point where rows move. Subsequent growth appends
 segments to that owner. Reset revokes exclusive ownership before another load

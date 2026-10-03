@@ -1196,3 +1196,33 @@
       (set! round (+ round 1))))
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!))
+
+(test
+  reader-increasing-long-list-storage-bound
+  (reader.sp-node-pool-reset!)
+  (reader.sp-node-pool-compact-retained!)
+  (let
+    [rows : i64 reader.sp-node-segment-rows]
+    [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+    [round : i64 0]
+    [max-length : i64 (+ (* 32 rows) 1)]
+    (while (< round 32)
+      (reader.sp-node-pool-truncate! 0)
+      (let
+        [length : i64 (+ (* (+ round 1) rows) 1)]
+        (unless
+          (and
+            (= (sp-node-pool-test-list length span) 0)
+            (sp-node-pool-test-list-reads? 0 length))
+          (io.panic "reader: increasing long lists changed child rows")))
+      (set! round (+ round 1)))
+    ;; Both the builder and long-list arrays grow geometrically. Their
+    ;; retained generations must remain bounded by the largest live form.
+    (unless
+      (<=
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+          (reader.sp-node-pool-base-arena-handle-value))
+        (* (* 9 max-length) (comptime (size-of (type reader.SpannedSexpr)))))
+      (io.panic "reader: increasing long lists retained quadratic storage")))
+  (reader.sp-node-pool-reset!)
+  (reader.sp-node-pool-compact-retained!))

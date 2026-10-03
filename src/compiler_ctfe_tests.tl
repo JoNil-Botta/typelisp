@@ -727,80 +727,79 @@
           cbi.compiler-builtin-id-fix-Status))]
     [env : ctfe.CtfeEnv (ctfe-env-with-layouts layouts)]
     [ok : bool true]
-    (begin
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") packet-ty)
-        env
-        16)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "align-of") packet-ty)
-        env
-        8)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "offset-of")
-          packet-ty
-          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-count)))
-        env
-        8)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") box-ty)
-        env
-        8)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "offset-of")
-          box-ty
-          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-x)))
-        env
-        0)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") choice-ty)
-        env
-        24)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "align-of") choice-ty)
-        env
-        8)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") qualified-status-ty)
-        env
-        32)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-error-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "offset-of")
-          choice-ty
-          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-tag)))
-        env
-        "offset-of requires struct layout type")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-error-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "offset-of")
-          packet-ty
-          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-missing)))
-        env
-        "offset-of unknown field missing")
-        unit
-        (set! ok false))
-      ok)))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") packet-ty)
+      env
+      16)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "align-of") packet-ty)
+      env
+      8)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "offset-of")
+        packet-ty
+        (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-count)))
+      env
+      8)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") box-ty)
+      env
+      8)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "offset-of")
+        box-ty
+        (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-x)))
+      env
+      0)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") choice-ty)
+      env
+      24)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "align-of") choice-ty)
+      env
+      8)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "size-of") qualified-status-ty)
+      env
+      32)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-error-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "offset-of")
+        choice-ty
+        (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-tag)))
+      env
+      "offset-of requires struct layout type")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-error-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "offset-of")
+        packet-ty
+        (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-missing)))
+      env
+      "offset-of unknown field missing")
+      unit
+      (set! ok false))
+    ok))
 
 (define (compiler-ctfe-reflection-env) : ctfe.CtfeEnv
   (let
@@ -918,238 +917,233 @@
                 (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))
               (String)))))]
     [ok : bool true]
-    (begin
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-kind") point-ty)
-        env
-        "struct")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1
-          (ctfe.ctfe-builtin "type-key")
-          (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64)))))
-        env
-        "i64")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-bool-ok?
-        (compiler-ctfe-call1
-          (ctfe.ctfe-builtin "type-cleanup-owning?")
-          point-ty)
-        env
-        true)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1
-          (ctfe.ctfe-builtin "type-cleanup-function")
-          point-ty)
-        env
-        "cleanup-point")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-key") str-ref-ty)
-        env
-        "ref_r_str")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-nominal-name") point-ty)
-        env
-        "Point")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1
-          (ctfe.ctfe-builtin "type-nominal-module")
-          qualified-status-ty)
-        env
-        "stdlib")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1
-          (ctfe.ctfe-builtin "type-nominal-name")
-          qualified-status-ty)
-        env
-        "Status")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") point-ty)
-        env
-        2)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-name")
-          point-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        "flag")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-type")
-          point-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-        env
-        (I64))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") point-ty)
-        env
-        16)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") maybe-ty)
-        env
-        0)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") array-ty)
-        env
-        0)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-declared-align")
-          point-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        8)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-declared-align")
-          point-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-        env
-        0)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-error-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-declared-align")
-          point-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 2))))
-        env
-        "struct-field-declared-align index out of range")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-error-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-declared-align")
-          maybe-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-        env
-        "struct-field-declared-align requires struct type")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "enum-variant-count") maybe-ty)
-        env
-        2)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "enum-variant-name")
-          maybe-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        "Some")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "enum-variant-payload-count")
-          maybe-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        1)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call3
-          (ctfe.ctfe-builtin "enum-variant-payload-type")
-          maybe-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-        env
-        (String))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-element-type") array-ty)
-        env
-        (I64))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "box-element-type") box-ty)
-        env
-        (String))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-length") array-ty)
-        env
-        4)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-bool-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-dynamic?") dyn-array-ty)
-        env
-        true)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "tuple-element-count") tuple-ty)
-        env
-        2)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "tuple-element-type")
-          tuple-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        (Bool))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "function-param-count") fn-ty)
-        env
-        2)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "function-param-type")
-          fn-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        (Bool))
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "function-return-type") fn-ty)
-        env
-        (String))
-        unit
-        (set! ok false))
-      ok)))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-kind") point-ty)
+      env
+      "struct")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1
+        (ctfe.ctfe-builtin "type-key")
+        (ast.ast-node-push (TypeLiteral (ast.ty-node-push (I64)))))
+      env
+      "i64")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-bool-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-cleanup-owning?") point-ty)
+      env
+      true)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-cleanup-function") point-ty)
+      env
+      "cleanup-point")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-key") str-ref-ty)
+      env
+      "ref_r_str")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-nominal-name") point-ty)
+      env
+      "Point")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1
+        (ctfe.ctfe-builtin "type-nominal-module")
+        qualified-status-ty)
+      env
+      "stdlib")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call1
+        (ctfe.ctfe-builtin "type-nominal-name")
+        qualified-status-ty)
+      env
+      "Status")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") point-ty)
+      env
+      2)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-name")
+        point-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      "flag")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-type")
+        point-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
+      env
+      (I64))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") point-ty)
+      env
+      16)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") maybe-ty)
+      env
+      0)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") array-ty)
+      env
+      0)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-declared-align")
+        point-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      8)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-declared-align")
+        point-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
+      env
+      0)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-error-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-declared-align")
+        point-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 2))))
+      env
+      "struct-field-declared-align index out of range")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-error-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-declared-align")
+        maybe-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
+      env
+      "struct-field-declared-align requires struct type")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "enum-variant-count") maybe-ty)
+      env
+      2)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "enum-variant-name")
+        maybe-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      "Some")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "enum-variant-payload-count")
+        maybe-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      1)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call3
+        (ctfe.ctfe-builtin "enum-variant-payload-type")
+        maybe-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
+        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
+      env
+      (String))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-element-type") array-ty)
+      env
+      (I64))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "box-element-type") box-ty)
+      env
+      (String))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-length") array-ty)
+      env
+      4)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-bool-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "array-dynamic?") dyn-array-ty)
+      env
+      true)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "tuple-element-count") tuple-ty)
+      env
+      2)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "tuple-element-type")
+        tuple-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      (Bool))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "function-param-count") fn-ty)
+      env
+      2)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "function-param-type")
+        fn-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      (Bool))
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "function-return-type") fn-ty)
+      env
+      (String))
+      unit
+      (set! ok false))
+    ok))
 
 (define (compiler-ctfe-module-value-query-ok?) : bool
   (let
@@ -1182,97 +1176,92 @@
               (clone nested-referent)))))]
     [non-ref : i64 (ast.ast-node-push (TypeLiteral (ast.ty-node-push (Bool))))]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
-    (begin
-      (ctfe-module-value-reflection-enable! true)
-      (ctfe-module-value-reset!)
-      (ctfe-module-value-add-id! module-id make-id (clone signature))
-      (let
-        [ok : bool
-          (and
-            (compiler-ctfe-eval-bool-ok?
-              (compiler-ctfe-call2
-                (ctfe.ctfe-builtin "module-value?")
-                module-expr
-                make-expr)
-              env
-              true)
-            (compiler-ctfe-eval-bool-ok?
-              (compiler-ctfe-call2
-                (ctfe.ctfe-builtin "module-value?")
-                module-expr
-                missing-expr)
-              env
-              false)
-            (compiler-ctfe-eval-type-ok?
-              (compiler-ctfe-call2
-                (ctfe.ctfe-builtin "module-value-type")
-                module-expr
-                make-expr)
-              env
-              signature)
-            (compiler-ctfe-eval-error-ok?
-              (compiler-ctfe-call2
-                (ctfe.ctfe-builtin "module-value-type")
-                module-expr
-                missing-expr)
-              env
-              "module-value-type: module ctfe.module.values does not define value missing")
-            (compiler-ctfe-eval-type-ok?
-              (compiler-ctfe-call1
-                (ctfe.ctfe-builtin "reference-element-type")
-                shared-ref)
-              env
-              (String))
-            (compiler-ctfe-eval-type-ok?
-              (compiler-ctfe-call1
-                (ctfe.ctfe-builtin "reference-element-type")
-                mutable-ref)
-              env
-              (I64))
-            (compiler-ctfe-eval-type-ok?
-              (compiler-ctfe-call1
-                (ctfe.ctfe-builtin "reference-element-type")
-                nested-ref)
-              env
-              nested-referent)
-            (compiler-ctfe-eval-error-ok?
-              (compiler-ctfe-call1
-                (ctfe.ctfe-builtin "reference-element-type")
-                non-ref)
-              env
-              "reference-element-type requires reference type"))]
-        (begin
-          (ctfe-module-value-reflection-enable! false)
-          ok)))))
+    (ctfe-module-value-reflection-enable! true)
+    (ctfe-module-value-reset!)
+    (ctfe-module-value-add-id! module-id make-id (clone signature))
+    (let
+      [ok : bool
+        (and
+          (compiler-ctfe-eval-bool-ok?
+            (compiler-ctfe-call2
+              (ctfe.ctfe-builtin "module-value?")
+              module-expr
+              make-expr)
+            env
+            true)
+          (compiler-ctfe-eval-bool-ok?
+            (compiler-ctfe-call2
+              (ctfe.ctfe-builtin "module-value?")
+              module-expr
+              missing-expr)
+            env
+            false)
+          (compiler-ctfe-eval-type-ok?
+            (compiler-ctfe-call2
+              (ctfe.ctfe-builtin "module-value-type")
+              module-expr
+              make-expr)
+            env
+            signature)
+          (compiler-ctfe-eval-error-ok?
+            (compiler-ctfe-call2
+              (ctfe.ctfe-builtin "module-value-type")
+              module-expr
+              missing-expr)
+            env
+            "module-value-type: module ctfe.module.values does not define value missing")
+          (compiler-ctfe-eval-type-ok?
+            (compiler-ctfe-call1
+              (ctfe.ctfe-builtin "reference-element-type")
+              shared-ref)
+            env
+            (String))
+          (compiler-ctfe-eval-type-ok?
+            (compiler-ctfe-call1
+              (ctfe.ctfe-builtin "reference-element-type")
+              mutable-ref)
+            env
+            (I64))
+          (compiler-ctfe-eval-type-ok?
+            (compiler-ctfe-call1
+              (ctfe.ctfe-builtin "reference-element-type")
+              nested-ref)
+            env
+            nested-referent)
+          (compiler-ctfe-eval-error-ok?
+            (compiler-ctfe-call1
+              (ctfe.ctfe-builtin "reference-element-type")
+              non-ref)
+            env
+            "reference-element-type requires reference type"))]
+      (ctfe-module-value-reflection-enable! false)
+      ok)))
 
 (define (compiler-ctfe-module-value-index-state-ok?) : bool
   (let
     [module-id : i64 (ci.intern "ctfe.module.index.state")]
     [name-id : i64 (ci.intern "value")]
-    (begin
-      (ctfe-module-value-reflection-enable! false)
-      (ctfe-module-value-reset!)
-      (ctfe-module-value-add-id! module-id name-id (I64))
-      (match (ctfe-module-value-type-id module-id name-id)
-        [(Some _) false]
-        [(None)
-          (begin
-            (ctfe-module-value-reflection-enable! true)
-            (ctfe-module-value-reset!)
-            (ctfe-module-value-add-id! module-id name-id (I64))
-            (match (ctfe-module-value-type-id module-id name-id)
-              [(Some ty)
-                (let
-                  [found : bool (ctfe.ctfe-type-eq ty (I64))]
-                  (begin
-                    (ctfe-module-value-reflection-enable! false)
-                    (ctfe-module-value-reset!)
-                    (and
-                      found
-                      (match (ctfe-module-value-type-id module-id name-id)
-                        [(Some _) false]
-                        [(None) true]))))]
-              [(None) false]))]))))
+    (ctfe-module-value-reflection-enable! false)
+    (ctfe-module-value-reset!)
+    (ctfe-module-value-add-id! module-id name-id (I64))
+    (match (ctfe-module-value-type-id module-id name-id)
+      [(Some _) false]
+      [(None)
+        (ctfe-module-value-reflection-enable! true)
+        (ctfe-module-value-reset!)
+        (ctfe-module-value-add-id! module-id name-id (I64))
+        (match (ctfe-module-value-type-id module-id name-id)
+          [(Some ty)
+            (let
+              [found : bool (ctfe.ctfe-type-eq ty (I64))]
+              (ctfe-module-value-reflection-enable! false)
+              (ctfe-module-value-reset!)
+              (and
+                found
+                (match (ctfe-module-value-type-id module-id name-id)
+                  [(Some _) false]
+                  [(None) true])))]
+          [(None) false])])))
 
 ;; `type-expr` must preserve every AstType shape as an opaque TypeLiteral and
 ;; make that node immediately consumable by ExprList reflection. Keeping this
@@ -1574,61 +1563,54 @@
     [infos : ctfe.CtfeReflectInfoList (ctfe.ctfe-env-reflections env)]
     [alias-id : i64 (ctfe.ctfe-materialize-generated-name-id "RecordAlias")]
     [ok : bool true]
-    (begin
-      (match (ctfe.ctfe-reflect-info-lookup-name-id
-        infos
-        cbi.compiler-builtin-id-fix-Record)
-        [(Some info)
-          (begin
-            (unless (ctfe-reflect-info-must-use? (clone info)) (set! ok false))
-            (let
-              [alias-infos : ctfe.CtfeReflectInfoList
-                (ctfe.ctfe-reflect-info-add-alias
-                  (clone infos)
-                  info
-                  "RecordAlias"
-                  alias-id)]
-              (match (ctfe.ctfe-reflect-info-lookup-name-id
-                alias-infos
-                alias-id)
-                [(Some alias-info)
-                  (unless
-                    (ctfe-reflect-info-must-use? alias-info)
-                    (set! ok false))]
-                [(None) (set! ok false)])))]
-        [(None) (set! ok false)])
-      (match (ctfe.ctfe-reflect-info-lookup-name-id
-        infos
-        cbi.compiler-builtin-id-fix-Status)
-        [(Some info)
-          (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
-        [(None) (set! ok false)])
-      (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") record-ty)
-        env
-        2)
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call2
-          (ctfe.ctfe-builtin "struct-field-name")
-          record-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
-        env
-        "label")
-        unit
-        (set! ok false))
-      (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call3
-          (ctfe.ctfe-builtin "enum-variant-payload-type")
-          status-ty
-          (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-        env
-        (String))
-        unit
-        (set! ok false))
-      ok)))
+    (match (ctfe.ctfe-reflect-info-lookup-name-id
+      infos
+      cbi.compiler-builtin-id-fix-Record)
+      [(Some info)
+        (unless (ctfe-reflect-info-must-use? (clone info)) (set! ok false))
+        (let
+          [alias-infos : ctfe.CtfeReflectInfoList
+            (ctfe.ctfe-reflect-info-add-alias
+              (clone infos)
+              info
+              "RecordAlias"
+              alias-id)]
+          (match (ctfe.ctfe-reflect-info-lookup-name-id alias-infos alias-id)
+            [(Some alias-info)
+              (unless (ctfe-reflect-info-must-use? alias-info) (set! ok false))]
+            [(None) (set! ok false)]))]
+      [(None) (set! ok false)])
+    (match (ctfe.ctfe-reflect-info-lookup-name-id
+      infos
+      cbi.compiler-builtin-id-fix-Status)
+      [(Some info) (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
+      [(None) (set! ok false)])
+    (if (compiler-ctfe-eval-i64-ok?
+      (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") record-ty)
+      env
+      2)
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-string-ok?
+      (compiler-ctfe-call2
+        (ctfe.ctfe-builtin "struct-field-name")
+        record-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1))))
+      env
+      "label")
+      unit
+      (set! ok false))
+    (if (compiler-ctfe-eval-type-ok?
+      (compiler-ctfe-call3
+        (ctfe.ctfe-builtin "enum-variant-payload-type")
+        status-ty
+        (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
+        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
+      env
+      (String))
+      unit
+      (set! ok false))
+    ok))
 
 (define (compiler-ctfe-env-string-eq?
   [env : (& env ctfe.CtfeEnv)]
@@ -1832,9 +1814,8 @@
           (=
             (ast.ast-node-pool-context-type-len snapshot)
             (+ installed-cursor 2)))]
-      (begin
-        (ast.ast-node-pool-compat-context-clear!)
-        (and sentinel-ok source-ok cursor-ok)))))
+      (ast.ast-node-pool-compat-context-clear!)
+      (and sentinel-ok source-ok cursor-ok))))
 
 (define (compiler-ctfe-type-info-reflection-ok?) : bool
   (let
@@ -1896,311 +1877,304 @@
         (TypeLiteral
           (ctfe.ctfe-ty-push env (Var cbi.compiler-builtin-id-fix-Status))))]
     [ok : bool true]
-    (begin
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            i64-ty))
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
         env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (if (compiler-ctfe-type-info-builtin-kind? env ty "i64")
-                unit
-                (set! ok false))]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            array-ty))
+        (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-info") i64-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (if (compiler-ctfe-type-info-builtin-kind? env ty "i64")
+              unit
+              (set! ok false))]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
         env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-array-variant
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "type-info")
+          array-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-array-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id elem-id)
                 (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id elem-id)
-                  (ast.ast-pattern-cons
-                    (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-len)
-                    (ast.ast-pattern-list-new)))
-                (clone ty)
-                env)
-                [(Matched matched)
-                  (if (and
-                    (compiler-ctfe-env-i64-eq?
-                      matched
-                      cbi.compiler-builtin-id-fix-len
-                      4)
-                    (compiler-ctfe-env-type-info-box-builtin-kind?
-                      matched
-                      elem-id
-                      "i64"))
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            dyn-array-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-dyn-array-variant
-                (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id elem-id)
-                  (ast.ast-pattern-list-new))
-                ty
-                env)
-                [(Matched matched)
-                  (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                  (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-len)
+                  (ast.ast-pattern-list-new)))
+              (clone ty)
+              env)
+              [(Matched matched)
+                (if (and
+                  (compiler-ctfe-env-i64-eq?
+                    matched
+                    cbi.compiler-builtin-id-fix-len
+                    4)
+                  (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
                     elem-id
-                    "bool")
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            slice-ty))
+                    "i64"))
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
         env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-slice-variant
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "type-info")
+          dyn-array-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-dyn-array-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id elem-id)
+                (ast.ast-pattern-list-new))
+              ty
+              env)
+              [(Matched matched)
+                (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                  matched
+                  elem-id
+                  "bool")
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "type-info")
+          slice-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-slice-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
+                (ast.ast-pattern-list-new))
+              ty
+              env)
+              [(Matched matched)
+                (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                  matched
+                  cbi.compiler-builtin-id-fix-items
+                  "bool")
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "type-kind")
+          slice-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(String kind _)
+            (if (string.eq kind "slice")
+              unit
+              (set! ok false))]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-key") slice-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(String key _)
+            (if (string.eq key "slice_bool")
+              unit
+              (set! ok false))]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "array-element-type")
+          slice-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(Type ty)
+            (match ty
+              [(Bool) unit]
+              [_ (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env
+          env
+          (ctfe.ctfe-builtin "type-info")
+          tuple-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-tuple-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
+                (ast.ast-pattern-list-new))
+              ty
+              env)
+              [(Matched matched)
+                (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
+                  matched
+                  cbi.compiler-builtin-id-fix-items
+                  1
+                  "bool")
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-info") fn-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-function-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id params-id)
                 (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
-                  (ast.ast-pattern-list-new))
-                ty
-                env)
-                [(Matched matched)
-                  (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                  (ast.ast-pat-binding-id ret-id)
+                  (ast.ast-pattern-list-new)))
+              ty
+              env)
+              [(Matched matched)
+                (if (and
+                  (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                     matched
-                    cbi.compiler-builtin-id-fix-items
-                    "bool")
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-kind")
-            slice-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(String kind _)
-              (if (string.eq kind "slice")
-                unit
-                (set! ok false))]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-key")
-            slice-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(String key _)
-              (if (string.eq key "slice_bool")
-                unit
-                (set! ok false))]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "array-element-type")
-            slice-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(Type ty)
-              (match ty
-                [(Bool) unit]
-                [_ (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            tuple-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-tuple-variant
-                (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
-                  (ast.ast-pattern-list-new))
-                ty
-                env)
-                [(Matched matched)
-                  (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
-                    matched
-                    cbi.compiler-builtin-id-fix-items
+                    params-id
                     1
                     "bool")
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
-          env
-          (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-info") fn-ty))
+                  (compiler-ctfe-env-type-info-box-builtin-kind?
+                    matched
+                    ret-id
+                    "string"))
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
         env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-function-variant
-                (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id params-id)
-                  (ast.ast-pattern-cons
-                    (ast.ast-pat-binding-id ret-id)
-                    (ast.ast-pattern-list-new)))
-                ty
-                env)
-                [(Matched matched)
-                  (if (and
-                    (compiler-ctfe-env-type-info-list-ref-builtin-kind?
-                      matched
-                      params-id
-                      1
-                      "bool")
-                    (compiler-ctfe-env-type-info-box-builtin-kind?
-                      matched
-                      ret-id
-                      "string"))
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
+        (compiler-ctfe-call1-in-env
           env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            record-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-struct-variant
+          (ctfe.ctfe-builtin "type-info")
+          record-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-struct-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id key-id)
                 (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id key-id)
-                  (ast.ast-pattern-cons
-                    (ast.ast-pat-binding-id fields-id)
-                    (ast.ast-pattern-list-new)))
-                (clone ty)
-                env)
-                [(Matched matched)
-                  (if (and
-                    (compiler-ctfe-env-string-eq?
-                      matched
-                      key-id
-                      (ctfe.ctfe-type-info-key-in-env env ty))
-                    (match (ctfe.ctfe-env-lookup-id matched fields-id)
-                      [(Some fields-value)
-                        (compiler-ctfe-type-info-field-list-ok?
-                          matched
-                          fields-value)]
-                      [(None) false]))
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get
+                  (ast.ast-pat-binding-id fields-id)
+                  (ast.ast-pattern-list-new)))
+              (clone ty)
+              env)
+              [(Matched matched)
+                (if (and
+                  (compiler-ctfe-env-string-eq?
+                    matched
+                    key-id
+                    (ctfe.ctfe-type-info-key-in-env env ty))
+                  (match (ctfe.ctfe-env-lookup-id matched fields-id)
+                    [(Some fields-value)
+                      (compiler-ctfe-type-info-field-list-ok?
+                        matched
+                        fields-value)]
+                    [(None) false]))
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get
+        env
+        (compiler-ctfe-call1-in-env
           env
-          (compiler-ctfe-call1-in-env
-            env
-            (ctfe.ctfe-builtin "type-info")
-            status-ty))
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(TypeInfo ty)
-              (match (ctfe.ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-comptime-type-info-enum-variant
+          (ctfe.ctfe-builtin "type-info")
+          status-ty))
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(TypeInfo ty)
+            (match (ctfe.ctfe-match-type-info-variant
+              cbi.compiler-builtin-id-comptime-type-info-enum-variant
+              (ast.ast-pattern-cons
+                (ast.ast-pat-binding-id key-id)
                 (ast.ast-pattern-cons
-                  (ast.ast-pat-binding-id key-id)
-                  (ast.ast-pattern-cons
-                    (ast.ast-pat-binding-id variants-id)
-                    (ast.ast-pattern-list-new)))
-                (clone ty)
-                env)
-                [(Matched matched)
-                  (if (and
-                    (compiler-ctfe-env-string-eq?
-                      matched
-                      key-id
-                      (ctfe.ctfe-type-info-key-in-env env ty))
-                    (match (ctfe.ctfe-env-lookup-id matched variants-id)
-                      [(Some variants-value)
-                        (compiler-ctfe-type-info-variant-list-ok?
-                          matched
-                          variants-value)]
-                      [(None) false]))
-                    unit
-                    (set! ok false))]
-                [(No) (set! ok false)])]
-            [_ (set! ok false)])]
-        [(Err _) (set! ok false)])
-      (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
-      ok)))
+                  (ast.ast-pat-binding-id variants-id)
+                  (ast.ast-pattern-list-new)))
+              (clone ty)
+              env)
+              [(Matched matched)
+                (if (and
+                  (compiler-ctfe-env-string-eq?
+                    matched
+                    key-id
+                    (ctfe.ctfe-type-info-key-in-env env ty))
+                  (match (ctfe.ctfe-env-lookup-id matched variants-id)
+                    [(Some variants-value)
+                      (compiler-ctfe-type-info-variant-list-ok?
+                        matched
+                        variants-value)]
+                    [(None) false]))
+                  unit
+                  (set! ok false))]
+              [(No) (set! ok false)])]
+          [_ (set! ok false)])]
+      [(Err _) (set! ok false)])
+    (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
+    ok))
 
 ;; --- self-tests ---------------------------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
@@ -3055,66 +3029,63 @@
         body)]
     [unit-expr : i64 (ctfe.ctfe-ast-push env (Literal (Unit)))]
     [status : i64 0]
-    (begin
-      (match (ctfe.compiler-ctfe-eval
-        (ctfe.ctfe-ast-get env lambda-call)
-        env
-        (ctfe.ctfe-fuel-limit))
-        [(Ok value _)
-          (match value
-            [(Expr node produced)
-              (begin
-                (unless (ctfe.ctfe-untyped-expr-type? produced) (set! status 2))
-                (match (ctfe.ctfe-ast-get env node)
-                  [(Lambda lambda-box)
-                    (match (__tl-box-place lambda-box)
-                      [(Lambda params maybe-ret body-node)
-                        (begin
-                          (unless
-                            (= (ast.ast-param-list-len (& params)) 1)
-                            (set! status 4))
-                          (match (ast.ast-param-list-get
-                            (& params)
-                            0
-                            (ast.ast-param-fallback))
-                            [(Param actual-name actual-type false)
-                              (unless
-                                (and
-                                  (= actual-name parameter-name)
-                                  (ctfe.ctfe-type-eq-in-env
-                                    env
-                                    actual-type
-                                    parameter-type))
-                                (set! status 5))]
-                            [_ (set! status 5)])
-                          (match maybe-ret
-                            [(No) unit]
-                            [(Some _) (set! status 6)])
-                          (match (ctfe.ctfe-ast-get env body-node)
-                            [(TupleRef target-node 1)
-                              (match (ctfe.ctfe-ast-get env target-node)
-                                [(Var actual-name)
-                                  (unless
-                                    (= actual-name parameter-name)
-                                    (set! status 9))]
-                                [_ (set! status 8)])]
-                            [_ (set! status 7)]))])]
-                  [_ (set! status 3)]))]
-            [_ (set! status 2)])]
-        [(Err _) (set! status 1)])
-      (if (!= status 0)
-        status
-        (if (compiler-ctfe-eval-error-ok?
-          (compiler-ctfe-call3-in-env
-            env
-            (ctfe.ctfe-builtin "expr-lambda1")
-            name-value
-            type-value
-            unit-expr)
+    (match (ctfe.compiler-ctfe-eval
+      (ctfe.ctfe-ast-get env lambda-call)
+      env
+      (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(Expr node produced)
+            (unless (ctfe.ctfe-untyped-expr-type? produced) (set! status 2))
+            (match (ctfe.ctfe-ast-get env node)
+              [(Lambda lambda-box)
+                (match (__tl-box-place lambda-box)
+                  [(Lambda params maybe-ret body-node)
+                    (unless
+                      (= (ast.ast-param-list-len (& params)) 1)
+                      (set! status 4))
+                    (match (ast.ast-param-list-get
+                      (& params)
+                      0
+                      (ast.ast-param-fallback))
+                      [(Param actual-name actual-type false)
+                        (unless
+                          (and
+                            (= actual-name parameter-name)
+                            (ctfe.ctfe-type-eq-in-env
+                              env
+                              actual-type
+                              parameter-type))
+                          (set! status 5))]
+                      [_ (set! status 5)])
+                    (match maybe-ret
+                      [(No) unit]
+                      [(Some _) (set! status 6)])
+                    (match (ctfe.ctfe-ast-get env body-node)
+                      [(TupleRef target-node 1)
+                        (match (ctfe.ctfe-ast-get env target-node)
+                          [(Var actual-name)
+                            (unless
+                              (= actual-name parameter-name)
+                              (set! status 9))]
+                          [_ (set! status 8)])]
+                      [_ (set! status 7)])])]
+              [_ (set! status 3)])]
+          [_ (set! status 2)])]
+      [(Err _) (set! status 1)])
+    (if (!= status 0)
+      status
+      (if (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call3-in-env
           env
-          "expr-lambda1 body expects Expr")
-          0
-          10)))))
+          (ctfe.ctfe-builtin "expr-lambda1")
+          name-value
+          type-value
+          unit-expr)
+        env
+        "expr-lambda1 body expects Expr")
+        0
+        10))))
 
 (define (compiler-ctfe-expr-lambda1-ok?) : bool
   (= (compiler-ctfe-expr-lambda1-status) 0))
@@ -3411,25 +3382,21 @@
     [right : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id shared right-id (I64 3))]
     [grown : ctfe.CtfeEnv right]
     [index : i64 0]
-    (begin
-      ;; Exceed the initial capacity after both branches exist.
-      (while (< index 16)
-        (begin
-          (set!
-            grown
-            (ctfe.ctfe-env-extend-id grown (+ 100000 index) (I64 index)))
-          (set! index (+ index 1))))
-      (and
-        (compiler-ctfe-env-value-missing? base shared-id)
-        (compiler-ctfe-env-i64-value-ok? shared shared-id 1)
-        (compiler-ctfe-env-type-ok? shared shared-id (I64))
-        (compiler-ctfe-env-i64-value-ok? left left-id 2)
-        (compiler-ctfe-env-i64-value-ok? left shared-id 1)
-        (compiler-ctfe-env-value-missing? left right-id)
-        (compiler-ctfe-env-i64-value-ok? grown (+ 100000 15) 15)
-        (compiler-ctfe-env-i64-value-ok? grown right-id 3)
-        (compiler-ctfe-env-i64-value-ok? grown shared-id 1)
-        (compiler-ctfe-env-value-missing? grown left-id)))))
+    ;; Exceed the initial capacity after both branches exist.
+    (while (< index 16)
+      (set! grown (ctfe.ctfe-env-extend-id grown (+ 100000 index) (I64 index)))
+      (set! index (+ index 1)))
+    (and
+      (compiler-ctfe-env-value-missing? base shared-id)
+      (compiler-ctfe-env-i64-value-ok? shared shared-id 1)
+      (compiler-ctfe-env-type-ok? shared shared-id (I64))
+      (compiler-ctfe-env-i64-value-ok? left left-id 2)
+      (compiler-ctfe-env-i64-value-ok? left shared-id 1)
+      (compiler-ctfe-env-value-missing? left right-id)
+      (compiler-ctfe-env-i64-value-ok? grown (+ 100000 15) 15)
+      (compiler-ctfe-env-i64-value-ok? grown right-id 3)
+      (compiler-ctfe-env-i64-value-ok? grown shared-id 1)
+      (compiler-ctfe-env-value-missing? grown left-id))))
 
 ;; Local identity belongs to a stable slot. Descendant snapshots retain that
 ;; identity, a newer local gets a different slot, and an immutable shadow stops

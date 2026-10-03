@@ -191,20 +191,18 @@
     [count : i64 (diagnostic.compiler-diagnostic-label-list-count labels)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (let
-          [entry : diagnostic.CompilerDiagnosticLabel
-            (diagnostic.compiler-diagnostic-label-list-get labels index)]
-          (begin
-            (match entry.label
-              [(CompilerDiagnosticSomeString text)
-                (if (string.contains (& text) (& needle))
-                  (set! found true)
-                  unit)]
-              [CompilerDiagnosticNoString unit])
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (not found) (< index count))
+      (let
+        [entry : diagnostic.CompilerDiagnosticLabel
+          (diagnostic.compiler-diagnostic-label-list-get labels index)]
+        (match entry.label
+          [(CompilerDiagnosticSomeString text)
+            (if (string.contains (& text) (& needle))
+              (set! found true)
+              unit)]
+          [CompilerDiagnosticNoString unit])
+        (set! index (+ index 1))))
+    found))
 
 (define (compiler-typecheck-help-contains?
   [diag : (& diag diagnostic.CompilerDiagnostic)]
@@ -1028,29 +1026,26 @@
   (let
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
-    (begin
-      (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
-      (tc_core.macro-alias-cache-ensure! macro-state)
-      (tc_core.macro-alias-cache-put! macro-state 1 (ci.intern-capacity) 11)
-      (tc_core.macro-alias-cache-put! macro-state 2 0 22)
-      (tc_core.macro-alias-cache-put! macro-state 3 1 -1)
-      (tc_core.macro-alias-cache-put! macro-state 3 1 33)
-      (tc_core.macro-alias-cache-put! macro-state 4 2 2)
-      (tc_core.macro-alias-cache-put! macro-state 4 2 44)
-      (tc_core.macro-alias-cache-put! macro-state 5 3 3)
-      (tc_core.macro-alias-cache-put! macro-state 5 3 -3)
-      (tc_core.macro-alias-cache-put! macro-state 6 4 4)
-      (tc_core.macro-alias-cache-put! macro-state 6 4 -3)
-      (tc_core.macro-alias-cache-put! macro-state 6 4 66)
-      (and
-        (=
-          (tc_core.macro-alias-cache-get macro-state 1 (ci.intern-capacity))
-          11)
-        (= (tc_core.macro-alias-cache-get macro-state 2 0) 22)
-        (= (tc_core.macro-alias-cache-get macro-state 3 1) 33)
-        (= (tc_core.macro-alias-cache-get macro-state 4 2) 44)
-        (= (tc_core.macro-alias-cache-get macro-state 5 3) -3)
-        (= (tc_core.macro-alias-cache-get macro-state 6 4) 66)))))
+    (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
+    (tc_core.macro-alias-cache-ensure! macro-state)
+    (tc_core.macro-alias-cache-put! macro-state 1 (ci.intern-capacity) 11)
+    (tc_core.macro-alias-cache-put! macro-state 2 0 22)
+    (tc_core.macro-alias-cache-put! macro-state 3 1 -1)
+    (tc_core.macro-alias-cache-put! macro-state 3 1 33)
+    (tc_core.macro-alias-cache-put! macro-state 4 2 2)
+    (tc_core.macro-alias-cache-put! macro-state 4 2 44)
+    (tc_core.macro-alias-cache-put! macro-state 5 3 3)
+    (tc_core.macro-alias-cache-put! macro-state 5 3 -3)
+    (tc_core.macro-alias-cache-put! macro-state 6 4 4)
+    (tc_core.macro-alias-cache-put! macro-state 6 4 -3)
+    (tc_core.macro-alias-cache-put! macro-state 6 4 66)
+    (and
+      (= (tc_core.macro-alias-cache-get macro-state 1 (ci.intern-capacity)) 11)
+      (= (tc_core.macro-alias-cache-get macro-state 2 0) 22)
+      (= (tc_core.macro-alias-cache-get macro-state 3 1) 33)
+      (= (tc_core.macro-alias-cache-get macro-state 4 2) 44)
+      (= (tc_core.macro-alias-cache-get macro-state 5 3) -3)
+      (= (tc_core.macro-alias-cache-get macro-state 6 4) 66))))
 
 (define (compiler-typecheck-smoke-module-macro-import-evaluated-key-source) : String
   "(defmacro (gen [key : String]) : Module
@@ -1852,9 +1847,8 @@
 (define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : svec.Vec
   (let
     [roots : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut roots) root)
-      roots)))
+    (svec.push-ref! (&mut roots) root)
+    roots))
 
 (define (compiler-typecheck-smoke-prefix-cache-state-isolation-ok?) : bool
   (let
@@ -1868,99 +1862,82 @@
       (tc_core.TcPrefixSnapshotCacheProvenance 101 29 31 17 37 41)]
     [owner-b : tc_core.TcPrefixSnapshotCacheProvenance
       (tc_core.TcPrefixSnapshotCacheProvenance 103 43 47 53 59 61)]
-    (begin
-      (tc_core.tc-prefix-snapshot-cache-prepare-for-job! state-a owner-a)
-      (tc_core.tc-prefix-snapshot-cache-prepare-for-job! state-b owner-b)
-      (tc_core.tc-prefix-snapshot-cache-enable-for-state! state-a)
-      (tc_core.tc-prefix-snapshot-cache-enable-for-state! state-b)
-      (tc_core.tc-prefix-snapshot-cache-store-persistent-for-state
-        state-a
-        "shared-key"
-        7
-        "state-a"
-        71
-        (CompilerTypecheckSummary 1 2 3))
-      (tc_core.tc-prefix-snapshot-cache-store-persistent-for-state
-        state-b
-        "shared-key"
-        11
-        "state-b"
-        73
-        (CompilerTypecheckSummary 4 5 6))
-      (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-a)
-      (tc_core.tc-prefix-snapshot-cache-note-miss-for-state! state-a)
-      (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-b)
+    (tc_core.tc-prefix-snapshot-cache-prepare-for-job! state-a owner-a)
+    (tc_core.tc-prefix-snapshot-cache-prepare-for-job! state-b owner-b)
+    (tc_core.tc-prefix-snapshot-cache-enable-for-state! state-a)
+    (tc_core.tc-prefix-snapshot-cache-enable-for-state! state-b)
+    (tc_core.tc-prefix-snapshot-cache-store-persistent-for-state
+      state-a
+      "shared-key"
+      7
+      "state-a"
+      71
+      (CompilerTypecheckSummary 1 2 3))
+    (tc_core.tc-prefix-snapshot-cache-store-persistent-for-state
+      state-b
+      "shared-key"
+      11
+      "state-b"
+      73
+      (CompilerTypecheckSummary 4 5 6))
+    (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-a)
+    (tc_core.tc-prefix-snapshot-cache-note-miss-for-state! state-a)
+    (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! state-b)
+    (let
+      [b-arena : i64
+        (tc_core.tc-prefix-snapshot-cache-arena-value-for-state state-b)]
+      [b-hits : i64
+        (tc_core.tc-prefix-snapshot-cache-hit-count-for-state state-b)]
+      [b-stores : i64
+        (tc_core.tc-prefix-snapshot-cache-store-count-for-state state-b)]
+      ;; Simulate a pool/intern generation reset and retained-arena
+      ;; rollover for A. B must retain both its snapshot and metrics.
+      (tc_core.tc-prefix-snapshot-cache-prepare-for-job! state-a owner-a-reset)
       (let
-        [b-arena : i64
-          (tc_core.tc-prefix-snapshot-cache-arena-value-for-state state-b)]
-        [b-hits : i64
-          (tc_core.tc-prefix-snapshot-cache-hit-count-for-state state-b)]
-        [b-stores : i64
-          (tc_core.tc-prefix-snapshot-cache-store-count-for-state state-b)]
-        (begin
-          ;; Simulate a pool/intern generation reset and retained-arena
-          ;; rollover for A. B must retain both its snapshot and metrics.
-          (tc_core.tc-prefix-snapshot-cache-prepare-for-job!
-            state-a
-            owner-a-reset)
-          (let
-            [rollover-ok : bool
-              (and
-                (=
-                  (tc_core.tc-prefix-snapshot-cache-hit-count-for-state state-a)
-                  0)
-                (=
-                  (tc_core.tc-prefix-snapshot-cache-miss-count-for-state
-                    state-a)
-                  0)
-                (=
-                  (tc_core.tc-prefix-snapshot-cache-store-count-for-state
-                    state-a)
-                  0)
-                (=
-                  (tc_core.tc-prefix-snapshot-cache-arena-value-for-state
-                    state-a)
-                  0)
-                (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
-                  state-a
-                  "shared-key")
-                  [(Miss) true]
-                  [_ false]))]
-            (begin
-              ;; Teardown of A owns and destroys only A's retained arena.
-              (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! state-a)
-              (let
-                [isolated : bool
+        [rollover-ok : bool
+          (and
+            (= (tc_core.tc-prefix-snapshot-cache-hit-count-for-state state-a) 0)
+            (=
+              (tc_core.tc-prefix-snapshot-cache-miss-count-for-state state-a)
+              0)
+            (=
+              (tc_core.tc-prefix-snapshot-cache-store-count-for-state state-a)
+              0)
+            (=
+              (tc_core.tc-prefix-snapshot-cache-arena-value-for-state state-a)
+              0)
+            (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
+              state-a
+              "shared-key")
+              [(Miss) true]
+              [_ false]))]
+        ;; Teardown of A owns and destroys only A's retained arena.
+        (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! state-a)
+        (let
+          [isolated : bool
+            (and
+              rollover-ok
+              (=
+                (tc_core.tc-prefix-snapshot-cache-arena-value-for-state state-b)
+                b-arena)
+              (=
+                (tc_core.tc-prefix-snapshot-cache-hit-count-for-state state-b)
+                b-hits)
+              (=
+                (tc_core.tc-prefix-snapshot-cache-store-count-for-state state-b)
+                b-stores)
+              (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
+                state-b
+                "shared-key")
+                [(Hit count module module-id summary)
                   (and
-                    rollover-ok
-                    (=
-                      (tc_core.tc-prefix-snapshot-cache-arena-value-for-state
-                        state-b)
-                      b-arena)
-                    (=
-                      (tc_core.tc-prefix-snapshot-cache-hit-count-for-state
-                        state-b)
-                      b-hits)
-                    (=
-                      (tc_core.tc-prefix-snapshot-cache-store-count-for-state
-                        state-b)
-                      b-stores)
-                    (match (tc_core.tc-prefix-snapshot-cache-lookup-for-state
-                      state-b
-                      "shared-key")
-                      [(Hit count module module-id summary)
-                        (and
-                          (= count 11)
-                          (string.eq module "state-b")
-                          (= module-id 73)
-                          (=
-                            (tc_api.compiler-typecheck-summary-score summary)
-                            654))]
-                      [_ false]))]
-                (begin
-                  (tc_core.tc-prefix-snapshot-cache-invalidate-for-state!
-                    state-b)
-                  isolated)))))))))
+                    (= count 11)
+                    (string.eq module "state-b")
+                    (= module-id 73)
+                    (= (tc_api.compiler-typecheck-summary-score summary) 654))]
+                [_ false]))]
+          (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! state-b)
+          isolated)))))
 
 (define (compiler-typecheck-smoke-paths-contain?
   [paths : ast.AstDeclPathList]
@@ -2008,52 +1985,51 @@
       (compiler-typecheck-smoke-prefix-cache-roots
         (tc_core.tc-global-shared-view root-b))]
     [ok : bool true]
-    (begin
-      (load.compiler-load-session-cache-enable!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (tc_tests.compiler-typecheck-prefix-cache-source-a)
-        (tc_core.tc-global-shared-view entry-a)
-        (compiler-typecheck-smoke-prefix-cache-root-paths root-a entry-a)
-        roots-a
-        (parser.compiler-cfg-empty))
-        unit
-        (set! ok false))
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (tc_tests.compiler-typecheck-prefix-cache-source-b)
-        (tc_core.tc-global-shared-view entry-b)
-        (compiler-typecheck-smoke-prefix-cache-root-paths
-          (tc_core.tc-global-shared-view root-b)
-          entry-b)
-        (tc_core.tc-global-shared-view roots-b)
-        (parser.compiler-cfg-empty))
-        unit
-        (set! ok false))
-      (if (= (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
-        unit
-        (set! ok false))
-      (if (>= (tc_core.tc-prefix-snapshot-cache-store-count-value) 2)
-        unit
-        (set! ok false))
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (tc_tests.compiler-typecheck-prefix-cache-source-b)
-        "target/tc_prefix_root_entry_c.tl"
-        (compiler-typecheck-smoke-prefix-cache-root-paths
-          root-b
-          "target/tc_prefix_root_entry_c.tl")
-        roots-b
-        (parser.compiler-cfg-empty))
-        unit
-        (set! ok false))
-      (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
-        unit
-        (set! ok false))
-      (load.compiler-load-session-cache-disable-for-test!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (tc_api.compiler-typecheck-reset-load-session!)
-      ok)))
+    (load.compiler-load-session-cache-enable!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (tc_tests.compiler-typecheck-prefix-cache-source-a)
+      (tc_core.tc-global-shared-view entry-a)
+      (compiler-typecheck-smoke-prefix-cache-root-paths root-a entry-a)
+      roots-a
+      (parser.compiler-cfg-empty))
+      unit
+      (set! ok false))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (tc_tests.compiler-typecheck-prefix-cache-source-b)
+      (tc_core.tc-global-shared-view entry-b)
+      (compiler-typecheck-smoke-prefix-cache-root-paths
+        (tc_core.tc-global-shared-view root-b)
+        entry-b)
+      (tc_core.tc-global-shared-view roots-b)
+      (parser.compiler-cfg-empty))
+      unit
+      (set! ok false))
+    (if (= (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+      unit
+      (set! ok false))
+    (if (>= (tc_core.tc-prefix-snapshot-cache-store-count-value) 2)
+      unit
+      (set! ok false))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (tc_tests.compiler-typecheck-prefix-cache-source-b)
+      "target/tc_prefix_root_entry_c.tl"
+      (compiler-typecheck-smoke-prefix-cache-root-paths
+        root-b
+        "target/tc_prefix_root_entry_c.tl")
+      roots-b
+      (parser.compiler-cfg-empty))
+      unit
+      (set! ok false))
+    (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+      unit
+      (set! ok false))
+    (load.compiler-load-session-cache-disable-for-test!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (tc_api.compiler-typecheck-reset-load-session!)
+    ok))
 
 (define (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?) : bool
   (let
@@ -2064,54 +2040,53 @@
       (compiler-typecheck-smoke-prefix-cache-roots
         (tc_core.tc-global-shared-view root))]
     [ok : bool true]
-    (begin
-      (load.compiler-load-session-cache-enable!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (compiler-typecheck-smoke-prefix-cache-cfg-source)
-        (tc_core.tc-global-shared-view entry-empty)
-        (compiler-typecheck-smoke-prefix-cache-root-paths
-          (tc_core.tc-global-shared-view root)
-          entry-empty)
-        (tc_core.tc-global-shared-view roots)
-        (parser.compiler-cfg-empty))
-        unit
-        (set! ok false))
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (compiler-typecheck-smoke-prefix-cache-cfg-source)
-        (tc_core.tc-global-shared-view entry-feature)
-        (compiler-typecheck-smoke-prefix-cache-root-paths
-          (tc_core.tc-global-shared-view root)
-          entry-feature)
-        (tc_core.tc-global-shared-view roots)
-        (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature"))
-        unit
-        (set! ok false))
-      (if (= (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
-        unit
-        (set! ok false))
-      (if (>= (tc_core.tc-prefix-snapshot-cache-store-count-value) 2)
-        unit
-        (set! ok false))
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (if (compiler-typecheck-smoke-prefix-cache-check-cfg
-        (compiler-typecheck-smoke-prefix-cache-cfg-source)
-        "target/tc_prefix_cfg_entry_feature_b.tl"
-        (compiler-typecheck-smoke-prefix-cache-root-paths
-          root
-          "target/tc_prefix_cfg_entry_feature_b.tl")
-        roots
-        (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature"))
-        unit
-        (set! ok false))
-      (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
-        unit
-        (set! ok false))
-      (load.compiler-load-session-cache-disable-for-test!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (tc_api.compiler-typecheck-reset-load-session!)
-      ok)))
+    (load.compiler-load-session-cache-enable!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (compiler-typecheck-smoke-prefix-cache-cfg-source)
+      (tc_core.tc-global-shared-view entry-empty)
+      (compiler-typecheck-smoke-prefix-cache-root-paths
+        (tc_core.tc-global-shared-view root)
+        entry-empty)
+      (tc_core.tc-global-shared-view roots)
+      (parser.compiler-cfg-empty))
+      unit
+      (set! ok false))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (compiler-typecheck-smoke-prefix-cache-cfg-source)
+      (tc_core.tc-global-shared-view entry-feature)
+      (compiler-typecheck-smoke-prefix-cache-root-paths
+        (tc_core.tc-global-shared-view root)
+        entry-feature)
+      (tc_core.tc-global-shared-view roots)
+      (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature"))
+      unit
+      (set! ok false))
+    (if (= (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+      unit
+      (set! ok false))
+    (if (>= (tc_core.tc-prefix-snapshot-cache-store-count-value) 2)
+      unit
+      (set! ok false))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (if (compiler-typecheck-smoke-prefix-cache-check-cfg
+      (compiler-typecheck-smoke-prefix-cache-cfg-source)
+      "target/tc_prefix_cfg_entry_feature_b.tl"
+      (compiler-typecheck-smoke-prefix-cache-root-paths
+        root
+        "target/tc_prefix_cfg_entry_feature_b.tl")
+      roots
+      (parser.compiler-cfg-enable (parser.compiler-cfg-empty) "feature"))
+      unit
+      (set! ok false))
+    (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+      unit
+      (set! ok false))
+    (load.compiler-load-session-cache-disable-for-test!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (tc_api.compiler-typecheck-reset-load-session!)
+    ok))
 
 (define (compiler-typecheck-smoke-prefix-cache-loaded-check
   [loaded : load.ResultCompilerLoadWithPaths]
@@ -2151,30 +2126,28 @@
     [entry : String "target/tc_macro_kind_entry.tl"]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        provider
-        "(module tc_macro_kind_provider)
+    (compiler-typecheck-smoke-write-text
+      provider
+      "(module tc_macro_kind_provider)
 (defmacro (emit [T : type (:kind i64 u8 struct)]) : Decls
   `(define (made) : i64 1))
 (defmacro (family [T : type (:kind i64 u8 struct)]) : Module
   `(begin
     (module generated.macro_kind.family)
     (define (answer) : i64 41)))")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(defstruct Ball (x i64))
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(defstruct Ball (x i64))
 (import tc_macro_kind_provider as provider)
 (provider.emit Ball)
 (import (provider.family Ball) as family)
 (define (main) : i64 (+ (made) (family.answer)))")
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (let
+      [ok : bool
+        (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)]
       (tc_api.compiler-typecheck-reset-load-session!)
-      (let
-        [ok : bool
-          (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)]
-        (begin
-          (tc_api.compiler-typecheck-reset-load-session!)
-          ok)))))
+      ok)))
 
 (define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
   (let
@@ -2184,61 +2157,59 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     [ok : bool true]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        dep
-        "(module tc_prefix_local_dep)
+    (compiler-typecheck-smoke-write-text
+      dep
+      "(module tc_prefix_local_dep)
 (define (value [x : i64]) : i64 (+ x 1))")
-      (compiler-typecheck-smoke-write-text
-        entry-a
-        "(import tc_prefix_local_dep as dep)
+    (compiler-typecheck-smoke-write-text
+      entry-a
+      "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 1))")
-      (compiler-typecheck-smoke-write-text
-        entry-b
-        "(import tc_prefix_local_dep as dep)
+    (compiler-typecheck-smoke-write-text
+      entry-b
+      "(import tc_prefix_local_dep as dep)
 (define (main) : i64 (dep.value 2))")
-      (load.compiler-load-session-cache-enable!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      ;; Load both programs before typechecking so the cache owner floors are
-      ;; stable across the store/hit pair. Loading a new persistent program can
-      ;; legitimately advance those floors and establish new provenance.
-      (let
-        [loaded-a : load.ResultCompilerLoadWithPaths
-          (load.compiler-load-file-with-paths-and-roots-cfg
-            entry-a
-            (sym_i64_env.sym-i64-empty)
-            (tc_core.tc-global-shared-view roots)
-            cfgs)]
-        [loaded-b : load.ResultCompilerLoadWithPaths
-          (load.compiler-load-file-with-paths-and-roots-cfg
-            entry-b
-            (sym_i64_env.sym-i64-empty)
-            (tc_core.tc-global-shared-view roots)
-            cfgs)]
-        (begin
-          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
-            loaded-a
-            (tc_core.tc-global-shared-view roots)
-            cfgs)
-            unit
-            (set! ok false))
-          (tc_core.compiler-typecheck-reset-file-state!)
-          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
-            loaded-b
-            roots
-            cfgs)
-            unit
-            (set! ok false))
-          (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
-            unit
-            (set! ok false))
-          (if (> (tc_core.tc-prefix-snapshot-cache-store-count-value) 0)
-            unit
-            (set! ok false))))
-      (load.compiler-load-session-cache-disable-for-test!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (tc_api.compiler-typecheck-reset-load-session!)
-      ok)))
+    (load.compiler-load-session-cache-enable!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    ;; Load both programs before typechecking so the cache owner floors are
+    ;; stable across the store/hit pair. Loading a new persistent program can
+    ;; legitimately advance those floors and establish new provenance.
+    (let
+      [loaded-a : load.ResultCompilerLoadWithPaths
+        (load.compiler-load-file-with-paths-and-roots-cfg
+          entry-a
+          (sym_i64_env.sym-i64-empty)
+          (tc_core.tc-global-shared-view roots)
+          cfgs)]
+      [loaded-b : load.ResultCompilerLoadWithPaths
+        (load.compiler-load-file-with-paths-and-roots-cfg
+          entry-b
+          (sym_i64_env.sym-i64-empty)
+          (tc_core.tc-global-shared-view roots)
+          cfgs)]
+      (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+        loaded-a
+        (tc_core.tc-global-shared-view roots)
+        cfgs)
+        unit
+        (set! ok false))
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+        loaded-b
+        roots
+        cfgs)
+        unit
+        (set! ok false))
+      (if (> (tc_core.tc-prefix-snapshot-cache-hit-count-value) 0)
+        unit
+        (set! ok false))
+      (if (> (tc_core.tc-prefix-snapshot-cache-store-count-value) 0)
+        unit
+        (set! ok false)))
+    (load.compiler-load-session-cache-disable-for-test!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (tc_api.compiler-typecheck-reset-load-session!)
+    ok))
 
 (define (compiler-typecheck-smoke-prefix-cache-moduleless-local-ok?) : bool
   (let
@@ -2248,51 +2219,49 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     [ok : bool true]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        dep
-        "(define (flat-helper [x : i64]) : i64 (+ x 1))")
-      (compiler-typecheck-smoke-write-text
-        entry-a
-        "(import tc_prefix_flat_dep)
+    (compiler-typecheck-smoke-write-text
+      dep
+      "(define (flat-helper [x : i64]) : i64 (+ x 1))")
+    (compiler-typecheck-smoke-write-text
+      entry-a
+      "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 1))")
-      (compiler-typecheck-smoke-write-text
-        entry-b
-        "(import tc_prefix_flat_dep)
+    (compiler-typecheck-smoke-write-text
+      entry-b
+      "(import tc_prefix_flat_dep)
 (define (main) : i64 (tc_prefix_flat_dep.flat-helper 2))")
-      (load.compiler-load-session-cache-enable!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (let
-        [loaded-a : load.ResultCompilerLoadWithPaths
-          (load.compiler-load-file-with-paths-and-roots-cfg
-            entry-a
-            (sym_i64_env.sym-i64-empty)
-            (tc_core.tc-global-shared-view roots)
-            cfgs)]
-        [loaded-b : load.ResultCompilerLoadWithPaths
-          (load.compiler-load-file-with-paths-and-roots-cfg
-            entry-b
-            (sym_i64_env.sym-i64-empty)
-            (tc_core.tc-global-shared-view roots)
-            cfgs)]
-        (begin
-          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
-            loaded-a
-            (tc_core.tc-global-shared-view roots)
-            cfgs)
-            unit
-            (set! ok false))
-          (tc_core.compiler-typecheck-reset-file-state!)
-          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
-            loaded-b
-            roots
-            cfgs)
-            unit
-            (set! ok false))))
-      (load.compiler-load-session-cache-disable-for-test!)
-      (tc_core.tc-prefix-snapshot-cache-clear!)
-      (tc_api.compiler-typecheck-reset-load-session!)
-      ok)))
+    (load.compiler-load-session-cache-enable!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (let
+      [loaded-a : load.ResultCompilerLoadWithPaths
+        (load.compiler-load-file-with-paths-and-roots-cfg
+          entry-a
+          (sym_i64_env.sym-i64-empty)
+          (tc_core.tc-global-shared-view roots)
+          cfgs)]
+      [loaded-b : load.ResultCompilerLoadWithPaths
+        (load.compiler-load-file-with-paths-and-roots-cfg
+          entry-b
+          (sym_i64_env.sym-i64-empty)
+          (tc_core.tc-global-shared-view roots)
+          cfgs)]
+      (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+        loaded-a
+        (tc_core.tc-global-shared-view roots)
+        cfgs)
+        unit
+        (set! ok false))
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+        loaded-b
+        roots
+        cfgs)
+        unit
+        (set! ok false)))
+    (load.compiler-load-session-cache-disable-for-test!)
+    (tc_core.tc-prefix-snapshot-cache-clear!)
+    (tc_api.compiler-typecheck-reset-load-session!)
+    ok))
 
 (define (compiler-typecheck-smoke-generated-moduleless-import-order-ok?) : bool
   (let
@@ -2303,51 +2272,50 @@
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     [ok : bool true]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        root-provider
-        "(import stdlib.option)
+    (compiler-typecheck-smoke-write-text
+      root-provider
+      "(import stdlib.option)
 (import (stdlib.option.option i64) as option_i64)
 
 (define (root-score) : i64
   (option_i64.value-or (option_i64.some 1) 0))")
-      (compiler-typecheck-smoke-write-text
-        named-provider
-        "(module tc_4004_named_provider)
+    (compiler-typecheck-smoke-write-text
+      named-provider
+      "(module tc_4004_named_provider)
 (import stdlib.option)
 (import (stdlib.option.option i64) as option_i64)
 
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
-      (compiler-typecheck-smoke-write-text
-        root-then-named
-        "(import tc_4004_root_provider)
+    (compiler-typecheck-smoke-write-text
+      root-then-named
+      "(import tc_4004_root_provider)
 (import tc_4004_named_provider)
 
 (define (main) : i64
   (+ (tc_4004_root_provider.root-score) (tc_4004_named_provider.named-score)))")
-      (compiler-typecheck-smoke-write-text
-        named-then-root
-        "(import tc_4004_named_provider)
+    (compiler-typecheck-smoke-write-text
+      named-then-root
+      "(import tc_4004_named_provider)
 (import tc_4004_root_provider)
 
 (define (main) : i64
   (+ (tc_4004_root_provider.root-score) (tc_4004_named_provider.named-score)))")
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check
-        root-then-named
-        (tc_core.tc-global-shared-view roots)
-        cfgs)
-        unit
-        (set! ok false))
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check
-        named-then-root
-        roots
-        cfgs)
-        unit
-        (set! ok false))
-      ok)))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (if (compiler-typecheck-smoke-prefix-cache-file-check
+      root-then-named
+      (tc_core.tc-global-shared-view roots)
+      cfgs)
+      unit
+      (set! ok false))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (if (compiler-typecheck-smoke-prefix-cache-file-check
+      named-then-root
+      roots
+      cfgs)
+      unit
+      (set! ok false))
+    ok))
 
 (defstruct CompilerTypecheckGeneratedImportStateSnapshot
   (diagnostic String)
@@ -2380,71 +2348,65 @@
       (ast.ast-node-pool-context-expr-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
         (Literal (Bool false)))]
-    (begin
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-shared-view (& installed-pools)))
-      (let
-        [result-id : i64
-          (tc_core.macro-generated-type-param-expr
-            (ast.ast-node-pool-context-shared-view (& source-pools))
-            env
-            (Var name-id))]
-        [installed-expr-bases : i64
-          (ast.ast-node-pool-context-expr-segment-bases (& installed-pools))]
-        [installed-type-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
-        [active-after : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        [ok : bool
-          (and
-            (= result-id installed-expr-id)
-            (=
-              (ast.ast-node-pool-context-expr-len
-                (ast.ast-node-pool-context-shared-view (& source-pools)))
-              1)
-            (=
-              (ast.ast-node-pool-context-type-len
-                (ast.ast-node-pool-context-shared-view (& source-pools)))
-              1)
-            (=
-              (ast.ast-node-pool-context-expr-len
-                (ast.ast-node-pool-context-shared-view (& installed-pools)))
-              1)
-            (=
-              (ast.ast-node-pool-context-type-len
-                (ast.ast-node-pool-context-shared-view (& installed-pools)))
-              1)
-            (match (ast.ast-node-pool-context-expr-get
-              (& source-pools)
-              result-id)
-              [(TypeLiteral source-type-id)
-                (and
-                  (= source-type-id installed-type-id)
-                  (match (ast.ast-node-pool-context-type-get
-                    (& source-pools)
-                    source-type-id)
-                    [(I64) true]
-                    [_ false]))]
-              [_ false])
-            (match (ast.ast-node-pool-context-expr-get
-              (& installed-pools)
-              installed-expr-id)
-              [(Literal (Bool value)) (not value)]
-              [_ false])
-            (match (ast.ast-node-pool-context-type-get
-              (& installed-pools)
-              installed-type-id)
-              [(Bool) true]
-              [_ false])
-            (=
-              (ast.ast-node-pool-active-expr-segment-bases)
-              installed-expr-bases)
-            (=
-              (ast.ast-node-pool-context-type-segment-bases (& active-after))
-              installed-type-bases))]
-        (begin
-          (ast.ast-node-pool-context-install! active-before)
-          ok)))))
+    (ast.ast-node-pool-context-install!
+      (ast.ast-node-pool-context-shared-view (& installed-pools)))
+    (let
+      [result-id : i64
+        (tc_core.macro-generated-type-param-expr
+          (ast.ast-node-pool-context-shared-view (& source-pools))
+          env
+          (Var name-id))]
+      [installed-expr-bases : i64
+        (ast.ast-node-pool-context-expr-segment-bases (& installed-pools))]
+      [installed-type-bases : i64
+        (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
+      [active-after : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [ok : bool
+        (and
+          (= result-id installed-expr-id)
+          (=
+            (ast.ast-node-pool-context-expr-len
+              (ast.ast-node-pool-context-shared-view (& source-pools)))
+            1)
+          (=
+            (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& source-pools)))
+            1)
+          (=
+            (ast.ast-node-pool-context-expr-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools)))
+            1)
+          (=
+            (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools)))
+            1)
+          (match (ast.ast-node-pool-context-expr-get (& source-pools) result-id)
+            [(TypeLiteral source-type-id)
+              (and
+                (= source-type-id installed-type-id)
+                (match (ast.ast-node-pool-context-type-get
+                  (& source-pools)
+                  source-type-id)
+                  [(I64) true]
+                  [_ false]))]
+            [_ false])
+          (match (ast.ast-node-pool-context-expr-get
+            (& installed-pools)
+            installed-expr-id)
+            [(Literal (Bool value)) (not value)]
+            [_ false])
+          (match (ast.ast-node-pool-context-type-get
+            (& installed-pools)
+            installed-type-id)
+            [(Bool) true]
+            [_ false])
+          (= (ast.ast-node-pool-active-expr-segment-bases) installed-expr-bases)
+          (=
+            (ast.ast-node-pool-context-type-segment-bases (& active-after))
+            installed-type-bases))]
+      (ast.ast-node-pool-context-install! active-before)
+      ok)))
 
 (define (compiler-typecheck-smoke-type-resolution-pool-isolation-ok?) : bool
   (let
@@ -2487,95 +2449,93 @@
         ""
         cbi.compiler-builtin-id-fix-empty
         (ast.ast-node-pool-context-shared-view (& installed-pools)))]
-    (begin
-      (ast.ast-node-pool-context-install!
-        (ast.ast-node-pool-context-shared-view (& installed-pools)))
-      ;; The same numeric parent id deliberately means "already concrete" in
-      ;; the installed pool and "contains Var" in the context-owned pool.
-      (let
-        [installed-memo-answer : bool
-          (core_tests.tc-type-needs-resolution-id? installed-parent)]
-        [installed-generation-after-prime : i64
-          (ast.ty-node-pool-generation-value)]
-        [owned-explicit-answer : bool
-          (core_tests.tc-type-needs-resolution-id-with-bases?
-            (ast.ast-node-pool-context-type-segment-bases (& owned-pools))
-            owned-parent)]
-        [resolved : ast.AstType
-          (core_tests.tc-resolve-type-with-pools
-            ctx
-            (ast.ast-node-pool-context-shared-view (& owned-pools))
-            (ast.ast-node-pool-context-type-get (& owned-pools) owned-parent))]
-        [foreign-installed-count : i64
-          (ast.ast-node-pool-context-type-len
-            (ast.ast-node-pool-context-shared-view (& installed-pools)))]
-        [installed-var : i64
-          (ast.ast-node-pool-context-type-push
-            (ast.ast-node-pool-context-shared-view (& installed-pools))
-            (Var name-id))]
-        [installed-var-parent : i64
-          (ast.ast-node-pool-context-type-push
-            (ast.ast-node-pool-context-shared-view (& installed-pools))
-            (Array installed-var 5))]
-        [installed-resolved : ast.AstType
-          (tc_core.tc-resolve-type
-            installed-ctx
-            (ast.ast-node-pool-context-type-get
-              (& installed-pools)
-              installed-var-parent))]
-        [installed-bases : i64
-          (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
-        [installed-active : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        [ok : bool
-          (and
-            (= installed-child owned-child)
-            (= installed-parent owned-parent)
-            (not installed-memo-answer)
-            owned-explicit-answer
-            (ast.ast-node-pool-context-type-installed? (& installed-pools))
-            (=
-              (ast.ty-node-pool-generation-value)
-              installed-generation-after-prime)
-            (= foreign-installed-count 2)
-            (=
-              (ast.ast-node-pool-context-type-len
-                (ast.ast-node-pool-context-shared-view (& installed-pools)))
-              5)
-            (= (ast.ty-node-pool-len) 5)
-            (=
-              (ast.ast-node-pool-context-type-len
-                (ast.ast-node-pool-context-shared-view (& owned-pools)))
-              3)
-            (match resolved
-              [(Array resolved-child count)
-                (and
-                  (= count 3)
-                  (match (ast.ast-node-pool-context-type-get
-                    (& owned-pools)
-                    resolved-child)
-                    [(Expr) true]
-                    [_ false]))]
-              [_ false])
-            (match (ast.ast-node-pool-context-type-get
-              (& installed-pools)
-              installed-child)
-              [(I64) true]
-              [_ false])
-            (match installed-resolved
-              [(Array resolved-child count)
-                (and
-                  (= count 5)
-                  (match (ast.ty-node-get resolved-child)
-                    [(Expr) true]
-                    [_ false]))]
-              [_ false])
-            (=
-              (ast.ast-node-pool-context-type-segment-bases installed-active)
-              installed-bases))]
-        (begin
-          (ast.ast-node-pool-context-install! active-before)
-          ok)))))
+    (ast.ast-node-pool-context-install!
+      (ast.ast-node-pool-context-shared-view (& installed-pools)))
+    ;; The same numeric parent id deliberately means "already concrete" in
+    ;; the installed pool and "contains Var" in the context-owned pool.
+    (let
+      [installed-memo-answer : bool
+        (core_tests.tc-type-needs-resolution-id? installed-parent)]
+      [installed-generation-after-prime : i64
+        (ast.ty-node-pool-generation-value)]
+      [owned-explicit-answer : bool
+        (core_tests.tc-type-needs-resolution-id-with-bases?
+          (ast.ast-node-pool-context-type-segment-bases (& owned-pools))
+          owned-parent)]
+      [resolved : ast.AstType
+        (core_tests.tc-resolve-type-with-pools
+          ctx
+          (ast.ast-node-pool-context-shared-view (& owned-pools))
+          (ast.ast-node-pool-context-type-get (& owned-pools) owned-parent))]
+      [foreign-installed-count : i64
+        (ast.ast-node-pool-context-type-len
+          (ast.ast-node-pool-context-shared-view (& installed-pools)))]
+      [installed-var : i64
+        (ast.ast-node-pool-context-type-push
+          (ast.ast-node-pool-context-shared-view (& installed-pools))
+          (Var name-id))]
+      [installed-var-parent : i64
+        (ast.ast-node-pool-context-type-push
+          (ast.ast-node-pool-context-shared-view (& installed-pools))
+          (Array installed-var 5))]
+      [installed-resolved : ast.AstType
+        (tc_core.tc-resolve-type
+          installed-ctx
+          (ast.ast-node-pool-context-type-get
+            (& installed-pools)
+            installed-var-parent))]
+      [installed-bases : i64
+        (ast.ast-node-pool-context-type-segment-bases (& installed-pools))]
+      [installed-active : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [ok : bool
+        (and
+          (= installed-child owned-child)
+          (= installed-parent owned-parent)
+          (not installed-memo-answer)
+          owned-explicit-answer
+          (ast.ast-node-pool-context-type-installed? (& installed-pools))
+          (=
+            (ast.ty-node-pool-generation-value)
+            installed-generation-after-prime)
+          (= foreign-installed-count 2)
+          (=
+            (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& installed-pools)))
+            5)
+          (= (ast.ty-node-pool-len) 5)
+          (=
+            (ast.ast-node-pool-context-type-len
+              (ast.ast-node-pool-context-shared-view (& owned-pools)))
+            3)
+          (match resolved
+            [(Array resolved-child count)
+              (and
+                (= count 3)
+                (match (ast.ast-node-pool-context-type-get
+                  (& owned-pools)
+                  resolved-child)
+                  [(Expr) true]
+                  [_ false]))]
+            [_ false])
+          (match (ast.ast-node-pool-context-type-get
+            (& installed-pools)
+            installed-child)
+            [(I64) true]
+            [_ false])
+          (match installed-resolved
+            [(Array resolved-child count)
+              (and
+                (= count 5)
+                (match (ast.ty-node-get resolved-child)
+                  [(Expr) true]
+                  [_ false]))]
+            [_ false])
+          (=
+            (ast.ast-node-pool-context-type-segment-bases installed-active)
+            installed-bases))]
+      (ast.ast-node-pool-context-install! active-before)
+      ok)))
 
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
@@ -2627,32 +2587,31 @@
     [entry : String "target/tc_generated_import_caller.tl"]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        "target/tc_generated_import_left.tl"
-        "(define answer : i64 14)")
-      (compiler-typecheck-smoke-write-text
-        "target/tc_generated_import_right.tl"
-        "(define answer : i64 15)")
-      (compiler-typecheck-smoke-write-text
-        "target/tc_generated_import_provider.tl"
-        (if (= mode 1)
-          "(module tc_generated_import_provider)
+    (compiler-typecheck-smoke-write-text
+      "target/tc_generated_import_left.tl"
+      "(define answer : i64 14)")
+    (compiler-typecheck-smoke-write-text
+      "target/tc_generated_import_right.tl"
+      "(define answer : i64 15)")
+    (compiler-typecheck-smoke-write-text
+      "target/tc_generated_import_provider.tl"
+      (if (= mode 1)
+        "(module tc_generated_import_provider)
 (defmacro (emit-imports) : Decls
   `(begin
     (import tc_generated_import_left as dep)
     (import tc_generated_import_right as dep)))"
-          (if (= mode 0)
-            "(module tc_generated_import_provider)
+        (if (= mode 0)
+          "(module tc_generated_import_provider)
 (defmacro (emit-imports) : Decls
   `(import tc_generated_import_missing_dependency))"
-            "(module tc_generated_import_provider)
+          "(module tc_generated_import_provider)
 (defmacro (emit-imports) : Decls
   `(import tc_generated_import_left.missing as unused))")))
-      (compiler-typecheck-smoke-write-text
-        entry
-        (if (= mode 3)
-          "(import tc_generated_import_provider as provider)
+    (compiler-typecheck-smoke-write-text
+      entry
+      (if (= mode 3)
+        "(import tc_generated_import_provider as provider)
 
 (import tc_generated_import_left as existing)
 
@@ -2660,7 +2619,7 @@
 (provider.emit-imports)
 
 (define (main) : i64 42)"
-          "(import tc_generated_import_provider as provider)
+        "(import tc_generated_import_provider as provider)
 
 (define prior : i64 1)
 
@@ -2668,48 +2627,47 @@
 (provider.emit-imports)
 
 (define (main) : i64 42)"))
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (match (load.compiler-load-file-with-paths-and-roots-cfg
-        (tc_core.tc-global-shared-view entry)
-        (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
-        cfgs)
-        [(Ok decls paths _ _)
-          (match (tc_api.typecheck-compiler-program-with-paths-cache
-            (ast.ast-program decls)
-            paths
-            (tc_core.tc-global-shared-view roots)
-            cfgs
-            (tc_api.compiler-typecheck-prefix-cache-scope
-              "typecheck-generated-import-call-site"
-              roots
-              cfgs))
-            [(Err diagnostics)
-              (let
-                [first : diagnostic.CompilerDiagnostic
-                  (diagnostic.compiler-diagnostic-list-first
-                    (deref diagnostics))]
-                (if (not (= mode 0))
-                  (let
-                    [span : diagnostic.CompilerDiagnosticSpan
-                      (diagnostic.compiler-diagnostic-primary-span first)]
-                    (and
-                      (string.eq span.path entry)
-                      (= span.start-line 6)
-                      (= span.start-col 1)
-                      (string.eq
-                        (diagnostic.compiler-diagnostic-message first)
-                        (if (= mode 1)
-                          "compiler-load: ambiguous import alias 'dep' between 'tc_generated_import_left' and 'tc_generated_import_right'; use distinct aliases or qualified access"
-                          "compiler-load: module 'tc_generated_import_left' has no selected item 'missing'"))))
-                  (compiler-typecheck-smoke-generated-import-location-ok?
-                    first
-                    "target/tc_generated_import_missing_dependency.tl"
-                    entry
-                    6
-                    1)))]
-            [(Ok _) false])]
-        [(Err _) false]))))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (match (load.compiler-load-file-with-paths-and-roots-cfg
+      (tc_core.tc-global-shared-view entry)
+      (sym_i64_env.sym-i64-empty)
+      (tc_core.tc-global-shared-view roots)
+      cfgs)
+      [(Ok decls paths _ _)
+        (match (tc_api.typecheck-compiler-program-with-paths-cache
+          (ast.ast-program decls)
+          paths
+          (tc_core.tc-global-shared-view roots)
+          cfgs
+          (tc_api.compiler-typecheck-prefix-cache-scope
+            "typecheck-generated-import-call-site"
+            roots
+            cfgs))
+          [(Err diagnostics)
+            (let
+              [first : diagnostic.CompilerDiagnostic
+                (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
+              (if (not (= mode 0))
+                (let
+                  [span : diagnostic.CompilerDiagnosticSpan
+                    (diagnostic.compiler-diagnostic-primary-span first)]
+                  (and
+                    (string.eq span.path entry)
+                    (= span.start-line 6)
+                    (= span.start-col 1)
+                    (string.eq
+                      (diagnostic.compiler-diagnostic-message first)
+                      (if (= mode 1)
+                        "compiler-load: ambiguous import alias 'dep' between 'tc_generated_import_left' and 'tc_generated_import_right'; use distinct aliases or qualified access"
+                        "compiler-load: module 'tc_generated_import_left' has no selected item 'missing'"))))
+                (compiler-typecheck-smoke-generated-import-location-ok?
+                  first
+                  "target/tc_generated_import_missing_dependency.tl"
+                  entry
+                  6
+                  1)))]
+          [(Ok _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-generated-provided-module-ok?) : bool
   (match (tc_api.typecheck-compiler-source
@@ -2785,34 +2743,33 @@
                   cfgs
                   pools)
                   [(Err diag)
-                    (begin
-                      (if (compiler-typecheck-smoke-generated-import-location-ok?
-                        (diagnostic.compiler-diagnostic-box-shared-view
-                          (tc_core.tc-global-shared-view diag))
-                        "target/tc_state_missing.tl"
-                        "target/tc_state_entry.tl"
-                        1
-                        1)
-                        unit
-                        (io.panic
-                          "typecheck: generated import lost dependency or import-site location"))
-                      (CompilerTypecheckGeneratedImportStateSnapshot
-                        (diagnostic.compiler-diagnostic-message
-                          (__tl-box-place diag))
-                        (load.compiler-load-session-state-program-cache-hit-count-value
-                          state)
-                        (load.compiler-load-session-state-program-cache-miss-count-value
-                          state)
-                        (load.compiler-load-session-state-program-cache-store-count-value
-                          state)
-                        (match (sym_i64_env.sym-i64-view first-seen)
-                          [(SymI64ViewNil) false]
-                          [(SymI64ViewBind _ _ _) true])
-                        (match (load.compiler-load-session-state-surface-summary-find-module
-                          state
-                          (ci.intern "tc_state_dep"))
-                          [(CompilerLoadSomeSurfaceSummary _) true]
-                          [(CompilerLoadNoSurfaceSummary) false])))]
+                    (if (compiler-typecheck-smoke-generated-import-location-ok?
+                      (diagnostic.compiler-diagnostic-box-shared-view
+                        (tc_core.tc-global-shared-view diag))
+                      "target/tc_state_missing.tl"
+                      "target/tc_state_entry.tl"
+                      1
+                      1)
+                      unit
+                      (io.panic
+                        "typecheck: generated import lost dependency or import-site location"))
+                    (CompilerTypecheckGeneratedImportStateSnapshot
+                      (diagnostic.compiler-diagnostic-message
+                        (__tl-box-place diag))
+                      (load.compiler-load-session-state-program-cache-hit-count-value
+                        state)
+                      (load.compiler-load-session-state-program-cache-miss-count-value
+                        state)
+                      (load.compiler-load-session-state-program-cache-store-count-value
+                        state)
+                      (match (sym_i64_env.sym-i64-view first-seen)
+                        [(SymI64ViewNil) false]
+                        [(SymI64ViewBind _ _ _) true])
+                      (match (load.compiler-load-session-state-surface-summary-find-module
+                        state
+                        (ci.intern "tc_state_dep"))
+                        [(CompilerLoadSomeSurfaceSummary _) true]
+                        [(CompilerLoadNoSurfaceSummary) false]))]
                   [(Ok _ _ _)
                     (io.panic
                       "typecheck: generated missing import unexpectedly loaded")])]
@@ -2873,65 +2830,63 @@
         generated-import
         missing-import
         pools)]
-    (begin
-      (load.compiler-load-session-state-use! previous-state)
-      (cond
-        [(not (string.eq baseline.diagnostic interleaved.diagnostic))
-          (io.panic "typecheck: generated import state diagnostic mismatch")]
-        [(not (= baseline.cache-hits interleaved.cache-hits))
-          (io.panic "typecheck: generated import state cache-hit mismatch")]
-        [(not (= baseline.cache-misses interleaved.cache-misses))
-          (io.panic "typecheck: generated import state cache-miss mismatch")]
-        [(not (= baseline.cache-stores interleaved.cache-stores))
-          (io.panic "typecheck: generated import state cache-store mismatch")]
-        [(not (= baseline.seen-nonempty interleaved.seen-nonempty))
-          (io.panic "typecheck: generated import state seen mismatch")]
-        [(not
-            (=
-              baseline.surface-summary-present
-              interleaved.surface-summary-present))
-          (io.panic "typecheck: generated import state surface mismatch")]
-        [(not (> interleaved.cache-hits 0))
-          (io.panic "typecheck: generated import state missed cache reuse")]
-        [(not (> interleaved.cache-misses 0))
-          (io.panic "typecheck: generated import state recorded no cache miss")]
-        [(not (> interleaved.cache-stores 0))
-          (io.panic "typecheck: generated import state recorded no cache store")]
-        [(not interleaved.seen-nonempty)
-          (io.panic "typecheck: generated import state lost seen set")]
-        [(not interleaved.surface-summary-present)
-          (io.panic "typecheck: generated import state lost surface summary")]
-        [(not
-            (load.compiler-load-string-contains?
-              interleaved.diagnostic
-              "tc_state_missing.tl"))
-          (io.panic "typecheck: generated import state diagnostic uncontrolled")]
-        [(not
-            (=
-              (load.compiler-load-session-state-program-cache-hit-count-value
-                state-b)
-              17))
-          (io.panic "typecheck: generated import state mutated peer hit count")]
-        [(not
-            (=
-              (load.compiler-load-session-state-program-cache-miss-count-value
-                state-b)
-              0))
-          (io.panic "typecheck: generated import state mutated peer miss count")]
-        [(not
-            (=
-              (load.compiler-load-session-state-program-cache-store-count-value
-                state-b)
-              0))
-          (io.panic
-            "typecheck: generated import state mutated peer store count")]
-        [(match (load.compiler-load-session-state-surface-summary-find-module
-            state-b
-            (ci.intern "tc_state_dep"))
-            [(CompilerLoadNoSurfaceSummary) false]
-            [(CompilerLoadSomeSurfaceSummary _) true])
-          (io.panic "typecheck: generated import state mutated peer surface")]
-        [else true]))))
+    (load.compiler-load-session-state-use! previous-state)
+    (cond
+      [(not (string.eq baseline.diagnostic interleaved.diagnostic))
+        (io.panic "typecheck: generated import state diagnostic mismatch")]
+      [(not (= baseline.cache-hits interleaved.cache-hits))
+        (io.panic "typecheck: generated import state cache-hit mismatch")]
+      [(not (= baseline.cache-misses interleaved.cache-misses))
+        (io.panic "typecheck: generated import state cache-miss mismatch")]
+      [(not (= baseline.cache-stores interleaved.cache-stores))
+        (io.panic "typecheck: generated import state cache-store mismatch")]
+      [(not (= baseline.seen-nonempty interleaved.seen-nonempty))
+        (io.panic "typecheck: generated import state seen mismatch")]
+      [(not
+          (=
+            baseline.surface-summary-present
+            interleaved.surface-summary-present))
+        (io.panic "typecheck: generated import state surface mismatch")]
+      [(not (> interleaved.cache-hits 0))
+        (io.panic "typecheck: generated import state missed cache reuse")]
+      [(not (> interleaved.cache-misses 0))
+        (io.panic "typecheck: generated import state recorded no cache miss")]
+      [(not (> interleaved.cache-stores 0))
+        (io.panic "typecheck: generated import state recorded no cache store")]
+      [(not interleaved.seen-nonempty)
+        (io.panic "typecheck: generated import state lost seen set")]
+      [(not interleaved.surface-summary-present)
+        (io.panic "typecheck: generated import state lost surface summary")]
+      [(not
+          (load.compiler-load-string-contains?
+            interleaved.diagnostic
+            "tc_state_missing.tl"))
+        (io.panic "typecheck: generated import state diagnostic uncontrolled")]
+      [(not
+          (=
+            (load.compiler-load-session-state-program-cache-hit-count-value
+              state-b)
+            17))
+        (io.panic "typecheck: generated import state mutated peer hit count")]
+      [(not
+          (=
+            (load.compiler-load-session-state-program-cache-miss-count-value
+              state-b)
+            0))
+        (io.panic "typecheck: generated import state mutated peer miss count")]
+      [(not
+          (=
+            (load.compiler-load-session-state-program-cache-store-count-value
+              state-b)
+            0))
+        (io.panic "typecheck: generated import state mutated peer store count")]
+      [(match (load.compiler-load-session-state-surface-summary-find-module
+          state-b
+          (ci.intern "tc_state_dep"))
+          [(CompilerLoadNoSurfaceSummary) false]
+          [(CompilerLoadSomeSurfaceSummary _) true])
+        (io.panic "typecheck: generated import state mutated peer surface")]
+      [else true])))
 
 (define (compiler-typecheck-smoke-generated-import-state-threading-ok?) : bool
   (let
@@ -3060,11 +3015,10 @@
           (ci.intern "tc_state_dep"))
           [(CompilerLoadNoSurfaceSummary) true]
           [(CompilerLoadSomeSurfaceSummary _) false]))]
-    (begin
-      (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-a)
-      (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-b)
-      (load.compiler-load-session-state-use! previous-state)
-      ok)))
+    (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-a)
+    (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-b)
+    (load.compiler-load-session-state-use! previous-state)
+    ok))
 
 (define (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?) : bool
   (let
@@ -3084,22 +3038,20 @@
     [roots : svec.Vec
       (let
         [items : svec.Vec (svec.new)]
-        (begin
-          (svec.push-ref!
-            (&mut items)
-            (tc_core.tc-global-shared-view stdlib-root))
-          items))]
+        (svec.push-ref!
+          (&mut items)
+          (tc_core.tc-global-shared-view stdlib-root))
+        items)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (load.compiler-load-test-mkdir base)
-      (load.compiler-load-test-mkdir stdlib-root)
-      (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(import stdlib.some_name)
+    (load.compiler-load-test-mkdir base)
+    (load.compiler-load-test-mkdir stdlib-root)
+    (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(import stdlib.some_name)
 (define (main) : i64 some_name.value)")
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)))
 
 (define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
   (let
@@ -3114,40 +3066,39 @@
         "entry.tl")]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (load.compiler-load-test-mkdir dir)
-      (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(define (id [comptime T : type] [value : T]) : T value)
+    (load.compiler-load-test-mkdir dir)
+    (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(define (id [comptime T : type] [value : T]) : T value)
 (import dep)
 (define (main) : i64 0)")
-      (match (load.compiler-load-file-with-paths-and-roots-cfg
-        entry
-        (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
-        cfgs)
-        [(Ok decls paths _ _)
-          (match (tc_api.typecheck-compiler-program-with-paths-cache
-            (ast.ast-program decls)
-            paths
-            (tc_core.tc-global-shared-view roots)
-            cfgs
-            (tc_api.compiler-typecheck-prefix-cache-scope
-              "typecheck-specialized-import-path-smoke"
-              roots
-              cfgs))
-            [(Err diag)
-              (let
-                [first : diagnostic.CompilerDiagnostic
-                  (diagnostic.compiler-diagnostic-list-first (deref diag))]
-                (and
-                  (string.eq (diagnostic.compiler-diagnostic-path first) dep)
-                  (string.eq
-                    (diagnostic.compiler-diagnostic-message first)
-                    "typecheck: value definition type mismatch: expected i64, found bool")))]
-            [(Ok _) false])]
-        [(Err _) false]))))
+    (match (load.compiler-load-file-with-paths-and-roots-cfg
+      entry
+      (sym_i64_env.sym-i64-empty)
+      (tc_core.tc-global-shared-view roots)
+      cfgs)
+      [(Ok decls paths _ _)
+        (match (tc_api.typecheck-compiler-program-with-paths-cache
+          (ast.ast-program decls)
+          paths
+          (tc_core.tc-global-shared-view roots)
+          cfgs
+          (tc_api.compiler-typecheck-prefix-cache-scope
+            "typecheck-specialized-import-path-smoke"
+            roots
+            cfgs))
+          [(Err diag)
+            (let
+              [first : diagnostic.CompilerDiagnostic
+                (diagnostic.compiler-diagnostic-list-first (deref diag))]
+              (and
+                (string.eq (diagnostic.compiler-diagnostic-path first) dep)
+                (string.eq
+                  (diagnostic.compiler-diagnostic-message first)
+                  "typecheck: value definition type mismatch: expected i64, found bool")))]
+          [(Ok _) false])]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-macro-dependency-state-check
   [entry : String]
@@ -3187,9 +3138,8 @@
       (match result
         [(Ok _) true]
         [(Err _) false])]
-    (begin
-      (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache)
-      ok)))
+    (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache)
+    ok))
 
 (define (compiler-typecheck-smoke-macro-dependency-missing-ok?) : bool
   (let
@@ -3198,31 +3148,30 @@
     [missing : String "target/tc_macro_missing_helper.tl"]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        provider
-        "(module tc_macro_missing_provider)
+    (compiler-typecheck-smoke-write-text
+      provider
+      "(module tc_macro_missing_provider)
 (import tc_macro_missing_helper as helper)
 (defmacro (bumped [value : Expr]) : Expr `(helper.bump ,value))")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(import tc_macro_missing_provider as provider)
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(import tc_macro_missing_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (match (load.compiler-load-file-with-paths-and-roots-cfg
-        entry
-        (sym_i64_env.sym-i64-empty)
-        roots
-        cfgs)
-        [(Err diag)
-          (and
-            (string.eq
-              (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
-              missing)
-            (string.eq
-              (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
-              (str_cat.str-cat "compiler-load: cannot read import " missing)))]
-        [(Ok _ _ _ _) false]))))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (match (load.compiler-load-file-with-paths-and-roots-cfg
+      entry
+      (sym_i64_env.sym-i64-empty)
+      roots
+      cfgs)
+      [(Err diag)
+        (and
+          (string.eq
+            (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
+            missing)
+          (string.eq
+            (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
+            (str_cat.str-cat "compiler-load: cannot read import " missing)))]
+      [(Ok _ _ _ _) false])))
 
 (define (compiler-typecheck-smoke-macro-dependency-context-ok?) : bool
   (let
@@ -3231,41 +3180,37 @@
     [entry : String "target/tc_macro_context_entry.tl"]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        helper
-        "(module tc_macro_context_helper)
+    (compiler-typecheck-smoke-write-text
+      helper
+      "(module tc_macro_context_helper)
 (defmacro (bump [T : type] [value : Expr]) : Expr
   (match (type-kind T)
     [\"i64\" `(+ ,value 1)]
     [_ `0]))")
-      (compiler-typecheck-smoke-write-text
-        provider
-        "(module tc_macro_context_provider)
+    (compiler-typecheck-smoke-write-text
+      provider
+      "(module tc_macro_context_provider)
 (import tc_macro_context_helper as helper)
 (defmacro (bumped [value : Expr]) : Expr
   `(helper.bump i64 ,value))")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(import tc_macro_context_provider as provider)
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(import tc_macro_context_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (let
-        [serial-ok : bool
-          (compiler-typecheck-smoke-prefix-cache-file-check
-            (tc_core.tc-global-shared-view entry)
-            (tc_core.tc-global-shared-view roots)
-            cfgs)]
-        [_reset : unit (tc_api.compiler-typecheck-reset-load-session!)]
-        [state-ok : bool
-          (compiler-typecheck-smoke-macro-dependency-state-check
-            entry
-            roots
-            cfgs)]
-        (and
-          serial-ok
-          state-ok
-          (compiler-typecheck-smoke-macro-dependency-missing-ok?))))))
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (let
+      [serial-ok : bool
+        (compiler-typecheck-smoke-prefix-cache-file-check
+          (tc_core.tc-global-shared-view entry)
+          (tc_core.tc-global-shared-view roots)
+          cfgs)]
+      [_reset : unit (tc_api.compiler-typecheck-reset-load-session!)]
+      [state-ok : bool
+        (compiler-typecheck-smoke-macro-dependency-state-check entry roots cfgs)]
+      (and
+        serial-ok
+        state-ok
+        (compiler-typecheck-smoke-macro-dependency-missing-ok?)))))
 
 (define (compiler-typecheck-smoke-surface-macro-summary-ok?) : bool
   (let
@@ -3277,157 +3222,150 @@
       (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
     [ctfe-state : ctfe.CompilerCtfeMacroState
       (tc_core.tc-macro-ctfe-state macro-state)]
-    (begin
-      (compiler-typecheck-smoke-write-text
-        provider
-        "(module tc_surface_macro_provider)
+    (compiler-typecheck-smoke-write-text
+      provider
+      "(module tc_surface_macro_provider)
 (defmacro (first) : Expr `0)
 (define value : i64 1)
 (define (wide [p0 : i64] [p1 : i64] [p2 : i64] [p3 : i64] [p4 : i64] [p5 : i64] [p6 : i64] [p7 : i64] [p8 : i64] [p9 : i64] [p10 : i64] [p11 : i64] [p12 : i64] [p13 : i64] [p14 : i64] [p15 : i64]) : i64 p0)
 (defmacro (hook [value : i64]) : i64 `(+ ,value 1))
 (defmacro (last) : Expr `42)")
-      (compiler-typecheck-smoke-write-text
-        entry
-        "(import tc_surface_macro_provider as provider)
+    (compiler-typecheck-smoke-write-text
+      entry
+      "(import tc_surface_macro_provider as provider)
 (define (main) : i64 0)")
-      (tc_api.compiler-typecheck-reset-load-session!)
-      (match (load.compiler-load-file-with-paths-and-roots-cfg
-        entry
-        (sym_i64_env.sym-i64-empty)
-        roots
-        cfgs)
-        [(Ok _ _ _ _)
-          (begin
-            (tc_core.tc-macro-state-bind-source-names!
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (match (load.compiler-load-file-with-paths-and-roots-cfg
+      entry
+      (sym_i64_env.sym-i64-empty)
+      roots
+      cfgs)
+      [(Ok _ _ _ _)
+        (tc_core.tc-macro-state-bind-source-names!
+          macro-state
+          (ci.intern-source-name-session-capture-active-handle))
+        (ctfe.ctfe-module-macro-export-reset-for-state! ctfe-state)
+        (let
+          [names : tc_core.TcNameIdList
+            (tc_core.macro-collect-surface-summary-macro-names
               macro-state
-              (ci.intern-source-name-session-capture-active-handle))
-            (ctfe.ctfe-module-macro-export-reset-for-state! ctfe-state)
-            (let
-              [names : tc_core.TcNameIdList
-                (tc_core.macro-collect-surface-summary-macro-names
-                  macro-state
-                  (load.compiler-load-surface-summaries)
-                  (Nil))]
-              ;; The provider stays a lazy surface summary (aliased dotted
-              ;; import of a module-declared target), so its decls are not in
-              ;; the loaded program; the summary keys are the session-interned
-              ;; name ids directly.
-              [provider-id : i64 (ci.intern "tc_surface_macro_provider")]
-              [hook-id : i64 (ci.intern "hook")]
-              [non-macro-id : i64 (ci.intern "value")]
-              [missing-id : i64 (ci.intern "missing")]
-              [generated-provider-id : i64
-                (ci.intern-generated-name "tc_surface_macro_provider")]
-              [generated-hook-id : i64 (ci.intern-generated-name "hook")]
-              [retained : tc_core.MacroMaybeDecl
-                (tc_core.macro-surface-call-decl-in-module
-                  (ast.ast-node-pool-active-expr-segment-bases)
-                  macro-state
+              (load.compiler-load-surface-summaries)
+              (Nil))]
+          ;; The provider stays a lazy surface summary (aliased dotted
+          ;; import of a module-declared target), so its decls are not in
+          ;; the loaded program; the summary keys are the session-interned
+          ;; name ids directly.
+          [provider-id : i64 (ci.intern "tc_surface_macro_provider")]
+          [hook-id : i64 (ci.intern "hook")]
+          [non-macro-id : i64 (ci.intern "value")]
+          [missing-id : i64 (ci.intern "missing")]
+          [generated-provider-id : i64
+            (ci.intern-generated-name "tc_surface_macro_provider")]
+          [generated-hook-id : i64 (ci.intern-generated-name "hook")]
+          [retained : tc_core.MacroMaybeDecl
+            (tc_core.macro-surface-call-decl-in-module
+              (ast.ast-node-pool-active-expr-segment-bases)
+              macro-state
+              provider-id
+              hook-id)]
+          [before-reset : bool
+            (and
+              (tc_core.tc-name-id-list-contains names hook-id)
+              (tc_core.macro-surface-macro-in-module? provider-id hook-id)
+              (tc_core.macro-surface-macro-in-module?
+                provider-id
+                (ci.intern "first"))
+              (tc_core.macro-surface-macro-in-module?
+                provider-id
+                (ci.intern "last"))
+              (not
+                (tc_core.macro-surface-macro-in-module? provider-id missing-id))
+              (tc_core.macro-surface-module-has-macro? provider-id)
+              (not
+                (tc_core.macro-surface-macro-in-module?
                   provider-id
-                  hook-id)]
-              [before-reset : bool
+                  (ci.intern "wide")))
+              (match (tc_core.macro-surface-call-decl-in-module
+                (ast.ast-node-pool-active-expr-segment-bases)
+                macro-state
+                provider-id
+                (ci.intern "wide"))
+                [(No) true]
+                [_ false])
+              (string.eq
+                (ci.intern-str generated-provider-id)
+                (ci.intern-str provider-id))
+              (string.eq
+                (ci.intern-str generated-hook-id)
+                (ci.intern-str hook-id))
+              (not (= generated-provider-id provider-id))
+              (not (= generated-hook-id hook-id))
+              (not
+                (tc_core.macro-surface-macro-in-module?
+                  generated-provider-id
+                  hook-id))
+              (not
+                (tc_core.macro-surface-macro-in-module?
+                  provider-id
+                  generated-hook-id))
+              (not
+                (tc_core.macro-surface-module-has-macro? generated-provider-id))
+              (match (tc_core.macro-surface-call-decl-in-module
+                (ast.ast-node-pool-active-expr-segment-bases)
+                macro-state
+                provider-id
+                hook-id)
+                [(Some _ _ _ _ _ _) true]
+                [(No) false])
+              (match (tc_core.macro-surface-call-decl-in-module
+                (ast.ast-node-pool-active-expr-segment-bases)
+                macro-state
+                generated-provider-id
+                generated-hook-id)
+                [(Some _ _ _ _ _ _) false]
+                [(No) true])
+              (ctfe.ctfe-module-macro-export-id-for-state?
+                ctfe-state
+                provider-id
+                hook-id)
+              (not
+                (ctfe.ctfe-module-macro-export-id-for-state?
+                  ctfe-state
+                  provider-id
+                  non-macro-id)))]
+          (load.compiler-load-surface-summaries-reset!)
+          (tc_core.macro-surface-call-decl-cache-reset! macro-state)
+          (and
+            before-reset
+            ;; The selected signature owns its parameter payload even after
+            ;; the loader destroys the summary arena used by the scan.
+            (match retained
+              [(Some name module _ params ret _)
                 (and
-                  (tc_core.tc-name-id-list-contains names hook-id)
-                  (tc_core.macro-surface-macro-in-module? provider-id hook-id)
-                  (tc_core.macro-surface-macro-in-module?
-                    provider-id
-                    (ci.intern "first"))
-                  (tc_core.macro-surface-macro-in-module?
-                    provider-id
-                    (ci.intern "last"))
-                  (not
-                    (tc_core.macro-surface-macro-in-module?
-                      provider-id
-                      missing-id))
-                  (tc_core.macro-surface-module-has-macro? provider-id)
-                  (not
-                    (tc_core.macro-surface-macro-in-module?
-                      provider-id
-                      (ci.intern "wide")))
-                  (match (tc_core.macro-surface-call-decl-in-module
-                    (ast.ast-node-pool-active-expr-segment-bases)
-                    macro-state
-                    provider-id
-                    (ci.intern "wide"))
-                    [(No) true]
+                  (= name hook-id)
+                  (= module provider-id)
+                  (= (ast.ast-macro-param-list-len (& params)) 1)
+                  (match (ast.ast-macro-param-list-get
+                    (& params)
+                    0
+                    (ast.ast-macro-param-fallback))
+                    [(Param parameter (I64) false _)
+                      (= parameter (ci.intern "value"))]
                     [_ false])
-                  (string.eq
-                    (ci.intern-str generated-provider-id)
-                    (ci.intern-str provider-id))
-                  (string.eq
-                    (ci.intern-str generated-hook-id)
-                    (ci.intern-str hook-id))
-                  (not (= generated-provider-id provider-id))
-                  (not (= generated-hook-id hook-id))
-                  (not
-                    (tc_core.macro-surface-macro-in-module?
-                      generated-provider-id
-                      hook-id))
-                  (not
-                    (tc_core.macro-surface-macro-in-module?
-                      provider-id
-                      generated-hook-id))
-                  (not
-                    (tc_core.macro-surface-module-has-macro?
-                      generated-provider-id))
-                  (match (tc_core.macro-surface-call-decl-in-module
-                    (ast.ast-node-pool-active-expr-segment-bases)
-                    macro-state
-                    provider-id
-                    hook-id)
-                    [(Some _ _ _ _ _ _) true]
-                    [(No) false])
-                  (match (tc_core.macro-surface-call-decl-in-module
-                    (ast.ast-node-pool-active-expr-segment-bases)
-                    macro-state
-                    generated-provider-id
-                    generated-hook-id)
-                    [(Some _ _ _ _ _ _) false]
-                    [(No) true])
-                  (ctfe.ctfe-module-macro-export-id-for-state?
-                    ctfe-state
-                    provider-id
-                    hook-id)
-                  (not
-                    (ctfe.ctfe-module-macro-export-id-for-state?
-                      ctfe-state
-                      provider-id
-                      non-macro-id)))]
-              (begin
-                (load.compiler-load-surface-summaries-reset!)
-                (tc_core.macro-surface-call-decl-cache-reset! macro-state)
-                (and
-                  before-reset
-                  ;; The selected signature owns its parameter payload even after
-                  ;; the loader destroys the summary arena used by the scan.
-                  (match retained
-                    [(Some name module _ params ret _)
-                      (and
-                        (= name hook-id)
-                        (= module provider-id)
-                        (= (ast.ast-macro-param-list-len (& params)) 1)
-                        (match (ast.ast-macro-param-list-get
-                          (& params)
-                          0
-                          (ast.ast-macro-param-fallback))
-                          [(Param parameter (I64) false _)
-                            (= parameter (ci.intern "value"))]
-                          [_ false])
-                        (match ret
-                          [(I64) true]
-                          [_ false]))]
-                    [(No) false])
-                  (not
-                    (tc_core.macro-surface-macro-in-module? provider-id hook-id))
-                  (not (tc_core.macro-surface-module-has-macro? provider-id))
-                  (match (tc_core.macro-surface-call-decl-in-module
-                    (ast.ast-node-pool-active-expr-segment-bases)
-                    macro-state
-                    provider-id
-                    hook-id)
-                    [(Some _ _ _ _ _ _) false]
-                    [(No) true])))))]
-        [(Err _) false]))))
+                  (match ret
+                    [(I64) true]
+                    [_ false]))]
+              [(No) false])
+            (not (tc_core.macro-surface-macro-in-module? provider-id hook-id))
+            (not (tc_core.macro-surface-module-has-macro? provider-id))
+            (match (tc_core.macro-surface-call-decl-in-module
+              (ast.ast-node-pool-active-expr-segment-bases)
+              macro-state
+              provider-id
+              hook-id)
+              [(Some _ _ _ _ _ _) false]
+              [(No) true])))]
+      [(Err _) false])))
 
 (define (compiler-typecheck-smoke-record-surface-summary?
   [path : String]
@@ -3449,9 +3387,8 @@
           fallback-id
           false)
           [(Ok summary)
-            (begin
-              (load.compiler-load-record-surface-summary! summary)
-              true)]
+            (load.compiler-load-record-surface-summary! summary)
+            true]
           [(Err _) false])]
       [(Err _) false])))
 
@@ -3467,36 +3404,31 @@
   (let
     [provider-path : String "target/tc_lazy_summary_macro_provider.tl"]
     [ok : bool false]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      (if (compiler-typecheck-smoke-record-surface-summary?
-        provider-path
-        provider-source)
-        (match (parser.parse-ast-source-diagnostic "" entry-source)
-          [(Ok entry-program)
-            (match (tc_api.typecheck-compiler-program-with-paths-checked
-              entry-program
-              (ast.ast-decl-path-list-new))
-              [(Ok _ _ _ _)
-                (set!
-                  ok
-                  (and
-                    (> (core_tests.tc-lazy-import-summary-backed-stub-count) 0)
-                    (if (= expected-forces 0)
-                      (=
-                        (core_tests.tc-lazy-import-summary-macro-force-count)
-                        0)
-                      (>
-                        (core_tests.tc-lazy-import-summary-macro-force-count)
-                        0))))]
-              [(Partial _ _ _ _) (set! ok false)]
-              [(Err _) (set! ok false)])]
-          [(Err _) (set! ok false)])
-        (set! ok false))
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    (if (compiler-typecheck-smoke-record-surface-summary?
+      provider-path
+      provider-source)
+      (match (parser.parse-ast-source-diagnostic "" entry-source)
+        [(Ok entry-program)
+          (match (tc_api.typecheck-compiler-program-with-paths-checked
+            entry-program
+            (ast.ast-decl-path-list-new))
+            [(Ok _ _ _ _)
+              (set!
+                ok
+                (and
+                  (> (core_tests.tc-lazy-import-summary-backed-stub-count) 0)
+                  (if (= expected-forces 0)
+                    (= (core_tests.tc-lazy-import-summary-macro-force-count) 0)
+                    (> (core_tests.tc-lazy-import-summary-macro-force-count) 0))))]
+            [(Partial _ _ _ _) (set! ok false)]
+            [(Err _) (set! ok false)])]
+        [(Err _) (set! ok false)])
+      (set! ok false))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?) : bool
   (compiler-typecheck-smoke-lazy-summary-macro-check
@@ -3602,16 +3534,14 @@
   (let
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index exprs.len))
-        (begin
-          (set!
-            found
-            (compiler-typecheck-smoke-expr-parsed-id
-              (ast.ast-expr-list-get exprs index 0)
-              name))
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< found 0) (< index exprs.len))
+      (set!
+        found
+        (compiler-typecheck-smoke-expr-parsed-id
+          (ast.ast-expr-list-get exprs index 0)
+          name))
+      (set! index (+ index 1)))
+    found))
 
 (define (compiler-typecheck-smoke-expr-parsed-id
   [expr-id : i64]
@@ -3679,54 +3609,40 @@
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         [index : i64 0]
         [found : i64 -1]
-        (begin
-          (while (and (< found 0) (< index decls.len))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              (begin
-                (set!
-                  found
-                  (match decl
-                    [(Module name-id)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        -1)]
-                    [(Def decl-meta name-id _ value)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        (compiler-typecheck-smoke-expr-parsed-id value name))]
-                    [(DefFn decl-meta name-id _ _ body _)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(DefMacro decl-meta name-id _ _ body)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(DefStruct decl-meta name-id _ _ _)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        -1)]
-                    [(DefEnum decl-meta name-id _ _)
-                      (if (string.eq
-                        (tc_core.tc-env-key-name-text name-id)
-                        name)
-                        name-id
-                        -1)]
-                    [_ -1]))
-                (set! index (+ index 1)))))
-          found))]))
+        (while (and (< found 0) (< index decls.len))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+            (set!
+              found
+              (match decl
+                [(Module name-id)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    -1)]
+                [(Def decl-meta name-id _ value)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    (compiler-typecheck-smoke-expr-parsed-id value name))]
+                [(DefFn decl-meta name-id _ _ body _)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    (compiler-typecheck-smoke-expr-parsed-id body name))]
+                [(DefMacro decl-meta name-id _ _ body)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    (compiler-typecheck-smoke-expr-parsed-id body name))]
+                [(DefStruct decl-meta name-id _ _ _)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    -1)]
+                [(DefEnum decl-meta name-id _ _)
+                  (if (string.eq (tc_core.tc-env-key-name-text name-id) name)
+                    name-id
+                    -1)]
+                [_ -1]))
+            (set! index (+ index 1))))
+        found)]))
 
 (define (compiler-typecheck-smoke-required-parsed-id
   [ctx : tc_core.TcContext]
@@ -3765,92 +3681,88 @@
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
   [entry-ctx : tc_core.TcContext]
   [env : tc_core.TcTypeEnv]) : bool
-  (begin
-    (tc_core.tc-source-dotted-alias-key-cache-reset!)
-    (match (tc_core.tc-source-name-lookup-key-with-field-check
+  (tc_core.tc-source-dotted-alias-key-cache-reset!)
+  (match (tc_core.tc-source-name-lookup-key-with-field-check
+    entry-ctx
+    env
+    "helper.value"
+    (compiler-typecheck-smoke-required-parsed-id
       entry-ctx
-      env
-      "helper.value"
-      (compiler-typecheck-smoke-required-parsed-id
-        entry-ctx
-        "typecheck smoke: missing dotted lookup id: "
-        "helper.value")
-      true)
-      [(Ok key)
-        (let
-          [module-id : i64
-            (compiler-typecheck-smoke-required-parsed-id
-              entry-ctx
-              "typecheck smoke: missing entry module id: "
-              "entry.module")]
-          [name-id : i64
-            (compiler-typecheck-smoke-required-parsed-id
-              entry-ctx
-              "typecheck smoke: missing dotted lookup id: "
-              "helper.value")]
-          (and
-            (string.eq key "helper.module/value")
-            (compiler-typecheck-smoke-qualified-cache-id?
-              entry-ctx
-              (core_tests.tc-source-dotted-alias-key-cache-get
-                module-id
-                name-id)
-              "helper.module"
-              "value")
-            (match (tc_core.tc-source-name-lookup-key-with-field-check
-              entry-ctx
-              env
-              "helper.value"
-              name-id
-              true)
-              [(Ok cached-key) (string.eq cached-key key)]
-              [(Err _) false])))]
-      [(Err _) false])))
+      "typecheck smoke: missing dotted lookup id: "
+      "helper.value")
+    true)
+    [(Ok key)
+      (let
+        [module-id : i64
+          (compiler-typecheck-smoke-required-parsed-id
+            entry-ctx
+            "typecheck smoke: missing entry module id: "
+            "entry.module")]
+        [name-id : i64
+          (compiler-typecheck-smoke-required-parsed-id
+            entry-ctx
+            "typecheck smoke: missing dotted lookup id: "
+            "helper.value")]
+        (and
+          (string.eq key "helper.module/value")
+          (compiler-typecheck-smoke-qualified-cache-id?
+            entry-ctx
+            (core_tests.tc-source-dotted-alias-key-cache-get module-id name-id)
+            "helper.module"
+            "value")
+          (match (tc_core.tc-source-name-lookup-key-with-field-check
+            entry-ctx
+            env
+            "helper.value"
+            name-id
+            true)
+            [(Ok cached-key) (string.eq cached-key key)]
+            [(Err _) false])))]
+    [(Err _) false]))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
   [full-ctx : tc_core.TcContext]
   [env : tc_core.TcTypeEnv]) : bool
-  (begin
-    (tc_core.tc-source-dotted-full-path-key-cache-reset!)
-    (match (tc_core.tc-source-name-lookup-key-with-field-check
+  (tc_core.tc-source-dotted-full-path-key-cache-reset!)
+  (match (tc_core.tc-source-name-lookup-key-with-field-check
+    full-ctx
+    env
+    "helper.module.value"
+    (compiler-typecheck-smoke-required-parsed-id
       full-ctx
-      env
-      "helper.module.value"
-      (compiler-typecheck-smoke-required-parsed-id
-        full-ctx
-        "typecheck smoke: missing full dotted lookup id: "
-        "helper.module.value")
-      true)
-      [(Ok key)
-        (let
-          [module-id : i64
-            (compiler-typecheck-smoke-required-parsed-id
-              full-ctx
-              "typecheck smoke: missing full entry module id: "
-              "full.entry")]
-          [name-id : i64
-            (compiler-typecheck-smoke-required-parsed-id
-              full-ctx
-              "typecheck smoke: missing full dotted lookup id: "
-              "helper.module.value")]
-          (and
-            (string.eq key "helper.module/value")
-            (compiler-typecheck-smoke-qualified-cache-id?
-              full-ctx
-              (core_tests.tc-source-dotted-full-path-key-cache-get
-                module-id
-                name-id)
-              "helper.module"
-              "value")
-            (match (tc_core.tc-source-name-lookup-key-with-field-check
-              full-ctx
-              env
-              "helper.module.value"
-              name-id
-              true)
-              [(Ok cached-key) (string.eq cached-key key)]
-              [(Err _) false])))]
-      [(Err _) false])))
+      "typecheck smoke: missing full dotted lookup id: "
+      "helper.module.value")
+    true)
+    [(Ok key)
+      (let
+        [module-id : i64
+          (compiler-typecheck-smoke-required-parsed-id
+            full-ctx
+            "typecheck smoke: missing full entry module id: "
+            "full.entry")]
+        [name-id : i64
+          (compiler-typecheck-smoke-required-parsed-id
+            full-ctx
+            "typecheck smoke: missing full dotted lookup id: "
+            "helper.module.value")]
+        (and
+          (string.eq key "helper.module/value")
+          (compiler-typecheck-smoke-qualified-cache-id?
+            full-ctx
+            (core_tests.tc-source-dotted-full-path-key-cache-get
+              module-id
+              name-id)
+            "helper.module"
+            "value")
+          (match (tc_core.tc-source-name-lookup-key-with-field-check
+            full-ctx
+            env
+            "helper.module.value"
+            name-id
+            true)
+            [(Ok cached-key) (string.eq cached-key key)]
+            [(Err _) false])))]
+    [(Err _) false]))
 
 (define (compiler-typecheck-smoke-lazy-import-full-path-cache-ok?) : bool
   (let
@@ -3879,132 +3791,124 @@
             [(Partial _ _ _ _) false]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    ok))
 
 (define (compiler-typecheck-smoke-full-path-cache-derived-reset-ok?) : bool
   (let
     [module-id : i64 (ci.intern "reset.entry")]
     [name-id : i64 (ci.intern "stdlib.json.stringify")]
     [lookup-id : i64 (ci.intern "stdlib.json/stringify")]
-    (begin
-      (tc_core.tc-source-dotted-full-path-key-cache-reset!)
-      (core_tests.tc-source-dotted-full-path-key-cache-put!
-        module-id
-        name-id
-        lookup-id)
-      (let
-        [before : i64
+    (tc_core.tc-source-dotted-full-path-key-cache-reset!)
+    (core_tests.tc-source-dotted-full-path-key-cache-put!
+      module-id
+      name-id
+      lookup-id)
+    (let
+      [before : i64
+        (core_tests.tc-source-dotted-full-path-key-cache-get module-id name-id)]
+      (tc_core.macro-alias-derived-cache-reset!)
+      (and
+        (= before lookup-id)
+        (=
           (core_tests.tc-source-dotted-full-path-key-cache-get
             module-id
-            name-id)]
-        (begin
-          (tc_core.macro-alias-derived-cache-reset!)
-          (and
-            (= before lookup-id)
-            (=
-              (core_tests.tc-source-dotted-full-path-key-cache-get
-                module-id
-                name-id)
-              -2)))))))
+            name-id)
+          -2)))))
 
 (define (compiler-typecheck-smoke-source-name-caches-intern-reset-ok?) : bool
-  (begin
-    (tc_core.tc-source-dotted-alias-key-cache-reset!)
-    (tc_core.tc-source-dotted-full-path-key-cache-reset!)
-    (tc_core.tc-source-qualified-variant-key-cache-reset!)
+  (tc_core.tc-source-dotted-alias-key-cache-reset!)
+  (tc_core.tc-source-dotted-full-path-key-cache-reset!)
+  (tc_core.tc-source-qualified-variant-key-cache-reset!)
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
+    [registries : compiler_symbols.CompilerRegistries
+      (compiler_symbols.compiler-registries-empty)]
+    [registry-id : i64
+      (compiler_symbols.compiler-registries-identity registries)]
+    [old-module-id : i64 (ci.intern "generation.entry")]
+    [old-alias-name-id : i64 (ci.intern "alias.value")]
+    [old-full-name-id : i64 (ci.intern "full.path.value")]
+    [old-variant-name-id : i64 (ci.intern "Choice.Full")]
+    [old-alias-value-id : i64 (ci.intern "old.alias/value")]
+    [old-full-value-id : i64 (ci.intern "old.full/value")]
+    [old-variant-value-id : i64 (ci.intern "old.choice/Full")]
+    [old-table-id : i64 (ci.intern-active-table-id)]
+    [old-generation : i64 (ci.intern-generation)]
+    [old-result-module-id : i64 (ci.intern "stdlib.result")]
+    [old-result-name-id : i64 (ci.intern "result")]
+    [_bind-source-names : unit
+      (tc_core.tc-macro-state-bind-source-names!
+        macro-state
+        (ci.intern-source-name-session-capture-active-handle))]
+    [_old-result-identity : unit
+      (tc_core.macro-stdlib-result-identity-ensure! macro-state)]
+    [old-result-identity : tc_core.TcMacroResultIdentityStateData
+      (tc_core.tc-macro-result-identity-state-data macro-state)]
+    [old-result-ids-current : bool
+      (and
+        (= old-result-identity.table-id old-table-id)
+        (= old-result-identity.reset-generation old-generation)
+        (= old-result-identity.module-id old-result-module-id)
+        (= old-result-identity.macro-id old-result-name-id))]
+    (core_tests.tc-source-dotted-alias-key-cache-put!
+      old-module-id
+      old-alias-name-id
+      old-alias-value-id)
+    (core_tests.tc-source-dotted-full-path-key-cache-put!
+      old-module-id
+      old-full-name-id
+      old-full-value-id)
+    (core_tests.tc-source-qualified-variant-key-cache-put!
+      registry-id
+      old-module-id
+      old-variant-name-id
+      old-variant-value-id
+      0)
+    (ci.intern-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (tc_core.compiler-typecheck-reset-intern-owned-state!)
     (let
-      [macro-state : tc_core.TcMacroState
-        (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
-      [registries : compiler_symbols.CompilerRegistries
-        (compiler_symbols.compiler-registries-empty)]
-      [registry-id : i64
-        (compiler_symbols.compiler-registries-identity registries)]
-      [old-module-id : i64 (ci.intern "generation.entry")]
-      [old-alias-name-id : i64 (ci.intern "alias.value")]
-      [old-full-name-id : i64 (ci.intern "full.path.value")]
-      [old-variant-name-id : i64 (ci.intern "Choice.Full")]
-      [old-alias-value-id : i64 (ci.intern "old.alias/value")]
-      [old-full-value-id : i64 (ci.intern "old.full/value")]
-      [old-variant-value-id : i64 (ci.intern "old.choice/Full")]
-      [old-table-id : i64 (ci.intern-active-table-id)]
-      [old-generation : i64 (ci.intern-generation)]
-      [old-result-module-id : i64 (ci.intern "stdlib.result")]
-      [old-result-name-id : i64 (ci.intern "result")]
-      [_bind-source-names : unit
+      [module-id : i64 (ci.intern "generation.entry")]
+      [alias-name-id : i64 (ci.intern "alias.value")]
+      [full-name-id : i64 (ci.intern "full.path.value")]
+      [variant-name-id : i64 (ci.intern "Choice.Full")]
+      [result-module-id : i64 (ci.intern "stdlib.result")]
+      [result-name-id : i64 (ci.intern "result")]
+      [_bind-result-source-names : unit
         (tc_core.tc-macro-state-bind-source-names!
           macro-state
           (ci.intern-source-name-session-capture-active-handle))]
-      [_old-result-identity : unit
+      [_result-identity : unit
         (tc_core.macro-stdlib-result-identity-ensure! macro-state)]
-      [old-result-identity : tc_core.TcMacroResultIdentityStateData
+      [result-identity : tc_core.TcMacroResultIdentityStateData
         (tc_core.tc-macro-result-identity-state-data macro-state)]
-      [old-result-ids-current : bool
-        (and
-          (= old-result-identity.table-id old-table-id)
-          (= old-result-identity.reset-generation old-generation)
-          (= old-result-identity.module-id old-result-module-id)
-          (= old-result-identity.macro-id old-result-name-id))]
-      (begin
-        (core_tests.tc-source-dotted-alias-key-cache-put!
-          old-module-id
-          old-alias-name-id
-          old-alias-value-id)
-        (core_tests.tc-source-dotted-full-path-key-cache-put!
-          old-module-id
-          old-full-name-id
-          old-full-value-id)
-        (core_tests.tc-source-qualified-variant-key-cache-put!
+      [alias-miss : i64
+        (core_tests.tc-source-dotted-alias-key-cache-get
+          module-id
+          alias-name-id)]
+      [full-miss : i64
+        (core_tests.tc-source-dotted-full-path-key-cache-get
+          module-id
+          full-name-id)]
+      [variant-miss : i64
+        (core_tests.tc-source-qualified-variant-key-cache-get
           registry-id
-          old-module-id
-          old-variant-name-id
-          old-variant-value-id
-          0)
-        (ci.intern-reset!)
-        (cbi.compiler-builtin-initialize-for-parse!)
-        (tc_core.compiler-typecheck-reset-intern-owned-state!)
-        (let
-          [module-id : i64 (ci.intern "generation.entry")]
-          [alias-name-id : i64 (ci.intern "alias.value")]
-          [full-name-id : i64 (ci.intern "full.path.value")]
-          [variant-name-id : i64 (ci.intern "Choice.Full")]
-          [result-module-id : i64 (ci.intern "stdlib.result")]
-          [result-name-id : i64 (ci.intern "result")]
-          [_bind-result-source-names : unit
-            (tc_core.tc-macro-state-bind-source-names!
-              macro-state
-              (ci.intern-source-name-session-capture-active-handle))]
-          [_result-identity : unit
-            (tc_core.macro-stdlib-result-identity-ensure! macro-state)]
-          [result-identity : tc_core.TcMacroResultIdentityStateData
-            (tc_core.tc-macro-result-identity-state-data macro-state)]
-          [alias-miss : i64
-            (core_tests.tc-source-dotted-alias-key-cache-get
-              module-id
-              alias-name-id)]
-          [full-miss : i64
-            (core_tests.tc-source-dotted-full-path-key-cache-get
-              module-id
-              full-name-id)]
-          [variant-miss : i64
-            (core_tests.tc-source-qualified-variant-key-cache-get
-              registry-id
-              module-id
-              variant-name-id)]
-          (begin
-            (tc_core.compiler-typecheck-reset-file-state!)
-            (and
-              old-result-ids-current
-              (= (ci.intern-active-table-id) old-table-id)
-              (> (ci.intern-generation) old-generation)
-              (= result-identity.table-id old-table-id)
-              (= result-identity.reset-generation (ci.intern-generation))
-              (= result-identity.module-id result-module-id)
-              (= result-identity.macro-id result-name-id)
-              (= alias-miss -2)
-              (= full-miss -2)
-              (= variant-miss -2))))))))
+          module-id
+          variant-name-id)]
+      (tc_core.compiler-typecheck-reset-file-state!)
+      (and
+        old-result-ids-current
+        (= (ci.intern-active-table-id) old-table-id)
+        (> (ci.intern-generation) old-generation)
+        (= result-identity.table-id old-table-id)
+        (= result-identity.reset-generation (ci.intern-generation))
+        (= result-identity.module-id result-module-id)
+        (= result-identity.macro-id result-name-id)
+        (= alias-miss -2)
+        (= full-miss -2)
+        (= variant-miss -2)))))
 
 (define (compiler-typecheck-smoke-source-key-cache-state-isolation-ok?) : bool
   (let
@@ -4021,48 +3925,67 @@
     [registry-b : i64 3003]
     [module-id : i64 17]
     [name-id : i64 23]
-    (begin
-      (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-        (tc_core.tc-global-shared-view state-a)
-        table-a
-        generation-a
-        module-id
-        name-id
-        41)
-      (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-        (tc_core.tc-global-shared-view state-b)
-        table-b
-        generation-b
-        module-id
-        name-id
-        42)
-      (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-        (tc_core.tc-global-shared-view state-b)
-        table-b
-        generation-b
-        module-id
-        name-id
-        43)
-      (tc_core.tc-source-qualified-variant-key-cache-put-for-state!
-        (tc_core.tc-global-shared-view state-b)
-        table-b
-        generation-b
-        registry-b
-        module-id
-        name-id
-        44
-        45)
+    (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
+      (tc_core.tc-global-shared-view state-a)
+      table-a
+      generation-a
+      module-id
+      name-id
+      41)
+    (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
+      (tc_core.tc-global-shared-view state-b)
+      table-b
+      generation-b
+      module-id
+      name-id
+      42)
+    (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
+      (tc_core.tc-global-shared-view state-b)
+      table-b
+      generation-b
+      module-id
+      name-id
+      43)
+    (tc_core.tc-source-qualified-variant-key-cache-put-for-state!
+      (tc_core.tc-global-shared-view state-b)
+      table-b
+      generation-b
+      registry-b
+      module-id
+      name-id
+      44
+      45)
+    (let
+      [before-reset : bool
+        (and
+          (=
+            (tc_core.tc-source-dotted-alias-key-cache-get-for-state
+              (tc_core.tc-global-shared-view state-a)
+              table-a
+              generation-a
+              module-id
+              name-id)
+            41)
+          (=
+            (tc_core.tc-source-dotted-alias-key-cache-get-for-state
+              (tc_core.tc-global-shared-view state-b)
+              table-b
+              generation-b
+              module-id
+              name-id)
+            42))]
+      (tc_core.tc-job-state-reset-file-state! job-a)
       (let
-        [before-reset : bool
+        [isolated-reset : bool
           (and
             (=
               (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                (tc_core.tc-global-shared-view state-a)
+                state-a
                 table-a
                 generation-a
                 module-id
                 name-id)
-              41)
+              -2)
             (=
               (tc_core.tc-source-dotted-alias-key-cache-get-for-state
                 (tc_core.tc-global-shared-view state-b)
@@ -4070,86 +3993,64 @@
                 generation-b
                 module-id
                 name-id)
-              42))]
-        (begin
-          (tc_core.tc-job-state-reset-file-state! job-a)
-          (let
-            [isolated-reset : bool
-              (and
-                (=
-                  (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                    state-a
-                    table-a
-                    generation-a
-                    module-id
-                    name-id)
-                  -2)
-                (=
-                  (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                    (tc_core.tc-global-shared-view state-b)
-                    table-b
-                    generation-b
-                    module-id
-                    name-id)
-                  42)
-                (=
-                  (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                    (tc_core.tc-global-shared-view state-b)
-                    table-b
-                    generation-b
-                    module-id
-                    name-id)
-                  43)
-                (=
-                  (tc_core.tc-source-qualified-variant-key-cache-get-for-state
-                    (tc_core.tc-global-shared-view state-b)
-                    table-b
-                    generation-b
-                    registry-b
-                    module-id
-                    name-id)
-                  44)
-                (=
-                  (tc_core.tc-source-qualified-variant-handle-cache-get-for-state
-                    (tc_core.tc-global-shared-view state-b)
-                    table-b
-                    generation-b
-                    registry-b
-                    module-id
-                    name-id)
-                  45))]
-            [wrong-owner-miss : bool
-              (=
-                (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                  (tc_core.tc-global-shared-view state-b)
-                  table-a
-                  generation-b
-                  module-id
-                  name-id)
-                -2)]
-            (begin
-              (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
+              42)
+            (=
+              (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
                 (tc_core.tc-global-shared-view state-b)
                 table-b
                 generation-b
                 module-id
-                name-id
-                46)
-              (let
-                [stale-generation-miss : bool
-                  (=
-                    (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                      state-b
-                      table-b
-                      (+ generation-b 1)
-                      module-id
-                      name-id)
-                    -2)]
-                (and
-                  before-reset
-                  isolated-reset
-                  wrong-owner-miss
-                  stale-generation-miss)))))))))
+                name-id)
+              43)
+            (=
+              (tc_core.tc-source-qualified-variant-key-cache-get-for-state
+                (tc_core.tc-global-shared-view state-b)
+                table-b
+                generation-b
+                registry-b
+                module-id
+                name-id)
+              44)
+            (=
+              (tc_core.tc-source-qualified-variant-handle-cache-get-for-state
+                (tc_core.tc-global-shared-view state-b)
+                table-b
+                generation-b
+                registry-b
+                module-id
+                name-id)
+              45))]
+        [wrong-owner-miss : bool
+          (=
+            (tc_core.tc-source-dotted-alias-key-cache-get-for-state
+              (tc_core.tc-global-shared-view state-b)
+              table-a
+              generation-b
+              module-id
+              name-id)
+            -2)]
+        (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
+          (tc_core.tc-global-shared-view state-b)
+          table-b
+          generation-b
+          module-id
+          name-id
+          46)
+        (let
+          [stale-generation-miss : bool
+            (=
+              (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
+                state-b
+                table-b
+                (+ generation-b 1)
+                module-id
+                name-id)
+              -2)]
+          (and
+            before-reset
+            isolated-reset
+            wrong-owner-miss
+            stale-generation-miss))))))
 
 (define (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?) : bool
   (tc_tests.compiler-typecheck-ok?
@@ -4320,9 +4221,8 @@
             [(Partial _ _ _ _) false]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    ok))
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?) : bool
   (let
@@ -4346,10 +4246,9 @@
             [(Partial _ _ _ _) false]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?) : bool
   (let
@@ -4384,14 +4283,12 @@
                       (diagnostic.compiler-diagnostic-list-first (deref diag))]
                     [message : String
                       (diagnostic.compiler-diagnostic-message first)]
-                    (begin
-                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
-                      false))]))]
+                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
+                    false)]))]
           [(Err _) false]))]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-unused-result-import-local-type-ok?) : bool
   (let
@@ -4424,14 +4321,12 @@
                     (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
-                  (begin
-                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
-                    false))])]
+                  (io.stderr-write (byte_buf.str-as-bytes (& message)))
+                  false)])]
           [(Err _) false]))]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-result-enum-then-helper-ok?) : bool
   (let
@@ -4467,14 +4362,12 @@
                     (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
-                  (begin
-                    (io.stderr-write (byte_buf.str-as-bytes (& message)))
-                    false))])]
+                  (io.stderr-write (byte_buf.str-as-bytes (& message)))
+                  false)])]
           [(Err _) false]))]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-lazy-import-str-cat-macro-ok?) : bool
   (let
@@ -4492,10 +4385,9 @@
             [(Partial _ _ _ _) false]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-runtime-str-cat-two-nested-ok?) : bool
   (let
@@ -4533,10 +4425,9 @@
             [(Partial _ _ _ _) false]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (load.compiler-load-surface-summaries-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-registry-member-diagnostic-ok?
   [src : String]
@@ -4667,26 +4558,24 @@
       (and
         (not (tc_core.tc-cleanup-owner-active-id? shadow-env resource-id))
         (tc_core.tc-lifetime-visible-id? shadow-env resource-id))]
-    (begin
-      (tc_core.tc-type-env-scoped-runtime-restore! scope-save)
-      (let
-        [restored : bool
-          (and
-            (tc_core.tc-cleanup-owner-active-id? runtime-env resource-id)
-            (tc_core.tc-ordinary-arena-owner-active-id? runtime-env arena-id)
-            (tc_core.tc-atomic-arena-owner-active-id? runtime-env atomic-id)
-            (tc_core.tc-lifetime-outlives-binding-id?
-              runtime-env
-              outer-id
-              resource-id))]
-        (begin
-          (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
-          (and
-            (not was-active)
-            (not (tc_core.tc-type-env-scoped-runtime-active? runtime-env))
-            before-shadow
-            shadowed
-            restored))))))
+    (tc_core.tc-type-env-scoped-runtime-restore! scope-save)
+    (let
+      [restored : bool
+        (and
+          (tc_core.tc-cleanup-owner-active-id? runtime-env resource-id)
+          (tc_core.tc-ordinary-arena-owner-active-id? runtime-env arena-id)
+          (tc_core.tc-atomic-arena-owner-active-id? runtime-env atomic-id)
+          (tc_core.tc-lifetime-outlives-binding-id?
+            runtime-env
+            outer-id
+            resource-id))]
+      (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
+      (and
+        (not was-active)
+        (not (tc_core.tc-type-env-scoped-runtime-active? runtime-env))
+        before-shadow
+        shadowed
+        restored))))
 
 (define (compiler-typecheck-scoped-marker-replaced-cache-ok?) : bool
   (let
@@ -4706,18 +4595,16 @@
         (tc_core.tc-lifetime-visible-id?
           (tc_core.tc-default-env)
           cache-owner-id))]
-    (begin
-      (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
-      (let
-        [outer-visible-after : bool
-          (tc_core.tc-lifetime-visible-id? outer-env cache-owner-id)]
-        (begin
-          (tc_core.tc-type-env-scoped-runtime-restore! inactive-save)
-          (and
-            outer-visible-before
-            inner-hidden
-            outer-visible-after
-            (not (tc_core.tc-type-env-scoped-runtime-active? outer-env))))))))
+    (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
+    (let
+      [outer-visible-after : bool
+        (tc_core.tc-lifetime-visible-id? outer-env cache-owner-id)]
+      (tc_core.tc-type-env-scoped-runtime-restore! inactive-save)
+      (and
+        outer-visible-before
+        inner-hidden
+        outer-visible-after
+        (not (tc_core.tc-type-env-scoped-runtime-active? outer-env))))))
 
 (define (compiler-typecheck-smoke-hygiene-structural-ids-ok?) : bool
   (let
@@ -4868,25 +4755,22 @@
           4)
         (= (ci.intern-compat-state-structural-count intern-a) 10)
         (= (ci.intern-structural-record-slot-bytes) 37))]
-    (begin
-      (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
-      (let
-        [next-session-a : cis.InternStructuralSessionHandle
-          (cis.intern-structural-session-handle-from-source-names
-            (ci.intern-source-name-session-handle-from-state intern-a))]
-        [reset-ok : bool
-          (and
-            before-reset
-            (not (cis.intern-structural-session-valid? session-a))
-            (cis.intern-structural-session-valid? next-session-a)
-            (not (tc_core.macro-hygiene-global-id? next-session-a context-id))
-            (not
-              (tc_core.macro-hygiene-local-id? next-session-a direct-local-id))
-            (tc_core.macro-hygiene-global-id? session-b b-context-id)
-            (tc_core.macro-hygiene-local-id? session-b b-local-id))]
-        (begin
-          (ci.intern-compat-state-reset! (&mut intern-b))
-          (and reset-ok (not (cis.intern-structural-session-valid? session-b))))))))
+    (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
+    (let
+      [next-session-a : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-a))]
+      [reset-ok : bool
+        (and
+          before-reset
+          (not (cis.intern-structural-session-valid? session-a))
+          (cis.intern-structural-session-valid? next-session-a)
+          (not (tc_core.macro-hygiene-global-id? next-session-a context-id))
+          (not (tc_core.macro-hygiene-local-id? next-session-a direct-local-id))
+          (tc_core.macro-hygiene-global-id? session-b b-context-id)
+          (tc_core.macro-hygiene-local-id? session-b b-local-id))]
+      (ci.intern-compat-state-reset! (&mut intern-b))
+      (and reset-ok (not (cis.intern-structural-session-valid? session-b))))))
 
 (define (compiler-typecheck-smoke-structural-name-rendering-ok?) : bool
   (let
@@ -4949,9 +4833,8 @@
                       (tc_core.tc-serial-job-state)))))]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    ok))
 
 (define (compiler-typecheck-smoke-generated-decl-has-no-semantic-origin?
   [decls : ast.AstDeclList]) : bool
@@ -4990,11 +4873,10 @@
                     (ast.ast-decl-list-box-shared-view decls-box))])]
             [(Err _) false])]
         [(Err _) false])]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      ok)))
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    ok))
 
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
   ;; An unused defmacro forces the full declaration walk while every output
@@ -5135,263 +5017,254 @@
           (=
             (cis.intern-structural-session-owner env-session-a)
             (cis.intern-structural-session-owner env-session-b))))]
-    (begin
-      ;; Keep B installed while macro expansion and ordinary typecheck views
-      ;; owned by A canonicalize, grow, and decode A's structural records.
-      (ci.intern-compat-state-install! intern-b)
-      (let
-        [a-pair : cis.InternStructuralKey
-          (cis.intern-structural-session-composite-pair-key session-a 71 81)]
-        [a-pair-again : cis.InternStructuralKey
-          (cis.intern-structural-session-composite-pair-key
-            (cis.intern-structural-session-handle-from-source-names
-              ctx-a-handle)
-            71
-            81)]
-        [b-pair : cis.InternStructuralKey
-          (cis.intern-structural-session-composite-pair-key session-b 71 81)]
-        [a-triple : cis.InternStructuralKey
-          (cis.intern-structural-session-composite-triple-key
+    ;; Keep B installed while macro expansion and ordinary typecheck views
+    ;; owned by A canonicalize, grow, and decode A's structural records.
+    (ci.intern-compat-state-install! intern-b)
+    (let
+      [a-pair : cis.InternStructuralKey
+        (cis.intern-structural-session-composite-pair-key session-a 71 81)]
+      [a-pair-again : cis.InternStructuralKey
+        (cis.intern-structural-session-composite-pair-key
+          (cis.intern-structural-session-handle-from-source-names ctx-a-handle)
+          71
+          81)]
+      [b-pair : cis.InternStructuralKey
+        (cis.intern-structural-session-composite-pair-key session-b 71 81)]
+      [a-triple : cis.InternStructuralKey
+        (cis.intern-structural-session-composite-triple-key
+          session-a
+          91
+          101
+          111)]
+      [large-owner : i64 (+ (ci.intern-capacity) 1000)]
+      [large-token : i64 (+ (ci.intern-capacity) 2000)]
+      [a-region : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (Region large-owner large-token))]
+      [a-region-again : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (Region large-owner large-token))]
+      ;; The initial map has 512 slots. Changing this component by 512
+      ;; deliberately preserves the arena record's first bucket.
+      [a-region-hash-collision : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (Region (+ large-owner 512) large-token))]
+      [a-current-marker : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (CurrentRegionMarker large-owner))]
+      [a-owner-marker : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (TokenOwnerMarker large-token))]
+      [a-region-marker : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-a
+          (TokenRegionMarker large-token))]
+      [b-region : cis.InternArenaPhaseIdentity
+        (cis.intern-structural-session-arena-phase-identity
+          session-b
+          (Region large-owner large-token))]
+      (set! stale-arena-raw (cis.intern-arena-phase-identity-raw a-region))
+      (set!
+        ok
+        (and
+          ok
+          (=
+            (cis.intern-structural-key-raw a-pair)
+            (cis.intern-structural-key-raw a-pair-again))
+          (not
+            (=
+              (cis.intern-structural-key-raw a-pair)
+              (cis.intern-structural-key-raw b-pair)))
+          (cis.intern-structural-session-key-owned? session-a a-pair)
+          (not (cis.intern-structural-session-key-owned? session-b a-pair))
+          (ci.intern-compat-state-composite-pair-id?
+            intern-a
+            (cis.intern-structural-key-raw a-pair))
+          (=
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-a
+              (cis.intern-structural-key-raw a-pair))
+            71)
+          (=
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-a
+              (cis.intern-structural-key-raw a-pair))
+            81)
+          (ci.intern-compat-state-composite-triple-id?
+            intern-a
+            (cis.intern-structural-key-raw a-triple))
+          (=
+            (ci.intern-compat-state-composite-left-id-unchecked
+              intern-a
+              (cis.intern-structural-key-raw a-triple))
+            91)
+          (=
+            (ci.intern-compat-state-composite-middle-id-unchecked
+              intern-a
+              (cis.intern-structural-key-raw a-triple))
+            101)
+          (=
+            (ci.intern-compat-state-composite-right-id-unchecked
+              intern-a
+              (cis.intern-structural-key-raw a-triple))
+            111)
+          ;; B is both explicit and installed. The explicit constructor
+          ;; must keep the transitional legacy fast path coherent for the
+          ;; same owner while leaving unrelated installed owners alone.
+          (ci.intern-composite-pair-id? (cis.intern-structural-key-raw b-pair))
+          (=
+            (cis.intern-arena-phase-identity-raw a-region)
+            (cis.intern-arena-phase-identity-raw a-region-again))
+          (not
+            (=
+              (cis.intern-arena-phase-identity-raw a-region)
+              (cis.intern-arena-phase-identity-raw a-region-hash-collision)))
+          (not
+            (=
+              (cis.intern-arena-phase-identity-raw a-region)
+              (cis.intern-arena-phase-identity-raw a-current-marker)))
+          (not
+            (=
+              (cis.intern-arena-phase-identity-raw a-current-marker)
+              (cis.intern-arena-phase-identity-raw a-owner-marker)))
+          (not
+            (=
+              (cis.intern-arena-phase-identity-raw a-owner-marker)
+              (cis.intern-arena-phase-identity-raw a-region-marker)))
+          (not
+            (=
+              (cis.intern-arena-phase-identity-raw a-region)
+              (cis.intern-arena-phase-identity-raw b-region)))
+          (not
+            (ci.intern-renderable-id?
+              (cis.intern-arena-phase-identity-raw a-region)))
+          (match (cis.intern-structural-session-arena-phase-record
             session-a
-            91
-            101
-            111)]
-        [large-owner : i64 (+ (ci.intern-capacity) 1000)]
-        [large-token : i64 (+ (ci.intern-capacity) 2000)]
-        [a-region : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
+            a-region)
+            [(Some (Region owner token))
+              (and (= owner large-owner) (= token large-token))]
+            [_ false])
+          (match (cis.intern-structural-session-arena-phase-record
             session-a
-            (Region large-owner large-token))]
-        [a-region-again : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
+            a-current-marker)
+            [(Some (CurrentRegionMarker owner)) (= owner large-owner)]
+            [_ false])
+          (match (cis.intern-structural-session-arena-phase-record
             session-a
-            (Region large-owner large-token))]
-        ;; The initial map has 512 slots. Changing this component by 512
-        ;; deliberately preserves the arena record's first bucket.
-        [a-region-hash-collision : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
+            a-owner-marker)
+            [(Some (TokenOwnerMarker token)) (= token large-token)]
+            [_ false])
+          (match (cis.intern-structural-session-arena-phase-record
             session-a
-            (Region (+ large-owner 512) large-token))]
-        [a-current-marker : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
-            session-a
-            (CurrentRegionMarker large-owner))]
-        [a-owner-marker : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
-            session-a
-            (TokenOwnerMarker large-token))]
-        [a-region-marker : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
-            session-a
-            (TokenRegionMarker large-token))]
-        [b-region : cis.InternArenaPhaseIdentity
-          (cis.intern-structural-session-arena-phase-identity
+            a-region-marker)
+            [(Some (TokenRegionMarker token)) (= token large-token)]
+            [_ false])
+          (match (cis.intern-structural-session-arena-phase-record
             session-b
-            (Region large-owner large-token))]
-        (begin
-          (set! stale-arena-raw (cis.intern-arena-phase-identity-raw a-region))
-          (set!
-            ok
-            (and
-              ok
-              (=
-                (cis.intern-structural-key-raw a-pair)
-                (cis.intern-structural-key-raw a-pair-again))
-              (not
-                (=
-                  (cis.intern-structural-key-raw a-pair)
-                  (cis.intern-structural-key-raw b-pair)))
-              (cis.intern-structural-session-key-owned? session-a a-pair)
-              (not (cis.intern-structural-session-key-owned? session-b a-pair))
-              (ci.intern-compat-state-composite-pair-id?
-                intern-a
-                (cis.intern-structural-key-raw a-pair))
-              (=
-                (ci.intern-compat-state-composite-left-id-unchecked
-                  intern-a
-                  (cis.intern-structural-key-raw a-pair))
-                71)
-              (=
-                (ci.intern-compat-state-composite-right-id-unchecked
-                  intern-a
-                  (cis.intern-structural-key-raw a-pair))
-                81)
-              (ci.intern-compat-state-composite-triple-id?
-                intern-a
-                (cis.intern-structural-key-raw a-triple))
-              (=
-                (ci.intern-compat-state-composite-left-id-unchecked
-                  intern-a
-                  (cis.intern-structural-key-raw a-triple))
-                91)
-              (=
-                (ci.intern-compat-state-composite-middle-id-unchecked
-                  intern-a
-                  (cis.intern-structural-key-raw a-triple))
-                101)
-              (=
-                (ci.intern-compat-state-composite-right-id-unchecked
-                  intern-a
-                  (cis.intern-structural-key-raw a-triple))
-                111)
-              ;; B is both explicit and installed. The explicit constructor
-              ;; must keep the transitional legacy fast path coherent for the
-              ;; same owner while leaving unrelated installed owners alone.
-              (ci.intern-composite-pair-id?
-                (cis.intern-structural-key-raw b-pair))
-              (=
-                (cis.intern-arena-phase-identity-raw a-region)
-                (cis.intern-arena-phase-identity-raw a-region-again))
-              (not
-                (=
-                  (cis.intern-arena-phase-identity-raw a-region)
-                  (cis.intern-arena-phase-identity-raw a-region-hash-collision)))
-              (not
-                (=
-                  (cis.intern-arena-phase-identity-raw a-region)
-                  (cis.intern-arena-phase-identity-raw a-current-marker)))
-              (not
-                (=
-                  (cis.intern-arena-phase-identity-raw a-current-marker)
-                  (cis.intern-arena-phase-identity-raw a-owner-marker)))
-              (not
-                (=
-                  (cis.intern-arena-phase-identity-raw a-owner-marker)
-                  (cis.intern-arena-phase-identity-raw a-region-marker)))
-              (not
-                (=
-                  (cis.intern-arena-phase-identity-raw a-region)
-                  (cis.intern-arena-phase-identity-raw b-region)))
-              (not
-                (ci.intern-renderable-id?
-                  (cis.intern-arena-phase-identity-raw a-region)))
-              (match (cis.intern-structural-session-arena-phase-record
-                session-a
-                a-region)
-                [(Some (Region owner token))
-                  (and (= owner large-owner) (= token large-token))]
-                [_ false])
-              (match (cis.intern-structural-session-arena-phase-record
-                session-a
-                a-current-marker)
-                [(Some (CurrentRegionMarker owner)) (= owner large-owner)]
-                [_ false])
-              (match (cis.intern-structural-session-arena-phase-record
-                session-a
-                a-owner-marker)
-                [(Some (TokenOwnerMarker token)) (= token large-token)]
-                [_ false])
-              (match (cis.intern-structural-session-arena-phase-record
-                session-a
-                a-region-marker)
-                [(Some (TokenRegionMarker token)) (= token large-token)]
-                [_ false])
-              (match (cis.intern-structural-session-arena-phase-record
-                session-b
-                a-region)
-                [(No) true]
-                [_ false])
-              (match (cis.intern-structural-session-arena-phase-record-for-raw
-                session-a
-                (cis.intern-structural-key-raw a-pair))
-                [(No) true]
-                [_ false])))
-          (let
-            [index : i64 0]
-            (while (< index 700)
-              (let
-                [key : cis.InternStructuralKey
-                  (cis.intern-structural-session-composite-triple-key
-                    (cis.intern-structural-session-handle-from-source-names
-                      ctx-a-handle)
-                    (+ 1000 index)
-                    (+ 2000 index)
-                    (+ 3000 index))]
-                [phase : cis.InternArenaPhaseIdentity
-                  (cis.intern-structural-session-arena-phase-identity
-                    session-a
-                    (Region
-                      (+ (ci.intern-capacity) 4000 index)
-                      (+ (ci.intern-capacity) 5000 index)))]
-                (begin
-                  (unless
-                    (=
-                      (cis_tests.intern-structural-session-key-middle
-                        session-a
-                        key)
-                      (+ 2000 index))
-                    (set! ok false))
-                  (match (cis.intern-structural-session-arena-phase-record
-                    session-a
-                    phase)
-                    [(Some (Region owner token))
-                      (unless
-                        (and
-                          (= owner (+ (ci.intern-capacity) 4000 index))
-                          (= token (+ (ci.intern-capacity) 5000 index)))
-                        (set! ok false))]
-                    [_ (set! ok false)])
-                  (set! index (+ index 1))))))
-          (set!
-            ok
-            (and
-              ok
-              (= (ci.intern-compat-state-structural-count intern-a) 1407)
-              (= (ci.intern-compat-state-structural-count intern-b) 2)
-              (>=
-                (array-length
-                  (__tl-project-field
-                    (array-ref intern-a.structural-table-cell 0)
-                    kinds))
-                2048)
-              (= (ci.intern-structural-record-slot-bytes) 37)
-              (=
-                (array-length
-                  (__tl-project-field
-                    (array-ref intern-a.structural-table-cell 0)
-                    structural-cache-raws))
-                (ci.intern-structural-cache-capacity))
-              (=
-                (ci.intern-active-table-id)
-                (ci.intern-compat-state-table-id intern-b))))))
-      (ci.intern-compat-state-install! installed)
-      (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
+            a-region)
+            [(No) true]
+            [_ false])
+          (match (cis.intern-structural-session-arena-phase-record-for-raw
+            session-a
+            (cis.intern-structural-key-raw a-pair))
+            [(No) true]
+            [_ false])))
       (let
-        [stale-before-rebind : bool
-          (not (cis.intern-structural-session-valid? session-a))]
-        [next-source-a : ci.InternSourceNameSessionHandle
-          (ci.intern-source-name-session-handle-from-state intern-a)]
-        [_rebind-a : unit
-          (tc_core.tc-macro-state-bind-source-names! macro-a next-source-a)]
-        [next-session-a : cis.InternStructuralSessionHandle
-          (cis.intern-structural-session-handle-from-source-names
-            (tc_core.tc-macro-state-source-names macro-a))]
-        [reset-to-ok : bool
-          (and
-            ok
-            stale-before-rebind
-            (not
+        [index : i64 0]
+        (while (< index 700)
+          (let
+            [key : cis.InternStructuralKey
+              (cis.intern-structural-session-composite-triple-key
+                (cis.intern-structural-session-handle-from-source-names
+                  ctx-a-handle)
+                (+ 1000 index)
+                (+ 2000 index)
+                (+ 3000 index))]
+            [phase : cis.InternArenaPhaseIdentity
+              (cis.intern-structural-session-arena-phase-identity
+                session-a
+                (Region
+                  (+ (ci.intern-capacity) 4000 index)
+                  (+ (ci.intern-capacity) 5000 index)))]
+            (unless
               (=
-                (cis.intern-structural-session-current-reset-generation
-                  session-a)
-                session-a-generation))
-            (= (ci.intern-compat-state-structural-count intern-a) 0)
-            (cis.intern-structural-session-valid? next-session-a)
-            (match (cis.intern-structural-session-arena-phase-record-for-raw
-              next-session-a
-              stale-arena-raw)
-              [(No) true]
-              [_ false])
-            (= session-a.address next-session-a.address))]
-        (begin
-          (ci.intern-compat-state-reset! (&mut intern-b))
-          (and
-            reset-to-ok
-            (cis.intern-structural-session-valid? next-session-a)
-            (not (cis.intern-structural-session-valid? session-b))
-            (= (ci.intern-compat-state-structural-count intern-b) 0)
-            (not (= (ci.intern-compat-state-generation intern-b) generation-b))
-            (= (ci.intern-compat-state-pool-len intern-b) 0)))))))
+                (cis_tests.intern-structural-session-key-middle session-a key)
+                (+ 2000 index))
+              (set! ok false))
+            (match (cis.intern-structural-session-arena-phase-record
+              session-a
+              phase)
+              [(Some (Region owner token))
+                (unless
+                  (and
+                    (= owner (+ (ci.intern-capacity) 4000 index))
+                    (= token (+ (ci.intern-capacity) 5000 index)))
+                  (set! ok false))]
+              [_ (set! ok false)])
+            (set! index (+ index 1)))))
+      (set!
+        ok
+        (and
+          ok
+          (= (ci.intern-compat-state-structural-count intern-a) 1407)
+          (= (ci.intern-compat-state-structural-count intern-b) 2)
+          (>=
+            (array-length
+              (__tl-project-field
+                (array-ref intern-a.structural-table-cell 0)
+                kinds))
+            2048)
+          (= (ci.intern-structural-record-slot-bytes) 37)
+          (=
+            (array-length
+              (__tl-project-field
+                (array-ref intern-a.structural-table-cell 0)
+                structural-cache-raws))
+            (ci.intern-structural-cache-capacity))
+          (=
+            (ci.intern-active-table-id)
+            (ci.intern-compat-state-table-id intern-b)))))
+    (ci.intern-compat-state-install! installed)
+    (ci.intern-compat-state-reset-to! (&mut intern-a) 0)
+    (let
+      [stale-before-rebind : bool
+        (not (cis.intern-structural-session-valid? session-a))]
+      [next-source-a : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state intern-a)]
+      [_rebind-a : unit
+        (tc_core.tc-macro-state-bind-source-names! macro-a next-source-a)]
+      [next-session-a : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (tc_core.tc-macro-state-source-names macro-a))]
+      [reset-to-ok : bool
+        (and
+          ok
+          stale-before-rebind
+          (not
+            (=
+              (cis.intern-structural-session-current-reset-generation session-a)
+              session-a-generation))
+          (= (ci.intern-compat-state-structural-count intern-a) 0)
+          (cis.intern-structural-session-valid? next-session-a)
+          (match (cis.intern-structural-session-arena-phase-record-for-raw
+            next-session-a
+            stale-arena-raw)
+            [(No) true]
+            [_ false])
+          (= session-a.address next-session-a.address))]
+      (ci.intern-compat-state-reset! (&mut intern-b))
+      (and
+        reset-to-ok
+        (cis.intern-structural-session-valid? next-session-a)
+        (not (cis.intern-structural-session-valid? session-b))
+        (= (ci.intern-compat-state-structural-count intern-b) 0)
+        (not (= (ci.intern-compat-state-generation intern-b) generation-b))
+        (= (ci.intern-compat-state-pool-len intern-b) 0)))))
 
 (test
   compiler-typecheck-structural-intern-session-isolation
@@ -5453,112 +5326,108 @@
         (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
       [growth-cursor : i64 0]
       [ok : bool true]
-      (begin
-        (tc_core.compiler-tc-macro-profile-reset)
-        (tc_core.compiler-tc-macro-profile-record-entry!
-          macro-state
-          macro-a
-          "profile-dense-module-a/profile-dense-macro"
-          2
-          3)
-        (tc_core.compiler-tc-macro-profile-record-entry!
-          macro-state
-          macro-a
-          "profile-dense-module-a/profile-dense-macro"
-          2
-          5)
-        (tc_core.compiler-tc-macro-profile-record-entry!
-          macro-state
-          macro-a
-          "profile-dense-module-a/profile-dense-macro"
-          6
-          7)
-        (tc_core.compiler-tc-macro-profile-record-entry!
-          macro-state
-          macro-b
-          "profile-dense-module-b/profile-dense-macro"
-          2
-          11)
-        (set!
-          ok
-          (and
-            (= (tc_core.compiler-tc-macro-profile-count) 3)
-            (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
-              macro-a
-              "profile-dense-module-a/profile-dense-macro"
-              2
-              2
-              8)
-            (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 6)
-              macro-a
-              "profile-dense-module-a/profile-dense-macro"
-              6
-              1
-              7)
-            (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-current-entry-index macro-b 2)
-              macro-b
-              "profile-dense-module-b/profile-dense-macro"
-              2
-              1
-              11)))
-        (while (< growth-cursor 32)
-          (begin
-            (tc_core.compiler-tc-macro-profile-record-entry!
-              macro-state
-              macro-b
-              "profile-dense-module-b/profile-dense-macro"
-              (+ growth-cursor 100)
-              growth-cursor)
-            (set! growth-cursor (+ growth-cursor 1))))
-        (set!
-          ok
-          (and
-            ok
-            (= (tc_core.compiler-tc-macro-profile-count) 35)
-            (compiler-typecheck-smoke-macro-profile-entry-eq?
-              (tc_core.compiler-tc-macro-profile-current-entry-index
-                macro-b
-                131)
-              macro-b
-              "profile-dense-module-b/profile-dense-macro"
-              131
-              1
-              31)))
-        (tc_core.compiler-tc-macro-profile-reset)
-        (set!
-          ok
-          (and
-            ok
-            (tc_core.compiler-tc-macro-profile-active?)
-            (= (tc_core.compiler-tc-macro-profile-count) 0)
-            (=
-              (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
-              -1)))
+      (tc_core.compiler-tc-macro-profile-reset)
+      (tc_core.compiler-tc-macro-profile-record-entry!
+        macro-state
+        macro-a
+        "profile-dense-module-a/profile-dense-macro"
+        2
+        3)
+      (tc_core.compiler-tc-macro-profile-record-entry!
+        macro-state
+        macro-a
+        "profile-dense-module-a/profile-dense-macro"
+        2
+        5)
+      (tc_core.compiler-tc-macro-profile-record-entry!
+        macro-state
+        macro-a
+        "profile-dense-module-a/profile-dense-macro"
+        6
+        7)
+      (tc_core.compiler-tc-macro-profile-record-entry!
+        macro-state
+        macro-b
+        "profile-dense-module-b/profile-dense-macro"
+        2
+        11)
+      (set!
+        ok
+        (and
+          (= (tc_core.compiler-tc-macro-profile-count) 3)
+          (compiler-typecheck-smoke-macro-profile-entry-eq?
+            (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
+            macro-a
+            "profile-dense-module-a/profile-dense-macro"
+            2
+            2
+            8)
+          (compiler-typecheck-smoke-macro-profile-entry-eq?
+            (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 6)
+            macro-a
+            "profile-dense-module-a/profile-dense-macro"
+            6
+            1
+            7)
+          (compiler-typecheck-smoke-macro-profile-entry-eq?
+            (tc_core.compiler-tc-macro-profile-current-entry-index macro-b 2)
+            macro-b
+            "profile-dense-module-b/profile-dense-macro"
+            2
+            1
+            11)))
+      (while (< growth-cursor 32)
         (tc_core.compiler-tc-macro-profile-record-entry!
           macro-state
           macro-b
           "profile-dense-module-b/profile-dense-macro"
-          2
-          13)
-        (set!
-          ok
-          (and
-            ok
-            (compiler-typecheck-smoke-macro-profile-entry-eq?
-              0
-              macro-b
-              "profile-dense-module-b/profile-dense-macro"
-              2
-              1
-              13)))
-        (tc_core.compiler-tc-macro-profile-clear)
+          (+ growth-cursor 100)
+          growth-cursor)
+        (set! growth-cursor (+ growth-cursor 1)))
+      (set!
+        ok
         (and
           ok
-          (not (tc_core.compiler-tc-macro-profile-active?))
-          (= (tc_core.compiler-tc-macro-profile-count) 0))))))
+          (= (tc_core.compiler-tc-macro-profile-count) 35)
+          (compiler-typecheck-smoke-macro-profile-entry-eq?
+            (tc_core.compiler-tc-macro-profile-current-entry-index macro-b 131)
+            macro-b
+            "profile-dense-module-b/profile-dense-macro"
+            131
+            1
+            31)))
+      (tc_core.compiler-tc-macro-profile-reset)
+      (set!
+        ok
+        (and
+          ok
+          (tc_core.compiler-tc-macro-profile-active?)
+          (= (tc_core.compiler-tc-macro-profile-count) 0)
+          (=
+            (tc_core.compiler-tc-macro-profile-current-entry-index macro-a 2)
+            -1)))
+      (tc_core.compiler-tc-macro-profile-record-entry!
+        macro-state
+        macro-b
+        "profile-dense-module-b/profile-dense-macro"
+        2
+        13)
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-smoke-macro-profile-entry-eq?
+            0
+            macro-b
+            "profile-dense-module-b/profile-dense-macro"
+            2
+            1
+            13)))
+      (tc_core.compiler-tc-macro-profile-clear)
+      (and
+        ok
+        (not (tc_core.compiler-tc-macro-profile-active?))
+        (= (tc_core.compiler-tc-macro-profile-count) 0)))))
 
 (define (main) : i64
   (begin

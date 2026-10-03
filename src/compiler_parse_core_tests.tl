@@ -32,9 +32,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgram
       (parser.parse-ast-program-with-cfg-and-pools toks cfgs pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-program [toks : (__tl_dyn-array token.SpannedToken)]) : parser.ResultAstProgram
   (parse-ast-program-with-cfg toks (parser.compiler-cfg-empty)))
@@ -597,16 +596,15 @@
         [(Ok toks)
           (let
             [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            (begin
-              (set! (array-ref cur 0) 0)
-              (match (reader.form-spanned-result (& toks) (&mut cur))
-                [(Ok form)
-                  (let
-                    [span : token.SourceSpan (reader.spanned-sexpr-span form)]
-                    (and
-                      (= (token.span-start-line span) 1)
-                      (= (token.span-start-col span) 1)))]
-                [(Err _) false])))]
+            (set! (array-ref cur 0) 0)
+            (match (reader.form-spanned-result (& toks) (&mut cur))
+              [(Ok form)
+                (let
+                  [span : token.SourceSpan (reader.spanned-sexpr-span form)]
+                  (and
+                    (= (token.span-start-line span) 1)
+                    (= (token.span-start-col span) 1)))]
+              [(Err _) false]))]
         [(Err _) false]))))
 
 (define (compiler-parse-diagnostic-location-ok?
@@ -3744,41 +3742,39 @@
       "parse: duplicate :spmd-callable lanes field")))
 
 (define (compiler-parse-origin-lookup-cache-tests-ok?) : bool
-  (begin
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 11 2 0 0)
+  ;; Re-registering the same query must replace, rather than duplicate, the
+  ;; earlier value because append-order defines the authoritative sidecar.
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 29 3 0 0)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 2 101 7 3 4 5 6 7)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 202 9 2 0 0 101 7)
+  (let
+    [direct : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 101 7)]
+    [separate-domain : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 2 101 7)]
+    [alias : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 202 9)]
+    [missing : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 303 11)]
+    [ok : bool
+      (and
+        (= parser.compiler-parse-semantic-origin-lookup-len 3)
+        (= direct.kind 1)
+        (= direct.run-start 29)
+        (= direct.run-count 3)
+        (= separate-domain.kind 3)
+        (= separate-domain.run-start 4)
+        (= separate-domain.run-count 5)
+        (= separate-domain.source-key 6)
+        (= separate-domain.source-slot 7)
+        (= alias.kind 2)
+        (= alias.source-key 101)
+        (= alias.source-slot 7)
+        (= missing.kind 0))]
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 11 2 0 0)
-    ;; Re-registering the same query must replace, rather than duplicate, the
-    ;; earlier value because append-order defines the authoritative sidecar.
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 29 3 0 0)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 2 101 7 3 4 5 6 7)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 202 9 2 0 0 101 7)
-    (let
-      [direct : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 101 7)]
-      [separate-domain : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 2 101 7)]
-      [alias : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 202 9)]
-      [missing : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 303 11)]
-      [ok : bool
-        (and
-          (= parser.compiler-parse-semantic-origin-lookup-len 3)
-          (= direct.kind 1)
-          (= direct.run-start 29)
-          (= direct.run-count 3)
-          (= separate-domain.kind 3)
-          (= separate-domain.run-start 4)
-          (= separate-domain.run-count 5)
-          (= separate-domain.source-key 6)
-          (= separate-domain.source-slot 7)
-          (= alias.kind 2)
-          (= alias.source-key 101)
-          (= alias.source-slot 7)
-          (= missing.kind 0))]
-      (begin
-        (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
-        ok))))
+    ok))
 
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source

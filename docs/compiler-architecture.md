@@ -184,6 +184,12 @@ focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispat
 records routing, residual inline bodies and the state/evaluation/provenance
 contract for those boundaries.
 
+Enum struct-payload patterns use the same element binder as tuple and array
+patterns. Owned payloads supply the loaded value; borrowed payloads supply the
+address within the scrutinee. The binding mode and scrutinee lifetime reach
+every nested field and each subsequent payload, so destructuring never turns
+borrowed inline data into a temporary or moves its owner.
+
 Raw data-pointer return analysis requests a `CompilerLowerRequest` with a
 `PointerProofRequest.Requested` owner. Standalone callers use
 `lower-compiler-source-with-request`; driver callers install the request on

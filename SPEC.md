@@ -5032,10 +5032,12 @@ explicit constructors.
   ```
 
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
-  the same variant, wildcard, literal payload, and nested variant pattern
-  forms, but inspect the enum without moving the owner. Payload bindings are
+  the same variant, wildcard, literal payload, nested variant, and positional
+  struct payload pattern forms, but inspect the enum without moving the owner.
+  Payload bindings are
   immutable references tied to the borrowed scrutinee lifetime; `String`
-  payloads bind as borrowed `str` references.
+  payloads and `String` struct fields bind as borrowed `str` references. Nested
+  struct, tuple and fixed-array field patterns preserve that same lifetime.
 - Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
   the explicit `(box inner-pattern)` pattern. The form takes exactly one inner
   pattern, reads the boxed `T`, and checks/binds the inner pattern against

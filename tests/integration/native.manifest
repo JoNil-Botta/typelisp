@@ -698,6 +698,7 @@ register_group_phi_swap_cycle|all|-|tests/integration/register_group_phi_swap_cy
 float_phi_swap_cycle|all|-|tests/integration/float_phi_swap_cycle.tl|42|-|-|-|-
 register_group_borrowed_match|all|-|tests/integration/register_group_borrowed_match.tl|42|-|-|-|-
 borrowed_enum_inline_struct_payload|all|-|tests/integration/borrowed_enum_inline_struct_payload.tl|42|-|-|-|-
+borrowed_enum_struct_pattern|all|0,1,2|tests/integration/borrowed_enum_struct_pattern.tl|42|-|-|struct_match_pattern_geom.tl stdlib/io.tl|stage-stdlib
 register_group_try|all|-|tests/integration/register_group_try.tl|42|-|-|-|-
 try_propagation|all|-,0,1,2|tests/integration/try_propagation.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 try_err_payloads|all|-,0,1,2|tests/integration/try_err_payloads.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

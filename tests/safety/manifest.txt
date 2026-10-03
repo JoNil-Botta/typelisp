@@ -633,6 +633,10 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_enum_struct_pattern_arity_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl|-|pattern arity mismatch: expected 2, found 1
+borrowed_enum_struct_pattern_literal_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl|-|borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern
+borrowed_enum_struct_pattern_escape_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_enum_struct_pattern_mutation_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl|-|cannot assign to borrowed place `item`
 slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
 slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
 slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch

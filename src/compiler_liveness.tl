@@ -35,33 +35,32 @@
 
 (define (compiler-live-label-set-ref [set : CompilerLiveLabelSet] [index : i64]) : i64
   (match set
-    [(CompilerLiveLabelSet.Nil) -1]
-    [(CompilerLiveLabelSet.Dense items len)
-      (array-ref items (- (- len 1) index))]))
+    [(Nil) -1]
+    [(Dense items len) (array-ref items (- (- len 1) index))]))
 
 (define (compiler-live-label-set-tail [set : CompilerLiveLabelSet]) : CompilerLiveLabelSet
   (match set
-    [(CompilerLiveLabelSet.Nil) CompilerLiveLabelSet.Nil]
-    [(CompilerLiveLabelSet.Dense items len)
+    [(Nil) Nil]
+    [(Dense items len)
       (if (<= len 1)
-        CompilerLiveLabelSet.Nil
-        (CompilerLiveLabelSet.Dense items (- len 1)))]))
+        Nil
+        (Dense items (- len 1)))]))
 
 (define (compiler-live-label-set-cons
   [value : i64]
   [set : CompilerLiveLabelSet]) : CompilerLiveLabelSet
   (match set
-    [(CompilerLiveLabelSet.Nil)
+    [(Nil)
       (let
         [items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
         (begin
           (set! (array-ref items 0) value)
-          (CompilerLiveLabelSet.Dense items 1)))]
-    [(CompilerLiveLabelSet.Dense items len)
+          (Dense items 1)))]
+    [(Dense items len)
       (if (< len (array-length items))
         (begin
           (set! (array-ref items len) value)
-          (CompilerLiveLabelSet.Dense items (+ len 1)))
+          (Dense items (+ len 1)))
         (let
           [capacity : i64
             (if (< len 4)
@@ -75,7 +74,7 @@
                 (set! (array-ref bigger index) (array-ref items index))
                 (set! index (+ index 1))))
             (set! (array-ref bigger len) value)
-            (CompilerLiveLabelSet.Dense bigger (+ len 1)))))]))
+            (Dense bigger (+ len 1)))))]))
 
 (defstruct CompilerLiveIndexVec
   (items (__tl_dyn-array i64)))
@@ -856,8 +855,8 @@
   [set : CompilerLiveLabelSet]
   [value : i64]) : bool
   (match (compiler-live-shared-view set)
-    [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Dense _ _)
+    [(Nil) false]
+    [(Dense _ _)
       (if (=
         (compiler-live-label-set-ref (compiler-live-shared-view set) 0)
         value)
@@ -875,19 +874,19 @@
 
 (define (compiler-live-label-set-count [set : CompilerLiveLabelSet]) : i64
   (match set
-    [(CompilerLiveLabelSet.Nil) 0]
-    [(CompilerLiveLabelSet.Dense _ len) len]))
+    [(Nil) 0]
+    [(Dense _ len) len]))
 
 (define (compiler-live-value-vars [value : ir.CompilerIrValue]) : CompilerLiveI64Set
   (match value
-    [(ir.CompilerIrValue.Var id) (compiler-live-set1 id)]
+    [(Var id) (compiler-live-set1 id)]
     [_ (compiler-live-set-empty)]))
 
 (define (compiler-live-value-vars-into
   [set : CompilerLiveI64Set]
   [value : ir.CompilerIrValue]) : CompilerLiveI64Set
   (match value
-    [(ir.CompilerIrValue.Var id) (compiler-live-set-insert set id)]
+    [(Var id) (compiler-live-set-insert set id)]
     [_ set]))
 
 (define (compiler-live-values2-vars
@@ -908,13 +907,11 @@
 
 (define (compiler-live-call-args-vars [args : ir.CompilerIrCallArgs]) : CompilerLiveI64Set
   (match args
-    [(ir.CompilerIrCallArgs.Nil) (compiler-live-set-empty)]
-    [(ir.CompilerIrCallArgs.One value) (compiler-live-value-vars value)]
-    [(ir.CompilerIrCallArgs.Two a b) (compiler-live-values2-vars a b)]
-    [(ir.CompilerIrCallArgs.Array values)
-      (compiler-live-call-args-array-vars values 0)]
-    [(ir.CompilerIrCallArgs.Sret values _)
-      (compiler-live-call-args-array-vars values 0)]))
+    [(Nil) (compiler-live-set-empty)]
+    [(One value) (compiler-live-value-vars value)]
+    [(Two a b) (compiler-live-values2-vars a b)]
+    [(Array values) (compiler-live-call-args-array-vars values 0)]
+    [(Sret values _) (compiler-live-call-args-array-vars values 0)]))
 
 (define (compiler-live-spmd-call-args-seq-vars
   [seq : ir.CompilerIrSpmdCallArgSeq]
@@ -922,7 +919,7 @@
   (if (>= index seq.len)
     (compiler-live-set-empty)
     (match (compiler-live-array-element-shared-view seq.slots index)
-      [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+      [(Arg _ value _)
         (compiler-live-value-vars-into
           (compiler-live-spmd-call-args-seq-vars seq (+ index 1))
           value)])))
@@ -940,7 +937,7 @@
       (while (< index cases.len)
         (begin
           (match (ir.compiler-ir-switch-case-seq-ref cases index)
-            [(ir.CompilerIrSwitchCase.Case _ label)
+            [(Case _ label)
               (set! out (compiler-live-label-set-insert out label))])
           (set! index (+ index 1))))
       out)))
@@ -958,7 +955,7 @@
     [instr : ir.CompilerIrInstr
       (owned_view.compiler-owned-reference-shared-view instr)]
     (match (compiler-live-shared-view instr)
-      [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
+      [(AddrOf _ src) (compiler-live-set1 src)]
       [_
         (ir.compiler-ir-instr-fold-uses
           instr
@@ -1021,7 +1018,7 @@
   [n : i64]
   [value : ir.CompilerIrValue]) : i64
   (match value
-    [(ir.CompilerIrValue.Var id) (compiler-live-use-ids-push! out n id)]
+    [(Var id) (compiler-live-use-ids-push! out n id)]
     [_ n]))
 
 (define (compiler-live-use-ids-add-maybe-value!
@@ -1029,9 +1026,8 @@
   [n : i64]
   [value : ir.CompilerIrMaybeValue]) : i64
   (match value
-    [(ir.CompilerIrMaybeValue.No) n]
-    [(ir.CompilerIrMaybeValue.Some inner)
-      (compiler-live-use-ids-add-value! out n inner)]))
+    [(No) n]
+    [(Some inner) (compiler-live-use-ids-add-value! out n inner)]))
 
 (define (compiler-live-use-ids-add-value-array!
   [out : (&mut out (__tl_dyn-array i64))]
@@ -1054,18 +1050,15 @@
   [n : i64]
   [args : ir.CompilerIrCallArgs]) : i64
   (match args
-    [(ir.CompilerIrCallArgs.Nil) n]
-    [(ir.CompilerIrCallArgs.One value)
-      (compiler-live-use-ids-add-value! out n value)]
-    [(ir.CompilerIrCallArgs.Two a b)
+    [(Nil) n]
+    [(One value) (compiler-live-use-ids-add-value! out n value)]
+    [(Two a b)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out n a)
         b)]
-    [(ir.CompilerIrCallArgs.Array values)
-      (compiler-live-use-ids-add-value-array! out n values 0)]
-    [(ir.CompilerIrCallArgs.Sret values _)
-      (compiler-live-use-ids-add-value-array! out n values 0)]))
+    [(Array values) (compiler-live-use-ids-add-value-array! out n values 0)]
+    [(Sret values _) (compiler-live-use-ids-add-value-array! out n values 0)]))
 
 ;; Walk dense value slots in place; no transient chain is materialized.
 (define (compiler-live-use-ids-add-value-seq-from!
@@ -1119,8 +1112,7 @@
     (compiler-live-use-ids-add-spmd-args-seq!
       out
       (match (array-ref seq.slots index)
-        [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-          (compiler-live-use-ids-add-value! out n value)])
+        [(Arg _ value _) (compiler-live-use-ids-add-value! out n value)])
       seq
       (+ index 1))))
 
@@ -1139,84 +1131,75 @@
   [instr : ir.CompilerIrInstr]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match instr
-    [(ir.CompilerIrInstr.Mov _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.Alloc _ _) 0]
-    [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
-    [(ir.CompilerIrInstr.Gep _ base offset _)
+    [(Mov _ src _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(Alloc _ _) 0]
+    [(AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
+    [(Gep _ base offset _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 base)
         offset)]
-    [(ir.CompilerIrInstr.Load _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.StorePtr dst src _)
+    [(Load _ src _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(StorePtr dst src _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
-    [(ir.CompilerIrInstr.StoreOwned dst src _)
+    [(StoreOwned dst src _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
-    [(ir.CompilerIrInstr.CopyBytes dst src _)
+    [(CopyBytes dst src _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
+    [(BoundsCheck index length _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 index)
         length)]
-    [(ir.CompilerIrInstr.Cast _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+    [(Cast _ src _ _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(Bitcast _ src _ _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(BinOp _ _ lhs rhs _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 lhs)
         rhs)]
-    [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.LaneId _ _ _) 0]
-    [(ir.CompilerIrInstr.Splat _ value _ _)
-      (compiler-live-use-ids-add-value! out 0 value)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+    [(UnOp _ _ src _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(LaneId _ _ _) 0]
+    [(Splat _ value _ _) (compiler-live-use-ids-add-value! out 0 value)]
+    [(VectorBinOp payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorBinOpPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value! out 0 payload.lhs)
           payload.rhs))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+    [(VectorPrefix payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorPrefixPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value! out 0 payload.src)
           payload.carry))]
-    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
+    [(VectorReduce _ _ src _ _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(VectorCompare payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorComparePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value! out 0 payload.lhs)
           payload.rhs))]
-    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+    [(MaskBinOp _ _ lhs rhs _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 lhs)
         rhs)]
-    [(ir.CompilerIrInstr.MaskNot _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.Select payload-box)
+    [(MaskNot _ src _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(MaskReduce _ _ src _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(Select payload-box)
       (let
         [payload : ir.CompilerIrInstrSelectPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
@@ -1226,12 +1209,12 @@
             (compiler-live-use-ids-add-value! out 0 payload.mask)
             payload.on-true)
           payload.on-false))]
-    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
+    [(VectorLoad _ base index _ _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 base)
         index)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
+    [(VectorStore payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorStorePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
@@ -1241,7 +1224,7 @@
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index)
           payload.value))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+    [(PredicatedStore payload-box)
       (let
         [payload : ir.CompilerIrInstrPredicatedStorePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
@@ -1254,7 +1237,7 @@
               payload.index)
             payload.value)
           payload.mask))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+    [(PredicatedLoad payload-box)
       (let
         [payload : ir.CompilerIrInstrPredicatedLoadPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
@@ -1264,7 +1247,7 @@
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index)
           payload.mask))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
+    [(GatherLoad payload-box)
       (let
         [payload : ir.CompilerIrInstrGatherLoadPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
@@ -1274,7 +1257,7 @@
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index-base)
           payload.index))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+    [(VectorShuffle payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorShufflePayload (deref payload-box)]
         (compiler-live-use-ids-add-maybe-value!
@@ -1287,36 +1270,33 @@
               payload.selector-low)
             payload.active-lanes)
           payload.selector-high))]
-    [(ir.CompilerIrInstr.TailMask _ index len _)
+    [(TailMask _ index len _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 index)
         len)]
-    [(ir.CompilerIrInstr.EntryArgc _) 0]
-    [(ir.CompilerIrInstr.EntryArgv _) 0]
-    [(ir.CompilerIrInstr.EntryEnvp _) 0]
-    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
+    [(EntryArgc _) 0]
+    [(EntryArgv _) 0]
+    [(EntryEnvp _) 0]
+    [(CpuId _ leaf subleaf _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 leaf)
         subleaf)]
-    [(ir.CompilerIrInstr.Xgetbv _ index)
-      (compiler-live-use-ids-add-value! out 0 index)]
-    [(ir.CompilerIrInstr.Syscall _ args)
-      (compiler-live-use-ids-add-call-args! out 0 args)]
-    [(ir.CompilerIrInstr.Call _ _ args _)
-      (compiler-live-use-ids-add-call-args! out 0 args)]
-    [(ir.CompilerIrInstr.CallIndirect _ func args _)
+    [(Xgetbv _ index) (compiler-live-use-ids-add-value! out 0 index)]
+    [(Syscall _ args) (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(Call _ _ args _) (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(CallIndirect _ func args _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
-    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
+    [(CallIndirectC _ func args _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+    [(CallCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallCAbiStoreResultPayload
           (deref payload-box)]
@@ -1324,7 +1304,7 @@
           out
           (compiler-live-use-ids-add-call-args! out 0 payload.args)
           payload.base))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+    [(CallIndirectCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
           (deref payload-box)]
@@ -1335,38 +1315,29 @@
             (compiler-live-use-ids-add-call-args! out 0 payload.args)
             payload.base)
           payload.callee))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
+    [(SpmdCall payload-box)
       (let
         [payload : ir.CompilerIrInstrSpmdCallPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-spmd-args! out 0 payload.args)
           payload.active-mask))]
-    [(ir.CompilerIrInstr.TailCall _ args _)
-      (compiler-live-use-ids-add-call-args! out 0 args)]
-    [(ir.CompilerIrInstr.Store _ value _)
-      (compiler-live-use-ids-add-value! out 0 value)]
-    [(ir.CompilerIrInstr.Branch cond _ _)
-      (compiler-live-use-ids-add-value! out 0 cond)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (compiler-live-use-ids-add-value! out 0 cond)]
-    [(ir.CompilerIrInstr.Return value)
-      (compiler-live-use-ids-add-maybe-value! out 0 value)]
-    [(ir.CompilerIrInstr.Phi _ inputs _)
-      (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
-    [(ir.CompilerIrInstr.Pack _ words _)
-      (compiler-live-use-ids-add-value-seq! out 0 words)]
-    [(ir.CompilerIrInstr.Word _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.Jump _) 0]
-    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+    [(TailCall _ args _) (compiler-live-use-ids-add-call-args! out 0 args)]
+    [(Store _ value _) (compiler-live-use-ids-add-value! out 0 value)]
+    [(Branch cond _ _) (compiler-live-use-ids-add-value! out 0 cond)]
+    [(TotalEnumBranch cond _ _) (compiler-live-use-ids-add-value! out 0 cond)]
+    [(Return value) (compiler-live-use-ids-add-maybe-value! out 0 value)]
+    [(Phi _ inputs _) (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
+    [(Pack _ words _) (compiler-live-use-ids-add-value-seq! out 0 words)]
+    [(Word _ src _ _) (compiler-live-use-ids-add-value! out 0 src)]
+    [(Jump _) 0]
+    [(TailCallIndirect func args _)
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
-    [(ir.CompilerIrInstr.Switch index _ _ _)
-      (compiler-live-use-ids-add-value! out 0 index)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
+    [(Switch index _ _ _) (compiler-live-use-ids-add-value! out 0 index)]
+    [(TotalEnumSwitch index _ _ _ _)
       (compiler-live-use-ids-add-value! out 0 index)]))
 
 ;; Edge-precise counterpart of compiler-live-instr-use-ids-into!: a phi's inputs
@@ -1375,7 +1346,7 @@
   [instr : ir.CompilerIrInstr]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match (compiler-live-shared-view instr)
-    [(ir.CompilerIrInstr.Phi _ _ _) 0]
+    [(Phi _ _ _) 0]
     [_ (compiler-live-instr-use-ids-into! instr out)]))
 
 ;; One shared extraction buffer. Every consumer extracts the ids and consumes
@@ -1542,7 +1513,7 @@
     (begin
       (while (< index count)
         (match (ir.compiler-ir-instr-seq-ref instrs index)
-          [(ir.CompilerIrInstr.Phi _ _ _) (set! index (+ index 1))]
+          [(Phi _ _ _) (set! index (+ index 1))]
           [_ (return index)]))
       index)))
 
@@ -1785,63 +1756,47 @@
 
 (define (compiler-live-instr-seq-last [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
   (if (ir.compiler-ir-instr-seq-empty? instrs)
-    CompilerLiveMaybeInstr.No
-    (CompilerLiveMaybeInstr.Some
+    No
+    (Some
       (ir.compiler-ir-instr-seq-ref
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1)))))
 
 (define (compiler-live-block-successors [block : ir.CompilerIrBlock]) : CompilerLiveLabelSet
   (match block
-    [(ir.CompilerIrBlock.Block _ instrs)
+    [(Block _ instrs)
       (match (compiler-live-instr-seq-last instrs)
-        [(CompilerLiveMaybeInstr.No) CompilerLiveLabelSet.Nil]
-        [(CompilerLiveMaybeInstr.Some instr)
+        [(No) Nil]
+        [(Some instr)
           (match instr
-            [(ir.CompilerIrInstr.Jump target)
-              (compiler-live-label-set-cons target CompilerLiveLabelSet.Nil)]
-            [(ir.CompilerIrInstr.Branch _ true-label false-label)
+            [(Jump target) (compiler-live-label-set-cons target Nil)]
+            [(Branch _ true-label false-label)
               (compiler-live-label-set-insert
-                (compiler-live-label-set-cons
-                  true-label
-                  CompilerLiveLabelSet.Nil)
+                (compiler-live-label-set-cons true-label Nil)
                 false-label)]
-            [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+            [(TotalEnumBranch _ true-label false-label)
               (compiler-live-label-set-insert
-                (compiler-live-label-set-cons
-                  true-label
-                  CompilerLiveLabelSet.Nil)
+                (compiler-live-label-set-cons true-label Nil)
                 false-label)]
-            [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+            [(Switch _ _ cases default-label)
               (compiler-live-switch-case-successors
-                (compiler-live-label-set-cons
-                  default-label
-                  CompilerLiveLabelSet.Nil)
+                (compiler-live-label-set-cons default-label Nil)
                 cases)]
-            [(ir.CompilerIrInstr.TotalEnumSwitch
-                _
-                _
-                cases
-                default-label
-                trap-label)
+            [(TotalEnumSwitch _ _ cases default-label trap-label)
               (compiler-live-switch-case-successors
                 (if (= trap-label (ir.compiler-ir-label-none))
-                  (compiler-live-label-set-cons
-                    default-label
-                    CompilerLiveLabelSet.Nil)
+                  (compiler-live-label-set-cons default-label Nil)
                   (compiler-live-label-set-insert
-                    (compiler-live-label-set-cons
-                      default-label
-                      CompilerLiveLabelSet.Nil)
+                    (compiler-live-label-set-cons default-label Nil)
                     trap-label))
                 cases)]
-            [_ CompilerLiveLabelSet.Nil])])]))
+            [_ Nil])])]))
 
 (define (compiler-live-build-block-from-use-def
   [block : ir.CompilerIrBlock]
   [use-def : CompilerLiveUseDef]) : CompilerLiveBlock
   (match (compiler-live-shared-view block)
-    [(ir.CompilerIrBlock.Block label _)
+    [(Block label _)
       (CompilerLiveBlock
         label
         use-def.uses
@@ -1855,8 +1810,8 @@
   [ids : (& ids live_label_map.Map)]
   [label : i64]) : i64
   (match (live_label_map.get-borrowed ids label)
-    [(live_label_map.LookupFound slot) slot]
-    [(live_label_map.LookupMissing) -1]))
+    [(LookupFound slot) slot]
+    [(LookupMissing) -1]))
 
 (define (compiler-live-i64-array-prefix-copy
   [items : (__tl_dyn-array i64)]
@@ -1879,8 +1834,8 @@
   [items : (&mut items (__tl_dyn-array i64))]
   [index : i64]) : i64
   (match (compiler-live-shared-view labels)
-    [(CompilerLiveLabelSet.Nil) index]
-    [(CompilerLiveLabelSet.Dense _ _)
+    [(Nil) index]
+    [(Dense _ _)
       (let
         [label : i64
           (compiler-live-label-set-ref (compiler-live-shared-view labels) 0)]
@@ -2177,7 +2132,7 @@
   [words : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : CompilerLiveBlock
   (match ir-block
-    [(ir.CompilerIrBlock.Block _ instrs)
+    [(Block _ instrs)
       (let
         [items : (__tl_dyn-array CompilerLiveI64Set)
           (__tl_make-array
@@ -2201,7 +2156,7 @@
 
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _)
       (let
         [seq : ir.CompilerIrBlockSeq
           (compiler-live-ir-block-list-to-seq blocks)]
@@ -2218,7 +2173,7 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             false)
-          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks)))]))
+          (Liveness graph.ids graph.blocks)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Edge-precise (SSA) phi liveness -- used by scalar opt2 allocation and its
@@ -2246,7 +2201,7 @@
 ;; ---------------------------------------------------------------------------
 (define (compiler-live-instr-uses-nophi [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (match (compiler-live-shared-view instr)
-    [(ir.CompilerIrInstr.Phi _ _ _) (compiler-live-set-empty)]
+    [(Phi _ _ _) (compiler-live-set-empty)]
     [_ (compiler-live-instr-uses instr)]))
 
 ;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
@@ -2270,7 +2225,7 @@
             (- phi-inputs-at-2533-3.len 1))]
         (begin
           (match value
-            [(ir.CompilerIrValue.Var v)
+            [(Var v)
               (let
                 [slot : i64 (compiler-live-label-id-map-get ids label)]
                 (if (>= slot 0)
@@ -2295,9 +2250,9 @@
     (while (< i count)
       (begin
         (match (& (array-ref instrs.slots i))
-          [(ir.CompilerIrInstr.Phi _ _ _)
+          [(Phi _ _ _)
             (match (ir.compiler-ir-instr-seq-ref instrs i)
-              [(ir.CompilerIrInstr.Phi _ inputs _)
+              [(Phi _ inputs _)
                 (compiler-live-phi-out-add-inputs!
                   inputs
                   ids
@@ -2435,32 +2390,30 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             true)
-          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks))))))
+          (Liveness graph.ids graph.blocks))))))
 
 (define (compiler-live-analyze-function-edge-precise
   [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
+    [(Function _ _ _ vars blocks _)
       (compiler-live-analyze-blocks-edge-precise blocks vars)]))
 
 (define (compiler-live-function-block-index
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : i64
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids _)
-      (compiler-live-label-id-map-get (& ids) label)]))
+    [(Liveness ids _) (compiler-live-label-id-map-get (& ids) label)]))
 
 (define (compiler-live-function-find-block
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : CompilerLiveMaybeBlock
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids blocks)
+    [(Liveness ids blocks)
       (let
         [index : i64 (compiler-live-label-id-map-get (& ids) label)]
         (if (>= index 0)
-          (CompilerLiveMaybeBlock.Some
-            (compiler-live-array-element-shared-view blocks index))
-          CompilerLiveMaybeBlock.No))]))
+          (Some (compiler-live-array-element-shared-view blocks index))
+          No))]))
 
 (define (compiler-live-block-defs [block : CompilerLiveBlock]) : CompilerLiveI64Set
   block.defs)
@@ -2488,17 +2441,17 @@
   [label : i64]
   [index : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
-    [(CompilerLiveMaybeBlock.Some block)
+    [(Some block)
       (let
         [block-instr-after (compiler-live-block-instr-after block)]
         (compiler-live-instr-set-vec-nth block-instr-after index))]
-    [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
+    [(No) (compiler-live-set-empty)]))
 
 ;; Dense-array path for liveness analysis.
 ;; Avoids linked-list allocation overhead in the hot self-compile path.
 (define (compiler-live-ir-block-list-to-seq [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockSeq
   (match (compiler-live-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array seq) seq]))
+    [(Array seq) seq]))
 
 (define (compiler-live-build-block-array-with
   [blocks : (& blocks ir.CompilerIrBlockSeq)]
@@ -2518,7 +2471,7 @@
           [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref blocks i)]
           (begin
             (match (compiler-live-shared-view block)
-              [(ir.CompilerIrBlock.Block _ instrs)
+              [(Block _ instrs)
                 (set!
                   (array-ref out i)
                   (compiler-live-build-block-from-use-def
@@ -2551,7 +2504,7 @@
     (while (< i count)
       (begin
         (match (ir.compiler-ir-block-seq-ref blocks i)
-          [(ir.CompilerIrBlock.Block _ instrs)
+          [(Block _ instrs)
             (compiler-live-phi-out-add-seq!
               instrs
               ids

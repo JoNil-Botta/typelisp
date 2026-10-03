@@ -11481,7 +11481,12 @@
   (macro-cache-len i64)
   (hygiene-cache-arena i64)
   (hygiene-cache-arena-root i64)
-  (hygiene-cache-arena-mark i64))
+  (hygiene-cache-arena-mark i64)
+  ;; Per cached view: an `alias.Name` type its bindings still name unresolved,
+  ;; or -1 (see tc-module-view-pending-name), and the type-resolution
+  ;; generation at which it was last seen unresolved.
+  (macro-cache-pending-names (__tl_dyn-array i64))
+  (macro-cache-pending-generations (__tl_dyn-array i64)))
 
 (define (tc-macro-module-env-state-new) : TcMacroModuleEnvStateData
   (TcMacroModuleEnvStateData
@@ -11496,7 +11501,9 @@
     0
     0
     0
-    0))
+    0
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
 
 (define (tc-macro-module-env-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -30962,6 +30969,110 @@
 ;; Seed the existing per-module `seen` set with compile-root value names once.
 ;; A collision then takes the same LookupFound path as a repeated local name,
 ;; avoiding a second symbol-table lookup for every imported declaration.
+;; A module view binds some of its declarations (unsafe ones, and those whose
+;; name the compile root or another declaration of the module also declares)
+;; with their types resolved when the view is built. During macro expansion a
+;; lazily imported alias can still be unpublished then (`m.Map` of a generated
+;; module the root materialized first), and such a type keeps naming it
+;; unresolved. The view records one such name; the macro view cache rebuilds it
+;; once that name resolves instead of typing later code against it (#8614).
+(define tc-module-view-pending-name : i64
+  -1)
+
+;; The first `alias.Name` type `ty` still names unresolved, or -1. A resolved
+;; nominal is an Enum or Struct node; a plain type parameter has no dot.
+(define (tc-type-unresolved-alias-name [ctx : TcContext] [ty : ast.AstType]) : i64
+  (match ty
+    [(Func args ret)
+      (let
+        [in-args : i64
+          (tc-type-list-unresolved-alias-name-at
+            ctx
+            (ast.ast-type-list-box-shared-view args)
+            0)]
+        (if (>= in-args 0)
+          in-args
+          (tc-type-id-unresolved-alias-name ctx ret)))]
+    [(Tuple elems)
+      (tc-type-list-unresolved-alias-name-at
+        ctx
+        (ast.ast-type-list-box-shared-view elems)
+        0)]
+    [(Array elem _) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(DynArray elem) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(Slice elem) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(Box elem) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(CFunc signature _) (tc-type-id-unresolved-alias-name ctx signature)]
+    [(Ptr elem) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(MutPtr elem) (tc-type-id-unresolved-alias-name ctx elem)]
+    [(Ref _ inner) (tc-type-id-unresolved-alias-name ctx inner)]
+    [(MutRef _ inner) (tc-type-id-unresolved-alias-name ctx inner)]
+    [(Region _ inner) (tc-type-id-unresolved-alias-name ctx inner)]
+    [(Invalidate _ inner) (tc-type-id-unresolved-alias-name ctx inner)]
+    [(VarArgs name _) (tc-unresolved-alias-name-or-none ctx name)]
+    [(Var name) (tc-unresolved-alias-name-or-none ctx name)]
+    [_ -1]))
+
+(define (tc-unresolved-alias-name-or-none [ctx : TcContext] [name : i64]) : i64
+  (if (>= (tc-name-first-dot-id (tc-context-structural-session ctx) name) 0)
+    name
+    -1))
+
+(define (tc-type-id-unresolved-alias-name [ctx : TcContext] [id : i64]) : i64
+  (tc-type-unresolved-alias-name ctx (tc-context-type-get ctx id)))
+
+(define (tc-type-list-unresolved-alias-name-at
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [index : i64]) : i64
+  (if (>= index (ast.ast-type-list-len (& types)))
+    -1
+    (let
+      [found : i64
+        (tc-type-id-unresolved-alias-name
+          ctx
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))]
+      (if (>= found 0)
+        found
+        (tc-type-list-unresolved-alias-name-at ctx types (+ index 1))))))
+
+;; Whether `name` (an `alias.Name` type of `module-id`) still fails to resolve.
+(define (tc-module-view-pending-name-unresolved?
+  [ctx : TcContext]
+  [module : String]
+  [module-id : i64]
+  [name : i64]) : bool
+  (let
+    [module-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
+    (>=
+      (tc-type-unresolved-alias-name
+        module-ctx
+        (tc-resolve-type module-ctx (Var name)))
+      0)))
+
+(define (tc-module-view-note-type! [ctx : TcContext] [ty : ast.AstType]) : unit
+  (if (< tc-module-view-pending-name 0)
+    (set! tc-module-view-pending-name (tc-type-unresolved-alias-name ctx ty))
+    unit))
+
+(define (tc-module-view-bind-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [ty : ast.AstType]) : TcTypeEnv
+  (begin
+    (tc-module-view-note-type! ctx (tc-global-shared-view ty))
+    (tc-bind-id env name-id ty)))
+
+(define (tc-module-view-bind-unsafe-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [ty : ast.AstType]) : TcTypeEnv
+  (begin
+    (tc-module-view-note-type! ctx (tc-global-shared-view ty))
+    (tc-bind-unsafe-id env name-id ty)))
+
 (define (tc-module-local-root-shadow-name-note!
   [session : cis.InternStructuralSessionHandle]
   [seen : (&mut seen tc_i64_i64_map.Map)]
@@ -31150,7 +31261,8 @@
         (tc-bind-enum-variants-local-shadowed-at!
           ctx
           (if (tc-module-local-name-should-bind! ctx env seen name)
-            (tc-bind-id
+            (tc-module-view-bind-id
+              ctx
               env
               name
               (tc-enum-variant-constructor-type-id
@@ -31180,35 +31292,35 @@
           [(DefFn decl-meta name _ _ _ _)
             (let
               [ty : ast.AstType (try (tc-top-decl-type ctx inner))]
-              (Ok (tc-bind-unsafe-id env name ty)))]
+              (Ok (tc-module-view-bind-unsafe-id ctx env name ty)))]
           [(Extern decl-meta name kind _ _)
             (let
               [ty : ast.AstType (try (tc-top-decl-type ctx inner))]
-              (Ok (tc-bind-unsafe-id env name ty)))]
+              (Ok (tc-module-view-bind-unsafe-id ctx env name ty)))]
           [_ (Ok env)]))]
     [(Def decl-meta name _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
         (let
           [ty : ast.AstType (try (tc-top-decl-type-with-env ctx env decl))]
-          (Ok (tc-bind-id env name ty)))
+          (Ok (tc-module-view-bind-id ctx env name ty)))
         (Ok env))]
     [(DefFn decl-meta name _ _ _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
         (let
           [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
-          (Ok (tc-bind-id env name ty)))
+          (Ok (tc-module-view-bind-id ctx env name ty)))
         (Ok env))]
     [(DefDispatch decl-meta name _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
         (let
           [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
-          (Ok (tc-bind-id env name ty)))
+          (Ok (tc-module-view-bind-id ctx env name ty)))
         (Ok env))]
     [(Extern decl-meta name kind _ _)
       (if (tc-module-local-name-should-bind! ctx env seen name)
         (let
           [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
-          (Ok (tc-bind-id env name ty)))
+          (Ok (tc-module-view-bind-id ctx env name ty)))
         (Ok env))]
     [(DefEnum decl-meta name cleanup variants)
       (let
@@ -31261,7 +31373,7 @@
           (tc-bind-struct-cleanup-local-shadowed!
             ctx
             (if (tc-module-local-name-should-bind! ctx env seen name)
-              (tc-bind-id env name constructor-ty)
+              (tc-module-view-bind-id ctx env name constructor-ty)
               env)
             seen
             cleanup
@@ -31280,7 +31392,7 @@
           (tc-bind-struct-cleanup-local-shadowed!
             ctx
             (if (tc-module-local-name-should-bind! ctx env seen name)
-              (tc-bind-id env name constructor-ty)
+              (tc-module-view-bind-id ctx env name constructor-ty)
               env)
             seen
             cleanup
@@ -106039,26 +106151,59 @@
                 (__tl_make-array i64 (deref data).macro-cache-capacity))
               (set!
                 (deref data).macro-cache-values
-                (__tl_make-array TcTypeEnv (deref data).macro-cache-capacity)))))))))
+                (__tl_make-array TcTypeEnv (deref data).macro-cache-capacity))
+              (set!
+                (deref data).macro-cache-pending-names
+                (__tl_make-array i64 (deref data).macro-cache-capacity))
+              (set!
+                (deref data).macro-cache-pending-generations
+                (__tl_make-array i64 (deref data).macro-cache-capacity)))))))))
 
-(define (tc-macro-module-env-cache-lookup
+(define (tc-macro-module-env-cache-index
   [state : TcMacroState]
   [module-id : i64]
-  [index : i64]) : TcMaybeTypeEnv
+  [index : i64]) : i64
   (let
     [data : (Ptr TcMacroModuleEnvStateData)
       (tc-macro-module-env-state-view state)]
     (unsafe
       (if (>= index (deref data).macro-cache-len)
-        (No)
+        -1
         (if (= (array-ref (deref data).macro-cache-module-ids index) module-id)
-          (Some (array-ref (deref data).macro-cache-values index))
-          (tc-macro-module-env-cache-lookup state module-id (+ index 1)))))))
+          index
+          (tc-macro-module-env-cache-index state module-id (+ index 1)))))))
+
+;; Replace entry `index` by the last one; the cache is a small unordered list.
+(define (tc-macro-module-env-cache-remove-at!
+  [state : TcMacroState]
+  [index : i64]) : unit
+  (let
+    [data : (MutPtr TcMacroModuleEnvStateData)
+      (tc-macro-module-env-state-ptr state)]
+    [last : i64
+      (unsafe
+        (- (deref data).macro-cache-len 1))]
+    (unsafe
+      (begin
+        (set!
+          (array-ref (deref data).macro-cache-module-ids index)
+          (array-ref (deref data).macro-cache-module-ids last))
+        (set!
+          (array-ref (deref data).macro-cache-values index)
+          (array-ref (deref data).macro-cache-values last))
+        (set!
+          (array-ref (deref data).macro-cache-pending-names index)
+          (array-ref (deref data).macro-cache-pending-names last))
+        (set!
+          (array-ref (deref data).macro-cache-pending-generations index)
+          (array-ref (deref data).macro-cache-pending-generations last))
+        (set! (deref data).macro-cache-len last)))))
 
 (define (tc-macro-module-env-cache-insert!
   [state : TcMacroState]
   [module-id : i64]
-  [env : TcTypeEnv]) : unit
+  [env : TcTypeEnv]
+  [pending-name : i64]) : unit
   (let
     [_ensure : unit (tc-macro-module-env-cache-storage-ensure! state)]
     [data : (MutPtr TcMacroModuleEnvStateData)
@@ -106076,6 +106221,16 @@
               (deref data).macro-cache-values
               (deref data).macro-cache-len)
             env)
+          (set!
+            (array-ref
+              (deref data).macro-cache-pending-names
+              (deref data).macro-cache-len)
+            pending-name)
+          (set!
+            (array-ref
+              (deref data).macro-cache-pending-generations
+              (deref data).macro-cache-len)
+            tc-top-env-resolution-generation)
           (set! (deref data).macro-cache-len (+ (deref data).macro-cache-len 1)))
         unit))))
 
@@ -106099,19 +106254,53 @@
           (set! (deref data).macro-cache-store store-handle)
           (set! (deref data).macro-cache-head head)
           (set! (deref data).macro-cache-len 0)))
-      (match (tc-macro-module-env-cache-lookup state module-id 0)
-        [(Some env) (Ok env)]
-        [(No)
-          ;; The persistent environment store allocates appended nodes in the
-          ;; top environment's owner arena. Do not switch the ambient
-          ;; macro-generation arena here: doing so breaks the generation's
-          ;; allocator bookkeeping.
-          (match (tc-module-local-env-id ctx top-env module module-id)
-            [(Ok env)
+      (let
+        [index : i64 (tc-macro-module-env-cache-index state module-id 0)]
+        [pending-name : i64
+          (if (< index 0)
+            -1
+            (array-ref (deref data).macro-cache-pending-names index))]
+        ;; The pending name can only start resolving after the type-resolution
+        ;; generation moves, so re-resolve it once per generation.
+        (if (and
+          (>= index 0)
+          (or
+            (< pending-name 0)
+            (=
+              (array-ref (deref data).macro-cache-pending-generations index)
+              tc-top-env-resolution-generation)
+            (if (tc-module-view-pending-name-unresolved?
+              ctx
+              (tc-global-shared-view module)
+              module-id
+              pending-name)
               (begin
-                (tc-macro-module-env-cache-insert! state module-id env)
-                (Ok env))]
-            [(Err message) (Err message)])]))))
+                (set!
+                  (array-ref (deref data).macro-cache-pending-generations index)
+                  tc-top-env-resolution-generation)
+                true)
+              false)))
+          (Ok (array-ref (deref data).macro-cache-values index))
+          (begin
+            ;; A view whose pending alias now resolves is rebuilt (#8614).
+            (if (>= index 0)
+              (tc-macro-module-env-cache-remove-at! state index)
+              unit)
+            (set! tc-module-view-pending-name -1)
+            ;; The persistent environment store allocates appended nodes in
+            ;; the top environment's owner arena. Do not switch the ambient
+            ;; macro-generation arena here: doing so breaks the generation's
+            ;; allocator bookkeeping.
+            (match (tc-module-local-env-id ctx top-env module module-id)
+              [(Ok env)
+                (begin
+                  (tc-macro-module-env-cache-insert!
+                    state
+                    module-id
+                    env
+                    tc-module-view-pending-name)
+                  (Ok env))]
+              [(Err message) (Err message)])))))))
 
 (define (macro-env-for-module
   [ctx : TcContext]

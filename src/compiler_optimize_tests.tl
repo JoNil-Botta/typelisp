@@ -25,6 +25,7 @@
 (import (vector.vector i64 core) as opt_dense_i64_vec)
 (import (vector.vector opt.OptSsaDenseEntry core) as opt_ssa_dense_vec)
 (import (vector.vector opt.OptGlobalFact core) as opt_global_fact_vec)
+(import (vector.vector opt.OptNaturalLoop core) as opt_natural_loop_vec)
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -32232,12 +32233,12 @@
     [blocks : ir.CompilerIrBlockList (opt-licm-hot-use-test-blocks)]
     [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
-    [loops : opt.OptNaturalLoopList
+    [loops : opt_natural_loop_vec.Vec
       (opt.opt-cfg-natural-loops-with-context
         (opt.compiler-opt-global-shared-view blocks)
         context)]
     (match (opt.opt-natural-loop-find
-      (opt.compiler-opt-global-shared-view loops)
+      (opt_natural_loop_vec.view loops)
       (ir.compiler-ir-label "outer")
       (ir.compiler-ir-label "outer-latch"))
       [(opt.OptMaybeNaturalLoop.No) 1]
@@ -33904,18 +33905,18 @@
     [arith-func : ir.CompilerIrFunction
       (opt-licm-late-optimized-function (opt-licm-arithmetic-blocks))]
     [arith : ir.CompilerIrBlockList (opt.opt-function-blocks arith-func)]
-    [arith-loops : opt.OptNaturalLoopList
+    [arith-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-licm-arithmetic-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
-    [word-loops : opt.OptNaturalLoopList
+    [word-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-licm-word-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
     [trap-func : ir.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-trap-blocks))]
     [trap : ir.CompilerIrBlockList (opt.opt-function-blocks trap-func)]
-    [trap-loops : opt.OptNaturalLoopList
+    [trap-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-licm-trap-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
@@ -33926,7 +33927,7 @@
       (opt-licm-optimized-function (opt-licm-no-preheader-blocks))]
     [no-preheader : ir.CompilerIrBlockList
       (opt.opt-function-blocks no-preheader-func)]
-    [no-preheader-loops : opt.OptNaturalLoopList
+    [no-preheader-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-licm-no-preheader-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
@@ -34111,11 +34112,27 @@
       ;; a unique preheader. Those rejected shapes cannot begin a legal hoist
       ;; chain, so whole-function provenance would be pure overhead.
       [(or
-          (not (opt.opt-licm-loops-may-change? false true arith-loops))
-          (not (opt.opt-licm-loops-may-change? false false word-loops)))
+          (not
+            (opt.opt-licm-loops-may-change?
+              false
+              true
+              (opt_natural_loop_vec.view arith-loops)))
+          (not
+            (opt.opt-licm-loops-may-change?
+              false
+              false
+              (opt_natural_loop_vec.view word-loops))))
         218]
-      [(opt.opt-licm-loops-may-change? false false trap-loops) 219]
-      [(opt.opt-licm-loops-may-change? false false no-preheader-loops) 220]
+      [(opt.opt-licm-loops-may-change?
+          false
+          false
+          (opt_natural_loop_vec.view trap-loops))
+        219]
+      [(opt.opt-licm-loops-may-change?
+          false
+          false
+          (opt_natural_loop_vec.view no-preheader-loops))
+        220]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function arith-func))) 1]
       [(not
           (=
@@ -49932,10 +49949,12 @@
   [blocks : ir.CompilerIrBlockList]
   [header : String]
   [latch : String]) : bool
-  (match (opt.opt-natural-loop-find
-    (opt.opt-cfg-natural-loops blocks)
-    (ir.compiler-ir-label header)
-    (ir.compiler-ir-label latch))
+  (match (let
+    [natural-loops (opt.opt-cfg-natural-loops blocks)]
+    (opt.opt-natural-loop-find
+      (opt_natural_loop_vec.view natural-loops)
+      (ir.compiler-ir-label header)
+      (ir.compiler-ir-label latch)))
     [(opt.OptMaybeNaturalLoop.No) false]
     [(opt.OptMaybeNaturalLoop.Some loop)
       (match (opt.opt-natural-loop-preheader loop)
@@ -50096,9 +50115,9 @@
   [header : String]
   [latch : String]) : i64
   (let
-    [loops : opt.OptNaturalLoopList (opt.opt-cfg-natural-loops blocks)]
+    [loops : opt_natural_loop_vec.Vec (opt.opt-cfg-natural-loops blocks)]
     (match (opt.opt-natural-loop-find
-      (opt.compiler-opt-global-shared-view loops)
+      (opt_natural_loop_vec.view loops)
       (ir.compiler-ir-label header)
       (ir.compiler-ir-label latch))
       [(opt.OptMaybeNaturalLoop.No) (- 0 1)]
@@ -50240,62 +50259,62 @@
   (let
     [single-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build (opt-ssa-loop-blocks))]
-    [single-loops : opt.OptNaturalLoopList
+    [single-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-ssa-loop-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
     [single : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view single-loops)
+        (opt_natural_loop_vec.view single-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "body"))]
     [nested-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build (opt-natural-loop-nested-blocks))]
-    [nested-loops : opt.OptNaturalLoopList
+    [nested-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-natural-loop-nested-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
     [inner : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view nested-loops)
+        (opt_natural_loop_vec.view nested-loops)
         (ir.compiler-ir-label "inner")
         (ir.compiler-ir-label "inner-body"))]
     [outer : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view nested-loops)
+        (opt_natural_loop_vec.view nested-loops)
         (ir.compiler-ir-label "outer")
         (ir.compiler-ir-label "outer-latch"))]
-    [diamond-loops : opt.OptNaturalLoopList
+    [diamond-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-ssa-diamond-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
-    [irreducible-loops : opt.OptNaturalLoopList
+    [irreducible-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-natural-loop-irreducible-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
-    [no-preheader-loops : opt.OptNaturalLoopList
+    [no-preheader-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-natural-loop-no-preheader-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
     [no-preheader : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view no-preheader-loops)
+        (opt_natural_loop_vec.view no-preheader-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "body"))]
     [multi-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build (opt-natural-loop-multi-backedge-blocks))]
-    [multi-loops : opt.OptNaturalLoopList
+    [multi-loops : opt_natural_loop_vec.Vec
       (let
         [blocks (opt-natural-loop-multi-backedge-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
     [multi-left : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view multi-loops)
+        (opt_natural_loop_vec.view multi-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "left"))]
     [multi-right : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        (opt.compiler-opt-global-shared-view multi-loops)
+        (opt_natural_loop_vec.view multi-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "right"))]
     [preheadered-single-blocks : ir.CompilerIrBlockList
@@ -50309,11 +50328,11 @@
     [synth-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build
         (opt.compiler-opt-global-shared-view synth-blocks))]
-    [synth-loops : opt.OptNaturalLoopList
+    [synth-loops : opt_natural_loop_vec.Vec
       (opt.opt-cfg-natural-loops synth-blocks)]
     [synth-loop : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
-        synth-loops
+        (opt_natural_loop_vec.view synth-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "body"))]
     [preheadered-induction : ir.CompilerIrFunction
@@ -50328,7 +50347,12 @@
     [induction-after-preheader-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks induction-after-preheader)]
     (cond
-      [(not (= (opt.opt-natural-loop-list-count single-loops) 1)) 1]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view single-loops))
+            1))
+        1]
       [(not (= (opt-natural-loop-maybe-body-count single) 2)) 2]
       [(not
           (opt-natural-loop-maybe-body-contains?
@@ -50345,7 +50369,12 @@
             single
             (ir.compiler-ir-label "entry")))
         5]
-      [(not (= (opt.opt-natural-loop-list-count nested-loops) 2)) 6]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view nested-loops))
+            2))
+        6]
       [(not (= (opt-natural-loop-maybe-body-count inner) 2)) 7]
       [(not
           (opt-natural-loop-maybe-body-contains?
@@ -50388,12 +50417,32 @@
             outer
             (ir.compiler-ir-label "entry")))
         16]
-      [(not (= (opt.opt-natural-loop-list-count diamond-loops) 0)) 17]
-      [(not (= (opt.opt-natural-loop-list-count irreducible-loops) 0)) 18]
-      [(not (= (opt.opt-natural-loop-list-count no-preheader-loops) 1)) 19]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view diamond-loops))
+            0))
+        17]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view irreducible-loops))
+            0))
+        18]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view no-preheader-loops))
+            1))
+        19]
       [(not (= (opt-natural-loop-maybe-body-count no-preheader) 2)) 20]
       [(not (opt-natural-loop-maybe-no-preheader? no-preheader)) 21]
-      [(not (= (opt.opt-natural-loop-list-count multi-loops) 2)) 22]
+      [(not
+          (=
+            (opt.opt-natural-loop-list-count
+              (opt_natural_loop_vec.view multi-loops))
+            2))
+        22]
       [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
       [(not
           (opt-natural-loop-maybe-body-contains?
@@ -51025,15 +51074,15 @@
 
 (define (opt-rotate-ssa-test-latches-branch?
   [blocks : ir.CompilerIrBlockList]
-  [loops : opt.OptNaturalLoopList]) : bool
+  [loops : (& loops (Slice opt.OptNaturalLoop))]) : bool
   (match loops
-    [(opt.OptNaturalLoopList.Nil) true]
-    [(opt.OptNaturalLoopList.Cons loop rest)
+    [(slice) true]
+    [(slice loop & rest)
       (and
         (opt-rotate-ssa-test-ends-with-branch?
           blocks
           (opt.opt-natural-loop-latch loop))
-        (opt-rotate-ssa-test-latches-branch? blocks (deref rest)))]))
+        (opt-rotate-ssa-test-latches-branch? blocks rest))]))
 
 ;; `it-slice-eq?` as SSA construction hands it to the loop passes: the counter
 ;; and the monotone flag ride the header together, the gate re-tests the flag,
@@ -51116,13 +51165,12 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-rotate-ssa-test-flag-loop-function))]
     [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks optimized)]
-    [loops : opt.OptNaturalLoopList (opt.opt-cfg-natural-loops blocks)]
+    [loops : opt_natural_loop_vec.Vec (opt.opt-cfg-natural-loops blocks)]
     (and
-      (>
-        (opt.opt-natural-loop-list-count
-          (opt.compiler-opt-global-shared-view loops))
-        0)
-      (opt-rotate-ssa-test-latches-branch? blocks loops))))
+      (> (opt.opt-natural-loop-list-count (opt_natural_loop_vec.view loops)) 0)
+      (opt-rotate-ssa-test-latches-branch?
+        blocks
+        (opt_natural_loop_vec.view loops)))))
 
 ;; The exit phi has to carry the zero-trip value on the preheader edge and the
 ;; last iteration's value on the latch edge -- the whole point of minting it.
@@ -53620,10 +53668,11 @@
       (ir.compiler-ir-label "exit")
       (opt-test-instrs (opt-scratch-test-return-zero)))))
 
-(define (opt-scratch-loop-list-has-candidate? [loops : opt.OptNaturalLoopList]) : bool
+(define (opt-scratch-loop-list-has-candidate?
+  [loops : (& loops (Slice opt.OptNaturalLoop))]) : bool
   (match loops
-    [(opt.OptNaturalLoopList.Nil) false]
-    [(opt.OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (opt-scratch-report-candidate?
           (let
@@ -53632,7 +53681,7 @@
             (opt.opt-scratch-scope-report-blocks type-segment-bases blocks))
           1
           32)
-        (opt-scratch-loop-list-has-candidate? (deref rest)))]))
+        (opt-scratch-loop-list-has-candidate? rest))]))
 
 (define (opt-scratch-reset-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -53812,10 +53861,13 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-scratch-positive-instrs))]
       [loop-positive : bool
-        (opt-scratch-loop-list-has-candidate?
-          (let
-            [blocks (opt-scratch-loop-candidate-blocks)]
-            (opt.opt-cfg-natural-loops blocks)))]
+        (let
+          [natural-loops
+            (let
+              [blocks (opt-scratch-loop-candidate-blocks)]
+              (opt.opt-cfg-natural-loops blocks))]
+          (opt-scratch-loop-list-has-candidate?
+            (opt_natural_loop_vec.view natural-loops)))]
       [call-blocked : opt.OptScratchScopeReport
         (opt-scratch-scope-report-instrs
           (ast.ast-node-pool-reader-type-segment-bases)

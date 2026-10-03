@@ -17388,9 +17388,15 @@
   (No)
   (Some OptNaturalLoop))
 
-(defenum OptNaturalLoopList
-  (Nil)
-  (Cons OptNaturalLoop (Box OptNaturalLoopList)))
+(import (vector.vector OptNaturalLoop core) as opt_natural_loop_vec)
+
+(define opt-natural-loops-empty-slots : (__tl_dyn-array OptNaturalLoop)
+  (__tl_make-array OptNaturalLoop 0))
+
+(define (opt-natural-loops-empty) : opt_natural_loop_vec.Vec
+  (opt_natural_loop_vec.Vec
+    (compiler-opt-global-shared-view opt-natural-loops-empty-slots)
+    0))
 
 (defenum OptNaturalLoopCollectState
   (State OptLabelSet OptLabelSet))
@@ -17544,24 +17550,22 @@
   (match loop
     [(OptNaturalLoop.Loop _ _ _ preheader) (deref preheader)]))
 
-(define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
-  (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons _ rest)
-      (+ 1 (opt-natural-loop-list-count (deref rest)))]))
+(define (opt-natural-loop-list-count [loops : (& loops (Slice OptNaturalLoop))]) : i64
+  (array-length loops))
 
 (define (opt-natural-loop-find
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [header : i64]
   [latch : i64]) : OptMaybeNaturalLoop
   (match loops
-    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptMaybeNaturalLoop.No)]
+    [(slice loop & rest)
       (if (and
         (= (opt-natural-loop-header loop) header)
         (= (opt-natural-loop-latch loop) latch))
-        (OptMaybeNaturalLoop.Some loop)
-        (opt-natural-loop-find (deref rest) header latch))]))
+        (OptMaybeNaturalLoop.Some
+          (owned_view.compiler-owned-reference-shared-view loop))
+        (opt-natural-loop-find rest header latch))]))
 
 ;; Membership during body collection is an O(1) id-indexed marks array (the
 ;; body/worklist LISTS keep their construction order); reachability reads the
@@ -18004,9 +18008,9 @@
 ;; opt-cfg-block-successors-with-next set in insertion order
 ;; (opt-cfg-index-build-csr writes each label's id the first time the block
 ;; names it and drops labels the index cannot resolve -- precisely the old
-;; missing-label arm), so visiting blocks from last to
-;; first and each CSR row forward while front-consing emits loops in precisely
-;; the order the label-set walk produced. Reachability and ids come from the same
+;; missing-label arm), so visiting blocks first to last and each CSR row
+;; backward while pushing emits loops in precisely the order the label-set walk
+;; produced. Reachability and ids come from the same
 ;; index that walk consulted (the reachable set is built from this reachable
 ;; array).
 (define (opt-cfg-natural-loop-edges-csr
@@ -18017,100 +18021,67 @@
   [doms : (& doms OptDomInfo)]
   [source-id : i64]
   [source : i64]
-  [edge : i64]
+  [start : i64]
   [end : i64]
-  [acc : OptNaturalLoopList]) : OptNaturalLoopList
-  (if (>= edge end)
-    acc
-    (let
-      [header-id : i64 (array-ref index.succs.edges edge)]
-      [next-acc : OptNaturalLoopList
-        (if (and (>= header-id 0) (< header-id (array-length index.reachable)))
+  [out : (&mut out opt_natural_loop_vec.Vec)]) : unit
+  (let
+    [edge : i64 (- end 1)]
+    (while (>= edge start)
+      (let
+        [header-id : i64 (array-ref index.succs.edges edge)]
+        (begin
           (if (and
+            (>= header-id 0)
+            (< header-id (array-length index.reachable))
             (array-ref index.reachable header-id)
             (opt-dom-info-dominates-id? doms header-id source-id))
-            (OptNaturalLoopList.Cons
+            (opt_natural_loop_vec.push-ref!
+              out
               (opt-natural-loop-build
                 all-blocks
                 (compiler-opt-global-shared-view pred-map)
                 reachable
                 (array-ref index.labels header-id)
-                source)
-              (box acc))
-            acc)
-          acc)]
-      (opt-cfg-natural-loop-edges-csr
-        all-blocks
-        index
-        pred-map
-        reachable
-        doms
-        source-id
-        source
-        (+ edge 1)
-        end
-        next-acc))))
-
-(define (opt-cfg-natural-loop-block-seq-csr
-  [all-blocks : ir.CompilerIrBlockList]
-  [seq : (& seq ir.CompilerIrBlockSeq)]
-  [pos : i64]
-  [context : OptCfgContext]
-  [pred-map : OptPredMap]
-  [reachable : OptLabelSet]
-  [doms : (& doms OptDomInfo)]
-  [acc : OptNaturalLoopList]) : OptNaturalLoopList
-  (if (< pos 0)
-    acc
-    (match (ir.compiler-ir-block-seq-ref seq pos)
-      [(ir.CompilerIrBlock.Block label _)
-        (let
-          [index : OptCfgIndex context.index]
-          ;; `blocks` is this seq, and the index numbers its blocks in seq
-          ;; order, so the seq position is the block id.
-          [next-acc : OptNaturalLoopList
-            (if (< pos (array-length index.reachable))
-              (opt-cfg-natural-loop-edges-csr
-                all-blocks
-                index
-                (compiler-opt-global-shared-view pred-map)
-                reachable
-                doms
-                pos
-                label
-                (array-ref index.succs.offsets pos)
-                (array-ref index.succs.offsets (+ pos 1))
-                acc)
-              acc)]
-          (opt-cfg-natural-loop-block-seq-csr
-            all-blocks
-            seq
-            (- pos 1)
-            (compiler-opt-global-shared-view context)
-            pred-map
-            reachable
-            doms
-            next-acc))])))
+                source))
+            unit)
+          (set! edge (- edge 1)))))))
 
 (define (opt-cfg-natural-loops-with-context
   [blocks : ir.CompilerIrBlockList]
-  [context : (& context OptCfgContext)]) : OptNaturalLoopList
+  [context : (& context OptCfgContext)]) : opt_natural_loop_vec.Vec
   (let
     [context : OptCfgContext
       (owned_view.compiler-owned-reference-shared-view context)]
-    (match (compiler-opt-global-shared-view blocks)
-      [(ir.CompilerIrBlockList.Array seq)
-        (opt-cfg-natural-loop-block-seq-csr
-          blocks
-          seq
-          (- (ir.compiler-ir-block-seq-count seq) 1)
-          (compiler-opt-global-shared-view context)
-          context.pred-map
-          context.reachable
-          context.doms
-          (OptNaturalLoopList.Nil))])))
+    [index : OptCfgIndex context.index]
+    [seq : (& blocks (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view blocks)]
+    [count : i64 (array-length seq)]
+    [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
+    [pos : i64 0]
+    (begin
+      ;; `blocks` is this seq, and the index numbers its blocks in seq order,
+      ;; so the seq position is the block id.
+      (while (< pos count)
+        (begin
+          (if (< pos (array-length index.reachable))
+            (match (array-ref seq pos)
+              [(ir.CompilerIrBlock.Block label _)
+                (opt-cfg-natural-loop-edges-csr
+                  (& blocks)
+                  (& index)
+                  (compiler-opt-global-shared-view context.pred-map)
+                  (compiler-opt-global-shared-view context.reachable)
+                  (& context.doms)
+                  pos
+                  label
+                  (array-ref index.succs.offsets pos)
+                  (array-ref index.succs.offsets (+ pos 1))
+                  (&mut out))])
+            unit)
+          (set! pos (+ pos 1))))
+      out)))
 
-(define (opt-cfg-natural-loops [blocks : (& blocks ir.CompilerIrBlockList)]) : OptNaturalLoopList
+(define (opt-cfg-natural-loops [blocks : (& blocks ir.CompilerIrBlockList)]) : opt_natural_loop_vec.Vec
   (let
     [blocks-arg (owned_view.compiler-owned-reference-shared-view blocks)]
     [context
@@ -18827,10 +18798,10 @@
 (define (opt-loop-preheaders-synthesize-loops
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
-  [loops : OptNaturalLoopList]) : OptBlockListPassResult
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptBlockListPassResult.Result blocks false)]
+    [(slice loop & rest)
       (match (opt-loop-preheaders-synthesize-loop
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view context)
@@ -18838,25 +18809,34 @@
         [(OptBlockListPassResult.Result next changed)
           (if changed
             (OptBlockListPassResult.Result next true)
-            (opt-loop-preheaders-synthesize-loops blocks context (deref rest)))])]))
+            (opt-loop-preheaders-synthesize-loops blocks context rest))])]))
 
 (define (opt-loop-preheaders-blocks-once [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [context : OptCfgContext
       (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+    [natural-loops
+      (opt-cfg-natural-loops-with-context
+        (compiler-opt-global-shared-view blocks)
+        context)]
     (opt-loop-preheaders-synthesize-loops
       (compiler-opt-global-shared-view blocks)
       (compiler-opt-global-shared-view context)
-      (opt-cfg-natural-loops-with-context blocks context))))
+      (opt_natural_loop_vec.view natural-loops))))
 
 (define (opt-loop-preheaders-blocks-once-with-context
   [context : OptCfgContext]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   ;; `context` must be valid for `blocks` (the caller's pipeline context).
-  (opt-loop-preheaders-synthesize-loops
-    (compiler-opt-global-shared-view blocks)
-    (compiler-opt-global-shared-view context)
-    (opt-cfg-natural-loops-with-context blocks context)))
+  (let
+    [natural-loops
+      (opt-cfg-natural-loops-with-context
+        (compiler-opt-global-shared-view blocks)
+        context)]
+    (opt-loop-preheaders-synthesize-loops
+      (compiler-opt-global-shared-view blocks)
+      (compiler-opt-global-shared-view context)
+      (opt_natural_loop_vec.view natural-loops))))
 
 (define (opt-loop-preheaders-blocks-fixed-result
   [blocks : ir.CompilerIrBlockList]
@@ -18977,16 +18957,16 @@
   (Header ir.CompilerIrInstrSeq))
 
 (define (opt-loop-rotation-header-count
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [header : i64]) : i64
   (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) 0]
+    [(slice loop & rest)
       (+
         (if (= (opt-natural-loop-header loop) header)
           1
           0)
-        (opt-loop-rotation-header-count (deref (deref rest)) header))]))
+        (opt-loop-rotation-header-count rest header))]))
 
 (define (opt-loop-rotation-guard-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -19179,7 +19159,7 @@
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
   (let
     [header : i64 (opt-natural-loop-header loop)]
@@ -19190,7 +19170,11 @@
       [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]
       [(OptLoopPreheader.Some preheader)
         (if (and
-          (= (opt-loop-rotation-header-count loops header) 1)
+          (=
+            (opt-loop-rotation-header-count
+              (opt_natural_loop_vec.view loops)
+              header)
+            1)
           (= (opt-label-count preds) 2)
           (opt-label-contains preds preheader)
           (opt-label-contains preds latch)
@@ -19213,11 +19197,11 @@
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [loops : (& loops OptNaturalLoopList)]
-  [remaining : (& remaining OptNaturalLoopList)]) : OptBlockListPassResult
+  [loops : (& loops opt_natural_loop_vec.Vec)]
+  [remaining : (& remaining (Slice OptNaturalLoop))]) : OptBlockListPassResult
   (match remaining
-    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptBlockListPassResult.Result blocks false)]
+    [(slice loop & rest)
       (match (opt-loop-rotation-loop
         pools
         (compiler-opt-global-shared-view blocks)
@@ -19227,12 +19211,7 @@
         [(OptBlockListPassResult.Result next changed)
           (if changed
             (OptBlockListPassResult.Result next true)
-            (opt-loop-rotation-loops
-              pools
-              blocks
-              context
-              loops
-              (deref (deref rest))))])]))
+            (opt-loop-rotation-loops pools blocks context loops rest))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -19247,11 +19226,16 @@
   (let
     [context : OptCfgContext
       (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-    [loops : OptNaturalLoopList
+    [loops : opt_natural_loop_vec.Vec
       (opt-cfg-natural-loops-with-context
         (compiler-opt-global-shared-view blocks)
         context)]
-    (match (opt-loop-rotation-loops pools blocks context loops loops)
+    (match (opt-loop-rotation-loops
+      pools
+      blocks
+      context
+      loops
+      (opt_natural_loop_vec.view loops))
       [(OptBlockListPassResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
 
@@ -21083,18 +21067,17 @@
 (define (opt-rotate-ssa-loops
   [func : (& func ir.CompilerIrFunction)]
   [context : OptCfgContext]
-  [loops : OptNaturalLoopList]) : OptFunctionCtxMaybe
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptFunctionCtxMaybe
   (match loops
-    [(OptNaturalLoopList.Nil) (OptFunctionCtxMaybe.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptFunctionCtxMaybe.No)]
+    [(slice loop & rest)
       (match (opt-rotate-ssa-loop-verified
         func
         (compiler-opt-global-shared-view context)
-        loop)
+        (owned_view.compiler-owned-reference-shared-view loop))
         [(OptFunctionCtxMaybe.Some next next-context)
           (OptFunctionCtxMaybe.Some next next-context)]
-        [(OptFunctionCtxMaybe.No)
-          (opt-rotate-ssa-loops func context (deref rest))])]))
+        [(OptFunctionCtxMaybe.No) (opt-rotate-ssa-loops func context rest)])]))
 
 ;; One rotation per round, each candidate verified on its own (in
 ;; `opt-rotate-ssa-loop-verified`, so a rejected one only costs its own round
@@ -21116,10 +21099,13 @@
   [remaining : i64]) : OptFunctionCtxResult
   (if (<= remaining 0)
     (OptFunctionCtxResult.Result func context)
-    (match (opt-rotate-ssa-loops
-      func
-      (compiler-opt-global-shared-view context)
-      (opt-cfg-natural-loops-with-context (opt-function-blocks func) context))
+    (match (let
+      [natural-loops
+        (opt-cfg-natural-loops-with-context (opt-function-blocks func) context)]
+      (opt-rotate-ssa-loops
+        func
+        (compiler-opt-global-shared-view context)
+        (opt_natural_loop_vec.view natural-loops)))
       [(OptFunctionCtxMaybe.No) (OptFunctionCtxResult.Result func context)]
       [(OptFunctionCtxMaybe.Some next next-context)
         (opt-rotate-ssa-rounds next next-context (- remaining 1))])))
@@ -21639,9 +21625,9 @@
 (define (opt-licm-addr-taken-install-for-loops!
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
-  [loops : (& loops OptNaturalLoopList)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view loops)
-    [(OptNaturalLoopList.Nil) unit]
+  [loops : (& loops (Slice OptNaturalLoop))]) : unit
+  (match loops
+    [(slice) unit]
     [_ (opt-function-addr-taken-install! frame blocks)]))
 
 (define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
@@ -24235,31 +24221,37 @@
 ;; lies in `body`. Filtered once per loop, so the per-block question below scans
 ;; only nested bodies.
 (define (opt-licm-nested-loops
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [header : i64]
-  [body : OptLabelSet]) : OptNaturalLoopList
-  (match (owned_view.compiler-owned-reference-shared-view loops)
-    [(OptNaturalLoopList.Nil) (OptNaturalLoopList.Nil)]
-    [(OptNaturalLoopList.Cons inner rest)
-      (let
-        [tail : OptNaturalLoopList
-          (opt-licm-nested-loops (deref rest) header body)]
-        [inner-header : i64 (opt-natural-loop-header inner)]
-        (if (and
-          (not (= inner-header header))
-          (opt-label-contains body inner-header))
-          (OptNaturalLoopList.Cons inner (box tail))
-          tail))]))
+  [body : OptLabelSet]) : opt_natural_loop_vec.Vec
+  (let
+    [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length loops))
+        (let
+          [inner : OptNaturalLoop
+            (owned_view.compiler-owned-reference-shared-view
+              (& (array-ref loops index)))]
+          [inner-header : i64 (opt-natural-loop-header inner)]
+          (begin
+            (if (and
+              (not (= inner-header header))
+              (opt-label-contains body inner-header))
+              (opt_natural_loop_vec.push-ref! (&mut out) inner)
+              unit)
+            (set! index (+ index 1)))))
+      out)))
 
 (define (opt-licm-label-in-loops?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [label : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons inner rest)
+    [(slice) false]
+    [(slice inner & rest)
       (if (opt-label-contains (opt-natural-loop-body inner) label)
         true
-        (opt-licm-label-in-loops? (deref (deref rest)) label))]))
+        (opt-licm-label-in-loops? rest label))]))
 
 ;; A BRANCH CONDITION is not a consumer that can pay for a hoist, and it is the
 ;; one use kind where moving the definition out is never a per-iteration win. A
@@ -24323,7 +24315,7 @@
 (define (opt-licm-hot-use-vars
   [context : (& context OptCfgContext)]
   [latch-id : i64]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [header : i64]
   [body : OptLabelSet]
   [gate? : bool]
@@ -24332,7 +24324,7 @@
   (opt-licm-hot-use-vars-from
     context
     latch-id
-    (opt-licm-nested-loops loops header body)
+    (opt-licm-nested-loops (opt_natural_loop_vec.view loops) header body)
     body
     gate?
     (ir.compiler-ir-block-list-view blocks)
@@ -24342,7 +24334,7 @@
 (define (opt-licm-hot-use-vars-from
   [context : (& context OptCfgContext)]
   [latch-id : i64]
-  [nested : OptNaturalLoopList]
+  [nested : opt_natural_loop_vec.Vec]
   [body : OptLabelSet]
   [gate? : bool]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -24355,7 +24347,9 @@
           (begin
             (if (or
               (not (opt-label-contains body label))
-              (opt-licm-label-in-loops? nested label))
+              (opt-licm-label-in-loops?
+                (opt_natural_loop_vec.view nested)
+                label))
               (opt-collect-instr-seq-uses-array
                 (compiler-opt-global-shared-view set)
                 instrs)
@@ -24484,7 +24478,7 @@
   (at i64)
   (header i64)
   (guard? bool)
-  (plans (__tl_dyn-array OptLicmGuardPlans)))
+  (plans (__tl_dyn-array opt_licm_guard_plan_vec.Vec)))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
 ;; COUNTED -- on `cursor[key + 1]`, or on `literal-cursor[0]` -- and with
@@ -25890,17 +25884,15 @@
   (index ir.CompilerIrValue)
   (len ir.CompilerIrValue))
 
-(defenum OptLicmGuardPlans
-  (Nil)
-  (Cons OptLicmGuardPlan (Box OptLicmGuardPlans)))
+(import (vector.vector OptLicmGuardPlan core) as opt_licm_guard_plan_vec)
 
 (define (opt-licm-guard-planned?
-  [plans : (& plans OptLicmGuardPlans)]
+  [plans : (& plans (Slice OptLicmGuardPlan))]
   [dst : i64]) : bool
   (match plans
-    [(OptLicmGuardPlans.Nil) false]
-    [(OptLicmGuardPlans.Cons plan rest)
-      (or (= plan.dst dst) (opt-licm-guard-planned? (deref (deref rest)) dst))]))
+    [(slice) false]
+    [(slice plan & rest)
+      (or (= plan.dst dst) (opt-licm-guard-planned? rest dst))]))
 
 ;; Is dense block `block` reached, inside the site's loop, only through the
 ;; equal edge of an equality test -- `eq` taken, or `ne` not taken? Such a
@@ -26018,7 +26010,9 @@
                   type-segment-bases
                   (compiler-opt-global-shared-view ty))
                 0))
-            (opt-licm-guard-planned? (& (array-ref site.plans 0)) dst)
+            (opt-licm-guard-planned?
+              (opt_licm_guard_plan_vec.view (& (array-ref site.plans 0)))
+              dst)
             (opt-licm-guard-sparse? site block))
             unit
             (match (opt-licm-deref-address
@@ -26058,21 +26052,25 @@
                           hoisted
                           index)
                         (opt-licm-value-invariant? false loop-defs hoisted len))
-                        (set!
-                          (array-ref site.plans 0)
-                          (OptLicmGuardPlans.Cons
-                            (OptLicmGuardPlan
-                              (opt-cfg-index-label site.doms.index site.at)
-                              (opt-cfg-index-label site.doms.index site.header)
-                              dst
-                              src
-                              ty
-                              index
-                              len)
-                            (box
-                              (compiler-opt-global-array-element-shared-view
-                                site.plans
-                                0))))
+                        (let
+                          [plans : opt_licm_guard_plan_vec.Vec
+                            (compiler-opt-global-array-element-shared-view
+                              site.plans
+                              0)]
+                          (begin
+                            (opt_licm_guard_plan_vec.push-ref!
+                              (&mut plans)
+                              (OptLicmGuardPlan
+                                (opt-cfg-index-label site.doms.index site.at)
+                                (opt-cfg-index-label
+                                  site.doms.index
+                                  site.header)
+                                dst
+                                src
+                                ty
+                                index
+                                len))
+                            (set! (array-ref site.plans 0) plans)))
                         unit)]
                     [(ir.CompilerIrMaybeValue.No) unit]))]
               [_ unit])))]
@@ -26267,52 +26265,56 @@
 (defenum OptLicmGuardApplied
   (Applied ir.CompilerIrBlockList i64))
 
-;; Build every plan's diamond. Plans are independent except within one loop,
-;; where they chain: each splits the block the previous one left entering the
-;; header, which `tails` maps each preheader to.
+;; Build every plan's diamond, newest first. Plans are independent except
+;; within one loop, where they chain: each splits the block the previous one
+;; left entering the header, which `tails` maps each preheader to.
 (define (opt-licm-guard-apply-from
   [blocks : ir.CompilerIrBlockList]
-  [plans : OptLicmGuardPlans]
+  [plans : (& plans (Slice OptLicmGuardPlan))]
+  [index : i64]
   [tails : opt_i64_i64_map.Map]
   [changed? : bool]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptBlockListPassResult
-  (match plans
-    [(OptLicmGuardPlans.Nil) (OptBlockListPassResult.Result blocks changed?)]
-    [(OptLicmGuardPlans.Cons plan rest)
-      (let
-        [tail : i64
-          (match (opt_i64_i64_map.get (& tails) plan.preheader)
-            [(opt_i64_i64_map.LookupFound joined) joined]
-            [(opt_i64_i64_map.LookupMissing) plan.preheader])]
-        (match (opt-licm-guard-apply-plan
-          (& blocks)
-          (compiler-opt-global-shared-view plan)
-          tail
-          frame-cell)
-          [(OptLicmGuardApplied.Applied next joined)
-            (if (< joined 0)
+  (if (< index 0)
+    (OptBlockListPassResult.Result blocks changed?)
+    (let
+      [plan (& (array-ref plans index))]
+      [tail : i64
+        (match (opt_i64_i64_map.get (& tails) plan.preheader)
+          [(opt_i64_i64_map.LookupFound joined) joined]
+          [(opt_i64_i64_map.LookupMissing) plan.preheader])]
+      (match (opt-licm-guard-apply-plan
+        (& blocks)
+        (owned_view.compiler-owned-reference-shared-view plan)
+        tail
+        frame-cell)
+        [(OptLicmGuardApplied.Applied next joined)
+          (if (< joined 0)
+            (opt-licm-guard-apply-from
+              next
+              plans
+              (- index 1)
+              tails
+              changed?
+              frame-cell)
+            (begin
+              (opt_i64_i64_map.insert-ref! (&mut tails) plan.preheader joined)
               (opt-licm-guard-apply-from
                 next
-                (deref rest)
+                plans
+                (- index 1)
                 tails
-                changed?
-                frame-cell)
-              (begin
-                (opt_i64_i64_map.insert-ref! (&mut tails) plan.preheader joined)
-                (opt-licm-guard-apply-from
-                  next
-                  (deref rest)
-                  tails
-                  true
-                  frame-cell)))]))]))
+                true
+                frame-cell)))]))))
 
 (define (opt-licm-guard-apply
   [blocks : ir.CompilerIrBlockList]
-  [plans : OptLicmGuardPlans]
+  [plans : opt_licm_guard_plan_vec.Vec]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptBlockListPassResult
   (opt-licm-guard-apply-from
     blocks
-    plans
+    (opt_licm_guard_plan_vec.view plans)
+    (- (opt_licm_guard_plan_vec.len plans) 1)
     (opt_i64_i64_map.with-capacity 4)
     false
     frame-cell))
@@ -28861,11 +28863,11 @@
   ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
   [deref-facts : OptLicmDerefFacts]
   ;; #7997: where the walk records guarded reads (opt-licm-guard-plan!).
-  [guard-plans : (__tl_dyn-array OptLicmGuardPlans)]
+  [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)]
   ;; Valid for `blocks`: LICM only inserts into existing preheaders, so the
   ;; original dominance relation remains valid throughout this loop walk.
   [context : OptCfgContext]
-  [all-loops : (& all-loops OptNaturalLoopList)]
+  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
   [blocks : ir.CompilerIrBlockList]
   [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
@@ -29289,13 +29291,13 @@
 (define (opt-licm-guard-loops?
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loops : (& loops OptNaturalLoopList)]) : bool
+  [loops : (& loops (Slice OptNaturalLoop))]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (opt-licm-guard-loop? type-segment-bases blocks loop)
-        (opt-licm-guard-loops? type-segment-bases blocks (deref (deref rest))))]))
+        (opt-licm-guard-loops? type-segment-bases blocks rest))]))
 
 (define (opt-licm-apply-loops
   [type-segment-bases : i64]
@@ -29307,14 +29309,14 @@
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [late? : bool]
   [deref-facts : OptLicmDerefFacts]
-  [guard-plans : (__tl_dyn-array OptLicmGuardPlans)]
+  [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)]
   [context : OptCfgContext]
-  [all-loops : (& all-loops OptNaturalLoopList)]
-  [loops : (& loops OptNaturalLoopList)]
+  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptBlockListPassResult.Result blocks false)]
+    [(slice loop & rest)
       (match (if (and
         opt-licm-guard-on
         (not (opt-licm-guard-loop? type-segment-bases (& blocks) loop)))
@@ -29348,7 +29350,7 @@
             guard-plans
             context
             all-loops
-            (deref (deref rest))
+            rest
             loop-blocks)
             [(OptBlockListPassResult.Result rest-blocks rest-changed)
               (OptBlockListPassResult.Result
@@ -29475,16 +29477,13 @@
 (define (opt-licm-loops-may-change?
   [global-promotion? : bool]
   [late? : bool]
-  [loops : (& loops OptNaturalLoopList)]) : bool
+  [loops : (& loops (Slice OptNaturalLoop))]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (opt-licm-loop-may-change? global-promotion? late? loop)
-        (opt-licm-loops-may-change?
-          global-promotion?
-          late?
-          (deref (deref rest))))]))
+        (opt-licm-loops-may-change? global-promotion? late? rest))]))
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [type-segment-bases : i64]
@@ -29512,7 +29511,7 @@
           ;; Recorded through the trace guard, so an ordinary compile pays
           ;; one boolean test per function.
           [_refuse-name : unit (opt-licm-trace-function! name)]
-          [loops : OptNaturalLoopList
+          [loops : opt_natural_loop_vec.Vec
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
@@ -29520,14 +29519,17 @@
             (opt-licm-addr-taken-install-for-loops!
               frame
               (compiler-opt-global-shared-view blocks)
-              (& loops))]
+              (opt_natural_loop_vec.view loops))]
           (if (not
             (if opt-licm-guard-on
-              (opt-licm-guard-loops? type-segment-bases (& blocks) (& loops))
+              (opt-licm-guard-loops?
+                type-segment-bases
+                (& blocks)
+                (opt_natural_loop_vec.view loops))
               (opt-licm-loops-may-change?
                 (not (= global-cells.word-cell 0))
                 late?
-                loops)))
+                (opt_natural_loop_vec.view loops))))
             (OptBlockRewriteResult.Result blocks frame false)
             (let
               [sources : OptValueSources
@@ -29562,8 +29564,8 @@
               ;; value back into the rewritten function.
               [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
-              [guard-plans : (__tl_dyn-array OptLicmGuardPlans)
-                (__tl_make-array OptLicmGuardPlans 1)]
+              [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)
+                (__tl_make-array (opt_licm_guard_plan_vec.with-capacity 0))]
               (match (opt-licm-apply-loops
                 type-segment-bases
                 sources
@@ -29577,7 +29579,7 @@
                 (compiler-opt-global-shared-view guard-plans)
                 context
                 loops
-                loops
+                (opt_natural_loop_vec.view loops)
                 blocks)
                 [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
                   ;; #7997: the guards, once every loop has been walked.
@@ -29759,14 +29761,14 @@
                 [_ false])])])]))
 
 (define (opt-licm-unswitch-target-enters-nested-loop?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [outer-header : i64]
   [outer-body : OptLabelSet]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [target : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (let
         [header : i64 (opt-natural-loop-header loop)]
         [enters? : bool
@@ -29789,7 +29791,7 @@
         (or
           enters?
           (opt-licm-unswitch-target-enters-nested-loop?
-            (deref (deref rest))
+            rest
             outer-header
             outer-body
             body-blocks
@@ -29917,20 +29919,17 @@
 ;; not what this pass is for and it takes the shape past the one the block
 ;; ceiling above was chosen for.
 (define (opt-licm-unswitch-nested-loop-header?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [outer-header : i64]
   [label : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (let
           [nested : i64 (opt-natural-loop-header loop)]
           (and (not (= nested outer-header)) (= nested label)))
-        (opt-licm-unswitch-nested-loop-header?
-          (deref (deref rest))
-          outer-header
-          label))]))
+        (opt-licm-unswitch-nested-loop-header? rest outer-header label))]))
 
 ;; LU-2: a dispatch block is `[branch %c]`, or `[%c = compare ...; branch %c]`
 ;; -- the shape the versioner's guard conjuncts have, since LICM leaves a
@@ -30025,7 +30024,7 @@
 
 (define (opt-licm-unswitch-chain-from
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [body-labels : OptLabelSet]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [header : i64]
@@ -30042,7 +30041,10 @@
     (= label origin)
     (not (opt-label-contains body-labels label))
     (opt-label-contains acc label)
-    (opt-licm-unswitch-nested-loop-header? loops header label))
+    (opt-licm-unswitch-nested-loop-header?
+      (opt_natural_loop_vec.view loops)
+      header
+      label))
     acc
     (match (opt-cfg-find-block blocks label)
       [(OptMaybeBlock.No) acc]
@@ -30312,7 +30314,7 @@
     [_ cond]))
 
 (define (opt-licm-unswitch-find-instrs
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [header : i64]
   [body-labels : OptLabelSet]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
@@ -30347,13 +30349,13 @@
                       cond)
                     (or
                       (opt-licm-unswitch-target-enters-nested-loop?
-                        loops
+                        (opt_natural_loop_vec.view loops)
                         header
                         body-labels
                         body-blocks-all
                         true-label)
                       (opt-licm-unswitch-target-enters-nested-loop?
-                        loops
+                        (opt_natural_loop_vec.view loops)
                         header
                         body-labels
                         body-blocks-all
@@ -30401,7 +30403,7 @@
           (+ index 1))])))
 
 (define (opt-licm-unswitch-find-blocks
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [header : i64]
   [latch : i64]
   [body-labels : OptLabelSet]
@@ -30446,7 +30448,7 @@
 (define (opt-licm-unswitch-loop-shape
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [context : (& context OptCfgContext)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [loop : (& loop OptNaturalLoop)]) : OptMaybeLicmUnswitchShape
   (match (opt-natural-loop-preheader loop)
     [(OptLoopPreheader.No) (OptMaybeLicmUnswitchShape.No)]
@@ -31327,13 +31329,13 @@
 (define (opt-licm-unswitch-loops
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [all-loops : (& all-loops OptNaturalLoopList)]
-  [remaining : (& remaining OptNaturalLoopList)]
+  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
+  [remaining : (& remaining (Slice OptNaturalLoop))]
   [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptUnrollResult
   (match remaining
-    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptUnrollResult.Result blocks frame false)]
+    [(slice loop & rest)
       (match (opt-licm-unswitch-loop-shape blocks context all-loops loop)
         [(OptMaybeLicmUnswitchShape.Some shape)
           (match (if (>
@@ -31356,17 +31358,11 @@
                   blocks
                   context
                   all-loops
-                  (deref (deref rest))
+                  rest
                   params
                   frame))])]
         [(OptMaybeLicmUnswitchShape.No)
-          (opt-licm-unswitch-loops
-            blocks
-            context
-            all-loops
-            (deref (deref rest))
-            params
-            frame)])]))
+          (opt-licm-unswitch-loops blocks context all-loops rest params frame)])]))
 
 (define (opt-licm-unswitch-function-with-context-result
   [context : OptCfgContext]
@@ -31379,7 +31375,7 @@
         (compiler-opt-global-shared-view context)
         verified?
         (let
-          [loops : OptNaturalLoopList
+          [loops : opt_natural_loop_vec.Vec
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
@@ -31387,12 +31383,12 @@
             (opt-licm-addr-taken-install-for-loops!
               frame
               (compiler-opt-global-shared-view blocks)
-              (& loops))]
+              (opt_natural_loop_vec.view loops))]
           (match (opt-licm-unswitch-loops
             blocks
             context
             loops
-            loops
+            (opt_natural_loop_vec.view loops)
             params
             frame)
             [(OptUnrollResult.Result next next-frame changed)
@@ -33541,25 +33537,24 @@
 (define (opt-induction-apply-loops
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [changed : bool]) : OptInductionApplyResult
   (match loops
-    [(OptNaturalLoopList.Nil)
-      (OptInductionApplyResult.Result blocks frame changed)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptInductionApplyResult.Result blocks frame changed)]
+    [(slice loop & rest)
       (match (opt-induction-apply-loop
         type-segment-bases
         index
         blocks
         frame
-        loop)
+        (owned_view.compiler-owned-reference-shared-view loop))
         [(OptInductionApplyResult.Result next-blocks next-frame loop-changed)
           (opt-induction-apply-loops
             type-segment-bases
             index
-            (deref rest)
+            rest
             next-blocks
             next-frame
             (or changed loop-changed))])]))
@@ -33578,15 +33573,18 @@
         func
         (compiler-opt-global-shared-view context)
         verified?
-        (match (opt-induction-apply-loops
-          type-segment-bases
-          (__tl-project-field context index)
-          (opt-cfg-natural-loops-with-context
-            (compiler-opt-global-shared-view blocks)
-            context)
-          blocks
-          frame
-          false)
+        (match (let
+          [natural-loops
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              context)]
+          (opt-induction-apply-loops
+            type-segment-bases
+            (__tl-project-field context index)
+            (opt_natural_loop_vec.view natural-loops)
+            blocks
+            frame
+            false))
           [(OptInductionApplyResult.Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
@@ -38862,10 +38860,10 @@
   [uses : (& uses (__tl_dyn-array i64))]
   [raw-uses : (& raw-uses (__tl_dyn-array i64))]
   [def-label : (__tl_dyn-array i64)]
-  [loops : OptNaturalLoopList]) : OptFlagExitPassResult
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptFlagExitPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptFlagExitPassResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptFlagExitPassResult.Result blocks frame false)]
+    [(slice loop & rest)
       (match (opt-flag-exit-plan-loop
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view context)
@@ -38895,7 +38893,7 @@
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view context)
             frame
-            loop)
+            (owned_view.compiler-owned-reference-shared-view loop))
             [(OptFlagExitPassResult.Result seeded seeded-frame converted?)
               (if converted?
                 (OptFlagExitPassResult.Result seeded seeded-frame true)
@@ -38906,7 +38904,7 @@
                   uses
                   raw-uses
                   def-label
-                  (deref rest)))])])]))
+                  rest))])])]))
 
 ;; --- driver -------------------------------------------------------------------
 ;; --- the second prescan, once the loops are known -----------------------------
@@ -38986,10 +38984,10 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [context : (& context OptCfgContext)]
   [def-label : (& def-label (__tl_dyn-array i64))]
-  [loops : (& loops OptNaturalLoopList)]) : bool
+  [loops : (& loops (Slice OptNaturalLoop))]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
           [(OptMaybeBlock.No) false]
@@ -39003,11 +39001,7 @@
                   (opt-natural-loop-body-info loop)
                   instrs
                   0)])])
-        (opt-flag-exit-loops-have-candidate?
-          blocks
-          context
-          def-label
-          (deref (deref rest))))]))
+        (opt-flag-exit-loops-have-candidate? blocks context def-label rest))]))
 
 (define (opt-flag-exit-blocks-once-with-context
   [blocks : ir.CompilerIrBlockList]
@@ -39016,14 +39010,13 @@
   (if (not (opt-flag-exit-blocks-have-candidate? blocks))
     (OptFlagExitPassResult.Result blocks frame false)
     (let
-      [loops : OptNaturalLoopList
+      [loops : opt_natural_loop_vec.Vec
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
           context)]
-      (match (compiler-opt-global-shared-view loops)
-        [(OptNaturalLoopList.Nil)
-          (OptFlagExitPassResult.Result blocks frame false)]
-        [(OptNaturalLoopList.Cons _ _)
+      (match (opt_natural_loop_vec.view loops)
+        [(slice) (OptFlagExitPassResult.Result blocks frame false)]
+        [_
           (let
             [def-label : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
             [_fill : unit (opt-cfg-fill-i64! (&mut def-label) frame (- 0 1))]
@@ -39033,7 +39026,7 @@
                 blocks
                 context
                 def-label
-                loops))
+                (opt_natural_loop_vec.view loops)))
               (OptFlagExitPassResult.Result blocks frame false)
               (let
                 [uses : (__tl_dyn-array i64)
@@ -39047,7 +39040,7 @@
                   uses
                   raw-uses
                   def-label
-                  loops))))]))))
+                  (opt_natural_loop_vec.view loops)))))]))))
 
 ;; One conversion per round, then a fresh context: the rewrite changes the CFG,
 ;; so the loop set and the dominance facts have to be rebuilt before the next
@@ -40214,18 +40207,22 @@
 
 (define (opt-lftr-apply-loops
   [type-segment-bases : i64]
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [changed : bool]) : OptLftrApplyResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLftrApplyResult.Result blocks frame changed)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-lftr-apply-loop type-segment-bases blocks frame loop)
+    [(slice) (OptLftrApplyResult.Result blocks frame changed)]
+    [(slice loop & rest)
+      (match (opt-lftr-apply-loop
+        type-segment-bases
+        blocks
+        frame
+        (owned_view.compiler-owned-reference-shared-view loop))
         [(OptLftrApplyResult.Result next-blocks next-frame loop-changed)
           (opt-lftr-apply-loops
             type-segment-bases
-            (deref rest)
+            rest
             next-blocks
             next-frame
             (or changed loop-changed))])]))
@@ -40244,14 +40241,17 @@
         func
         (compiler-opt-global-shared-view context)
         verified?
-        (match (opt-lftr-apply-loops
-          type-segment-bases
-          (opt-cfg-natural-loops-with-context
-            (compiler-opt-global-shared-view blocks)
-            context)
-          blocks
-          frame
-          false)
+        (match (let
+          [natural-loops
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              context)]
+          (opt-lftr-apply-loops
+            type-segment-bases
+            (opt_natural_loop_vec.view natural-loops)
+            blocks
+            frame
+            false))
           [(OptLftrApplyResult.Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
@@ -48467,11 +48467,11 @@
 (define (opt-cfg-straighten-loop-boundary-fill!
   [index : (& index OptCfgIndex)]
   [total : i64]
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [out : (&mut o opt_i64_i64_map.Map)]) : unit
   (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) unit]
+    [(slice loop & rest)
       (let
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [header : i64 (opt-natural-loop-header loop)]
@@ -48507,21 +48507,21 @@
                             unit)
                           (set! edge (+ edge 1)))))])
                 (set! id (+ id 1)))))
-          (opt-cfg-straighten-loop-boundary-fill! index total (deref rest) out)))]))
+          (opt-cfg-straighten-loop-boundary-fill! index total rest out)))]))
 
 (define (opt-cfg-straighten-loop-boundary-labels
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (let
     [context : OptCfgContext
       (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-    [loops : OptNaturalLoopList
+    [loops : opt_natural_loop_vec.Vec
       (opt-cfg-natural-loops-with-context blocks context)]
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
     (begin
       (opt-cfg-straighten-loop-boundary-fill!
         context.index
         (opt-cfg-index-block-count context.index)
-        loops
+        (opt_natural_loop_vec.view loops)
         (&mut out))
       out)))
 
@@ -71997,14 +71997,14 @@
                 ;; records when the straight-line scan misses. That path keeps
                 ;; its single slot per invocation.
                 (let
-                  [loops : OptNaturalLoopList
+                  [loops : opt_natural_loop_vec.Vec
                     (opt-cfg-natural-loops-with-context
                       (compiler-opt-global-shared-view blocks)
                       context)]
                   (match (opt-unroll-mb-loops-scan
                     (compiler-opt-global-shared-view blocks)
                     (compiler-opt-global-shared-view loops)
-                    loops
+                    (opt_natural_loop_vec.view loops)
                     (opt-cfg-entry-label blocks)
                     frame)
                     [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
@@ -80077,36 +80077,33 @@
 ;; versioning it first keeps a hot inner scan versioned while the outer loop
 ;; stays alone.
 (define (opt-bce-mb-has-nested-loop?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [header : i64]
   [body-labels : OptLabelSet]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (match loop
         [(OptNaturalLoop.Loop other-header _ _ _)
           (if (and
             (not (= (deref other-header) header))
             (opt-label-contains body-labels (deref other-header)))
             true
-            (opt-bce-mb-has-nested-loop?
-              (deref (deref rest))
-              header
-              body-labels))])]))
+            (opt-bce-mb-has-nested-loop? rest header body-labels))])]))
 
 ;; The blocks of every natural loop nested inside this candidate.
 (define (opt-bce-mb-inner-labels
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [header : i64]
   [body-labels : OptLabelSet]
   [acc : OptLabelSet]) : OptLabelSet
   (match loops
-    [(OptNaturalLoopList.Nil) acc]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match loop
+    [(slice) acc]
+    [(slice loop & rest)
+      (match (owned_view.compiler-owned-reference-shared-view loop)
         [(OptNaturalLoop.Loop other-header _ other-body _)
           (opt-bce-mb-inner-labels
-            (deref rest)
+            rest
             header
             body-labels
             (if (and
@@ -80119,20 +80116,20 @@
 ;; Only then does its guard run once per CALL rather than once per enclosing
 ;; iteration, which is what makes the region budget bigger clone pay.
 (define (opt-bce-mb-preheader-outside-loops?
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [pred : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match loop
+    [(slice) true]
+    [(slice loop & rest)
+      (match (owned_view.compiler-owned-reference-shared-view loop)
         [(OptNaturalLoop.Loop _ _ other-body _)
           (if (opt-label-contains other-body.labels pred)
             false
-            (opt-bce-mb-preheader-outside-loops? (deref rest) pred))])]))
+            (opt-bce-mb-preheader-outside-loops? rest pred))])]))
 
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : ir.CompilerIrBlockList]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [nested? : bool]
   [free? : bool]
   [header : i64]
@@ -80145,7 +80142,7 @@
     [inner : OptLabelSet
       (if nested?
         (opt-bce-mb-inner-labels
-          (owned_view.compiler-owned-reference-shared-view loops)
+          (opt_natural_loop_vec.view loops)
           header
           body-labels
           (OptLabelSet.Nil))
@@ -80154,7 +80151,7 @@
       (and
         nested?
         (opt-bce-mb-preheader-outside-loops?
-          (owned_view.compiler-owned-reference-shared-view loops)
+          (opt_natural_loop_vec.view loops)
           pred))]
     ;; BCE-4: the guard is paid once per ENTRY, and an entry inside another
     ;; loop is an entry per enclosing iteration. The same question `region?`
@@ -80162,7 +80159,7 @@
     [nested-entry? : bool
       (not
         (opt-bce-mb-preheader-outside-loops?
-          (owned_view.compiler-owned-reference-shared-view loops)
+          (opt_natural_loop_vec.view loops)
           pred))]
     [block-max : i64
       (if region?
@@ -80241,7 +80238,7 @@
         ;; remove one check from a probe that averages about one iteration.
         ;; Outside every loop the guard is paid once per call instead.
         (if (opt-bce-mb-preheader-outside-loops?
-          (owned_view.compiler-owned-reference-shared-view loops)
+          (opt_natural_loop_vec.view loops)
           pred)
           (opt-bce-mb-loop-shape-free
             blocks
@@ -80372,7 +80369,7 @@
 
 (define (opt-bce-mb-loop-shape
   [blocks : ir.CompilerIrBlockList]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [entry-label : i64]
   [nested? : bool]
   [free? : bool]
@@ -80381,7 +80378,11 @@
     [(OptNaturalLoop.Loop header latch body preheader)
       (let
         [_trace : unit (opt-bce-trace-begin! free?)]
-        [nest? : bool (opt-bce-mb-has-nested-loop? loops header body.labels)]
+        [nest? : bool
+          (opt-bce-mb-has-nested-loop?
+            (opt_natural_loop_vec.view loops)
+            header
+            body.labels)]
         [reason : i64
           (cond
             ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
@@ -87196,8 +87197,8 @@
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
   [blocks : ir.CompilerIrBlockList]
-  [all-loops : (& all-loops OptNaturalLoopList)]
-  [loops : OptNaturalLoopList]
+  [all-loops : (& all-loops opt_natural_loop_vec.Vec)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [entry-label : i64]
   [nested? : bool]
   [regions-only? : bool]
@@ -87205,9 +87206,9 @@
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
   (match loops
-    [(OptNaturalLoopList.Nil)
+    [(slice)
       (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice loop & rest)
       (if (opt-label-contains rejected (opt-natural-loop-header loop))
         (opt-bce-mb-loops-scan
           descriptor
@@ -87215,7 +87216,7 @@
           doms
           blocks
           all-loops
-          (deref rest)
+          rest
           entry-label
           nested?
           regions-only?
@@ -87228,7 +87229,7 @@
           entry-label
           nested?
           free?
-          (compiler-opt-global-shared-view loop))
+          (owned_view.compiler-owned-reference-shared-view loop))
           [(OptBceMbMaybeShape.Some shape)
             (match (if (and regions-only? (not shape.region?))
               ;; A REGIONS-ONLY phase offered a non-region candidate: the flat
@@ -87249,21 +87250,25 @@
                 (if changed
                   (begin
                     (opt-bce-trace-note! (opt-bce-reason-ok))
-                    (opt-bce-trace-mb-loop! loop true)
+                    (opt-bce-trace-mb-loop!
+                      (owned_view.compiler-owned-reference-shared-view loop)
+                      true)
                     (OptBceVersionScan.Scan
                       next-blocks
                       next-frame
                       true
                       shape.header))
                   (begin
-                    (opt-bce-trace-mb-loop! loop false)
+                    (opt-bce-trace-mb-loop!
+                      (owned_view.compiler-owned-reference-shared-view loop)
+                      false)
                     (opt-bce-mb-loops-scan
                       descriptor
                       pred-map
                       doms
                       blocks
                       all-loops
-                      (deref rest)
+                      rest
                       entry-label
                       nested?
                       regions-only?
@@ -87272,14 +87277,16 @@
                       frame)))])]
           [(OptBceMbMaybeShape.No)
             (begin
-              (opt-bce-trace-mb-loop! loop false)
+              (opt-bce-trace-mb-loop!
+                (owned_view.compiler-owned-reference-shared-view loop)
+                false)
               (opt-bce-mb-loops-scan
                 descriptor
                 pred-map
                 doms
                 blocks
                 all-loops
-                (deref rest)
+                rest
                 entry-label
                 nested?
                 regions-only?
@@ -87336,7 +87343,7 @@
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
   [blocks : ir.CompilerIrBlockList]
-  [all-loops : OptNaturalLoopList]
+  [all-loops : opt_natural_loop_vec.Vec]
   [entry-label : i64]
   [rejected : OptLabelSet]
   [frame : i64]
@@ -87349,7 +87356,7 @@
       doms
       (compiler-opt-global-shared-view blocks)
       all-loops
-      (compiler-opt-global-shared-view all-loops)
+      (opt_natural_loop_vec.view all-loops)
       entry-label
       (opt-bce-mb-scan-phase-nested? phase)
       (opt-bce-mb-scan-phase-regions-only? phase)
@@ -87375,7 +87382,7 @@
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
   [blocks : ir.CompilerIrBlockList]
-  [all-loops : OptNaturalLoopList]
+  [all-loops : opt_natural_loop_vec.Vec]
   [entry-label : i64]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceVersionScan
@@ -88637,7 +88644,7 @@
 ;; with a call on one arm is not.
 (define (opt-bce-tighten-loop
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [loop : OptNaturalLoop]
   [frame : i64]) : OptBceHoistResult
   (match (opt-natural-loop-preheader loop)
@@ -88654,7 +88661,11 @@
         ;; separately.
         (if (or
           (= header latch)
-          (not (opt-bce-mb-has-nested-loop? loops header body-labels))
+          (not
+            (opt-bce-mb-has-nested-loop?
+              (opt_natural_loop_vec.view loops)
+              header
+              body-labels))
           (<
             (opt-bce-mb-body-calls
               (ir.compiler-ir-block-list-view body-blocks)
@@ -88766,35 +88777,34 @@
 ;; move left behind.
 (define (opt-bce-hoist-loops-scan
   [blocks : ir.CompilerIrBlockList]
-  [all-loops : OptNaturalLoopList]
-  [loops : OptNaturalLoopList]
+  [all-loops : opt_natural_loop_vec.Vec]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [rejected : OptLabelSet]
   [frame : i64]) : OptBceHoistScan
   (match loops
-    [(OptNaturalLoopList.Nil)
+    [(slice)
       (OptBceHoistScan.Scan blocks frame false (ir.compiler-ir-label-none))]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice loop & rest)
       (let
         [header : i64 (opt-natural-loop-header loop)]
         (if (opt-label-contains rejected header)
-          (opt-bce-hoist-loops-scan
-            blocks
-            all-loops
-            (deref rest)
-            rejected
-            frame)
+          (opt-bce-hoist-loops-scan blocks all-loops rest rejected frame)
           (match (opt-bce-hoist-loop blocks loop frame)
             [(OptBceHoistResult.Some next next-frame)
               (OptBceHoistScan.Scan next next-frame true header)]
             [(OptBceHoistResult.No)
-              (match (opt-bce-tighten-loop blocks all-loops loop frame)
+              (match (opt-bce-tighten-loop
+                blocks
+                all-loops
+                (owned_view.compiler-owned-reference-shared-view loop)
+                frame)
                 [(OptBceHoistResult.Some next next-frame)
                   (OptBceHoistScan.Scan next next-frame true header)]
                 [(OptBceHoistResult.No)
                   (opt-bce-hoist-loops-scan
                     blocks
                     all-loops
-                    (deref rest)
+                    rest
                     rejected
                     frame)])])))]))
 
@@ -88815,14 +88825,19 @@
           frame
           blocks
           function-abi)
-        (match (opt-bce-hoist-loops-scan
-          (compiler-opt-global-shared-view blocks)
-          (opt-cfg-natural-loops-with-context
+        (match (let
+          [natural-loops
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              context)]
+          (opt-bce-hoist-loops-scan
             (compiler-opt-global-shared-view blocks)
-            context)
-          (opt-cfg-natural-loops-with-context blocks context)
-          rejected
-          frame)
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              context)
+            (opt_natural_loop_vec.view natural-loops)
+            rejected
+            frame))
           [(OptBceHoistScan.Scan next-blocks next-frame changed applied)
             (if (not changed)
               (OptFunctionCtxResult.Result func context)
@@ -89003,7 +89018,7 @@
           function-abi)
         (let
           [_trace : unit (opt-bce-trace-function! name)]
-          [loops : OptNaturalLoopList
+          [loops : opt_natural_loop_vec.Vec
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
@@ -89228,12 +89243,12 @@
   [descriptor : OptBceMbDescriptor]
   [context : OptCfgContext]
   [blocks : ir.CompilerIrBlockList]
-  [all-loops : OptNaturalLoopList]
-  [remaining : OptNaturalLoopList]
+  [all-loops : opt_natural_loop_vec.Vec]
+  [remaining : (& remaining (Slice OptNaturalLoop))]
   [frame : i64]) : i64
   (match remaining
-    [(OptNaturalLoopList.Nil) (opt-bce-reason-none)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (opt-bce-reason-none)]
+    [(slice loop & rest)
       (let
         [_scan : OptBceVersionScan
           (opt-bce-mb-loops-scan
@@ -89242,7 +89257,7 @@
             (__tl-project-field context doms)
             (compiler-opt-global-shared-view blocks)
             all-loops
-            (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Nil)))
+            (slice-view remaining 0 1)
             (opt-cfg-entry-label blocks)
             false
             false
@@ -89256,7 +89271,7 @@
             context
             blocks
             all-loops
-            (deref rest)
+            rest
             frame)))]))
 
 ;; Test-only: the clause the versioner recorded for this function's loops, as
@@ -89289,7 +89304,7 @@
         (if (not (= single (opt-bce-reason-none)))
           single
           (let
-            [loops : OptNaturalLoopList
+            [loops : opt_natural_loop_vec.Vec
               (opt-cfg-natural-loops-with-context
                 (compiler-opt-global-shared-view blocks)
                 context)]
@@ -89309,7 +89324,7 @@
               context
               blocks
               (compiler-opt-global-shared-view loops)
-              loops
+              (opt_natural_loop_vec.view loops)
               frame))))]))
 
 ;; Test entry with type-pool access: descriptor-length recognition is live.
@@ -90314,14 +90329,17 @@
 
 (define (opt-unroll-mb-loops-scan
   [blocks : ir.CompilerIrBlockList]
-  [_all-loops : OptNaturalLoopList]
-  [loops : OptNaturalLoopList]
+  [_all-loops : opt_natural_loop_vec.Vec]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [entry-label : i64]
   [frame : i64]) : OptUnrollResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-unroll-mb-loop-shape blocks entry-label loop)
+    [(slice) (OptUnrollResult.Result blocks frame false)]
+    [(slice loop & rest)
+      (match (opt-unroll-mb-loop-shape
+        blocks
+        entry-label
+        (owned_view.compiler-owned-reference-shared-view loop))
         [(OptUnrollMbMaybeShape.Some shape)
           (match (opt-unroll-mb-apply
             (compiler-opt-global-shared-view blocks)
@@ -90333,16 +90351,11 @@
                 (opt-unroll-mb-loops-scan
                   blocks
                   _all-loops
-                  (deref rest)
+                  rest
                   entry-label
                   frame))])]
         [(OptUnrollMbMaybeShape.No)
-          (opt-unroll-mb-loops-scan
-            blocks
-            _all-loops
-            (deref rest)
-            entry-label
-            frame)])]))
+          (opt-unroll-mb-loops-scan blocks _all-loops rest entry-label frame)])]))
 
 (define (opt-unroll-mb-blocks-have-fast-phi?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
@@ -90918,7 +90931,7 @@
 ;; pass for the unrolled bodies behind it -- the `base[row + i]` scans this pass
 ;; exists to split.
 (define (opt-gep-offset-synthesize-first-candidate
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
   [uses : (& uses (__tl_dyn-array i64))]
@@ -90926,12 +90939,12 @@
   [poison : (& poison (__tl_dyn-array i64))]
   [def-block : (& def-block (__tl_dyn-array i64))]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptBlockListPassResult.Result blocks false)]
+    [(slice loop & rest)
       (match (opt-natural-loop-preheader loop)
         [(OptLoopPreheader.Some _)
           (opt-gep-offset-synthesize-first-candidate
-            (deref rest)
+            rest
             blocks
             context
             uses
@@ -90954,7 +90967,7 @@
                 (if synthesized
                   (OptBlockListPassResult.Result next true)
                   (opt-gep-offset-synthesize-first-candidate
-                    (deref rest)
+                    rest
                     blocks
                     context
                     uses
@@ -90962,7 +90975,7 @@
                     poison
                     def-block))])
             (opt-gep-offset-synthesize-first-candidate
-              (deref rest)
+              rest
               blocks
               context
               uses
@@ -91006,16 +91019,19 @@
           (&mut poison)
           (&mut base0)
           (&mut multi-base))]
-      (match (opt-gep-offset-synthesize-first-candidate
-        (opt-cfg-natural-loops-with-context
+      (match (let
+        [natural-loops
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            context)]
+        (opt-gep-offset-synthesize-first-candidate
+          (opt_natural_loop_vec.view natural-loops)
           (compiler-opt-global-shared-view blocks)
-          context)
-        (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view context)
-        uses
-        gep-uses
-        poison
-        def-block)
+          (compiler-opt-global-shared-view context)
+          uses
+          gep-uses
+          poison
+          def-block))
         [(OptBlockListPassResult.Result next synthesized)
           (if synthesized
             (opt-gep-offset-prepare-preheaders
@@ -91611,7 +91627,7 @@
 
 (define (opt-gep-offset-plan-loops
   [type-segment-bases : i64]
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [frame : i64]
   [uses : (& uses (__tl_dyn-array i64))]
@@ -91625,11 +91641,11 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
   (match loops
-    [(OptNaturalLoopList.Nil) acc]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) acc]
+    [(slice loop & rest)
       (opt-gep-offset-plan-loops
         type-segment-bases
-        (deref rest)
+        rest
         blocks
         frame
         uses
@@ -91643,7 +91659,7 @@
         cell
         (opt-gep-offset-plan-loop
           type-segment-bases
-          loop
+          (owned_view.compiler-owned-reference-shared-view loop)
           blocks
           frame
           uses
@@ -91837,23 +91853,26 @@
         (&mut base0)
         (&mut multi-base))]
     [derived : OptGepOffsetDerivedList
-      (opt-gep-offset-plan-loops
-        type-segment-bases
-        (opt-cfg-natural-loops-with-context
-          (compiler-opt-global-shared-view blocks)
-          context)
-        blocks
-        frame
-        uses
-        gep-uses
-        poison
-        multi-base
-        def-block
-        (compiler-opt-global-shared-view gep-mark)
-        (&mut gep-base)
-        (&mut gep-index)
-        (&mut cell)
-        (OptGepOffsetDerivedList.Nil))]
+      (let
+        [natural-loops
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            context)]
+        (opt-gep-offset-plan-loops
+          type-segment-bases
+          (opt_natural_loop_vec.view natural-loops)
+          blocks
+          frame
+          uses
+          gep-uses
+          poison
+          multi-base
+          def-block
+          (compiler-opt-global-shared-view gep-mark)
+          (&mut gep-base)
+          (&mut gep-index)
+          (&mut cell)
+          (OptGepOffsetDerivedList.Nil)))]
     (if (opt-gep-offset-derived-empty? derived)
       (OptGepOffsetPlanResult.Result blocks frame false)
       (OptGepOffsetPlanResult.Result
@@ -94688,23 +94707,19 @@
 
 (define (opt-successor-sink-loop-target?
   [index : (& index OptCfgIndex)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [source : i64]
   [target : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (if (and
         (= (opt-natural-loop-header loop) source)
         (let
           [body (opt-natural-loop-body-info loop)]
           (opt-loop-body-label-member? body index target)))
         true
-        (opt-successor-sink-loop-target?
-          index
-          (deref (deref rest))
-          source
-          target))]))
+        (opt-successor-sink-loop-target? index rest source target))]))
 
 (define (opt-successor-sink-append-prepared!
   [context : OptSuccessorSinkPrepareContext]
@@ -95157,7 +95172,7 @@
   [frame-cell : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
   [cfg : (& cfg OptCfgIndex)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [all-defs : (__tl_dyn-array i64)]
   [total-uses : (__tl_dyn-array i64)]
   [loop-phi-leaves : (__tl_dyn-array i64)]
@@ -95227,7 +95242,7 @@
                                     [_ false])
                                   (opt-successor-sink-loop-target?
                                     cfg
-                                    loops
+                                    (opt_natural_loop_vec.view loops)
                                     label
                                     target))
                                 (compiler-opt-global-shared-view total-uses)
@@ -95267,7 +95282,7 @@
   [frame-cell : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
   [cfg : (& cfg OptCfgIndex)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [all-defs : (__tl_dyn-array i64)]
   [total-uses : (__tl_dyn-array i64)]
   [loop-phi-leaves : (__tl_dyn-array i64)]
@@ -95581,7 +95596,7 @@
         context)]
     [cfg : OptCfgIndex
       (compiler-opt-global-shared-view (__tl-project-field cfg-context index))]
-    [loops : OptNaturalLoopList
+    [loops : opt_natural_loop_vec.Vec
       (opt-cfg-natural-loops-with-context
         (compiler-opt-global-shared-view ready)
         cfg-context)]
@@ -95899,14 +95914,17 @@
 (define (opt-uniform-phi-collect-loops
   [env : OptCopyEnv]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loops : OptNaturalLoopList]) : OptCopyEnv
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptCopyEnv
   (match loops
-    [(OptNaturalLoopList.Nil) env]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) env]
+    [(slice loop & rest)
       (opt-uniform-phi-collect-loops
-        (opt-uniform-phi-collect-loop env blocks loop)
+        (opt-uniform-phi-collect-loop
+          env
+          blocks
+          (owned_view.compiler-owned-reference-shared-view loop))
         blocks
-        (deref rest))]))
+        rest)]))
 
 (define (opt-uniform-phi-env-holds? [env : (& env OptCopyEnv)] [var : i64]) : bool
   (match (opt-copy-lookup env var)
@@ -95991,10 +96009,12 @@
 (define (opt-uniform-phi-round [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [env : OptCopyEnv
-      (opt-uniform-phi-collect-loops
-        (OptCopyEnv.Nil)
-        blocks
-        (opt-cfg-natural-loops blocks))]
+      (let
+        [natural-loops (opt-cfg-natural-loops blocks)]
+        (opt-uniform-phi-collect-loops
+          (OptCopyEnv.Nil)
+          blocks
+          (opt_natural_loop_vec.view natural-loops)))]
     (match (compiler-opt-global-shared-view env)
       [(OptCopyEnv.Nil) (OptBlockListPassResult.Result blocks false)]
       [_
@@ -96606,10 +96626,10 @@
 (define (opt-guard-sink-fill-depths!
   [count : i64]
   [depth : (&mut depth (__tl_dyn-array i64))]
-  [loops : OptNaturalLoopList]) : unit
+  [loops : (& loops (Slice OptNaturalLoop))]) : unit
   (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) unit]
+    [(slice loop & rest)
       (begin
         (let
           [members : (__tl_dyn-array bool) (opt-natural-loop-body-members loop)]
@@ -96620,7 +96640,7 @@
                 (set! (array-ref depth id) (+ (array-ref depth id) 1))
                 unit)
               (set! id (+ id 1)))))
-        (opt-guard-sink-fill-depths! count depth (deref rest)))]))
+        (opt-guard-sink-fill-depths! count depth rest))]))
 
 ;; Call-ish instructions, for the shrink-wrap precondition the guard-first
 ;; rematerialization below is priced by.
@@ -97337,12 +97357,15 @@
                   (&mut blk-opaque)
                   (&mut blk-call)))])
           (set! id (+ id 1))))
-      (opt-guard-sink-fill-depths!
-        count
-        (&mut depth)
-        (opt-cfg-natural-loops-with-context
-          (owned_view.compiler-owned-reference-shared-view blocks)
-          context))
+      (let
+        [natural-loops
+          (opt-cfg-natural-loops-with-context
+            (owned_view.compiler-owned-reference-shared-view blocks)
+            context)]
+        (opt-guard-sink-fill-depths!
+          count
+          (&mut depth)
+          (opt_natural_loop_vec.view natural-loops)))
       (OptGuardSinkState
         cells
         index
@@ -101734,14 +101757,14 @@
         (set! cursor (+ cursor 1))))))
 
 (define (opt-bg-loop-marks!
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [marks : (&mut marks (__tl_dyn-array bool))]) : unit
   (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) unit]
+    [(slice loop & rest)
       (begin
         (opt-bg-mark-members! (opt-natural-loop-body-members loop) marks)
-        (opt-bg-loop-marks! (deref (deref rest)) marks))]))
+        (opt-bg-loop-marks! rest marks))]))
 
 (define (opt-bg-outside-loops?
   [index : (& index OptCfgIndex)]
@@ -101765,21 +101788,25 @@
 
 (define (opt-bg-loop-innermost?
   [loop : (& loop OptNaturalLoop)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [index : (& index OptCfgIndex)]) : bool
   (let
     [body : OptLoopBody (opt-natural-loop-body-info loop)]
     [header : i64 (opt-natural-loop-header loop)]
-    (opt-bg-no-inner-header? body header loops index)))
+    (opt-bg-no-inner-header?
+      body
+      header
+      (opt_natural_loop_vec.view loops)
+      index)))
 
 (define (opt-bg-no-inner-header?
   [body : (& body OptLoopBody)]
   [header : i64]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [index : (& index OptCfgIndex)]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons other rest)
+    [(slice) true]
+    [(slice other & rest)
       (and
         (or
           (= (opt-natural-loop-header other) header)
@@ -101788,26 +101815,41 @@
               body
               index
               (opt-natural-loop-header other))))
-        (opt-bg-no-inner-header? body header (deref (deref rest)) index))]))
+        (opt-bg-no-inner-header? body header rest index))]))
 
-(define (opt-bg-loops-insert
-  [loop : OptNaturalLoop]
-  [sorted : OptNaturalLoopList]) : OptNaturalLoopList
-  (match sorted
-    [(OptNaturalLoopList.Nil)
-      (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Nil)))]
-    [(OptNaturalLoopList.Cons head rest)
-      (if (> (opt-bg-loop-body-size loop) (opt-bg-loop-body-size head))
-        (OptNaturalLoopList.Cons loop (box (OptNaturalLoopList.Cons head rest)))
-        (OptNaturalLoopList.Cons
-          head
-          (box (opt-bg-loops-insert loop (deref rest)))))]))
-
-(define (opt-bg-loops-widest-first [loops : OptNaturalLoopList]) : OptNaturalLoopList
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptNaturalLoopList.Nil)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (opt-bg-loops-insert loop (opt-bg-loops-widest-first (deref rest)))]))
+(define (opt-bg-loops-widest-first [loops : (& loops (Slice OptNaturalLoop))]) : opt_natural_loop_vec.Vec
+  (let
+    [count : i64 (array-length loops)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [out : opt_natural_loop_vec.Vec (opt_natural_loop_vec.with-capacity count)]
+    [placed : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< placed count)
+        (let
+          [source : i64 (- (- count 1) placed)]
+          [size : i64 (opt-bg-loop-body-size (& (array-ref loops source)))]
+          [slot : i64 placed]
+          (begin
+            (while (and
+              (> slot 0)
+              (>
+                size
+                (opt-bg-loop-body-size
+                  (& (array-ref loops (array-ref order (- slot 1)))))))
+              (begin
+                (set! (array-ref order slot) (array-ref order (- slot 1)))
+                (set! slot (- slot 1))))
+            (set! (array-ref order slot) source)
+            (set! placed (+ placed 1)))))
+      (while (< index count)
+        (begin
+          (opt_natural_loop_vec.push-ref!
+            (&mut out)
+            (owned_view.compiler-owned-reference-shared-view
+              (& (array-ref loops (array-ref order index)))))
+          (set! index (+ index 1))))
+      out)))
 
 ;; --- planning ----------------------------------------------------------------
 ;;
@@ -101886,16 +101928,16 @@
           next-state))]))
 
 (define (opt-bg-plan-loops
-  [loops : OptNaturalLoopList]
-  [all-loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
+  [all-loops : opt_natural_loop_vec.Vec]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [marks : (& marks (__tl_dyn-array bool))]
   [analysis : OptBgAnalysis]
   [state : OptBgPlanState]) : OptBgPlanState
   (match loops
-    [(OptNaturalLoopList.Nil) state]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) state]
+    [(slice loop & rest)
       (let
         [next-state : OptBgPlanState
           (match (opt-natural-loop-preheader loop)
@@ -101922,7 +101964,7 @@
                     (compiler-opt-global-shared-view analysis)
                     state)))])]
         (opt-bg-plan-loops
-          (deref rest)
+          rest
           all-loops
           blocks
           index
@@ -102320,42 +102362,37 @@
 ;; header, so it is outside every loop exactly when the header is inside its own
 ;; loop alone -- which is the condition the plan then demands of it.
 (define (opt-bg-header-loop-count
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [index : (& index OptCfgIndex)]
   [header : i64]) : i64
   (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) 0]
+    [(slice loop & rest)
       (+
         (if (let
           [body (opt-natural-loop-body-info loop)]
           (opt-loop-body-label-member? body index header))
           1
           0)
-        (opt-bg-header-loop-count (deref (deref rest)) index header))]))
+        (opt-bg-header-loop-count rest index header))]))
 
 (define (opt-bg-synthesize-first-candidate
-  [remaining : (& remaining OptNaturalLoopList)]
-  [loops : (& loops OptNaturalLoopList)]
+  [remaining : (& remaining (Slice OptNaturalLoop))]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
   [analysis : OptBgAnalysis]) : OptBlockListPassResult
   (match remaining
-    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptBlockListPassResult.Result blocks false)]
+    [(slice loop & rest)
       (match (opt-natural-loop-preheader loop)
         [(OptLoopPreheader.Some _)
-          (opt-bg-synthesize-first-candidate
-            (deref (deref rest))
-            loops
-            blocks
-            context
-            analysis)]
+          (opt-bg-synthesize-first-candidate rest loops blocks context analysis)]
         [(OptLoopPreheader.No)
           (if (and
             (=
               (opt-bg-header-loop-count
-                loops
+                (opt_natural_loop_vec.view loops)
                 context.index
                 (opt-natural-loop-header loop))
               1)
@@ -102380,13 +102417,13 @@
                 (if synthesized
                   (OptBlockListPassResult.Result next true)
                   (opt-bg-synthesize-first-candidate
-                    (deref (deref rest))
+                    rest
                     loops
                     blocks
                     context
                     analysis))])
             (opt-bg-synthesize-first-candidate
-              (deref (deref rest))
+              rest
               loops
               blocks
               context
@@ -102395,14 +102432,14 @@
 (defenum OptBgPreheaderResult
   (Result ir.CompilerIrBlockList OptCfgContext bool))
 
-(define (opt-bg-loops-need-preheader? [loops : (& loops OptNaturalLoopList)]) : bool
+(define (opt-bg-loops-need-preheader?
+  [loops : (& loops (Slice OptNaturalLoop))]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (match (opt-natural-loop-preheader loop)
         [(OptLoopPreheader.No) true]
-        [(OptLoopPreheader.Some _)
-          (opt-bg-loops-need-preheader? (deref (deref rest)))])]))
+        [(OptLoopPreheader.Some _) (opt-bg-loops-need-preheader? rest)])]))
 
 ;; One synthesis per round: the CFG (and therefore `context`) is stale straight
 ;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
@@ -102420,14 +102457,16 @@
     (let
       [width : i64
         (opt-bg-max-instr-count (ir.compiler-ir-block-list-view blocks))]
-      [loops : OptNaturalLoopList
+      [loops : opt_natural_loop_vec.Vec
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
           context)]
-      (if (or (<= width 0) (not (opt-bg-loops-need-preheader? loops)))
+      (if (or
+        (<= width 0)
+        (not (opt-bg-loops-need-preheader? (opt_natural_loop_vec.view loops))))
         (OptBgPreheaderResult.Result blocks context changed)
         (match (opt-bg-synthesize-first-candidate
-          loops
+          (opt_natural_loop_vec.view loops)
           loops
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view context)
@@ -102455,13 +102494,14 @@
     (if (or (<= frame 0) (<= width 0))
       (OptBgBlocksResult.Result blocks frame false)
       (let
-        [loops : OptNaturalLoopList
+        [loops : opt_natural_loop_vec.Vec
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
             context)]
         [marks : (__tl_dyn-array bool)
           (__tl_make-array bool (ir.compiler-ir-block-list-count blocks))]
-        [_marks : unit (opt-bg-loop-marks! loops (&mut marks))]
+        [_marks : unit
+          (opt-bg-loop-marks! (opt_natural_loop_vec.view loops) (&mut marks))]
         [analysis : OptBgAnalysis (opt-bg-analysis-build blocks frame width)]
         (match (opt-bg-plan-literal-blocks
           (ir.compiler-ir-block-list-view blocks)
@@ -102471,18 +102511,21 @@
             (__tl_make-array bool 0)
             (ir.compiler-ir-block-list-empty))
           (compiler-opt-global-shared-view analysis)
-          (opt-bg-plan-loops
-            (opt-bg-loops-widest-first (compiler-opt-global-shared-view loops))
-            loops
-            blocks
-            context.index
-            marks
-            (compiler-opt-global-shared-view analysis)
-            (OptBgPlanState.State
-              (OptBgPlanList.Nil)
-              (OptLabelSet.Nil)
-              (OptLabelSet.Nil)
-              frame)))
+          (let
+            [natural-loops
+              (opt-bg-loops-widest-first (opt_natural_loop_vec.view loops))]
+            (opt-bg-plan-loops
+              (opt_natural_loop_vec.view natural-loops)
+              loops
+              blocks
+              context.index
+              marks
+              (compiler-opt-global-shared-view analysis)
+              (OptBgPlanState.State
+                (OptBgPlanList.Nil)
+                (OptLabelSet.Nil)
+                (OptLabelSet.Nil)
+                frame))))
           [(OptBgPlanState.State plans _ _ next-var)
             (match (& plans)
               [(OptBgPlanList.Nil)
@@ -109832,15 +109875,15 @@
       count)))
 
 (define (opt-inline-loop-labels-add
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [acc : OptLabelSet]) : OptLabelSet
   (match loops
-    [(OptNaturalLoopList.Nil) acc]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) acc]
+    [(slice loop & rest)
       (let
         [body : OptLabelSet (opt-natural-loop-body loop)]
         (opt-inline-loop-labels-add
-          (deref rest)
+          rest
           (opt-inline-loop-label-union-from acc body 0 (opt-label-count body))))]))
 
 (define (opt-inline-caller-facts-install!
@@ -109888,11 +109931,14 @@
     (begin
       (set!
         (array-ref opt-inline-caller-loop-labels 0)
-        (opt-inline-loop-labels-add
-          (let
-            [blocks (opt-inline-caller-facts-blocks-shared-view)]
-            (opt-cfg-natural-loops blocks))
-          (OptLabelSet.Nil)))
+        (let
+          [natural-loops
+            (let
+              [blocks (opt-inline-caller-facts-blocks-shared-view)]
+              (opt-cfg-natural-loops blocks))]
+          (opt-inline-loop-labels-add
+            (opt_natural_loop_vec.view natural-loops)
+            (OptLabelSet.Nil))))
       (set!
         opt-inline-caller-has-bounds?
         (let
@@ -110544,13 +110590,13 @@
 ;; The header label of the smallest natural loop whose body holds `label`, or
 ;; none.
 (define (opt-inline-innermost-loop-header
-  [loops : OptNaturalLoopList]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [label : i64]
   [best-header : i64]
   [best-size : i64]) : i64
   (match loops
-    [(OptNaturalLoopList.Nil) best-header]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) best-header]
+    [(slice loop & rest)
       (let
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [size : i64 (opt-label-count body)]
@@ -110558,15 +110604,11 @@
           (opt-label-contains body label)
           (or (< best-header 0) (< size best-size)))
           (opt-inline-innermost-loop-header
-            (deref rest)
+            rest
             label
             (opt-natural-loop-header loop)
             size)
-          (opt-inline-innermost-loop-header
-            (deref rest)
-            label
-            best-header
-            best-size)))]))
+          (opt-inline-innermost-loop-header rest label best-header best-size)))]))
 
 ;; Count the deciding branches on the idom chain from `site` (exclusive) up to
 ;; `header` (inclusive); -1 when the chain does not reach the header.
@@ -110632,11 +110674,13 @@
       (opt-inline-caller-facts-blocks-shared-view)]
     [site-label : i64 opt-inline-current-block-label]
     [header-label : i64
-      (opt-inline-innermost-loop-header
-        (opt-cfg-natural-loops blocks)
-        site-label
-        (- 0 1)
-        0)]
+      (let
+        [natural-loops (opt-cfg-natural-loops blocks)]
+        (opt-inline-innermost-loop-header
+          (opt_natural_loop_vec.view natural-loops)
+          site-label
+          (- 0 1)
+          0))]
     (if (< header-label 0)
       (- 0 1)
       (let
@@ -129764,23 +129808,26 @@
   [context : OptCfgContext]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
-  [loops : OptNaturalLoopList]) : OptScratchResetApplyResult
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptScratchResetApplyResult
   (match loops
-    [(OptNaturalLoopList.Nil)
-      (OptScratchResetApplyResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptScratchResetApplyResult.Result blocks frame false)]
+    [(slice loop & rest)
       (if (opt-scratch-loop-eligible?
         type-segment-bases
         (compiler-opt-global-shared-view context)
         blocks
-        (compiler-opt-global-shared-view loop))
-        (opt-scratch-reset-apply-loop context blocks frame loop)
+        (owned_view.compiler-owned-reference-shared-view loop))
+        (opt-scratch-reset-apply-loop
+          context
+          blocks
+          frame
+          (owned_view.compiler-owned-reference-shared-view loop))
         (opt-scratch-reset-apply-loops
           type-segment-bases
           context
           blocks
           frame
-          (deref rest)))]))
+          rest))]))
 
 (define (opt-scratch-reset-function-with-context-result
   [type-segment-bases : i64]
@@ -129793,12 +129840,17 @@
         func
         (compiler-opt-global-shared-view context)
         verified?
-        (match (opt-scratch-reset-apply-loops
-          type-segment-bases
-          (compiler-opt-global-shared-view context)
-          (compiler-opt-global-shared-view blocks)
-          frame
-          (opt-cfg-natural-loops-with-context blocks context))
+        (match (let
+          [natural-loops
+            (opt-cfg-natural-loops-with-context
+              (compiler-opt-global-shared-view blocks)
+              context)]
+          (opt-scratch-reset-apply-loops
+            type-segment-bases
+            (compiler-opt-global-shared-view context)
+            (compiler-opt-global-shared-view blocks)
+            frame
+            (opt_natural_loop_vec.view natural-loops)))
           [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
 
@@ -129819,12 +129871,17 @@
         (let
           [context : OptCfgContext
             (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-          (match (opt-scratch-reset-apply-loops
-            type-segment-bases
-            (compiler-opt-global-shared-view context)
-            (compiler-opt-global-shared-view blocks)
-            frame
-            (opt-cfg-natural-loops-with-context blocks context))
+          (match (let
+            [natural-loops
+              (opt-cfg-natural-loops-with-context
+                (compiler-opt-global-shared-view blocks)
+                context)]
+            (opt-scratch-reset-apply-loops
+              type-segment-bases
+              (compiler-opt-global-shared-view context)
+              (compiler-opt-global-shared-view blocks)
+              frame
+              (opt_natural_loop_vec.view natural-loops)))
             [(OptScratchResetApplyResult.Result next-blocks next-frame changed)
               (if changed
                 (OptLateRewriteResult.Result
@@ -135030,10 +135087,10 @@
   [memory : (& memory opt_i64_i64_map.Map)]
   [defs : (& defs (__tl_dyn-array i64))]
   [addr-taken : (__tl_dyn-array bool)]
-  [loops : OptNaturalLoopList]) : OptLoopCallSite
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptLoopCallSite
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLoopCallSite.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptLoopCallSite.No)]
+    [(slice loop & rest)
       (begin
         (match (opt-natural-loop-preheader loop)
           [(OptLoopPreheader.Some pre)
@@ -135061,7 +135118,7 @@
                     (return (OptLoopCallSite.Some p label at))]
                   [(OptLoopCallSite.No) unit])))]
           [(OptLoopPreheader.No) unit])
-        (opt-loop-call-find functions memory defs addr-taken (deref rest)))]))
+        (opt-loop-call-find functions memory defs addr-taken rest))]))
 
 ;; A two-block while loop can keep the original first guard and call, then
 ;; return through a second copy of the guard, replay any scalar prefix, and
@@ -135801,7 +135858,7 @@
         (let
           [context : OptCfgContext
             (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-          [loops : OptNaturalLoopList
+          [loops : opt_natural_loop_vec.Vec
             (opt-cfg-natural-loops-with-context blocks context)]
           [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
           (begin
@@ -135812,7 +135869,7 @@
               memory
               defs
               (opt-loop-call-addr-taken frame (opt-function-blocks func))
-              loops)
+              (opt_natural_loop_vec.view loops))
               [(OptLoopCallSite.No) func]
               [(OptLoopCallSite.Some pre site at)
                 (match (opt-cfg-index-find-block context.index pre)
@@ -136317,13 +136374,12 @@
 (define (opt-load-gvn-loop-safe-collect
   [hs : (& hs OptLoadHeaderSet)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loops : (& loops OptNaturalLoopList)]) : OptLabelSet
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptLabelSet
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLabelSet.Nil)]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) (OptLabelSet.Nil)]
+    [(slice loop & rest)
       (let
-        [tail : OptLabelSet
-          (opt-load-gvn-loop-safe-collect hs blocks (deref (deref rest)))]
+        [tail : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks rest)]
         (if (let
           [walked-blocks : ir.CompilerIrBlockList
             (opt-natural-loop-body-blocks loop)]
@@ -136413,20 +136469,19 @@
             (opt-load-gvn-body-uses-seq instrs 0 uses)]))]))
 
 (define (opt-load-gvn-loop-count
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [acc : i64]) : i64
   (match loops
-    [(OptNaturalLoopList.Nil) acc]
-    [(OptNaturalLoopList.Cons _ rest)
-      (opt-load-gvn-loop-count (deref (deref rest)) (+ acc 1))]))
+    [(slice) acc]
+    [(slice _ & rest) (opt-load-gvn-loop-count rest (+ acc 1))]))
 
 (define (opt-load-gvn-loop-carry-fill
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [carry : OptLoadLoopCarry]
   [next : i64]) : OptLoadLoopCarry
   (match loops
-    [(OptNaturalLoopList.Nil) carry]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) carry]
+    [(slice loop & rest)
       (if (let
         [walked-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-body-blocks loop)]
@@ -136446,13 +136501,13 @@
                   (ir.compiler-ir-block-list-view walked-blocks)
                   (opt_i64_i64_map.with-capacity 32))))
             (opt-load-gvn-loop-carry-fill
-              (deref (deref rest))
+              rest
               (OptLoadLoopCarry
                 (opt-label-cons header carry.headers)
                 index
                 carry.uses)
               (+ next 1))))
-        (opt-load-gvn-loop-carry-fill (deref (deref rest)) carry next))]))
+        (opt-load-gvn-loop-carry-fill rest carry next))]))
 
 (define (opt-load-gvn-loop-carry-contains?
   [carry : OptLoadLoopCarry]
@@ -136467,11 +136522,12 @@
       (compiler-opt-global-array-element-shared-view carry.uses at)]
     [(opt_i64_i64_map.LookupMissing) (opt_i64_i64_map.with-capacity 1)]))
 
-(define (opt-load-gvn-loop-carry-collect [loops : (& loops OptNaturalLoopList)]) : OptLoadLoopCarry
+(define (opt-load-gvn-loop-carry-collect
+  [loops : (& loops opt_natural_loop_vec.Vec)]) : OptLoadLoopCarry
   (let
-    [count : i64 (opt-load-gvn-loop-count loops 0)]
+    [count : i64 (opt-load-gvn-loop-count (opt_natural_loop_vec.view loops) 0)]
     (opt-load-gvn-loop-carry-fill
-      loops
+      (opt_natural_loop_vec.view loops)
       (OptLoadLoopCarry
         (OptLabelSet.Nil)
         (opt_i64_i64_map.with-capacity (+ count 1))
@@ -137713,7 +137769,7 @@
   (instrs (__tl_dyn-array ir.CompilerIrInstr))
   (live-ins (__tl_dyn-array i64))
   (preds (__tl_dyn-array i64))
-  (loops OptNaturalLoopList))
+  (loops opt_natural_loop_vec.Vec))
 
 (define (opt-load-join-inactive [mint : i64]) : OptLoadJoinPhis
   (let
@@ -137726,17 +137782,14 @@
       (__tl_make-array ir.CompilerIrInstr 0)
       (compiler-opt-global-shared-view empty)
       empty
-      (OptNaturalLoopList.Nil))))
+      (opt-natural-loops-empty))))
 
 (define (opt-load-join-count [joins : (& joins OptLoadJoinPhis)]) : i64
   (array-ref joins.counters 0))
 
 ;; Loops, counted for the live-in cache.
-(define (opt-load-join-loop-count [loops : (& loops OptNaturalLoopList)]) : i64
-  (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons _ rest)
-      (+ 1 (opt-load-join-loop-count (deref (deref rest))))]))
+(define (opt-load-join-loop-count [loops : (& loops (Slice OptNaturalLoop))]) : i64
+  (array-length loops))
 
 ;; Does any reachable block have more than one reachable predecessor? A function
 ;; without one can never mint a phi, so it skips the workspace entirely.
@@ -137765,12 +137818,13 @@
 (define (opt-load-join-build
   [index : (& index OptCfgIndex)]
   [block-count : i64]
-  [loops : OptNaturalLoopList]
+  [loops : opt_natural_loop_vec.Vec]
   [mint : i64]) : OptLoadJoinPhis
   (if (not (opt-load-join-any-site? index block-count))
     (opt-load-join-inactive mint)
     (let
-      [loop-count : i64 (opt-load-join-loop-count loops)]
+      [loop-count : i64
+        (opt-load-join-loop-count (opt_natural_loop_vec.view loops))]
       [live-ins : (__tl_dyn-array i64) (__tl_make-array i64 loop-count)]
       [slot : i64 0]
       (begin
@@ -137838,12 +137892,12 @@
 (define (opt-load-join-budget-ok?
   [index : (& index OptCfgIndex)]
   [joins : (& joins OptLoadJoinPhis)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [loop-index : i64]
   [id : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) true]
+    [(slice loop & rest)
       (and
         (if (opt-load-join-enters-loop? index loop id)
           (<
@@ -137853,12 +137907,7 @@
               loop-index)
             (opt-licm-chain-live-in-budget))
           true)
-        (opt-load-join-budget-ok?
-          index
-          joins
-          (deref (deref rest))
-          (+ loop-index 1)
-          id))]))
+        (opt-load-join-budget-ok? index joins rest (+ loop-index 1) id))]))
 
 ;; Fill `joins.preds` with this block's reachable predecessor ids. Returns the
 ;; count, or -1 when the site is refused: an unprocessed predecessor (the
@@ -138163,7 +138212,13 @@
           id)]
       (if (< count 0)
         state
-        (if (not (opt-load-join-budget-ok? index joins joins.loops 0 id))
+        (if (not
+          (opt-load-join-budget-ok?
+            index
+            joins
+            (opt_natural_loop_vec.view joins.loops)
+            0
+            id))
           state
           (match (compiler-opt-global-array-element-shared-view
             exit-states
@@ -138541,25 +138596,25 @@
         [_ false]))))
 
 (define (opt-load-pre-latch?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [label : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) false]
+    [(slice loop & rest)
       (or
         (= (opt-natural-loop-latch loop) label)
-        (opt-load-pre-latch? (deref (deref rest)) label))]))
+        (opt-load-pre-latch? rest label))]))
 
 ;; The placement gate: never a loop latch, and never a hoist whose destination
 ;; or whose arm sits in (or enters) a loop already at the live-in budget.
 (define (opt-load-pre-dest-ok?
   [cache : (&mut cache (__tl_dyn-array i64))]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [loop-index : i64]
   [dest : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) true]
+    [(slice loop & rest)
       (and
         ;; The destination is budgeted by the same rule MF-2 uses, on the same
         ;; proxy: a guard block INSIDE a loop that already carries as many
@@ -138574,7 +138629,7 @@
             (opt-load-loop-live-ins-cached cache loop loop-index)
             (opt-licm-chain-live-in-budget))
           true)
-        (opt-load-pre-dest-ok? cache (deref (deref rest)) (+ loop-index 1) dest))]))
+        (opt-load-pre-dest-ok? cache rest (+ loop-index 1) dest))]))
 
 ;; IT-2's slot adds one placement rule on top of the budget above: the
 ;; destination must be outside EVERY natural loop. The budget prices a
@@ -138584,14 +138639,14 @@
 ;; hoisted words and costs more than the same pass wins where the destination
 ;; is the function entry.
 (define (opt-load-pre-dest-loop-free?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [dest : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) true]
+    [(slice loop & rest)
       (and
         (not (opt-natural-loop-body-contains-id? loop dest))
-        (opt-load-pre-dest-loop-free? (deref (deref rest)) dest))]))
+        (opt-load-pre-dest-loop-free? rest dest))]))
 
 ;; The current value of a block in the plan: a block can be both a hoist source
 ;; and a hoist destination, so every edit reads what earlier edits left.
@@ -138670,7 +138725,7 @@
   [hs : (& hs OptLoadHeaderSet)]
   [sites : (& sites OptLoadPreSites)]
   [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [cache : (&mut cache (__tl_dyn-array i64))]
   [out : (__tl_dyn-array OptGvnBlockResult)]
   [loop-free-dest? : bool]
@@ -138689,8 +138744,10 @@
         (=
           (- (array-ref preds.offsets (+ arm 1)) (array-ref preds.offsets arm))
           1)
-        (opt-load-pre-dest-ok? cache loops 0 pred)
-        (or (not loop-free-dest?) (opt-load-pre-dest-loop-free? loops pred))
+        (opt-load-pre-dest-ok? cache (opt_natural_loop_vec.view loops) 0 pred)
+        (or
+          (not loop-free-dest?)
+          (opt-load-pre-dest-loop-free? (opt_natural_loop_vec.view loops) pred))
         ;; The bypass edge must land on a JOIN. That is what makes the hoist a
         ;; partial-redundancy fix rather than plain speculation: the value the
         ;; two edges carry meets there, so the block the join dominates is the
@@ -138811,7 +138868,7 @@
   [context : (& context OptCfgContext)]
   [sources : (& sources OptValueSources)]
   [hs : (& hs OptLoadHeaderSet)]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
   [loop-free-dest? : bool]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
@@ -138831,7 +138888,9 @@
         [out : (__tl_dyn-array OptGvnBlockResult)
           (__tl_make-array OptGvnBlockResult block-count)]
         [cache : (__tl_dyn-array i64)
-          (__tl_make-array i64 (opt-load-join-loop-count loops))]
+          (__tl_make-array
+            i64
+            (opt-load-join-loop-count (opt_natural_loop_vec.view loops)))]
         [succs : OptCfgCsr index.succs]
         [reachable : (__tl_dyn-array bool) index.reachable]
         [moved : i64 0]
@@ -138852,7 +138911,10 @@
                     (array-ref succs.offsets (+ id 1))
                     (array-ref succs.offsets id))
                   2)
-                (not (opt-load-pre-latch? loops (opt-cfg-index-label index id))))
+                (not
+                  (opt-load-pre-latch?
+                    (opt_natural_loop_vec.view loops)
+                    (opt-cfg-index-label index id))))
                 (let
                   [a : i64 (array-ref succs.edges (array-ref succs.offsets id))]
                   [b : i64
@@ -139403,18 +139465,18 @@
 ;; loop of `it-hash-words` even though the path between them runs the words
 ;; loop.
 (define (opt-guard-dedup-same-loops?
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [a : i64]
   [b : i64]) : bool
   (match loops
-    [(OptNaturalLoopList.Nil) true]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) true]
+    [(slice loop & rest)
       (and
         (let
           [in-a : bool (opt-natural-loop-body-contains-id? loop a)]
           [in-b : bool (opt-natural-loop-body-contains-id? loop b)]
           (or (and in-a in-b) (and (not in-a) (not in-b))))
-        (opt-guard-dedup-same-loops? (deref (deref rest)) a b))]))
+        (opt-guard-dedup-same-loops? rest a b))]))
 
 ;; Resolve a match chain to the site that is never itself retired.
 (define (opt-guard-dedup-resolve-root
@@ -141339,7 +141401,7 @@
   [context : (& context OptCfgContext)]
   [hs : OptLoadHeaderSet]
   [sources : OptValueSources]
-  [loops : OptNaturalLoopList]
+  [loops : opt_natural_loop_vec.Vec]
   [moved : (& moved (__tl_dyn-array bool))]
   [uses : (__tl_dyn-array i64)]
   [def-blocks : (& def-blocks (__tl_dyn-array i64))]
@@ -141420,7 +141482,7 @@
                       (if (and
                         (not (= root pass))
                         (opt-guard-dedup-same-loops?
-                          loops
+                          (opt_natural_loop_vec.view loops)
                           (array-ref sites (* root 6))
                           (array-ref sites (* pass 6)))
                         ;; The surviving load's BASE must still name the same
@@ -141568,7 +141630,7 @@
                   (compiler-opt-global-shared-view params)
                   blocks
                   frame)]
-              [loops : OptNaturalLoopList
+              [loops : opt_natural_loop_vec.Vec
                 (opt-cfg-natural-loops-with-context
                   (compiler-opt-global-shared-view blocks)
                   context)]
@@ -142309,20 +142371,17 @@
 
 (define (opt-load-gvn-loop-masks-fill
   [loop-masks : (&mut loop-masks (__tl_dyn-array i64))]
-  [loops : (& loops OptNaturalLoopList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
   [loop-index : i64]) : unit
   (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
+    [(slice) unit]
+    [(slice loop & rest)
       (begin
         (opt-load-gvn-loop-mask-mark
           loop-masks
           (opt-natural-loop-body-members loop)
           (opt-load-gvn-loop-mask-bit loop-index))
-        (opt-load-gvn-loop-masks-fill
-          loop-masks
-          (deref (deref rest))
-          (+ loop-index 1)))]))
+        (opt-load-gvn-loop-masks-fill loop-masks rest (+ loop-index 1)))]))
 
 (define (opt-load-gvn-subst-env
   [index : (& index OptCfgIndex)]
@@ -142520,7 +142579,7 @@
     (let
       [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
       [count : i64 (opt-cfg-index-block-count index)]
-      [loops : OptNaturalLoopList
+      [loops : opt_natural_loop_vec.Vec
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
           context)]
@@ -142561,7 +142620,11 @@
       [processed : (__tl_dyn-array bool) (__tl_make-array bool count)]
       [out : (__tl_dyn-array OptGvnBlockResult)
         (__tl_make-array OptGvnBlockResult count)]
-      [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs work loops)]
+      [loop-safe : OptLabelSet
+        (opt-load-gvn-loop-safe-collect
+          hs
+          work
+          (opt_natural_loop_vec.view loops))]
       [carry : OptLoadLoopCarry (opt-load-gvn-loop-carry-collect loops)]
       [canon : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       ;; Natural-loop membership, filled before the sweep because MF-5 (i)'s
@@ -142581,7 +142644,10 @@
             0))]
       [_masks : unit
         (if promotable?
-          (opt-load-gvn-loop-masks-fill (&mut loop-masks) loops 0)
+          (opt-load-gvn-loop-masks-fill
+            (&mut loop-masks)
+            (opt_natural_loop_vec.view loops)
+            0)
           unit)]
       [_refresh : unit (opt-cfg-index-refresh-blocks! index work)]
       [promote : OptLoadCellPromote
@@ -142648,7 +142714,10 @@
           [_subst-masks : unit
             (if (or promotable? (not subst-any?))
               unit
-              (opt-load-gvn-loop-masks-fill (&mut subst-masks) loops 0))]
+              (opt-load-gvn-loop-masks-fill
+                (&mut subst-masks)
+                (opt_natural_loop_vec.view loops)
+                0))]
           [subst : OptCopyEnv
             (if subst-any?
               (opt-load-gvn-subst-env index sources subst-masks frame out)

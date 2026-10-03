@@ -330,7 +330,7 @@
         state.count
         state.base-arena
         state.exhausted
-        (__tl_make-array i64 8)
+        (in-arena (arena.Arena state.base-arena) (__tl_make-array i64 8))
         state.dedup-count
         state.storage-arena
         state.segment-count)]

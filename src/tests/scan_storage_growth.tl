@@ -58,7 +58,9 @@
         (set!
           valid
           (and
-            (!= old-owner new-owner)
+            ;; Growth appends a segment to the retained owner; no row
+            ;; moves and no owner is retired.
+            (= old-owner new-owner)
             (<= (* new-bytes 4) (* 32769 56 5))
             (=
               (arena.tl_arena_current)

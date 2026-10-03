@@ -83,42 +83,41 @@
     (let
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (__tl_make-array CompilerProfileStateStorage 1)]
-      (begin
-        (set!
-          (array-ref storage 0)
-          (CompilerProfileStateStorage
-            (__tl_make-array i64 compiler-profile-state-metric-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
-            (__tl_make-array String compiler-profile-state-summary-row-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
-            (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-table-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-scope-capacity)
-            (__tl_make-array
-              String
-              compiler-profile-state-summary-exact-row-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-row-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-row-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-row-capacity)
-            (__tl_make-array
-              i64
-              compiler-profile-state-summary-exact-top-capacity)))
-        (CompilerProfileState
-          (unsafe
-            (ptr->int (__tl_array-data storage))))))
+      (set!
+        (array-ref storage 0)
+        (CompilerProfileStateStorage
+          (__tl_make-array i64 compiler-profile-state-metric-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+          (__tl_make-array String compiler-profile-state-summary-row-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-row-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+          (__tl_make-array i64 compiler-profile-state-summary-scope-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-table-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-scope-capacity)
+          (__tl_make-array
+            String
+            compiler-profile-state-summary-exact-row-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-row-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-row-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-row-capacity)
+          (__tl_make-array
+            i64
+            compiler-profile-state-summary-exact-top-capacity)))
+      (CompilerProfileState
+        (unsafe
+          (ptr->int (__tl_array-data storage)))))
     (CompilerProfileState 0)))
 
 (cfg
@@ -214,12 +213,11 @@
     (let
       [metric : i64 start]
       (while (< metric end)
-        (begin
-          (compiler-profile-metrics-set!
-            (compiler-profile-state-shared-view metrics)
-            metric
-            0)
-          (set! metric (+ metric 1)))))))
+        (compiler-profile-metrics-set!
+          (compiler-profile-state-shared-view metrics)
+          metric
+          0)
+        (set! metric (+ metric 1))))))
 
 (cfg
   (any compile-profile test)
@@ -360,79 +358,78 @@
     (let
       [left : CompilerProfileState (compiler-profile-state-new)]
       [right : CompilerProfileState (compiler-profile-state-new)]
-      (begin
-        (compiler-profile-state-metric-set! left 3 11)
-        (compiler-profile-state-metric-set! right 3 29)
-        (compiler-profile-state-metric-add! left 3 7)
-        (compiler-profile-state-metric-set! left 4 41)
-        (compiler-profile-state-metric-set! right 4 43)
-        ;; Exercise the first backend slot and the final regalloc slot so the
-        ;; owner test covers the complete census range, not only legacy
-        ;; compile-profile ids.
-        (compiler-profile-state-metric-set! left 140 47)
-        (compiler-profile-state-metric-set! right 140 53)
-        (compiler-profile-state-metric-set! left 222 59)
-        (compiler-profile-state-metric-set! right 222 61)
-        ;; Exercise the first load-lifetime slot and both ends of the packed
-        ;; typecheck/lifetime view so the central owner test pins the complete
-        ;; reservation and a reset of one job cannot erase another ledger.
-        (compiler-profile-state-metric-set! left 242 67)
-        (compiler-profile-state-metric-set! left 350 71)
-        (compiler-profile-state-metric-set! right 350 73)
-        (compiler-profile-state-metric-set! left 373 79)
-        (compiler-profile-state-metric-set! right 373 83)
-        (compiler-profile-state-metric-reset-range! right 3 5)
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 3)
-          18
-          "left job keeps interleaved metric")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 4)
-          41
-          "right reset does not erase left range")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 3)
-          0
-          "right reset clears its first metric")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 4)
-          0
-          "right reset clears its second metric")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 140)
-          47
-          "left backend metric remains isolated")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 140)
-          53
-          "right backend metric remains isolated")
-        (compiler-profile-state-metric-reset-range! left 140 223)
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 222)
-          0
-          "left census reset reaches the final metric")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 222)
-          61
-          "left census reset leaves right owner intact")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 242)
-          67
-          "first typecheck metric belongs to left owner")
-        (compiler-profile-state-metric-reset-range! right 350 374)
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 350)
-          71
-          "right lifetime reset leaves left load metric intact")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 350)
-          0
-          "right lifetime reset clears its load metric")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 373)
-          79
-          "right lifetime reset leaves left final macro metric intact")
-        (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 373)
-          0
-          "right lifetime reset reaches its final macro metric")))))
+      (compiler-profile-state-metric-set! left 3 11)
+      (compiler-profile-state-metric-set! right 3 29)
+      (compiler-profile-state-metric-add! left 3 7)
+      (compiler-profile-state-metric-set! left 4 41)
+      (compiler-profile-state-metric-set! right 4 43)
+      ;; Exercise the first backend slot and the final regalloc slot so the
+      ;; owner test covers the complete census range, not only legacy
+      ;; compile-profile ids.
+      (compiler-profile-state-metric-set! left 140 47)
+      (compiler-profile-state-metric-set! right 140 53)
+      (compiler-profile-state-metric-set! left 222 59)
+      (compiler-profile-state-metric-set! right 222 61)
+      ;; Exercise the first load-lifetime slot and both ends of the packed
+      ;; typecheck/lifetime view so the central owner test pins the complete
+      ;; reservation and a reset of one job cannot erase another ledger.
+      (compiler-profile-state-metric-set! left 242 67)
+      (compiler-profile-state-metric-set! left 350 71)
+      (compiler-profile-state-metric-set! right 350 73)
+      (compiler-profile-state-metric-set! left 373 79)
+      (compiler-profile-state-metric-set! right 373 83)
+      (compiler-profile-state-metric-reset-range! right 3 5)
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 3)
+        18
+        "left job keeps interleaved metric")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 4)
+        41
+        "right reset does not erase left range")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 3)
+        0
+        "right reset clears its first metric")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 4)
+        0
+        "right reset clears its second metric")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 140)
+        47
+        "left backend metric remains isolated")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 140)
+        53
+        "right backend metric remains isolated")
+      (compiler-profile-state-metric-reset-range! left 140 223)
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 222)
+        0
+        "left census reset reaches the final metric")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 222)
+        61
+        "left census reset leaves right owner intact")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 242)
+        67
+        "first typecheck metric belongs to left owner")
+      (compiler-profile-state-metric-reset-range! right 350 374)
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 350)
+        71
+        "right lifetime reset leaves left load metric intact")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 350)
+        0
+        "right lifetime reset clears its load metric")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value left 373)
+        79
+        "right lifetime reset leaves left final macro metric intact")
+      (test.assert-i64-eq
+        (compiler-profile-state-metric-value right 373)
+        0
+        "right lifetime reset reaches its final macro metric"))))

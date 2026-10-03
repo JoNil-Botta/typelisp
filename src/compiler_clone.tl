@@ -68,11 +68,10 @@
     [index : i64 0]
     [count : i64 (clone-root-entries-len roots)]
     (while (< index count)
-      (begin
-        (clone-helper-name-id-materialize-for-key!
-          (clone-root-entries-key-id-at-or roots index -1)
-          (clone-root-entries-helper-id-at-or roots index -1))
-        (set! index (+ index 1))))))
+      (clone-helper-name-id-materialize-for-key!
+        (clone-root-entries-key-id-at-or roots index -1)
+        (clone-root-entries-helper-id-at-or roots index -1))
+      (set! index (+ index 1)))))
 
 (define (clone-root-module-id) : i64
   -1)
@@ -135,14 +134,12 @@
     [i : i64 0]
     [n : i64 (string.string-length name)]
     [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (cast (string.string-ref name i) : i64) (cast '/' : i64))
-            (set! last i)
-            unit)
-          (set! i (+ i 1))))
-      last)))
+    (while (< i n)
+      (if (= (cast (string.string-ref name i) : i64) (cast '/' : i64))
+        (set! last i)
+        unit)
+      (set! i (+ i 1)))
+    last))
 
 (define (clone-type-name-module [name : (& name str)]) : String
   (let
@@ -207,26 +204,24 @@
     [current-module-id : i64 (clone-root-module-id)]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    (begin
-      (while (< index count)
-        (begin
-          ;; Borrowed classification first: only module markers and imports
-          ;; carry a payload this alias table reads.
-          (if (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
-            (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-              [(Module next-module) (set! current-module-id next-module)]
-              [(Import decl-meta (Spec kind _ (Some target) (Some alias) _))
-                (if (clone-module-alias-import-kind? kind)
-                  (clone_id_map.insert-ref!
-                    (&mut aliases)
-                    (clone-import-alias-key-id current-module-id alias)
-                    target)
-                  unit)]
-              [_ unit])
-            unit)
-          (set! index (+ index 1))))
-      (CloneNameSet (clone_id_map.with-capacity 8) aliases))))
+    (while (< index count)
+      ;; Borrowed classification first: only module markers and imports
+      ;; carry a payload this alias table reads.
+      (if (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
+        (match (ast.ast-decl-unwrapped
+          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          [(Module next-module) (set! current-module-id next-module)]
+          [(Import decl-meta (Spec kind _ (Some target) (Some alias) _))
+            (if (clone-module-alias-import-kind? kind)
+              (clone_id_map.insert-ref!
+                (&mut aliases)
+                (clone-import-alias-key-id current-module-id alias)
+                target)
+              unit)]
+          [_ unit])
+        unit)
+      (set! index (+ index 1)))
+    (CloneNameSet (clone_id_map.with-capacity 8) aliases)))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
 ;; type universe; seeding that accumulator at the input set's capacity (it can
@@ -245,22 +240,20 @@
   (let
     [map : clone_id_map.Map names.map]
     [aliases : clone_id_map.Map names.aliases]
-    (begin
-      (clone_id_map.insert-ref!
-        (&mut aliases)
-        (clone-import-alias-key-id module-id alias-id)
-        target-module-id)
-      (CloneNameSet map aliases))))
+    (clone_id_map.insert-ref!
+      (&mut aliases)
+      (clone-import-alias-key-id module-id alias-id)
+      target-module-id)
+    (CloneNameSet map aliases)))
 
 (define (clone-name-set-insert-id [names : CloneNameSet] [key-id : i64]) : CloneNameSet
   (let
     [map : clone_id_map.Map names.map]
     [aliases : clone_id_map.Map names.aliases]
-    (begin
-      (if (>= key-id 0)
-        (clone_id_map.insert-ref! (&mut map) key-id 1)
-        unit)
-      (CloneNameSet map aliases))))
+    (if (>= key-id 0)
+      (clone_id_map.insert-ref! (&mut map) key-id 1)
+      unit)
+    (CloneNameSet map aliases)))
 
 (define (clone-name-set-contains-id?
   [names : (& names CloneNameSet)]
@@ -382,12 +375,10 @@
   [count : i64]) : unit
   (let
     [cursor : i64 index]
-    (begin
-      (while (< cursor count)
-        (begin
-          (set! (array-ref dst cursor) (array-ref src cursor))
-          (set! cursor (+ cursor 1))))
-      unit)))
+    (while (< cursor count)
+      (set! (array-ref dst cursor) (array-ref src cursor))
+      (set! cursor (+ cursor 1)))
+    unit))
 
 (define (clone-root-entries-store-grow!
   [store : (&mut store CloneRootEntryStore)]) : unit
@@ -403,15 +394,14 @@
       (let
         [bigger : (__tl_dyn-array CloneRootEntry)
           (__tl_make-array CloneRootEntry new-capacity)]
-        (begin
-          ;; Only the live physical prefix is copied; snapshots share the new
-          ;; dense handle and retain their old start/length bounds.
-          (clone-root-entries-store-copy-range!
-            (&mut bigger)
-            (& store.entries)
-            0
-            store.len)
-          (set! store.entries bigger))))))
+        ;; Only the live physical prefix is copied; snapshots share the new
+        ;; dense handle and retain their old start/length bounds.
+        (clone-root-entries-store-copy-range!
+          (&mut bigger)
+          (& store.entries)
+          0
+          store.len)
+        (set! store.entries bigger)))))
 
 (define (clone-root-entries-store-entry-at
   [store : (& store CloneRootEntryStore)]
@@ -510,21 +500,20 @@
     [found : bool false]
     [ambiguous : bool false]
     [count : i64 (clone-root-entries-len roots)]
-    (begin
-      (while (and (< index count) (not ambiguous))
-        (let
-          [key-id : i64 (clone-root-entries-key-id-at-or roots index -1)]
-          (if (= (clone-name-key-base-id key-id) base-id)
-            (if found
-              (set! ambiguous true)
-              (begin
-                (set! result key-id)
-                (set! found true)))
-            unit)
-          (set! index (+ index 1))))
-      (if ambiguous
-        fallback
-        result))))
+    (while (and (< index count) (not ambiguous))
+      (let
+        [key-id : i64 (clone-root-entries-key-id-at-or roots index -1)]
+        (if (= (clone-name-key-base-id key-id) base-id)
+          (if found
+            (set! ambiguous true)
+            (begin
+              (set! result key-id)
+              (set! found true)))
+          unit)
+        (set! index (+ index 1))))
+    (if ambiguous
+      fallback
+      result)))
 
 (define (clone-root-entries-materialize-dense
   [store : (& store CloneRootEntryStore)]
@@ -534,32 +523,31 @@
     [out-address : u64 (clone-root-entries-store-new)]
     [out : CloneRootEntryStore (clone-root-entries-store-read out-address)]
     [index : i64 (- count 1)]
-    (begin
-      ;; Iterate physical oldest -> newest so helper identity and map first
-      ;; indices are byte-for-byte preserved.
-      (while (>= index 0)
+    ;; Iterate physical oldest -> newest so helper identity and map first
+    ;; indices are byte-for-byte preserved.
+    (while (>= index 0)
+      (let
+        [entry : CloneRootEntry
+          (clone-root-entries-store-entry-at
+            store
+            (+ start (- count (+ index 1))))]
+        ;; index is logical; physical materialization is easiest by writing
+        ;; in reverse logical order to physical 0..len-1.
+        (if (< out.len (array-length out.entries))
+          unit
+          (clone-root-entries-store-grow! (&mut out)))
         (let
-          [entry : CloneRootEntry
-            (clone-root-entries-store-entry-at
-              store
-              (+ start (- count (+ index 1))))]
-          ;; index is logical; physical materialization is easiest by writing
-          ;; in reverse logical order to physical 0..len-1.
-          (if (< out.len (array-length out.entries))
-            unit
-            (clone-root-entries-store-grow! (&mut out)))
+          [physical : i64 out.len]
+          (set! (array-ref out.entries physical) entry)
+          (set! out.len (+ physical 1))
           (let
-            [physical : i64 out.len]
-            (set! (array-ref out.entries physical) entry)
-            (set! out.len (+ physical 1))
-            (let
-              [key-id : i64 entry.key-id]
-              (if (not (clone_id_map.contains? (& out.key-index) key-id))
-                (clone_id_map.insert-ref! (&mut out.key-index) key-id physical)
-                unit))))
-        (set! index (- index 1)))
-      (clone-root-entries-store-write! out-address out)
-      (Dense out-address 0 count))))
+            [key-id : i64 entry.key-id]
+            (if (not (clone_id_map.contains? (& out.key-index) key-id))
+              (clone_id_map.insert-ref! (&mut out.key-index) key-id physical)
+              unit))))
+      (set! index (- index 1)))
+    (clone-root-entries-store-write! out-address out)
+    (Dense out-address 0 count)))
 
 (define (clone-root-entries-materialize [roots : CloneRootEntries]) : CloneRootEntries
   (match roots
@@ -581,12 +569,11 @@
           [helper-id : i64 (clone-helper-name-id-new-for-key key-id)]
           [address : u64 (clone-root-entries-store-new)]
           [store : CloneRootEntryStore (clone-root-entries-store-read address)]
-          (begin
-            (set! (array-ref store.entries 0) (CloneRootEntry key-id helper-id))
-            (set! store.len 1)
-            (clone_id_map.insert-ref! (&mut store.key-index) key-id 0)
-            (clone-root-entries-store-write! address store)
-            (Dense address 0 1))))]
+          (set! (array-ref store.entries 0) (CloneRootEntry key-id helper-id))
+          (set! store.len 1)
+          (clone_id_map.insert-ref! (&mut store.key-index) key-id 0)
+          (clone-root-entries-store-write! address store)
+          (Dense address 0 1)))]
     [(Dense address start len)
       (let
         [store : CloneRootEntryStore (clone-root-entries-store-read address)]
@@ -617,26 +604,25 @@
                   [owner : i64 target-store.arena]
                   (in-arena
                     (arena.Arena owner)
-                    (begin
-                      (if (>=
-                        target-store.len
-                        (array-length target-store.entries))
-                        (clone-root-entries-store-grow! (&mut target-store))
-                        unit)
-                      (let
-                        [physical : i64 target-store.len]
-                        (set!
-                          (array-ref target-store.entries physical)
-                          (CloneRootEntry key-id helper-id))
-                        (set! target-store.len (+ physical 1))
-                        (clone_id_map.insert-ref!
-                          (&mut target-store.key-index)
-                          key-id
-                          physical)
-                        (clone-root-entries-store-write!
-                          target-address
-                          target-store)
-                        (Dense target-address target-start (+ target-len 1))))))]
+                    (if (>=
+                      target-store.len
+                      (array-length target-store.entries))
+                      (clone-root-entries-store-grow! (&mut target-store))
+                      unit)
+                    (let
+                      [physical : i64 target-store.len]
+                      (set!
+                        (array-ref target-store.entries physical)
+                        (CloneRootEntry key-id helper-id))
+                      (set! target-store.len (+ physical 1))
+                      (clone_id_map.insert-ref!
+                        (&mut target-store.key-index)
+                        key-id
+                        physical)
+                      (clone-root-entries-store-write!
+                        target-address
+                        target-store)
+                      (Dense target-address target-start (+ target-len 1)))))]
               [(Empty) Empty]))))]))
 
 (define (clone-root-entries-take [roots : CloneRootEntries] [count : i64]) : CloneRootEntries
@@ -830,47 +816,41 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    (begin
-      (while (< index count)
-        (begin
-          ;; Classify through a borrow first: only module markers and the two
-          ;; type-definition kinds have a payload this fixpoint reads, so every
-          ;; other declaration is skipped without materialising a 104 B row and
-          ;; copying it twice more through `ast-decl-unwrapped`.
-          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            decls
-            index)
-            (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-              [(Module next-module) (set! current-module-id next-module)]
-              [(DefEnum decl-meta name _ variants)
-                (if (clone-variant-list-able?
-                  pools
-                  variants
-                  names
-                  current-module-id)
-                  (set!
-                    out
-                    (clone-name-set-insert-id
-                      out
-                      (clone-name-key-id-in-module current-module-id name)))
-                  unit)]
-              [(DefStruct decl-meta name _ _ fields)
-                (if (clone-struct-fields-able?
-                  pools
-                  fields
-                  names
-                  current-module-id)
-                  (set!
-                    out
-                    (clone-name-set-insert-id
-                      out
-                      (clone-name-key-id-in-module current-module-id name)))
-                  unit)]
-              [_ unit])
-            unit)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      ;; Classify through a borrow first: only module markers and the two
+      ;; type-definition kinds have a payload this fixpoint reads, so every
+      ;; other declaration is skipped without materialising a 104 B row and
+      ;; copying it twice more through `ast-decl-unwrapped`.
+      (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+        decls
+        index)
+        (match (ast.ast-decl-unwrapped
+          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          [(Module next-module) (set! current-module-id next-module)]
+          [(DefEnum decl-meta name _ variants)
+            (if (clone-variant-list-able?
+              pools
+              variants
+              names
+              current-module-id)
+              (set!
+                out
+                (clone-name-set-insert-id
+                  out
+                  (clone-name-key-id-in-module current-module-id name)))
+              unit)]
+          [(DefStruct decl-meta name _ _ fields)
+            (if (clone-struct-fields-able? pools fields names current-module-id)
+              (set!
+                out
+                (clone-name-set-insert-id
+                  out
+                  (clone-name-key-id-in-module current-module-id name)))
+              unit)]
+          [_ unit])
+        unit)
+      (set! index (+ index 1)))
+    out))
 
 (define (clone-fixpoint-step
   [pools : (& pools ast.AstNodePoolContext)]
@@ -889,32 +869,30 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    (begin
-      (while (< index count)
-        (begin
-          ;; Same borrowed classification as the fixpoint step above.
-          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            decls
-            index)
-            (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
-              [(Module next-module) (set! current-module-id next-module)]
-              [(DefEnum decl-meta name _ _)
-                (set!
-                  out
-                  (clone-name-set-insert-id
-                    out
-                    (clone-name-key-id-in-module current-module-id name)))]
-              [(DefStruct decl-meta name _ _ _)
-                (set!
-                  out
-                  (clone-name-set-insert-id
-                    out
-                    (clone-name-key-id-in-module current-module-id name)))]
-              [_ unit])
-            unit)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      ;; Same borrowed classification as the fixpoint step above.
+      (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+        decls
+        index)
+        (match (ast.ast-decl-unwrapped
+          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          [(Module next-module) (set! current-module-id next-module)]
+          [(DefEnum decl-meta name _ _)
+            (set!
+              out
+              (clone-name-set-insert-id
+                out
+                (clone-name-key-id-in-module current-module-id name)))]
+          [(DefStruct decl-meta name _ _ _)
+            (set!
+              out
+              (clone-name-set-insert-id
+                out
+                (clone-name-key-id-in-module current-module-id name)))]
+          [_ unit])
+        unit)
+      (set! index (+ index 1)))
+    out))
 
 (define (clone-all-type-names
   [decls : (& decls ast.AstDeclList)]
@@ -945,10 +923,9 @@
     [out : ast.AstDeclList
       (ast.ast-decl-list-with-capacity
         (+ (ast.ast-decl-list-len (& left)) (ast.ast-decl-list-len right)))]
-    (begin
-      (ast.ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast.ast-decl-list-append-from (&mut out) right 0)
-      out)))
+    (ast.ast-decl-list-append-from (&mut out) (& left) 0)
+    (ast.ast-decl-list-append-from (&mut out) right 0)
+    out))
 
 (define (clone-root-add-type-list
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1072,51 +1049,47 @@
     [out : CloneRootEntries roots]
     [current-module-id : i64 module-id]
     [done : bool false]
-    (begin
-      (while (and (not done) (< index count))
-        (begin
-          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            cursor
-            index)
-            (match (ast.ast-decl-unwrapped
-              (ast.ast-decl-list-get cursor index (ast.ast-decl-fallback)))
-              [(Module next-module) (set! current-module-id next-module)]
-              [(DefEnum decl-meta decl-name _ variants)
-                (if (=
-                  (clone-name-key-id-in-module current-module-id decl-name)
-                  name-key-id)
-                  (begin
-                    (set!
-                      out
-                      (clone-root-add-variants
-                        pools
-                        decls
-                        able
-                        out
-                        variants
-                        current-module-id))
-                    (set! done true))
-                  unit)]
-              [(DefStruct decl-meta decl-name _ _ fields)
-                (if (=
-                  (clone-name-key-id-in-module current-module-id decl-name)
-                  name-key-id)
-                  (begin
-                    (set!
-                      out
-                      (clone-root-add-fields
-                        pools
-                        decls
-                        able
-                        out
-                        fields
-                        current-module-id))
-                    (set! done true))
-                  unit)]
-              [_ unit])
-            unit)
-          (set! index (+ index 1))))
-      out)))
+    (while (and (not done) (< index count))
+      (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+        cursor
+        index)
+        (match (ast.ast-decl-unwrapped
+          (ast.ast-decl-list-get cursor index (ast.ast-decl-fallback)))
+          [(Module next-module) (set! current-module-id next-module)]
+          [(DefEnum decl-meta decl-name _ variants)
+            (when
+              (=
+                (clone-name-key-id-in-module current-module-id decl-name)
+                name-key-id)
+              (set!
+                out
+                (clone-root-add-variants
+                  pools
+                  decls
+                  able
+                  out
+                  variants
+                  current-module-id))
+              (set! done true))]
+          [(DefStruct decl-meta decl-name _ _ fields)
+            (when
+              (=
+                (clone-name-key-id-in-module current-module-id decl-name)
+                name-key-id)
+              (set!
+                out
+                (clone-root-add-fields
+                  pools
+                  decls
+                  able
+                  out
+                  fields
+                  current-module-id))
+              (set! done true))]
+          [_ unit])
+        unit)
+      (set! index (+ index 1)))
+    out))
 
 (define (clone-root-add-name-deps
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1232,22 +1205,20 @@
     [out : CloneRootEntries roots]
     [index : i64 0]
     [count : i64 (clone-root-entries-len cursor)]
-    (begin
-      (while (< index count)
-        (let
-          [name-key-id : i64 (clone-root-entries-key-id-at-or cursor index -1)]
-          (begin
-            (set!
-              out
-              (clone-root-add-name-deps
-                pools
-                decls
-                decls
-                able
-                (clone-root-add-name pools decls able out name-key-id)
-                name-key-id))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [name-key-id : i64 (clone-root-entries-key-id-at-or cursor index -1)]
+        (set!
+          out
+          (clone-root-add-name-deps
+            pools
+            decls
+            decls
+            able
+            (clone-root-add-name pools decls able out name-key-id)
+            name-key-id))
+        (set! index (+ index 1))))
+    out))
 
 (define (clone-stdlib-handoff-roots
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1257,12 +1228,11 @@
   (let
     [expanded : CloneRootEntries
       (clone-root-expand pools decls able roots roots)]
-    (begin
-      ;; Clone helper identities stay structural while dependencies expand.
-      ;; The declaration macro still emits textual syntax, so publish each
-      ;; helper spelling once at this handoff before validation and lowering.
-      (clone-root-entries-materialize-helper-names! expanded)
-      expanded)))
+    ;; Clone helper identities stay structural while dependencies expand.
+    ;; The declaration macro still emits textual syntax, so publish each
+    ;; helper spelling once at this handoff before validation and lowering.
+    (clone-root-entries-materialize-helper-names! expanded)
+    expanded))
 
 (define (clone-helper-decl-count-in-module
   [decls : ast.AstDeclList]
@@ -1321,13 +1291,11 @@
     [index : i64 0]
     [count : i64 (clone-root-entries-len names)]
     [out : CloneNameSet acc]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (clone-name-set-insert-id
-              out
-              (clone-root-entries-key-id-at-or names index -1)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (clone-name-set-insert-id
+          out
+          (clone-root-entries-key-id-at-or names index -1)))
+      (set! index (+ index 1)))
+    out))

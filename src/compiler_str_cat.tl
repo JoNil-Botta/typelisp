@@ -14,20 +14,18 @@
   (let
     [parts : comptime.ExprList (comptime.expr-list-empty)]
     [index : i64 (comptime.expr-list-length args)]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (let
-            [arg : comptime.Expr (comptime.expr-list-nth args index)]
-            (set!
-              parts
-              (comptime.expr-list-cons
-                (match arg
-                  [(comptime.Expr.Var _) `(compiler_str_cat.str-cat-name ,arg)]
-                  [_ arg])
-                parts)))))
-      `(stdlib.str_cat_runtime.str-cat ,@parts))))
+    (while (> index 0)
+      (set! index (- index 1))
+      (let
+        [arg : comptime.Expr (comptime.expr-list-nth args index)]
+        (set!
+          parts
+          (comptime.expr-list-cons
+            (match arg
+              [(comptime.Expr.Var _) `(compiler_str_cat.str-cat-name ,arg)]
+              [_ arg])
+            parts))))
+    `(stdlib.str_cat_runtime.str-cat ,@parts)))
 
 ;; The String a name operand holds or borrows, read in place.
 (defmacro (str-cat-name [name : Expr]) : String

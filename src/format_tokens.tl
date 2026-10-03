@@ -179,18 +179,16 @@
     [i : i64 0]
     [line : i64 1]
     [col : i64 1]
-    (begin
-      (while (and (< i target) (< i n))
-        (let
-          [c : char (string.string-ref src i)]
+    (while (and (< i target) (< i n))
+      (let
+        [c : char (string.string-ref src i)]
+        (if (= c '\n')
           (begin
-            (if (= c '\n')
-              (begin
-                (set! line (+ line 1))
-                (set! col 1))
-              (set! col (+ col 1)))
-            (set! i (+ i 1)))))
-      (FormatPosition line col))))
+            (set! line (+ line 1))
+            (set! col 1))
+          (set! col (+ col 1)))
+        (set! i (+ i 1))))
+    (FormatPosition line col)))
 
 (define (fmt-source-error-at [src : (& src str)] [idx : i64] [message : String]) : FormatSourceError
   (let
@@ -268,30 +266,28 @@
     unit
     (let
       [i : i64 0]
-      (begin
-        (while (< i 256)
-          (let
-            [c : char (cast i : char)]
-            [mask : i64
+      (while (< i 256)
+        (let
+          [c : char (cast i : char)]
+          [mask : i64
+            (+
+              (if (fmt-is-space c)
+                1
+                0)
               (+
-                (if (fmt-is-space c)
-                  1
+                (if (fmt-is-digit c)
+                  2
                   0)
                 (+
-                  (if (fmt-is-digit c)
-                    2
+                  (if (fmt-is-symbol-char c)
+                    4
                     0)
-                  (+
-                    (if (fmt-is-symbol-char c)
-                      4
-                      0)
-                    (if (fmt-is-hex-digit c)
-                      8
-                      0))))]
-            (begin
-              (set! (array-ref fmt-char-class-table i) mask)
-              (set! i (+ i 1)))))
-        (set! fmt-char-class-ready true)))))
+                  (if (fmt-is-hex-digit c)
+                    8
+                    0))))]
+          (set! (array-ref fmt-char-class-table i) mask)
+          (set! i (+ i 1))))
+      (set! fmt-char-class-ready true))))
 
 ;; Inline class test: no function call, just a table load and bit test.
 (defmacro (fmt-char-class? [c : Expr] [mask : i64]) : bool
@@ -350,18 +346,17 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : char (fmt-source-byte-bounds-proven data j)]
-            (if (if (= base 16)
-              (fmt-char-class? c 8)
-              (or (= c '0') (= c '1')))
-              (set! j (+ j 1))
-              (set! keep false)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [c : char (fmt-source-byte-bounds-proven data j)]
+          (if (if (= base 16)
+            (fmt-char-class? c 8)
+            (or (= c '0') (= c '1')))
+            (set! j (+ j 1))
+            (set! keep false)))
+        (set! keep false)))
+    j))
 
 (define (fmt-scan-prefixed-number-end-result
   [src : (& src str)]
@@ -396,69 +391,65 @@
     [found : bool false]
     [valid : bool true]
     [keep : bool true]
-    (begin
-      (if (< j n)
-        (if (= (fmt-source-byte-bounds-proven data j) '-')
-          (set! j (+ j 1))
-          unit)
+    (if (< j n)
+      (if (= (fmt-source-byte-bounds-proven data j) '-')
+        (set! j (+ j 1))
         unit)
-      (while keep
-        (if (< j n)
-          (let
-            [c : char (fmt-source-byte-bounds-proven data j)]
-            (cond
-              [(and (= c '.') (not seen-dot))
-                (begin
-                  (set! seen-dot true)
-                  (set! j (+ j 1)))]
-              [(or (fmt-char-class? c 2) (= c '_'))
-                (begin
-                  (if (= c '_')
-                    (set! valid false)
-                    (if (and seen-dot (fmt-char-class? c 2))
-                      (set! found true)
-                      unit))
-                  (set! j (+ j 1)))]
-              [(and valid (or (not seen-dot) found) (or (= c 'e') (= c 'E')))
-                (let
-                  [mark : i64 j]
-                  [exp-digits : i64 (+ j 1)]
+      unit)
+    (while keep
+      (if (< j n)
+        (let
+          [c : char (fmt-source-byte-bounds-proven data j)]
+          (cond
+            [(and (= c '.') (not seen-dot))
+              (set! seen-dot true)
+              (set! j (+ j 1))]
+            [(or (fmt-char-class? c 2) (= c '_'))
+              (if (= c '_')
+                (set! valid false)
+                (if (and seen-dot (fmt-char-class? c 2))
+                  (set! found true)
+                  unit))
+              (set! j (+ j 1))]
+            [(and valid (or (not seen-dot) found) (or (= c 'e') (= c 'E')))
+              (let
+                [mark : i64 j]
+                [exp-digits : i64 (+ j 1)]
+                (if (< exp-digits n)
+                  (if (or
+                    (= (fmt-source-byte-bounds-proven data exp-digits) '+')
+                    (= (fmt-source-byte-bounds-proven data exp-digits) '-'))
+                    (set! exp-digits (+ exp-digits 1))
+                    unit)
+                  unit)
+                (if (< exp-digits n)
+                  (if (fmt-char-class?
+                    (fmt-source-byte-bounds-proven data exp-digits)
+                    2)
+                    (begin
+                      (while (and
+                        (< exp-digits n)
+                        (fmt-char-class?
+                          (fmt-source-byte-bounds-proven data exp-digits)
+                          2))
+                        (set! exp-digits (+ exp-digits 1)))
+                      (set! j exp-digits)
+                      ;; A valid exponent terminates the numeric token;
+                      ;; any following dot/underscore is rejected by the
+                      ;; trailing-symbol guard rather than absorbed here.
+                      (set! keep false))
+                    (begin
+                      ;; Leave an invalid marker at the scan end so the
+                      ;; result wrapper can report the error at the
+                      ;; numeric token start.
+                      (set! j mark)
+                      (set! keep false)))
                   (begin
-                    (if (< exp-digits n)
-                      (if (or
-                        (= (fmt-source-byte-bounds-proven data exp-digits) '+')
-                        (= (fmt-source-byte-bounds-proven data exp-digits) '-'))
-                        (set! exp-digits (+ exp-digits 1))
-                        unit)
-                      unit)
-                    (if (< exp-digits n)
-                      (if (fmt-char-class?
-                        (fmt-source-byte-bounds-proven data exp-digits)
-                        2)
-                        (begin
-                          (while (and
-                            (< exp-digits n)
-                            (fmt-char-class?
-                              (fmt-source-byte-bounds-proven data exp-digits)
-                              2))
-                            (set! exp-digits (+ exp-digits 1)))
-                          (set! j exp-digits)
-                          ;; A valid exponent terminates the numeric token;
-                          ;; any following dot/underscore is rejected by the
-                          ;; trailing-symbol guard rather than absorbed here.
-                          (set! keep false))
-                        (begin
-                          ;; Leave an invalid marker at the scan end so the
-                          ;; result wrapper can report the error at the
-                          ;; numeric token start.
-                          (set! j mark)
-                          (set! keep false)))
-                      (begin
-                        (set! j mark)
-                        (set! keep false)))))]
-              [else (set! keep false)]))
-          (set! keep false)))
-      j)))
+                    (set! j mark)
+                    (set! keep false))))]
+            [else (set! keep false)]))
+        (set! keep false)))
+    j))
 
 (define (fmt-scan-number-end-result
   [src : (& src str)]
@@ -488,27 +479,25 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (fmt-char-class? (fmt-source-byte-bounds-proven data j) 4)
-            (set! j (+ j 1))
-            (set! keep false))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (fmt-char-class? (fmt-source-byte-bounds-proven data j) 4)
+          (set! j (+ j 1))
+          (set! keep false))
+        (set! keep false)))
+    j))
 
 (define (fmt-scan-comment-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (= (fmt-source-byte-bounds-proven data j) '\n')
-            (set! keep false)
-            (set! j (+ j 1)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (= (fmt-source-byte-bounds-proven data j) '\n')
+          (set! keep false)
+          (set! j (+ j 1)))
+        (set! keep false)))
+    j))
 
 (define (fmt-scan-string-end-result
   [src : (& src str)]
@@ -519,32 +508,28 @@
     [j : i64 start]
     [escaped : bool false]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : char (fmt-source-byte-bounds-proven data j)]
-            (cond
-              [escaped
-                (begin
-                  (set! escaped false)
-                  (set! j (+ j 1)))]
-              [(= c '\\')
-                (begin
-                  (set! escaped true)
-                  (set! j (+ j 1)))]
-              [(= c '"')
-                (begin
-                  (set! j (+ j 1))
-                  (set! keep false))]
-              [else (set! j (+ j 1))]))
-          (return
-            (Err
-              (fmt-source-error-at
-                src
-                (- start 1)
-                "format lexer: unterminated string literal")))))
-      (Ok j))))
+    (while keep
+      (if (< j n)
+        (let
+          [c : char (fmt-source-byte-bounds-proven data j)]
+          (cond
+            [escaped
+              (set! escaped false)
+              (set! j (+ j 1))]
+            [(= c '\\')
+              (set! escaped true)
+              (set! j (+ j 1))]
+            [(= c '"')
+              (set! j (+ j 1))
+              (set! keep false)]
+            [else (set! j (+ j 1))]))
+        (return
+          (Err
+            (fmt-source-error-at
+              src
+              (- start 1)
+              "format lexer: unterminated string literal")))))
+    (Ok j)))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -606,9 +591,8 @@
   [count : i64]
   [start : i64]
   [tok : FormatToken]) : unit
-  (begin
-    (set! (array-ref tokens count) tok)
-    (set! (array-ref starts count) start)))
+  (set! (array-ref tokens count) tok)
+  (set! (array-ref starts count) start))
 
 ;; Copy `count` token slots into a freshly sized array. The lexer sizes its
 ;; token buffers to an estimate of the token count and grows them by doubling
@@ -622,12 +606,10 @@
   (let
     [bigger : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken newcap)]
     [j : i64 0]
-    (begin
-      (while (< j count)
-        (begin
-          (set! (array-ref bigger j) (array-ref old j))
-          (set! j (+ j 1))))
-      bigger)))
+    (while (< j count)
+      (set! (array-ref bigger j) (array-ref old j))
+      (set! j (+ j 1)))
+    bigger))
 
 (define (fmt-grow-i64-array
   [old : (__tl_dyn-array i64)]
@@ -636,12 +618,10 @@
   (let
     [bigger : (__tl_dyn-array i64) (__tl_make-array i64 newcap)]
     [j : i64 0]
-    (begin
-      (while (< j count)
-        (begin
-          (set! (array-ref bigger j) (array-ref old j))
-          (set! j (+ j 1))))
-      bigger)))
+    (while (< j count)
+      (set! (array-ref bigger j) (array-ref old j))
+      (set! j (+ j 1)))
+    bigger))
 
 ;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
 ;; three bytes, with slack for short inputs and the trailing `FormatToken.End`.
@@ -664,15 +644,14 @@
 (define (fmt-scan-recovery-token-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
-    (begin
-      (while (and
-        (< i n)
-        (not
-          (fmt-recovery-token-delimiter? (fmt-source-byte-bounds-proven data i))))
-        (set! i (+ i 1)))
-      (if (> i start)
-        i
-        (+ start 1)))))
+    (while (and
+      (< i n)
+      (not
+        (fmt-recovery-token-delimiter? (fmt-source-byte-bounds-proven data i))))
+      (set! i (+ i 1)))
+    (if (> i start)
+      i
+      (+ start 1))))
 
 ;; The recovering mode is used by editor tooling on incomplete buffers. It
 ;; retains every proven token before an error, treats an unterminated string as
@@ -689,265 +668,246 @@
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (fmt-char-class-init)
-      (while (< i n)
-        (begin
-          ;; Each iteration emits at most one token; keep one free slot.
-          (if (>= count cap)
-            (let
-              [newcap : i64 (* cap 2)]
-              (begin
-                (set! tokens (fmt-grow-token-array tokens count newcap))
-                (set! starts (fmt-grow-i64-array starts count newcap))
-                (set! cap newcap)))
-            unit)
-          (let
-            [c : char (fmt-source-byte-bounds-proven data i)]
-            (cond
-              [(fmt-char-class? c 1) (set! i (+ i 1))]
-              [(= c ';')
-                (let
-                  [end : i64 (fmt-scan-comment-end data i n)]
-                  (begin
-                    (fmt-store-token
-                      (owned_view.compiler-owned-shared-view tokens)
-                      (owned_view.compiler-owned-shared-view starts)
-                      count
-                      i
-                      (Comment (string.substring src i (- end i))))
-                    (set! count (+ count 1))
-                    (set! i end)))]
-              [(= c '(')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (LParen))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c ')')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (RParen))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c '[')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (LBracket))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c ']')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (RBracket))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c ':')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (Colon))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c '\'')
-                (match (fmt-scan-apostrophe-char-end-result src data i n)
-                  [(Ok end)
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (Char (string.substring src i (- end i))))
-                      (set! count (+ count 1))
-                      (set! i end))]
-                  [(Err err)
-                    (if recover
-                      (begin
-                        (fmt-store-token
-                          (owned_view.compiler-owned-shared-view tokens)
-                          (owned_view.compiler-owned-shared-view starts)
-                          count
-                          i
-                          (Quote))
-                        (set! count (+ count 1))
-                        (set! i (+ i 1)))
-                      (return (Err err)))]
-                  [(No)
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (Quote))
-                      (set! count (+ count 1))
-                      (set! i (+ i 1)))])]
-              [(= c '`')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (Backtick))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(fmt-starts-ellipsis data i n)
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (Symbol "..."))
-                  (set! count (+ count 1))
-                  (set! i (+ i 3)))]
-              [(= c '.')
-                (begin
-                  (fmt-store-token
-                    (owned_view.compiler-owned-shared-view tokens)
-                    (owned_view.compiler-owned-shared-view starts)
-                    count
-                    i
-                    (Dot))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))]
-              [(= c ',')
-                (if (< (+ i 1) n)
-                  (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (CommaAt))
-                      (set! count (+ count 1))
-                      (set! i (+ i 2)))
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (Comma))
-                      (set! count (+ count 1))
-                      (set! i (+ i 1))))
-                  (begin
-                    (fmt-store-token
-                      (owned_view.compiler-owned-shared-view tokens)
-                      (owned_view.compiler-owned-shared-view starts)
-                      count
-                      i
-                      (Comma))
-                    (set! count (+ count 1))
-                    (set! i (+ i 1))))]
-              [(= c '"')
-                (match (fmt-scan-string-end-result src data (+ i 1) n)
-                  [(Ok end)
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (String (string.substring src i (- end i))))
-                      (set! count (+ count 1))
-                      (set! i end))]
-                  [(Err err)
-                    (if recover
-                      (begin
-                        (fmt-store-token
-                          (owned_view.compiler-owned-shared-view tokens)
-                          (owned_view.compiler-owned-shared-view starts)
-                          count
-                          i
-                          (String (string.substring src i (- n i))))
-                        (set! count (+ count 1))
-                        (set! i n))
-                      (return (Err err)))])]
-              [(fmt-starts-number data i n)
-                (match (fmt-scan-number-end-result src data i n)
-                  [(Ok end)
-                    (begin
-                      (fmt-store-token
-                        (owned_view.compiler-owned-shared-view tokens)
-                        (owned_view.compiler-owned-shared-view starts)
-                        count
-                        i
-                        (Int (string.substring src i (- end i))))
-                      (set! count (+ count 1))
-                      (set! i end))]
-                  [(Err err)
-                    (if recover
-                      (let
-                        [end : i64 (fmt-scan-recovery-token-end data i n)]
-                        (begin
-                          (fmt-store-token
-                            (owned_view.compiler-owned-shared-view tokens)
-                            (owned_view.compiler-owned-shared-view starts)
-                            count
-                            i
-                            (Int (string.substring src i (- end i))))
-                          (set! count (+ count 1))
-                          (set! i end)))
-                      (return (Err err)))])]
-              [(fmt-char-class? c 4)
-                (let
-                  [end : i64 (fmt-scan-symbol-end data i n)]
-                  (begin
-                    (fmt-store-token
-                      (owned_view.compiler-owned-shared-view tokens)
-                      (owned_view.compiler-owned-shared-view starts)
-                      count
-                      i
-                      (Symbol (string.substring src i (- end i))))
-                    (set! count (+ count 1))
-                    (set! i end)))]
-              [else
-                (if recover
-                  (set! i (+ i 1))
-                  (return
-                    (Err
-                      (fmt-source-error-at
-                        src
-                        i
-                        "format lexer: unexpected character"))))]))))
+    (fmt-char-class-init)
+    (while (< i n)
+      ;; Each iteration emits at most one token; keep one free slot.
       (if (>= count cap)
         (let
           [newcap : i64 (* cap 2)]
-          (begin
-            (set! tokens (fmt-grow-token-array tokens count newcap))
-            (set! starts (fmt-grow-i64-array starts count newcap))
-            (set! cap newcap)))
+          (set! tokens (fmt-grow-token-array tokens count newcap))
+          (set! starts (fmt-grow-i64-array starts count newcap))
+          (set! cap newcap))
         unit)
-      (fmt-store-token
-        (owned_view.compiler-owned-shared-view tokens)
-        (owned_view.compiler-owned-shared-view starts)
-        count
-        n
-        (End))
-      (Ok (FormatTokenStream src tokens starts (+ count 1))))))
+      (let
+        [c : char (fmt-source-byte-bounds-proven data i)]
+        (cond
+          [(fmt-char-class? c 1) (set! i (+ i 1))]
+          [(= c ';')
+            (let
+              [end : i64 (fmt-scan-comment-end data i n)]
+              (fmt-store-token
+                (owned_view.compiler-owned-shared-view tokens)
+                (owned_view.compiler-owned-shared-view starts)
+                count
+                i
+                (Comment (string.substring src i (- end i))))
+              (set! count (+ count 1))
+              (set! i end))]
+          [(= c '(')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (LParen))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c ')')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (RParen))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c '[')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (LBracket))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c ']')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (RBracket))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c ':')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (Colon))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c '\'')
+            (match (fmt-scan-apostrophe-char-end-result src data i n)
+              [(Ok end)
+                (fmt-store-token
+                  (owned_view.compiler-owned-shared-view tokens)
+                  (owned_view.compiler-owned-shared-view starts)
+                  count
+                  i
+                  (Char (string.substring src i (- end i))))
+                (set! count (+ count 1))
+                (set! i end)]
+              [(Err err)
+                (if recover
+                  (begin
+                    (fmt-store-token
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
+                      count
+                      i
+                      (Quote))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1)))
+                  (return (Err err)))]
+              [(No)
+                (fmt-store-token
+                  (owned_view.compiler-owned-shared-view tokens)
+                  (owned_view.compiler-owned-shared-view starts)
+                  count
+                  i
+                  (Quote))
+                (set! count (+ count 1))
+                (set! i (+ i 1))])]
+          [(= c '`')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (Backtick))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(fmt-starts-ellipsis data i n)
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (Symbol "..."))
+            (set! count (+ count 1))
+            (set! i (+ i 3))]
+          [(= c '.')
+            (fmt-store-token
+              (owned_view.compiler-owned-shared-view tokens)
+              (owned_view.compiler-owned-shared-view starts)
+              count
+              i
+              (Dot))
+            (set! count (+ count 1))
+            (set! i (+ i 1))]
+          [(= c ',')
+            (if (< (+ i 1) n)
+              (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
+                (begin
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (CommaAt))
+                  (set! count (+ count 1))
+                  (set! i (+ i 2)))
+                (begin
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (Comma))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1))))
+              (begin
+                (fmt-store-token
+                  (owned_view.compiler-owned-shared-view tokens)
+                  (owned_view.compiler-owned-shared-view starts)
+                  count
+                  i
+                  (Comma))
+                (set! count (+ count 1))
+                (set! i (+ i 1))))]
+          [(= c '"')
+            (match (fmt-scan-string-end-result src data (+ i 1) n)
+              [(Ok end)
+                (fmt-store-token
+                  (owned_view.compiler-owned-shared-view tokens)
+                  (owned_view.compiler-owned-shared-view starts)
+                  count
+                  i
+                  (String (string.substring src i (- end i))))
+                (set! count (+ count 1))
+                (set! i end)]
+              [(Err err)
+                (if recover
+                  (begin
+                    (fmt-store-token
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
+                      count
+                      i
+                      (String (string.substring src i (- n i))))
+                    (set! count (+ count 1))
+                    (set! i n))
+                  (return (Err err)))])]
+          [(fmt-starts-number data i n)
+            (match (fmt-scan-number-end-result src data i n)
+              [(Ok end)
+                (fmt-store-token
+                  (owned_view.compiler-owned-shared-view tokens)
+                  (owned_view.compiler-owned-shared-view starts)
+                  count
+                  i
+                  (Int (string.substring src i (- end i))))
+                (set! count (+ count 1))
+                (set! i end)]
+              [(Err err)
+                (if recover
+                  (let
+                    [end : i64 (fmt-scan-recovery-token-end data i n)]
+                    (fmt-store-token
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
+                      count
+                      i
+                      (Int (string.substring src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end))
+                  (return (Err err)))])]
+          [(fmt-char-class? c 4)
+            (let
+              [end : i64 (fmt-scan-symbol-end data i n)]
+              (fmt-store-token
+                (owned_view.compiler-owned-shared-view tokens)
+                (owned_view.compiler-owned-shared-view starts)
+                count
+                i
+                (Symbol (string.substring src i (- end i))))
+              (set! count (+ count 1))
+              (set! i end))]
+          [else
+            (if recover
+              (set! i (+ i 1))
+              (return
+                (Err
+                  (fmt-source-error-at
+                    src
+                    i
+                    "format lexer: unexpected character"))))])))
+    (if (>= count cap)
+      (let
+        [newcap : i64 (* cap 2)]
+        (set! tokens (fmt-grow-token-array tokens count newcap))
+        (set! starts (fmt-grow-i64-array starts count newcap))
+        (set! cap newcap))
+      unit)
+    (fmt-store-token
+      (owned_view.compiler-owned-shared-view tokens)
+      (owned_view.compiler-owned-shared-view starts)
+      count
+      n
+      (End))
+    (Ok (FormatTokenStream src tokens starts (+ count 1)))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (format-lex-mode-result src false))

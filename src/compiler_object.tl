@@ -229,9 +229,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (compiler-object-instr-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectX64Instr))]
@@ -240,9 +239,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (compiler-object-symbol-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSymbol))]
@@ -251,9 +249,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (compiler-object-relocation-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectRelocation))]
@@ -262,9 +259,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (compiler-object-section-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSection))]
@@ -273,9 +269,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (compiler-object-data-record-builder-grow
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder
@@ -284,12 +279,8 @@
     [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectDataRecord)
       (__tl_make-array CompilerObjectDataRecord (* (array-length slots) 2))]
-    (begin
-      (compiler-object-data-record-builder-copy-range!
-        (&mut bigger)
-        slots
-        count)
-      (CompilerObjectDataRecordBuilder bigger count))))
+    (compiler-object-data-record-builder-copy-range! (&mut bigger) slots count)
+    (CompilerObjectDataRecordBuilder bigger count)))
 
 (define (compiler-object-instr-builder-grow
   [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrBuilder
@@ -298,9 +289,8 @@
     [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
       (__tl_make-array CompilerObjectX64Instr (* (array-length slots) 2))]
-    (begin
-      (compiler-object-instr-builder-copy-range! (&mut bigger) slots count)
-      (CompilerObjectX64InstrBuilder bigger count))))
+    (compiler-object-instr-builder-copy-range! (&mut bigger) slots count)
+    (CompilerObjectX64InstrBuilder bigger count)))
 
 (define (compiler-object-symbol-builder-grow
   [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolBuilder
@@ -309,9 +299,8 @@
     [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
       (__tl_make-array CompilerObjectSymbol (* (array-length slots) 2))]
-    (begin
-      (compiler-object-symbol-builder-copy-range! (&mut bigger) slots count)
-      (CompilerObjectSymbolBuilder bigger count))))
+    (compiler-object-symbol-builder-copy-range! (&mut bigger) slots count)
+    (CompilerObjectSymbolBuilder bigger count)))
 
 (define (compiler-object-relocation-builder-grow
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationBuilder
@@ -320,9 +309,8 @@
     [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
       (__tl_make-array CompilerObjectRelocation (* (array-length slots) 2))]
-    (begin
-      (compiler-object-relocation-builder-copy-range! (&mut bigger) slots count)
-      (CompilerObjectRelocationBuilder bigger count))))
+    (compiler-object-relocation-builder-copy-range! (&mut bigger) slots count)
+    (CompilerObjectRelocationBuilder bigger count)))
 
 (define (compiler-object-section-builder-grow
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionBuilder
@@ -331,9 +319,8 @@
     [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSection)
       (__tl_make-array CompilerObjectSection (* (array-length slots) 2))]
-    (begin
-      (compiler-object-section-builder-copy-range! (&mut bigger) slots count)
-      (CompilerObjectSectionBuilder bigger count))))
+    (compiler-object-section-builder-copy-range! (&mut bigger) slots count)
+    (CompilerObjectSectionBuilder bigger count)))
 
 (define (compiler-object-data-record-builder-push
   [builder : CompilerObjectDataRecordBuilder]
@@ -342,9 +329,8 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
       [count : i64 builder.count]
-      (begin
-        (set! (array-ref slots count) record)
-        (CompilerObjectDataRecordBuilder slots (+ count 1))))
+      (set! (array-ref slots count) record)
+      (CompilerObjectDataRecordBuilder slots (+ count 1)))
     (compiler-object-data-record-builder-push
       (compiler-object-data-record-builder-grow builder)
       record)))
@@ -356,9 +342,8 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
       [count : i64 builder.count]
-      (begin
-        (set! (array-ref slots count) instr)
-        (CompilerObjectX64InstrBuilder slots (+ count 1))))
+      (set! (array-ref slots count) instr)
+      (CompilerObjectX64InstrBuilder slots (+ count 1)))
     (compiler-object-instr-builder-push
       (compiler-object-instr-builder-grow builder)
       instr)))
@@ -370,9 +355,8 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
       [count : i64 builder.count]
-      (begin
-        (set! (array-ref slots count) symbol)
-        (CompilerObjectSymbolBuilder slots (+ count 1))))
+      (set! (array-ref slots count) symbol)
+      (CompilerObjectSymbolBuilder slots (+ count 1)))
     (compiler-object-symbol-builder-push
       (compiler-object-symbol-builder-grow builder)
       symbol)))
@@ -384,9 +368,8 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
       [count : i64 builder.count]
-      (begin
-        (set! (array-ref slots count) reloc)
-        (CompilerObjectRelocationBuilder slots (+ count 1))))
+      (set! (array-ref slots count) reloc)
+      (CompilerObjectRelocationBuilder slots (+ count 1)))
     (compiler-object-relocation-builder-push
       (compiler-object-relocation-builder-grow builder)
       reloc)))
@@ -398,9 +381,8 @@
     (let
       [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
       [count : i64 builder.count]
-      (begin
-        (set! (array-ref slots count) section)
-        (CompilerObjectSectionBuilder slots (+ count 1))))
+      (set! (array-ref slots count) section)
+      (CompilerObjectSectionBuilder slots (+ count 1)))
     (compiler-object-section-builder-push
       (compiler-object-section-builder-grow builder)
       section)))
@@ -435,17 +417,16 @@
     [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (array-ref slots index)
-          [(Symbol found-name found-binding found-kind _)
-            (if (and
-              (string.eq found-name name)
-              (compiler-object-symbol-binding-eq? found-binding binding)
-              (compiler-object-symbol-kind-eq? found-kind kind))
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (array-ref slots index)
+        [(Symbol found-name found-binding found-kind _)
+          (if (and
+            (string.eq found-name name)
+            (compiler-object-symbol-binding-eq? found-binding binding)
+            (compiler-object-symbol-kind-eq? found-kind kind))
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (compiler-object-relocation-builder-targets?
   [builder : (& builder CompilerObjectRelocationBuilder)]
@@ -455,14 +436,13 @@
     [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (array-ref slots index)
-          [(Relocation _ _ _ found-target)
-            (if (string.eq found-target target)
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (array-ref slots index)
+        [(Relocation _ _ _ found-target)
+          (if (string.eq found-target target)
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (compiler-object-section-kind-eq?
   [a : CompilerObjectSectionKind]
@@ -634,19 +614,18 @@
           (__tl_make-array CompilerObjectX64Instr 0)
           0))]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (let
-          [section : CompilerObjectSection
-            (compiler-object-section-list-ref sections index)]
-          (match (owned_view.compiler-owned-shared-view section)
-            [(Section found-kind _ _)
-              (if (compiler-object-section-kind-eq? found-kind kind)
-                (begin
-                  (set! result section)
-                  (set! found true))
-                (set! index (+ index 1)))])))
-      result)))
+    (while (and (not found) (< index count))
+      (let
+        [section : CompilerObjectSection
+          (compiler-object-section-list-ref sections index)]
+        (match (owned_view.compiler-owned-shared-view section)
+          [(Section found-kind _ _)
+            (if (compiler-object-section-kind-eq? found-kind kind)
+              (begin
+                (set! result section)
+                (set! found true))
+              (set! index (+ index 1)))])))
+    result))
 
 (define (compiler-object-symbol-list-contains?
   [symbols : (& symbols CompilerObjectSymbolList)]
@@ -657,17 +636,16 @@
     [count : i64 (compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
-          [(Symbol found-name found-binding found-kind _)
-            (if (and
-              (string.eq found-name name)
-              (compiler-object-symbol-binding-eq? found-binding binding)
-              (compiler-object-symbol-kind-eq? found-kind kind))
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (compiler-object-symbol-list-ref symbols index)
+        [(Symbol found-name found-binding found-kind _)
+          (if (and
+            (string.eq found-name name)
+            (compiler-object-symbol-binding-eq? found-binding binding)
+            (compiler-object-symbol-kind-eq? found-kind kind))
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (compiler-object-relocation-list-contains?
   [relocs : (& relocs CompilerObjectRelocationList)]
@@ -677,16 +655,15 @@
     [count : i64 (compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-relocation-list-ref relocs index)
-          [(Relocation _ _ found-kind found-target)
-            (if (and
-              (compiler-object-relocation-kind-eq? found-kind kind)
-              (string.eq found-target target))
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (compiler-object-relocation-list-ref relocs index)
+        [(Relocation _ _ found-kind found-target)
+          (if (and
+            (compiler-object-relocation-kind-eq? found-kind kind)
+            (string.eq found-target target))
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (compiler-object-data-record-list-contains-label?
   [records : CompilerObjectDataRecordList]
@@ -695,15 +672,14 @@
     [count : i64 (compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-data-record-list-ref records index)
-          [(Label value)
-            (if (string.eq value label)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (compiler-object-data-record-list-ref records index)
+        [(Label value)
+          (if (string.eq value label)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-section-contains-label?
   [sections : (& sections CompilerObjectSectionList)]
@@ -745,19 +721,18 @@
     [count : i64 (compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
-          [(Bytes value)
-            (if (compiler-object-string-contains? value bytes 0)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [(Raw value)
-            (if (compiler-object-string-contains? value bytes 0)
-              (set! found true)
-              (set! index (+ index 1)))]
-          [_ (set! index (+ index 1))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (compiler-object-instr-list-ref instrs index)
+        [(Bytes value)
+          (if (compiler-object-string-contains? value bytes 0)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [(Raw value)
+          (if (compiler-object-string-contains? value bytes 0)
+            (set! found true)
+            (set! index (+ index 1)))]
+        [_ (set! index (+ index 1))]))
+    found))
 
 (define (compiler-object-section-contains-bytes?
   [sections : (& sections CompilerObjectSectionList)]

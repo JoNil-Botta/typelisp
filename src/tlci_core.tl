@@ -80,9 +80,8 @@
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
   (let
     [next : TlciSpmdSpecializations items]
-    (begin
-      (tlci_specialization_vec.push-ref! (&mut next.items) item)
-      next)))
+    (tlci_specialization_vec.push-ref! (&mut next.items) item)
+    next))
 
 (define (tlci-spmd-specializations-push!
   [items : (&mut items TlciSpmdSpecializations)]
@@ -114,9 +113,8 @@
   [item : TlciSpmdCallable]) : TlciSpmdCallables
   (let
     [next : TlciSpmdCallables items]
-    (begin
-      (tlci_callable_vec.push-ref! (&mut next.items) item)
-      next)))
+    (tlci_callable_vec.push-ref! (&mut next.items) item)
+    next))
 
 (define (tlci-spmd-callables-push!
   [items : (&mut items TlciSpmdCallables)]
@@ -917,27 +915,25 @@
       (string.string-length "compiler-comptime-host-callback-")]
     [row : i64 (expr-list-length rows)]
     [lookup : Expr `-1]
-    (begin
-      (while (> row 0)
-        (begin
-          (set! row (- row 1))
-          (match (expr-list-nth rows row)
-            [(comptime.Expr.Var text)
-              (set!
-                lookup
-                `(if (string.eq
-                  ,name
-                  ,(comptime.expr-string
-                    (comptime.string-slice
-                      text
-                      prefix-length
-                      (- (string.string-length text) prefix-length))))
-                  ,(comptime.expr-int row)
-                  ,lookup))]
-            [_
-              (comptime-error
-                "tlci-host-callback-row-index-rows: rows must be bare names")])))
-      lookup)))
+    (while (> row 0)
+      (set! row (- row 1))
+      (match (expr-list-nth rows row)
+        [(comptime.Expr.Var text)
+          (set!
+            lookup
+            `(if (string.eq
+              ,name
+              ,(comptime.expr-string
+                (comptime.string-slice
+                  text
+                  prefix-length
+                  (- (string.string-length text) prefix-length))))
+              ,(comptime.expr-int row)
+              ,lookup))]
+        [_
+          (comptime-error
+            "tlci-host-callback-row-index-rows: rows must be bare names")]))
+    lookup))
 
 ;; The row index of ABI name `name` in `tlci-host-callback-table`, or -1. The
 ;; producer stamps it into `run-ops` batches as a hint that the host confirms
@@ -960,22 +956,20 @@
         [count : i64 (expr-list-length rows)]
         [index : i64 0]
         [found : bool (= count 0)]
-        (begin
-          (while (< index count)
-            (begin
-              (match (expr-list-nth rows index)
-                [(comptime.Expr.Var row)
-                  (if (string.eq row row-name)
-                    (begin
-                      (set! found true)
-                      (set! index count))
-                    unit)]
-                [_ unit])
-              (set! index (+ index 1))))
-          (if found
-            (comptime.expr-string text)
-            (comptime-error
-              (comptime.string-append "tlci: unknown host callback " text)))))]
+        (while (< index count)
+          (match (expr-list-nth rows index)
+            [(comptime.Expr.Var row)
+              (if (string.eq row row-name)
+                (begin
+                  (set! found true)
+                  (set! index count))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1)))
+        (if found
+          (comptime.expr-string text)
+          (comptime-error
+            (comptime.string-append "tlci: unknown host callback " text))))]
     [_ (comptime-error "tlci-host-callback-name: expected a bare name")]))
 
 (define tlci-header-size : i64
@@ -1055,26 +1049,22 @@
       [(< (array-length table.import-callbacks) count)
         "host callback registry address storage is smaller than its count"]
       [else
-        (begin
-          (while (and (= (string.string-length error) 0) (< index count))
-            (cond
-              [(string.eq (array-ref table.import-names index) "")
-                (set! error "host callback registry name must not be empty")]
-              [(= (array-ref table.import-callbacks index) 0)
-                (set! error "host callback registry address must be nonzero")]
-              [else
-                (begin
-                  (set! prior 0)
-                  (while (and
-                    (= (string.string-length error) 0)
-                    (< prior index))
-                    (if (string.eq
-                      (array-ref table.import-names prior)
-                      (array-ref table.import-names index))
-                      (set! error "duplicate host callback registry name")
-                      (set! prior (+ prior 1))))
-                  (set! index (+ index 1)))]))
-          error)])))
+        (while (and (= (string.string-length error) 0) (< index count))
+          (cond
+            [(string.eq (array-ref table.import-names index) "")
+              (set! error "host callback registry name must not be empty")]
+            [(= (array-ref table.import-callbacks index) 0)
+              (set! error "host callback registry address must be nonzero")]
+            [else
+              (set! prior 0)
+              (while (and (= (string.string-length error) 0) (< prior index))
+                (if (string.eq
+                  (array-ref table.import-names prior)
+                  (array-ref table.import-names index))
+                  (set! error "duplicate host callback registry name")
+                  (set! prior (+ prior 1))))
+              (set! index (+ index 1))]))
+        error])))
 
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
@@ -1152,14 +1142,12 @@
   (let
     [index : i64 0]
     [count : i64 (tlci-string-length text)]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref bytes (+ offset index))
-            (cast (tlci-string-ref text index) : u8))
-          (set! index (+ index 1))))
-      unit)))
+    (while (< index count)
+      (set!
+        (array-ref bytes (+ offset index))
+        (cast (tlci-string-ref text index) : u8))
+      (set! index (+ index 1)))
+    unit))
 
 (define tlci-macro-table-symbol : String
   "tlci_macro_table")
@@ -1183,14 +1171,10 @@
   (let
     [index : i64 0]
     [total : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            total
-            (+ total (tlci-string-length (array-ref identities index))))
-          (set! index (+ index 1))))
-      total)))
+    (while (< index count)
+      (set! total (+ total (tlci-string-length (array-ref identities index))))
+      (set! index (+ index 1)))
+    total))
 
 ;; Extend the layout code bytes with the name blob, the aligned count word,
 ;; and the zeroed macro table. Returns the extended code array.
@@ -1207,22 +1191,19 @@
     [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
     [index : i64 0]
     [name-cursor : i64 code-len]
-    (begin
-      (while (< index code-len)
-        (begin
-          (set! (array-ref out index) (array-ref code index))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index count)
-        (let
-          [name : (& input str) (& (array-ref input.identities index))]
-          [name-len : i64 (tlci-string-length name)]
-          (begin
-            (tlci-put-string! (&mut out) name-cursor name)
-            (set! name-cursor (+ name-cursor name-len))
-            (set! index (+ index 1)))))
-      (tlci-set-u64! (&mut out) count-word count)
-      out)))
+    (while (< index code-len)
+      (set! (array-ref out index) (array-ref code index))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index count)
+      (let
+        [name : (& input str) (& (array-ref input.identities index))]
+        [name-len : i64 (tlci-string-length name)]
+        (tlci-put-string! (&mut out) name-cursor name)
+        (set! name-cursor (+ name-cursor name-len))
+        (set! index (+ index 1))))
+    (tlci-set-u64! (&mut out) count-word count)
+    out))
 
 ;; Intra-code offset of the count word for the extended code array.
 (define (tlci-native-package-count-word
@@ -1239,21 +1220,19 @@
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 tlci-section-entry-record-size)]
     [symbol : String (string.copy (& tlci-macro-table-symbol))]
-    (begin
-      (tlci-set-u64! (&mut out) 0 0)
-      (tlci-set-u64! (&mut out) 8 (tlci-string-length symbol))
-      (tlci-set-u64! (&mut out) 16 (tlci-native-package-count-word input))
-      out)))
+    (tlci-set-u64! (&mut out) 0 0)
+    (tlci-set-u64! (&mut out) 8 (tlci-string-length symbol))
+    (tlci-set-u64! (&mut out) 16 (tlci-native-package-count-word input))
+    out))
 
 (define (tlci-native-package-symbols) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 tlci-section-symbol-record-size)]
-    (begin
-      (let
-        [symbol : String (string.copy (& tlci-macro-table-symbol))]
-        (tlci-put-string! (&mut out) 0 symbol))
-      out)))
+    (let
+      [symbol : String (string.copy (& tlci-macro-table-symbol))]
+      (tlci-put-string! (&mut out) 0 symbol))
+    out))
 
 (define (tlci-native-package-fixups [input : (& input TlciNativePackageInput)]) : (__tl_dyn-array
     u8)
@@ -1277,73 +1256,62 @@
     [table-offset : i64 (+ count-word 8)]
     [name-cursor : i64 (array-length input.code)]
     [index : i64 0]
-    (begin
-      (while (< index layout-count)
+    (while (< index layout-count)
+      (let
+        [slot : i64
+          (+ code-offset (array-ref input.layout-fixup-offsets index))]
+        (tlci-set-u64!
+          bytes
+          (+ fixups-offset (* index tlci-section-fixup-record-size))
+          slot)
+        (tlci-set-u64! bytes slot (+ code-offset (tlci-read-u64 bytes slot)))
+        (set! index (+ index 1))))
+    (set! index 0)
+    (while (< index count)
+      (let
+        [name-len : i64 (tlci-string-length (array-ref input.identities index))]
+        [record-slot : i64
+          (+
+            code-offset
+            (+ table-offset (* index tlci-macro-entry-record-size)))]
+        [name-slot : i64 (+ record-slot tlci-macro-entry-name-ptr-offset)]
+        [entry-slot : i64 (+ record-slot tlci-macro-entry-function-offset)]
+        [fixup-slot : i64
+          (+
+            fixups-offset
+            (* (+ layout-count (* index 2)) tlci-section-fixup-record-size))]
+        (tlci-set-u64! bytes name-slot (+ code-offset name-cursor))
+        (tlci-set-u64!
+          bytes
+          (+ record-slot tlci-macro-entry-name-len-offset)
+          name-len)
+        (tlci-set-u64!
+          bytes
+          entry-slot
+          (+ code-offset (array-ref input.entry-offsets index)))
+        (tlci-set-u64! bytes fixup-slot name-slot)
+        (tlci-set-u64!
+          bytes
+          (+ fixup-slot tlci-section-fixup-record-size)
+          entry-slot)
+        (set! name-cursor (+ name-cursor name-len))
+        (set! index (+ index 1))))
+    (let
+      [imports-offset : i64 (tlci-read-u64 bytes 152)]
+      [imports-count : i64 (tlci-read-u64 bytes 160)]
+      [import-index : i64 0]
+      (while (< import-index imports-count)
         (let
           [slot : i64
-            (+ code-offset (array-ref input.layout-fixup-offsets index))]
-          (begin
-            (tlci-set-u64!
-              bytes
-              (+ fixups-offset (* index tlci-section-fixup-record-size))
-              slot)
-            (tlci-set-u64!
-              bytes
-              slot
-              (+ code-offset (tlci-read-u64 bytes slot)))
-            (set! index (+ index 1)))))
-      (set! index 0)
-      (while (< index count)
-        (let
-          [name-len : i64
-            (tlci-string-length (array-ref input.identities index))]
-          [record-slot : i64
             (+
-              code-offset
-              (+ table-offset (* index tlci-macro-entry-record-size)))]
-          [name-slot : i64 (+ record-slot tlci-macro-entry-name-ptr-offset)]
-          [entry-slot : i64 (+ record-slot tlci-macro-entry-function-offset)]
-          [fixup-slot : i64
-            (+
-              fixups-offset
-              (* (+ layout-count (* index 2)) tlci-section-fixup-record-size))]
-          (begin
-            (tlci-set-u64! bytes name-slot (+ code-offset name-cursor))
-            (tlci-set-u64!
-              bytes
-              (+ record-slot tlci-macro-entry-name-len-offset)
-              name-len)
-            (tlci-set-u64!
-              bytes
-              entry-slot
-              (+ code-offset (array-ref input.entry-offsets index)))
-            (tlci-set-u64! bytes fixup-slot name-slot)
-            (tlci-set-u64!
-              bytes
-              (+ fixup-slot tlci-section-fixup-record-size)
-              entry-slot)
-            (set! name-cursor (+ name-cursor name-len))
-            (set! index (+ index 1)))))
-      (let
-        [imports-offset : i64 (tlci-read-u64 bytes 152)]
-        [imports-count : i64 (tlci-read-u64 bytes 160)]
-        [import-index : i64 0]
-        (while (< import-index imports-count)
-          (let
-            [slot : i64
+              imports-offset
               (+
-                imports-offset
-                (+
-                  tlci-section-import-header-size
-                  (* import-index tlci-section-import-record-size)))]
-            (begin
-              (tlci-set-u64!
-                bytes
-                slot
-                (+ code-offset (tlci-read-u64 bytes slot)))
-              (set! import-index (+ import-index 1))))))
-      (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
-      unit)))
+                tlci-section-import-header-size
+                (* import-index tlci-section-import-record-size)))]
+          (tlci-set-u64! bytes slot (+ code-offset (tlci-read-u64 bytes slot)))
+          (set! import-index (+ import-index 1)))))
+    (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
+    unit))
 
 ;; Assemble a native package image from normal-backend layout output.
 (define (tlci-emit-native-package-image
@@ -1365,9 +1333,8 @@
       (clone input.imports)))
     [(Err message) (Err message)]
     [(Ok bytes)
-      (begin
-        (tlci-native-package-patch! (&mut bytes) input)
-        (Ok bytes))]))
+      (tlci-native-package-patch! (&mut bytes) input)
+      (Ok bytes)]))
 
 (define (tlci-byte-at [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
@@ -1380,12 +1347,10 @@
   [count : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (tlci-push-u8! out 0)
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i count)
+      (tlci-push-u8! out 0)
+      (set! i (+ i 1)))
+    unit))
 
 (define (tlci-align-offset [offset : i64] [align : i64]) : i64
   (if (<= align 1)
@@ -1402,15 +1367,14 @@
   (tlci-push-zeroes! out (- offset out.len)))
 
 (define (tlci-push-magic! [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
-  (begin
-    (tlci-push-u8! out 84)
-    (tlci-push-u8! out 76)
-    (tlci-push-u8! out 67)
-    (tlci-push-u8! out 73)
-    (tlci-push-u8! out 13)
-    (tlci-push-u8! out 10)
-    (tlci-push-u8! out 26)
-    (tlci-push-u8! out 10)))
+  (tlci-push-u8! out 84)
+  (tlci-push-u8! out 76)
+  (tlci-push-u8! out 67)
+  (tlci-push-u8! out 73)
+  (tlci-push-u8! out 13)
+  (tlci-push-u8! out 10)
+  (tlci-push-u8! out 26)
+  (tlci-push-u8! out 10))
 
 (define (tlci-magic-ok? [bytes : (& bytes (__tl_dyn-array u8))]) : bool
   (and
@@ -1429,21 +1393,18 @@
   (let
     [i : i64 0]
     [n : i64 (tlci-string-length text)]
-    (begin
-      (while (< i n)
-        (begin
-          (byte_buf_core.byte-buf-builder-push
-            out
-            (cast (tlci-string-ref text i) : u8))
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i n)
+      (byte_buf_core.byte-buf-builder-push
+        out
+        (cast (tlci-string-ref text i) : u8))
+      (set! i (+ i 1)))
+    unit))
 
 (define (tlci-string->bytes [text : String]) : (__tl_dyn-array u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (tlci-push-string-bytes! (&mut out) text)
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
+    (tlci-push-string-bytes! (&mut out) text)
+    (byte_buf_core.byte-buf-builder-finish-array (& out))))
 
 (define (tlci-bytes->string
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1452,13 +1413,11 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set! (array-ref out i) (array-ref bytes (+ offset i)))
-          (set! i (+ i 1))))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) len)))))
+    (while (< i len)
+      (set! (array-ref out i) (array-ref bytes (+ offset i)))
+      (set! i (+ i 1)))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) len))))
 
 (define (tlci-slice-bytes
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1467,12 +1426,10 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set! (array-ref out i) (array-ref bytes (+ offset i)))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i len)
+      (set! (array-ref out i) (array-ref bytes (+ offset i)))
+      (set! i (+ i 1)))
+    out))
 
 (define (tlci-copy-bytes [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
     u8)
@@ -1490,12 +1447,11 @@
     [n : i64 (array-length left)]
     [i : i64 0]
     [ok : bool (= n (array-length right))]
-    (begin
-      (while (and ok (< i n))
-        (if (= (tlci-byte-at left i) (tlci-byte-at right i))
-          (set! i (+ i 1))
-          (set! ok false)))
-      ok)))
+    (while (and ok (< i n))
+      (if (= (tlci-byte-at left i) (tlci-byte-at right i))
+        (set! i (+ i 1))
+        (set! ok false)))
+    ok))
 
 ;; The image and range digests are the polynomial hash
 ;;
@@ -1541,156 +1497,139 @@
       (if (< end (array-length bytes))
         end
         (array-length bytes))]
-    (begin
-      ;; Four independent recurrences consume the eight-byte pieces of each
-      ;; 32-byte group. Each advances by 131^32 mod p = 938964152. After the
-      ;; last full group, weight them by 131^24, 131^16, 131^8 and 1 to put
-      ;; the pieces back in byte order. The incoming digest starts in h3 so
-      ;; its weight is exactly 131^(32 * groups), without an extra factor.
-      ;;
-      ;; Even maximal bytes and h_j = p-1 give x <= 2186534790481770432,
-      ;; below 2^61, so the existing Mersenne reduction applies throughout.
-      ;; Guard the subtraction once; neither the bound nor i+32 can overflow.
-      ;; Keep the block polynomials here: extracting calls inhibits this
-      ;; compiler's inlining and loses most of the independent-chain benefit.
-      (when
-        (and (>= i 0) (>= limit 32) (<= i (- limit 32)))
-        (let
-          [h0 : i64 0]
-          [h1 : i64 0]
-          [h2 : i64 0]
-          [h3 : i64 h]
-          (begin
-            (while (<= i (- limit 32))
-              (begin
-                (let
-                  [a : i64
-                    (+
-                      (* (tlci-byte-at bytes i) 131)
-                      (tlci-byte-at bytes (+ i 1)))]
-                  [b : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 2)) 131)
-                      (tlci-byte-at bytes (+ i 3)))]
-                  [c : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 4)) 131)
-                      (tlci-byte-at bytes (+ i 5)))]
-                  [d : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 6)) 131)
-                      (tlci-byte-at bytes (+ i 7)))]
-                  [t : i64
-                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
-                  (set! h0 (tlci-hash-reduce (+ (* h0 938964152) t))))
-                (let
-                  [a : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 8)) 131)
-                      (tlci-byte-at bytes (+ i 9)))]
-                  [b : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 10)) 131)
-                      (tlci-byte-at bytes (+ i 11)))]
-                  [c : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 12)) 131)
-                      (tlci-byte-at bytes (+ i 13)))]
-                  [d : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 14)) 131)
-                      (tlci-byte-at bytes (+ i 15)))]
-                  [t : i64
-                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
-                  (set! h1 (tlci-hash-reduce (+ (* h1 938964152) t))))
-                (let
-                  [a : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 16)) 131)
-                      (tlci-byte-at bytes (+ i 17)))]
-                  [b : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 18)) 131)
-                      (tlci-byte-at bytes (+ i 19)))]
-                  [c : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 20)) 131)
-                      (tlci-byte-at bytes (+ i 21)))]
-                  [d : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 22)) 131)
-                      (tlci-byte-at bytes (+ i 23)))]
-                  [t : i64
-                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
-                  (set! h2 (tlci-hash-reduce (+ (* h2 938964152) t))))
-                (let
-                  [a : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 24)) 131)
-                      (tlci-byte-at bytes (+ i 25)))]
-                  [b : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 26)) 131)
-                      (tlci-byte-at bytes (+ i 27)))]
-                  [c : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 28)) 131)
-                      (tlci-byte-at bytes (+ i 29)))]
-                  [d : i64
-                    (+
-                      (* (tlci-byte-at bytes (+ i 30)) 131)
-                      (tlci-byte-at bytes (+ i 31)))]
-                  [t : i64
-                    (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
-                  (set! h3 (tlci-hash-reduce (+ (* h3 938964152) t))))
-                (set! i (+ i 32))))
-            (set!
-              h
-              (tlci-hash-reduce
-                (+
-                  (tlci-hash-reduce (* h0 1117162002))
-                  (+
-                    (tlci-hash-reduce (* h1 549389049))
-                    (+ (tlci-hash-reduce (* h2 tlci-hash-step-8)) h3))))))))
-      ;; Eight bytes per reduction (see above); the two-step Mersenne fold
-      ;; of a sum below 2^61 lands in [0, p + 2], one conditional subtract
-      ;; from p. The loop runs to the array length, so one guard covers all
-      ;; eight reads.
-      (while (<= (+ i 8) limit)
-        (let
-          ;; Pair adjacent bytes, then pairs of pairs. This is the same
-          ;; eight-byte polynomial with three dependent multiplies instead
-          ;; of seven; 131^2 and 131^4 both fit signed immediate operands.
-          [a : i64
-            (+ (* (tlci-byte-at bytes i) 131) (tlci-byte-at bytes (+ i 1)))]
-          [b : i64
+    ;; Four independent recurrences consume the eight-byte pieces of each
+    ;; 32-byte group. Each advances by 131^32 mod p = 938964152. After the
+    ;; last full group, weight them by 131^24, 131^16, 131^8 and 1 to put
+    ;; the pieces back in byte order. The incoming digest starts in h3 so
+    ;; its weight is exactly 131^(32 * groups), without an extra factor.
+    ;;
+    ;; Even maximal bytes and h_j = p-1 give x <= 2186534790481770432,
+    ;; below 2^61, so the existing Mersenne reduction applies throughout.
+    ;; Guard the subtraction once; neither the bound nor i+32 can overflow.
+    ;; Keep the block polynomials here: extracting calls inhibits this
+    ;; compiler's inlining and loses most of the independent-chain benefit.
+    (when
+      (and (>= i 0) (>= limit 32) (<= i (- limit 32)))
+      (let
+        [h0 : i64 0]
+        [h1 : i64 0]
+        [h2 : i64 0]
+        [h3 : i64 h]
+        (while (<= i (- limit 32))
+          (let
+            [a : i64
+              (+ (* (tlci-byte-at bytes i) 131) (tlci-byte-at bytes (+ i 1)))]
+            [b : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 2)) 131)
+                (tlci-byte-at bytes (+ i 3)))]
+            [c : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 4)) 131)
+                (tlci-byte-at bytes (+ i 5)))]
+            [d : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 6)) 131)
+                (tlci-byte-at bytes (+ i 7)))]
+            [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+            (set! h0 (tlci-hash-reduce (+ (* h0 938964152) t))))
+          (let
+            [a : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 8)) 131)
+                (tlci-byte-at bytes (+ i 9)))]
+            [b : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 10)) 131)
+                (tlci-byte-at bytes (+ i 11)))]
+            [c : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 12)) 131)
+                (tlci-byte-at bytes (+ i 13)))]
+            [d : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 14)) 131)
+                (tlci-byte-at bytes (+ i 15)))]
+            [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+            (set! h1 (tlci-hash-reduce (+ (* h1 938964152) t))))
+          (let
+            [a : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 16)) 131)
+                (tlci-byte-at bytes (+ i 17)))]
+            [b : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 18)) 131)
+                (tlci-byte-at bytes (+ i 19)))]
+            [c : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 20)) 131)
+                (tlci-byte-at bytes (+ i 21)))]
+            [d : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 22)) 131)
+                (tlci-byte-at bytes (+ i 23)))]
+            [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+            (set! h2 (tlci-hash-reduce (+ (* h2 938964152) t))))
+          (let
+            [a : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 24)) 131)
+                (tlci-byte-at bytes (+ i 25)))]
+            [b : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 26)) 131)
+                (tlci-byte-at bytes (+ i 27)))]
+            [c : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 28)) 131)
+                (tlci-byte-at bytes (+ i 29)))]
+            [d : i64
+              (+
+                (* (tlci-byte-at bytes (+ i 30)) 131)
+                (tlci-byte-at bytes (+ i 31)))]
+            [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+            (set! h3 (tlci-hash-reduce (+ (* h3 938964152) t))))
+          (set! i (+ i 32)))
+        (set!
+          h
+          (tlci-hash-reduce
             (+
-              (* (tlci-byte-at bytes (+ i 2)) 131)
-              (tlci-byte-at bytes (+ i 3)))]
-          [c : i64
-            (+
-              (* (tlci-byte-at bytes (+ i 4)) 131)
-              (tlci-byte-at bytes (+ i 5)))]
-          [d : i64
-            (+
-              (* (tlci-byte-at bytes (+ i 6)) 131)
-              (tlci-byte-at bytes (+ i 7)))]
-          [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
-          [x : i64 (+ (* h tlci-hash-step-8) t)]
-          [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
-          [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
-          (begin
-            (set!
-              h
-              (if (>= twice tlci-hash-modulus)
-                (- twice tlci-hash-modulus)
-                twice))
-            (set! i (+ i 8)))))
-      (while (< i end)
-        (begin
-          (set! h (tlci-hash-reduce (+ (* h 131) (tlci-byte-at bytes i))))
-          (set! i (+ i 1))))
-      h)))
+              (tlci-hash-reduce (* h0 1117162002))
+              (+
+                (tlci-hash-reduce (* h1 549389049))
+                (+ (tlci-hash-reduce (* h2 tlci-hash-step-8)) h3)))))))
+    ;; Eight bytes per reduction (see above); the two-step Mersenne fold
+    ;; of a sum below 2^61 lands in [0, p + 2], one conditional subtract
+    ;; from p. The loop runs to the array length, so one guard covers all
+    ;; eight reads.
+    (while (<= (+ i 8) limit)
+      (let
+        ;; Pair adjacent bytes, then pairs of pairs. This is the same
+        ;; eight-byte polynomial with three dependent multiplies instead
+        ;; of seven; 131^2 and 131^4 both fit signed immediate operands.
+        [a : i64
+          (+ (* (tlci-byte-at bytes i) 131) (tlci-byte-at bytes (+ i 1)))]
+        [b : i64
+          (+ (* (tlci-byte-at bytes (+ i 2)) 131) (tlci-byte-at bytes (+ i 3)))]
+        [c : i64
+          (+ (* (tlci-byte-at bytes (+ i 4)) 131) (tlci-byte-at bytes (+ i 5)))]
+        [d : i64
+          (+ (* (tlci-byte-at bytes (+ i 6)) 131) (tlci-byte-at bytes (+ i 7)))]
+        [t : i64 (+ (* (+ (* a 17161) b) 294499921) (+ (* c 17161) d))]
+        [x : i64 (+ (* h tlci-hash-step-8) t)]
+        [once : i64 (+ (bit-and x tlci-hash-modulus) (shr x 31))]
+        [twice : i64 (+ (bit-and once tlci-hash-modulus) (shr once 31))]
+        (set!
+          h
+          (if (>= twice tlci-hash-modulus)
+            (- twice tlci-hash-modulus)
+            twice))
+        (set! i (+ i 8))))
+    (while (< i end)
+      (set! h (tlci-hash-reduce (+ (* h 131) (tlci-byte-at bytes i))))
+      (set! i (+ i 1)))
+    h))
 
 ;; The image digest; the digest field itself hashes as zeros.
 (define (tlci-content-hash [bytes : (& bytes (__tl_dyn-array u8))]) : i64
@@ -1715,19 +1654,17 @@
     [n : i64 (array-length bytes)]
     [i : i64 0]
     [hash : i64 1]
-    (begin
-      (while (< i n)
-        (let
-          [b : i64
-            (if (and
-              (>= i tlci-hash-field-offset)
-              (< i (+ tlci-hash-field-offset tlci-hash-field-size)))
-              0
-              (tlci-byte-at bytes i))]
-          (begin
-            (set! hash (% (+ (* hash 131) b) 2147483647))
-            (set! i (+ i 1)))))
-      hash)))
+    (while (< i n)
+      (let
+        [b : i64
+          (if (and
+            (>= i tlci-hash-field-offset)
+            (< i (+ tlci-hash-field-offset tlci-hash-field-size)))
+            0
+            (tlci-byte-at bytes i))]
+        (set! hash (% (+ (* hash 131) b) 2147483647))
+        (set! i (+ i 1))))
+    hash))
 
 (define (tlci-range-hash
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1752,69 +1689,62 @@
         [previous-kind : i64 0]
         [ok : bool true]
         [message : String ""]
-        (begin
-          (tlci-append-bytes! (&mut out) base)
-          (while (and ok (< index count))
-            (let
-              [section : TlciAuxSection (clone (array-ref sections index))]
-              [kind : i64 section.kind]
-              [schema-version : i64 section.schema-version]
-              [payload : (__tl_dyn-array u8) (clone section.payload)]
-              (cond
-                [(<= kind previous-kind)
-                  (begin
-                    (set! ok false)
-                    (set!
-                      message
-                      "tlci: auxiliary section kinds must be positive and strictly ordered"))]
-                [(<= schema-version 0)
-                  (begin
-                    (set! ok false)
-                    (set!
-                      message
-                      "tlci: auxiliary section schema version must be positive"))]
-                [else
-                  (let
-                    [offset : i64 (tlci-align-offset out.len 8)]
-                    [len : i64 (array-length payload)]
-                    (begin
-                      (tlci-pad-to! (&mut out) offset)
-                      (set! (array-ref offsets index) offset)
-                      (set! (array-ref lengths index) len)
-                      (tlci-append-bytes! (&mut out) payload)
-                      (set!
-                        (array-ref hashes index)
-                        (tlci-range-hash payload 0 len))
-                      (set! previous-kind kind)
-                      (set! index (+ index 1))))]))))
+        (tlci-append-bytes! (&mut out) base)
+        (while (and ok (< index count))
+          (let
+            [section : TlciAuxSection (clone (array-ref sections index))]
+            [kind : i64 section.kind]
+            [schema-version : i64 section.schema-version]
+            [payload : (__tl_dyn-array u8) (clone section.payload)]
+            (cond
+              [(<= kind previous-kind)
+                (set! ok false)
+                (set!
+                  message
+                  "tlci: auxiliary section kinds must be positive and strictly ordered")]
+              [(<= schema-version 0)
+                (set! ok false)
+                (set!
+                  message
+                  "tlci: auxiliary section schema version must be positive")]
+              [else
+                (let
+                  [offset : i64 (tlci-align-offset out.len 8)]
+                  [len : i64 (array-length payload)]
+                  (tlci-pad-to! (&mut out) offset)
+                  (set! (array-ref offsets index) offset)
+                  (set! (array-ref lengths index) len)
+                  (tlci-append-bytes! (&mut out) payload)
+                  (set!
+                    (array-ref hashes index)
+                    (tlci-range-hash payload 0 len))
+                  (set! previous-kind kind)
+                  (set! index (+ index 1)))])))
         (if (not ok)
           (Err message)
           (let
             [directory-offset : i64 (tlci-align-offset out.len 8)]
-            (begin
-              (tlci-pad-to! (&mut out) directory-offset)
-              (set! index 0)
-              (while (< index count)
-                (let
-                  [section : TlciAuxSection (clone (array-ref sections index))]
-                  (begin
-                    (tlci-push-u64! (&mut out) section.kind)
-                    (tlci-push-u64! (&mut out) section.schema-version)
-                    (tlci-push-u64! (&mut out) (array-ref offsets index))
-                    (tlci-push-u64! (&mut out) (array-ref lengths index))
-                    (tlci-push-u64! (&mut out) (array-ref hashes index))
-                    (set! index (+ index 1)))))
+            (tlci-pad-to! (&mut out) directory-offset)
+            (set! index 0)
+            (while (< index count)
               (let
-                [trailer-offset : i64 out.len]
-                [total-len : i64 (+ trailer-offset tlci-aux-trailer-size)]
-                (begin
-                  (tlci-push-u64! (&mut out) tlci-aux-magic)
-                  (tlci-push-u64! (&mut out) tlci-aux-format-version)
-                  (tlci-push-u64! (&mut out) (array-length base))
-                  (tlci-push-u64! (&mut out) directory-offset)
-                  (tlci-push-u64! (&mut out) count)
-                  (tlci-push-u64! (&mut out) total-len)
-                  (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))))
+                [section : TlciAuxSection (clone (array-ref sections index))]
+                (tlci-push-u64! (&mut out) section.kind)
+                (tlci-push-u64! (&mut out) section.schema-version)
+                (tlci-push-u64! (&mut out) (array-ref offsets index))
+                (tlci-push-u64! (&mut out) (array-ref lengths index))
+                (tlci-push-u64! (&mut out) (array-ref hashes index))
+                (set! index (+ index 1))))
+            (let
+              [trailer-offset : i64 out.len]
+              [total-len : i64 (+ trailer-offset tlci-aux-trailer-size)]
+              (tlci-push-u64! (&mut out) tlci-aux-magic)
+              (tlci-push-u64! (&mut out) tlci-aux-format-version)
+              (tlci-push-u64! (&mut out) (array-length base))
+              (tlci-push-u64! (&mut out) directory-offset)
+              (tlci-push-u64! (&mut out) count)
+              (tlci-push-u64! (&mut out) total-len)
+              (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))
 
 (define (tlci-aux-directory [rodata : (& rodata (__tl_dyn-array u8))]) : ResultTlciAuxDirectory
   (let
@@ -1869,31 +1799,30 @@
     [previous-kind : i64 0]
     [previous-end : i64 (tlci-align-offset directory.base-len 8)]
     [ok : bool true]
-    (begin
-      (while (and ok (< index directory.count))
-        (let
-          [record : i64
-            (+ directory.directory-offset (* index tlci-aux-record-size))]
-          [kind : i64 (tlci-read-u64 rodata record)]
-          [schema-version : i64 (tlci-read-u64 rodata (+ record 8))]
-          [offset : i64 (tlci-read-u64 rodata (+ record 16))]
-          [len : i64 (tlci-read-u64 rodata (+ record 24))]
-          [expected-hash : i64 (tlci-read-u64 rodata (+ record 32))]
-          (if (and
-            (> kind previous-kind)
-            (> schema-version 0)
-            (>= offset previous-end)
-            (= (% offset 8) 0)
-            (>= len 0)
-            (<= offset directory.directory-offset)
-            (<= len (- directory.directory-offset offset))
-            (= expected-hash (tlci-range-hash rodata offset len)))
-            (begin
-              (set! previous-kind kind)
-              (set! previous-end (+ offset len))
-              (set! index (+ index 1)))
-            (set! ok false))))
-      ok)))
+    (while (and ok (< index directory.count))
+      (let
+        [record : i64
+          (+ directory.directory-offset (* index tlci-aux-record-size))]
+        [kind : i64 (tlci-read-u64 rodata record)]
+        [schema-version : i64 (tlci-read-u64 rodata (+ record 8))]
+        [offset : i64 (tlci-read-u64 rodata (+ record 16))]
+        [len : i64 (tlci-read-u64 rodata (+ record 24))]
+        [expected-hash : i64 (tlci-read-u64 rodata (+ record 32))]
+        (if (and
+          (> kind previous-kind)
+          (> schema-version 0)
+          (>= offset previous-end)
+          (= (% offset 8) 0)
+          (>= len 0)
+          (<= offset directory.directory-offset)
+          (<= len (- directory.directory-offset offset))
+          (= expected-hash (tlci-range-hash rodata offset len)))
+          (begin
+            (set! previous-kind kind)
+            (set! previous-end (+ offset len))
+            (set! index (+ index 1)))
+          (set! ok false))))
+    ok))
 
 (define (tlci-aux-find
   [rodata : (& rodata (__tl_dyn-array u8))]
@@ -1906,22 +1835,21 @@
         (Err "tlci: malformed or corrupt auxiliary section directory")
         (let
           [index : i64 0]
-          (begin
-            (while (< index directory.count)
-              (let
-                [record : i64
-                  (+ directory.directory-offset (* index tlci-aux-record-size))]
-                [kind : i64 (tlci-read-u64 rodata record)]
-                (if (= kind wanted-kind)
-                  (return
-                    (Ok
-                      (tlci-read-u64 rodata (+ record 8))
-                      (tlci-slice-bytes
-                        rodata
-                        (tlci-read-u64 rodata (+ record 16))
-                        (tlci-read-u64 rodata (+ record 24)))))
-                  (set! index (+ index 1)))))
-            (Missing))))]))
+          (while (< index directory.count)
+            (let
+              [record : i64
+                (+ directory.directory-offset (* index tlci-aux-record-size))]
+              [kind : i64 (tlci-read-u64 rodata record)]
+              (if (= kind wanted-kind)
+                (return
+                  (Ok
+                    (tlci-read-u64 rodata (+ record 8))
+                    (tlci-slice-bytes
+                      rodata
+                      (tlci-read-u64 rodata (+ record 16))
+                      (tlci-read-u64 rodata (+ record 24)))))
+                (set! index (+ index 1)))))
+          (Missing)))]))
 
 (define (tlci-package-source-binding-digest-valid? [digest : i64]) : bool
   (and (>= digest 0) (< digest 2147483647)))
@@ -1929,12 +1857,11 @@
 (define (tlci-package-source-binding-section [digest : i64]) : TlciAuxSection
   (let
     [payload : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-    (begin
-      (tlci-set-u64! (&mut payload) 0 digest)
-      (TlciAuxSection
-        tlci-aux-kind-package-source-binding
-        tlci-package-source-binding-schema-version
-        payload))))
+    (tlci-set-u64! (&mut payload) 0 digest)
+    (TlciAuxSection
+      tlci-aux-kind-package-source-binding
+      tlci-package-source-binding-schema-version
+      payload)))
 
 (define (tlci-package-source-binding-read
   [rodata : (& rodata (__tl_dyn-array u8))]) : TlciPackageSourceBindingRead
@@ -2027,25 +1954,23 @@
         right-len)]
     [index : i64 0]
     [result : i64 0]
-    (begin
-      (while (and (= result 0) (< index limit))
-        (let
-          [lc : i64 (tlci-char-code-at left index)]
-          [rc : i64 (tlci-char-code-at right index)]
-          (begin
-            (if (< lc rc)
-              (set! result -1)
-              (if (> lc rc)
-                (set! result 1)
-                unit))
-            (set! index (+ index 1)))))
-      (if (= result 0)
-        (if (< left-len right-len)
-          -1
-          (if (> left-len right-len)
-            1
-            0))
-        result))))
+    (while (and (= result 0) (< index limit))
+      (let
+        [lc : i64 (tlci-char-code-at left index)]
+        [rc : i64 (tlci-char-code-at right index)]
+        (if (< lc rc)
+          (set! result -1)
+          (if (> lc rc)
+            (set! result 1)
+            unit))
+        (set! index (+ index 1))))
+    (if (= result 0)
+      (if (< left-len right-len)
+        -1
+        (if (> left-len right-len)
+          1
+          0))
+      result)))
 
 (define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
   (match (reader.sexpr-view items)
@@ -2078,25 +2003,22 @@
                     -1)]
                 [_ -1])]
             [_ -1])])]
-    (begin
-      (reader.sp-node-pool-truncate! mark)
-      count)))
+    (reader.sp-node-pool-truncate! mark)
+    count))
 
 (define (tlci-spmd-args-valid? [args : (& args str)]) : bool
   (let
     [count : i64 (tlci-string-length args)]
     [index : i64 0]
     [valid : bool true]
-    (begin
-      (while (and valid (< index count))
-        (let
-          [code : i64 (tlci-char-code-at args index)]
-          (begin
-            (if (or (= code 117) (= code 118))
-              unit
-              (set! valid false))
-            (set! index (+ index 1)))))
-      valid)))
+    (while (and valid (< index count))
+      (let
+        [code : i64 (tlci-char-code-at args index)]
+        (if (or (= code 117) (= code 118))
+          unit
+          (set! valid false))
+        (set! index (+ index 1))))
+    valid))
 
 (define (tlci-spmd-result-valid? [result : (& result str)]) : bool
   (or (string.eq result "unit") (string.eq result "u") (string.eq result "v")))
@@ -2203,43 +2125,36 @@
     ;; first failing record can be moved into it.
     [failed : bool false]
     [error : String ""]
-    (begin
-      (while (and (not failed) (< index count))
-        (let
-          [item : TlciSpmdSpecialization
-            (tlci-spmd-specializations-ref items index)]
-          [item-error : String
-            (tlci-spmd-specialization-validation-error (clone item) param-count)]
-          [item-ok : bool (string.eq item-error "")]
-          (begin
-            (cond
-              [(not item-ok)
-                (begin
+    (while (and (not failed) (< index count))
+      (let
+        [item : TlciSpmdSpecialization
+          (tlci-spmd-specializations-ref items index)]
+        [item-error : String
+          (tlci-spmd-specialization-validation-error (clone item) param-count)]
+        [item-ok : bool (string.eq item-error "")]
+        (cond
+          [(not item-ok)
+            (set! failed true)
+            (set! error item-error)]
+          [(>= (+ index 1) count) unit]
+          [else
+            (let
+              [order : i64
+                (tlci-spmd-specialization-compare
+                  item
+                  (tlci-spmd-specializations-ref items (+ index 1)))]
+              (cond
+                [(= order 0)
                   (set! failed true)
-                  (set! error item-error))]
-              [(>= (+ index 1) count) unit]
-              [else
-                (let
-                  [order : i64
-                    (tlci-spmd-specialization-compare
-                      item
-                      (tlci-spmd-specializations-ref items (+ index 1)))]
-                  (cond
-                    [(= order 0)
-                      (begin
-                        (set! failed true)
-                        (set!
-                          error
-                          "tlci metadata: duplicate specialization record"))]
-                    [(> order 0)
-                      (begin
-                        (set! failed true)
-                        (set!
-                          error
-                          "tlci metadata: specialization records are not in stable order"))]
-                    [else unit]))])
-            (set! index (+ index 1)))))
-      error)))
+                  (set! error "tlci metadata: duplicate specialization record")]
+                [(> order 0)
+                  (set! failed true)
+                  (set!
+                    error
+                    "tlci metadata: specialization records are not in stable order")]
+                [else unit]))])
+        (set! index (+ index 1))))
+    error))
 
 (define (tlci-spmd-callable-validation-error [callable : TlciSpmdCallable]) : String
   (let
@@ -2266,40 +2181,34 @@
     ;; Same stop flag as the specialization walk above.
     [failed : bool false]
     [error : String ""]
-    (begin
-      (while (and (not failed) (< index count))
-        (let
-          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
-          [item-error : String
-            (tlci-spmd-callable-validation-error (clone item))]
-          [item-ok : bool (string.eq item-error "")]
-          (begin
-            (cond
-              [(not item-ok)
-                (begin
+    (while (and (not failed) (< index count))
+      (let
+        [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+        [item-error : String (tlci-spmd-callable-validation-error (clone item))]
+        [item-ok : bool (string.eq item-error "")]
+        (cond
+          [(not item-ok)
+            (set! failed true)
+            (set! error item-error)]
+          [(>= (+ index 1) count) unit]
+          [else
+            (let
+              [order : i64
+                (tlci-spmd-callable-compare
+                  item
+                  (tlci-spmd-callables-ref items (+ index 1)))]
+              (cond
+                [(= order 0)
                   (set! failed true)
-                  (set! error item-error))]
-              [(>= (+ index 1) count) unit]
-              [else
-                (let
-                  [order : i64
-                    (tlci-spmd-callable-compare
-                      item
-                      (tlci-spmd-callables-ref items (+ index 1)))]
-                  (cond
-                    [(= order 0)
-                      (begin
-                        (set! failed true)
-                        (set! error "tlci metadata: duplicate helper record"))]
-                    [(> order 0)
-                      (begin
-                        (set! failed true)
-                        (set!
-                          error
-                          "tlci metadata: helper records are not in stable order"))]
-                    [else unit]))])
-            (set! index (+ index 1)))))
-      error)))
+                  (set! error "tlci metadata: duplicate helper record")]
+                [(> order 0)
+                  (set! failed true)
+                  (set!
+                    error
+                    "tlci metadata: helper records are not in stable order")]
+                [else unit]))])
+        (set! index (+ index 1))))
+    error))
 
 (define (tlci-spmd-specialization-fields
   [fields : reader.SpannedSexpr]
@@ -2859,9 +2768,8 @@
       (match (reader.data-result source)
         [(Err message) (Err (str_cat.str-cat "tlci metadata: " message))]
         [(Ok form) (tlci-metadata-from-form form)])]
-    (begin
-      (reader.sp-node-pool-truncate! mark)
-      result)))
+    (reader.sp-node-pool-truncate! mark)
+    result))
 
 (define (tlci-quote-text) : String
   "\"")
@@ -2876,30 +2784,24 @@
     [out : String ""]
     [slash : String (tlci-backslash-text)]
     [quote : String (tlci-quote-text)]
-    (begin
-      (while (< i n)
-        (begin
-          (let
-            [code : i64 (tlci-char-code-at text i)]
-            (cond
-              [(= code 34)
-                (set!
-                  out
-                  (str_cat.str-cat out (string.copy slash) (string.copy quote)))]
-              [(= code 92)
-                (set!
-                  out
-                  (str_cat.str-cat out (string.copy slash) (string.copy slash)))]
-              [(= code 10)
-                (set! out (str_cat.str-cat out (string.copy slash) "n"))]
-              [(= code 9)
-                (set! out (str_cat.str-cat out (string.copy slash) "t"))]
-              [(= code 13)
-                (set! out (str_cat.str-cat out (string.copy slash) "r"))]
-              [else
-                (set! out (str_cat.str-cat out (string.substring text i 1)))]))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (let
+        [code : i64 (tlci-char-code-at text i)]
+        (cond
+          [(= code 34)
+            (set!
+              out
+              (str_cat.str-cat out (string.copy slash) (string.copy quote)))]
+          [(= code 92)
+            (set!
+              out
+              (str_cat.str-cat out (string.copy slash) (string.copy slash)))]
+          [(= code 10) (set! out (str_cat.str-cat out (string.copy slash) "n"))]
+          [(= code 9) (set! out (str_cat.str-cat out (string.copy slash) "t"))]
+          [(= code 13) (set! out (str_cat.str-cat out (string.copy slash) "r"))]
+          [else (set! out (str_cat.str-cat out (string.substring text i 1)))]))
+      (set! i (+ i 1)))
+    out))
 
 (define (tlci-quote-string [text : String]) : String
   (str_cat.str-cat
@@ -2912,66 +2814,62 @@
     [count : i64 (tlci-spmd-specializations-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : TlciSpmdSpecialization
-            (tlci-spmd-specializations-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "    (specialization\n"
-                "      (abi "
-                (tlci-quote-string item.abi)
-                ")\n"
-                "      (backend "
-                (tlci-quote-string item.backend)
-                ")\n"
-                "      (lanes "
-                (string.int->string item.lanes)
-                ")\n"
-                "      (args "
-                (tlci-quote-string item.args)
-                ")\n"
-                "      (result "
-                (tlci-quote-string item.result)
-                ")\n"
-                "      (index-param "
-                (string.int->string item.index-param)
-                ")\n"
-                "      (symbol "
-                (tlci-quote-string item.symbol)
-                "))\n"))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : TlciSpmdSpecialization
+          (tlci-spmd-specializations-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "    (specialization\n"
+            "      (abi "
+            (tlci-quote-string item.abi)
+            ")\n"
+            "      (backend "
+            (tlci-quote-string item.backend)
+            ")\n"
+            "      (lanes "
+            (string.int->string item.lanes)
+            ")\n"
+            "      (args "
+            (tlci-quote-string item.args)
+            ")\n"
+            "      (result "
+            (tlci-quote-string item.result)
+            ")\n"
+            "      (index-param "
+            (string.int->string item.index-param)
+            ")\n"
+            "      (symbol "
+            (tlci-quote-string item.symbol)
+            "))\n"))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-spmd-callables-emit-items [items : TlciSpmdCallables]) : String
   (let
     [count : i64 (tlci-spmd-callables-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "  (helper\n"
-                "    (name "
-                (tlci-quote-string item.name)
-                ")\n"
-                "    (signature "
-                (tlci-quote-string item.signature)
-                ")\n"
-                (tlci-spmd-specializations-emit item.specializations)
-                "  )\n"))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "  (helper\n"
+            "    (name "
+            (tlci-quote-string item.name)
+            ")\n"
+            "    (signature "
+            (tlci-quote-string item.signature)
+            ")\n"
+            (tlci-spmd-specializations-emit item.specializations)
+            "  )\n"))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-spmd-callables-emit [items : TlciSpmdCallables]) : String
   (if (= (tlci-spmd-callables-len items) 0)
@@ -3063,30 +2961,27 @@
       [(or (< records-end tlci-section-import-header-size) (> records-end len))
         "import records exceed the import section"]
       [else
-        (begin
-          (while (and
-            (= (string.string-length error) 0)
-            (< index expected-count))
-            (let
-              [record : i64
-                (+
-                  tlci-section-import-header-size
-                  (* index tlci-section-import-record-size))]
-              [name-offset : i64 (tlci-read-u64 imports (+ record 8))]
-              [name-len : i64 (tlci-read-u64 imports (+ record 16))]
-              (cond
-                [(= name-len 0) (set! error "import name must not be empty")]
-                [(< name-offset records-end)
-                  (set! error "import name overlaps the record table")]
-                [(not
-                    (and
-                      (>= name-offset 0)
-                      (>= name-len 0)
-                      (<= name-offset len)
-                      (<= name-len (- len name-offset))))
-                  (set! error "import name is outside the import section")]
-                [else (set! index (+ index 1))])))
-          error)])))
+        (while (and (= (string.string-length error) 0) (< index expected-count))
+          (let
+            [record : i64
+              (+
+                tlci-section-import-header-size
+                (* index tlci-section-import-record-size))]
+            [name-offset : i64 (tlci-read-u64 imports (+ record 8))]
+            [name-len : i64 (tlci-read-u64 imports (+ record 16))]
+            (cond
+              [(= name-len 0) (set! error "import name must not be empty")]
+              [(< name-offset records-end)
+                (set! error "import name overlaps the record table")]
+              [(not
+                  (and
+                    (>= name-offset 0)
+                    (>= name-len 0)
+                    (<= name-offset len)
+                    (<= name-len (- len name-offset))))
+                (set! error "import name is outside the import section")]
+              [else (set! index (+ index 1))])))
+        error])))
 
 (define (tlci-emit-image-v2-legacy-compatible [image : TlciImage]) : ResultTlciBytes
   (cond
@@ -3154,77 +3049,69 @@
           (tlci-section-end after-symbols imports-offset imports-len)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
-        (begin
-          (tlci-push-magic! (&mut out))
-          (tlci-push-u64! (&mut out) tlci-format-version)
-          (tlci-push-u64! (&mut out) image.host-platform)
-          (tlci-push-u64! (&mut out) image.callback-abi-version)
-          (tlci-push-u64! (&mut out) hash-offset)
-          (tlci-push-u64! (&mut out) (array-length compiler-hash-bytes))
-          (tlci-push-u64! (&mut out) 0)
-          (tlci-push-u64! (&mut out) metadata-offset)
-          (tlci-push-u64! (&mut out) (array-length metadata-bytes))
-          (tlci-push-u64! (&mut out) rodata-offset)
-          (tlci-push-u64! (&mut out) rodata-len)
-          (tlci-push-u64! (&mut out) code-offset)
-          (tlci-push-u64! (&mut out) code-len)
-          (tlci-push-u64! (&mut out) fixups-offset)
-          (tlci-push-u64!
-            (&mut out)
-            (/ fixups-len tlci-section-fixup-record-size))
-          (tlci-push-u64! (&mut out) entries-offset)
-          (tlci-push-u64!
-            (&mut out)
-            (/ entries-len tlci-section-entry-record-size))
-          (tlci-push-u64! (&mut out) symbols-offset)
-          (tlci-push-u64!
-            (&mut out)
-            (/ symbols-len tlci-section-symbol-record-size))
-          (tlci-push-u64! (&mut out) imports-offset)
-          (tlci-push-u64! (&mut out) (tlci-import-section-count image.imports))
-          (tlci-push-u64! (&mut out) file-size)
-          (tlci-append-bytes! (&mut out) compiler-hash-bytes)
-          (tlci-pad-to! (&mut out) metadata-offset)
-          (tlci-append-bytes! (&mut out) metadata-bytes)
-          (if (> rodata-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) rodata-offset)
-              (tlci-append-bytes! (&mut out) image.rodata))
-            unit)
-          (if (> code-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) code-offset)
-              (tlci-append-bytes! (&mut out) image.code))
-            unit)
-          (if (> fixups-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) fixups-offset)
-              (tlci-append-bytes! (&mut out) image.fixups))
-            unit)
-          (if (> entries-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) entries-offset)
-              (tlci-append-bytes! (&mut out) image.entries))
-            unit)
-          (if (> symbols-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) symbols-offset)
-              (tlci-append-bytes! (&mut out) image.symbols))
-            unit)
-          (if (> imports-len 0)
-            (begin
-              (tlci-pad-to! (&mut out) imports-offset)
-              (tlci-append-bytes! (&mut out) image.imports))
-            unit)
-          (let
-            [out-bytes : (__tl_dyn-array u8)
-              (byte_buf_core.byte-buf-builder-finish-array (& out))]
-            (begin
-              (tlci-set-u64!
-                (&mut out-bytes)
-                tlci-hash-field-offset
-                (tlci-content-hash out-bytes))
-              (Ok out-bytes)))))]))
+        (tlci-push-magic! (&mut out))
+        (tlci-push-u64! (&mut out) tlci-format-version)
+        (tlci-push-u64! (&mut out) image.host-platform)
+        (tlci-push-u64! (&mut out) image.callback-abi-version)
+        (tlci-push-u64! (&mut out) hash-offset)
+        (tlci-push-u64! (&mut out) (array-length compiler-hash-bytes))
+        (tlci-push-u64! (&mut out) 0)
+        (tlci-push-u64! (&mut out) metadata-offset)
+        (tlci-push-u64! (&mut out) (array-length metadata-bytes))
+        (tlci-push-u64! (&mut out) rodata-offset)
+        (tlci-push-u64! (&mut out) rodata-len)
+        (tlci-push-u64! (&mut out) code-offset)
+        (tlci-push-u64! (&mut out) code-len)
+        (tlci-push-u64! (&mut out) fixups-offset)
+        (tlci-push-u64!
+          (&mut out)
+          (/ fixups-len tlci-section-fixup-record-size))
+        (tlci-push-u64! (&mut out) entries-offset)
+        (tlci-push-u64!
+          (&mut out)
+          (/ entries-len tlci-section-entry-record-size))
+        (tlci-push-u64! (&mut out) symbols-offset)
+        (tlci-push-u64!
+          (&mut out)
+          (/ symbols-len tlci-section-symbol-record-size))
+        (tlci-push-u64! (&mut out) imports-offset)
+        (tlci-push-u64! (&mut out) (tlci-import-section-count image.imports))
+        (tlci-push-u64! (&mut out) file-size)
+        (tlci-append-bytes! (&mut out) compiler-hash-bytes)
+        (tlci-pad-to! (&mut out) metadata-offset)
+        (tlci-append-bytes! (&mut out) metadata-bytes)
+        (when
+          (> rodata-len 0)
+          (tlci-pad-to! (&mut out) rodata-offset)
+          (tlci-append-bytes! (&mut out) image.rodata))
+        (when
+          (> code-len 0)
+          (tlci-pad-to! (&mut out) code-offset)
+          (tlci-append-bytes! (&mut out) image.code))
+        (when
+          (> fixups-len 0)
+          (tlci-pad-to! (&mut out) fixups-offset)
+          (tlci-append-bytes! (&mut out) image.fixups))
+        (when
+          (> entries-len 0)
+          (tlci-pad-to! (&mut out) entries-offset)
+          (tlci-append-bytes! (&mut out) image.entries))
+        (when
+          (> symbols-len 0)
+          (tlci-pad-to! (&mut out) symbols-offset)
+          (tlci-append-bytes! (&mut out) image.symbols))
+        (when
+          (> imports-len 0)
+          (tlci-pad-to! (&mut out) imports-offset)
+          (tlci-append-bytes! (&mut out) image.imports))
+        (let
+          [out-bytes : (__tl_dyn-array u8)
+            (byte_buf_core.byte-buf-builder-finish-array (& out))]
+          (tlci-set-u64!
+            (&mut out-bytes)
+            tlci-hash-field-offset
+            (tlci-content-hash out-bytes))
+          (Ok out-bytes)))]))
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond

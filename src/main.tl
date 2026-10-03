@@ -386,30 +386,27 @@ Options:
   (and (= count 3) (cli-help-flag? (cli-arg 2))))
 
 (define (cli-print-help-text [text : String] [code : i64]) : i64
-  (begin
-    (cli-err text)
-    code))
+  (cli-err text)
+  code)
 
 (define (cli-print-help [code : i64]) : i64
   (cli-print-help-text (cli-help-text) code))
 
 (define (cli-print-version) : i64
-  (begin
-    (io.print-format
-      "{}"
+  (io.print-format
+    "{}"
+    (cli-cat
+      "typelisp "
       (cli-cat
-        "typelisp "
-        (cli-cat
-          (build_identity.compiler-build-git-hash-shared-view)
-          (cli-cat " built " (cli-cat cli-build-date "\n")))))
-    0))
+        (build_identity.compiler-build-git-hash-shared-view)
+        (cli-cat " built " (cli-cat cli-build-date "\n")))))
+  0)
 
 (define (cli-print-producer-identity) : i64
-  (begin
-    (io.print-format
-      "{}"
-      (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
-    0))
+  (io.print-format
+    "{}"
+    (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
+  0)
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
   (cond
@@ -487,10 +484,9 @@ Options:
         (cli-print-help-text (cli-init-help-text) 0)
         (scaffold_cli_core.scaffold-init-run-from 2 count))]
     [else
-      (begin
-        (cli-err (cli-cat "typelisp: unknown subcommand " command))
-        (cli-err "\n\n")
-        (cli-print-help 1))]))
+      (cli-err (cli-cat "typelisp: unknown subcommand " command))
+      (cli-err "\n\n")
+      (cli-print-help 1)]))
 
 (define (main) : i64
   (begin

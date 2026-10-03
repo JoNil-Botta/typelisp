@@ -95,31 +95,28 @@
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [read-at : i64 0]
     [write-at : i64 0]
-    (begin
-      (while (< read-at length)
-        (let
-          [current : char (string.string-ref (& encoded) read-at)]
-          (if (= current '\\')
-            (if (>= (+ read-at 1) length)
-              (io.panic "x64 executable template: truncated catalog escape")
-              (let
-                [escaped : char (string.string-ref (& encoded) (+ read-at 1))]
-                (begin
-                  (cond
-                    [(= escaped 'n')
-                      (set! (array-ref out write-at) (cast '\n' : u8))]
-                    [(= escaped '\\')
-                      (set! (array-ref out write-at) (cast '\\' : u8))]
-                    [else
-                      (io.panic
-                        "x64 executable template: unknown catalog escape")])
-                  (set! read-at (+ read-at 2)))))
-            (begin
-              (set! (array-ref out write-at) (cast current : u8))
-              (set! read-at (+ read-at 1))))
-          (set! write-at (+ write-at 1))))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) write-at)))))
+    (while (< read-at length)
+      (let
+        [current : char (string.string-ref (& encoded) read-at)]
+        (if (= current '\\')
+          (if (>= (+ read-at 1) length)
+            (io.panic "x64 executable template: truncated catalog escape")
+            (let
+              [escaped : char (string.string-ref (& encoded) (+ read-at 1))]
+              (cond
+                [(= escaped 'n')
+                  (set! (array-ref out write-at) (cast '\n' : u8))]
+                [(= escaped '\\')
+                  (set! (array-ref out write-at) (cast '\\' : u8))]
+                [else
+                  (io.panic "x64 executable template: unknown catalog escape")])
+              (set! read-at (+ read-at 2))))
+          (begin
+            (set! (array-ref out write-at) (cast current : u8))
+            (set! read-at (+ read-at 1))))
+        (set! write-at (+ write-at 1))))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) write-at))))
 
 (define (compiler-x64-template-abi-from-catalog [value : (& value str)]) : CompilerX64TemplateAbi
   (let

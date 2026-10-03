@@ -46,39 +46,37 @@
       (byte_buf.byte-buf-builder-with-capacity (* width 2))]
     [index : i64 0]
     [nonzero : bool false]
-    (begin
-      (when
-        (!= (string.string-length binary) width)
-        (return (Err "git object: invalid binary object ID width")))
-      (while (< index width)
+    (when
+      (!= (string.string-length binary) width)
+      (return (Err "git object: invalid binary object ID width")))
+    (while (< index width)
+      (let
+        [octet : i64 (git-object-byte binary index)]
+        (when (!= octet 0) (set! nonzero true))
+        (byte_buf.byte-buf-builder-push
+          (&mut out)
+          (cast
+            (if (< (shr octet 4) 10)
+              (+ 48 (shr octet 4))
+              (+ 87 (shr octet 4)))
+            : u8))
         (let
-          [octet : i64 (git-object-byte binary index)]
-          (begin
-            (when (!= octet 0) (set! nonzero true))
-            (byte_buf.byte-buf-builder-push
-              (&mut out)
-              (cast
-                (if (< (shr octet 4) 10)
-                  (+ 48 (shr octet 4))
-                  (+ 87 (shr octet 4)))
-                : u8))
-            (let
-              [low : i64 (bit-and octet 15)]
-              (byte_buf.byte-buf-builder-push
-                (&mut out)
-                (cast
-                  (if (< low 10)
-                    (+ 48 low)
-                    (+ 87 low))
-                  : u8)))
-            (set! index (+ index 1)))))
-      (if nonzero
-        (Ok
-          (GitObjectId
-            format
-            (string.substring binary 0 width)
-            (byte_buf.byte-buf-builder-finish-string (& out))))
-        (Err "git object: zero object ID is reserved")))))
+          [low : i64 (bit-and octet 15)]
+          (byte_buf.byte-buf-builder-push
+            (&mut out)
+            (cast
+              (if (< low 10)
+                (+ 48 low)
+                (+ 87 low))
+              : u8)))
+        (set! index (+ index 1))))
+    (if nonzero
+      (Ok
+        (GitObjectId
+          format
+          (string.substring binary 0 width)
+          (byte_buf.byte-buf-builder-finish-string (& out))))
+      (Err "git object: zero object ID is reserved"))))
 
 (define (git-object-id-from-hex [format : GitObjectFormat] [hex : (& hex str)]) : ResultGitObjectId
   (let
@@ -86,25 +84,23 @@
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity width)]
     [index : i64 0]
-    (begin
-      (when
-        (!= (string.string-length hex) (* width 2))
-        (return (Err "git object: invalid hexadecimal object ID width")))
-      (while (< index (* width 2))
-        (let
-          [high : i64 (git-object-hex-digit (git-object-byte hex index))]
-          [low : i64 (git-object-hex-digit (git-object-byte hex (+ index 1)))]
-          (begin
-            (when
-              (or (< high 0) (< low 0))
-              (return (Err "git object: noncanonical hexadecimal object ID")))
-            (byte_buf.byte-buf-builder-push
-              (&mut out)
-              (cast (+ (* high 16) low) : u8))
-            (set! index (+ index 2)))))
-      (git-object-id-from-binary
-        format
-        (byte_buf.byte-buf-builder-finish-string (& out))))))
+    (when
+      (!= (string.string-length hex) (* width 2))
+      (return (Err "git object: invalid hexadecimal object ID width")))
+    (while (< index (* width 2))
+      (let
+        [high : i64 (git-object-hex-digit (git-object-byte hex index))]
+        [low : i64 (git-object-hex-digit (git-object-byte hex (+ index 1)))]
+        (when
+          (or (< high 0) (< low 0))
+          (return (Err "git object: noncanonical hexadecimal object ID")))
+        (byte_buf.byte-buf-builder-push
+          (&mut out)
+          (cast (+ (* high 16) low) : u8))
+        (set! index (+ index 2))))
+    (git-object-id-from-binary
+      format
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (git-object-id-valid?
   [format : GitObjectFormat]
@@ -142,19 +138,18 @@
     [length : i64 (string.string-length content)]
     [size : String (string.int->string length)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-    (begin
-      (byte_buf.byte-buf-builder-append-string (&mut out) prefix)
-      (byte_buf.byte-buf-builder-push (&mut out) (cast 32 : u8))
-      (byte_buf.byte-buf-builder-append-string (&mut out) size)
-      (byte_buf.byte-buf-builder-push (&mut out) (cast 0 : u8))
-      (byte_buf.byte-buf-builder-append-string-range
-        (&mut out)
-        (string.substring content 0 length)
-        0
-        length)
-      (git-object-id-from-binary
-        format
-        (digest (byte_buf.byte-buf-builder-finish-string (& out)))))))
+    (byte_buf.byte-buf-builder-append-string (&mut out) prefix)
+    (byte_buf.byte-buf-builder-push (&mut out) (cast 32 : u8))
+    (byte_buf.byte-buf-builder-append-string (&mut out) size)
+    (byte_buf.byte-buf-builder-push (&mut out) (cast 0 : u8))
+    (byte_buf.byte-buf-builder-append-string-range
+      (&mut out)
+      (string.substring content 0 length)
+      0
+      length)
+    (git-object-id-from-binary
+      format
+      (digest (byte_buf.byte-buf-builder-finish-string (& out))))))
 
 ;: Git check-ref-format rules for full ref names. HEAD is admitted only as
 ;: the advertised pseudoref, never as a branch/tag component.
@@ -164,62 +159,57 @@
     [index : i64 0]
     [component-start : i64 0]
     [slashes : i64 0]
-    (begin
-      (when (and allow-head (string.eq name "HEAD")) (return true))
-      (when
-        (or
-          (< length 3)
-          (= (git-object-byte name 0) 47)
-          (= (git-object-byte name (- length 1)) 47)
-          (= (git-object-byte name (- length 1)) 46)
-          (string.eq name "@"))
-        (return false))
-      (while (< index length)
-        (let
-          [byte : i64 (git-object-byte name index)]
-          (begin
-            (when
-              (or
-                (< byte 32)
-                (= byte 127)
-                (= byte 32)
-                (= byte 126)
-                (= byte 94)
-                (= byte 58)
-                (= byte 63)
-                (= byte 42)
-                (= byte 91)
-                (= byte 92))
-              (return false))
-            (when
-              (and
-                (> index 0)
-                (or
-                  (and (= byte 46) (= (git-object-byte name (- index 1)) 46))
-                  (and (= byte 123) (= (git-object-byte name (- index 1)) 64))))
-              (return false))
-            (when
-              (= byte 47)
-              (begin
-                (when (= index component-start) (return false))
-                (when
-                  (= (git-object-byte name component-start) 46)
-                  (return false))
-                (when
-                  (and
-                    (>= (- index component-start) 5)
-                    (string.eq (string.substring name (- index 5) 5) ".lock"))
-                  (return false))
-                (set! slashes (+ slashes 1))
-                (set! component-start (+ index 1))))
-            (set! index (+ index 1)))))
-      (and
-        (> slashes 0)
-        (!= (git-object-byte name component-start) 46)
-        (not
+    (when (and allow-head (string.eq name "HEAD")) (return true))
+    (when
+      (or
+        (< length 3)
+        (= (git-object-byte name 0) 47)
+        (= (git-object-byte name (- length 1)) 47)
+        (= (git-object-byte name (- length 1)) 46)
+        (string.eq name "@"))
+      (return false))
+    (while (< index length)
+      (let
+        [byte : i64 (git-object-byte name index)]
+        (when
+          (or
+            (< byte 32)
+            (= byte 127)
+            (= byte 32)
+            (= byte 126)
+            (= byte 94)
+            (= byte 58)
+            (= byte 63)
+            (= byte 42)
+            (= byte 91)
+            (= byte 92))
+          (return false))
+        (when
           (and
-            (>= (- length component-start) 5)
-            (string.eq (string.substring name (- length 5) 5) ".lock")))))))
+            (> index 0)
+            (or
+              (and (= byte 46) (= (git-object-byte name (- index 1)) 46))
+              (and (= byte 123) (= (git-object-byte name (- index 1)) 64))))
+          (return false))
+        (when
+          (= byte 47)
+          (when (= index component-start) (return false))
+          (when (= (git-object-byte name component-start) 46) (return false))
+          (when
+            (and
+              (>= (- index component-start) 5)
+              (string.eq (string.substring name (- index 5) 5) ".lock"))
+            (return false))
+          (set! slashes (+ slashes 1))
+          (set! component-start (+ index 1)))
+        (set! index (+ index 1))))
+    (and
+      (> slashes 0)
+      (!= (git-object-byte name component-start) 46)
+      (not
+        (and
+          (>= (- length component-start) 5)
+          (string.eq (string.substring name (- length 5) 5) ".lock"))))))
 
 ;: A symbolic ref's target: a valid full ref under `refs/`. Git refuses to point
 ;: HEAD outside refs/, and no advertisement names another pseudoref as a target.
@@ -250,38 +240,36 @@
   [hex : (& hex str)]
   [symref-target : (& symref_target str)]
   [peeled-hex : (& peeled_hex str)]) : ResultGitAdvertisedRef
-  (begin
-    (unless
-      (git-object-refname-valid? name true)
-      (return (Err "git object: invalid advertised ref name")))
-    (when
-      (and
-        (> (string.string-length symref-target) 0)
-        (or
-          (not (git-object-symref-target-valid? symref-target))
-          (string.eq name symref-target)))
-      (return (Err "git object: invalid symref target")))
-    (match (git-object-id-from-hex format hex)
-      [(Err error) (Err error)]
-      [(Ok id)
-        (let
-          [peeled : GitAdvertisedPeeled (Absent)]
-          (begin
-            (when
-              (> (string.string-length peeled-hex) 0)
-              (match (git-object-id-from-hex format peeled-hex)
-                [(Err error) (return (Err error))]
-                [(Ok peeled-id) (set! peeled (Present peeled-id))]))
-            (Ok
-              (GitAdvertisedRef
-                (string.substring name 0 (string.string-length name))
-                id
-                (> (string.string-length symref-target) 0)
-                (string.substring
-                  symref-target
-                  0
-                  (string.string-length symref-target))
-                peeled))))])))
+  (unless
+    (git-object-refname-valid? name true)
+    (return (Err "git object: invalid advertised ref name")))
+  (when
+    (and
+      (> (string.string-length symref-target) 0)
+      (or
+        (not (git-object-symref-target-valid? symref-target))
+        (string.eq name symref-target)))
+    (return (Err "git object: invalid symref target")))
+  (match (git-object-id-from-hex format hex)
+    [(Err error) (Err error)]
+    [(Ok id)
+      (let
+        [peeled : GitAdvertisedPeeled (Absent)]
+        (when
+          (> (string.string-length peeled-hex) 0)
+          (match (git-object-id-from-hex format peeled-hex)
+            [(Err error) (return (Err error))]
+            [(Ok peeled-id) (set! peeled (Present peeled-id))]))
+        (Ok
+          (GitAdvertisedRef
+            (string.substring name 0 (string.string-length name))
+            id
+            (> (string.string-length symref-target) 0)
+            (string.substring
+              symref-target
+              0
+              (string.string-length symref-target))
+            peeled)))]))
 
 (defstruct GitObjectLimits
   (max-object-bytes i64)
@@ -321,25 +309,21 @@
   (let
     [index : i64 start]
     [length : i64 (string.string-length bytes)]
-    (begin
-      (while (< index length)
-        (begin
-          (when (= (git-object-byte bytes index) wanted) (return index))
-          (set! index (+ index 1))))
-      -1)))
+    (while (< index length)
+      (when (= (git-object-byte bytes index) wanted) (return index))
+      (set! index (+ index 1)))
+    -1))
 
 (define (git-object-header-key-valid? [bytes : (& bytes str)] [end : i64]) : bool
   (let
     [index : i64 0]
-    (begin
-      (when (<= end 0) (return false))
-      (while (< index end)
-        (let
-          [byte : i64 (git-object-byte bytes index)]
-          (begin
-            (when (or (< byte 33) (> byte 126) (= byte 58)) (return false))
-            (set! index (+ index 1)))))
-      true)))
+    (when (<= end 0) (return false))
+    (while (< index end)
+      (let
+        [byte : i64 (git-object-byte bytes index)]
+        (when (or (< byte 33) (> byte 126) (= byte 58)) (return false))
+        (set! index (+ index 1))))
+    true))
 
 ;: Parses all headers before the first empty line. A continuation belongs to
 ;: its preceding header and is retained verbatim, including LF and leading SP.
@@ -354,69 +338,56 @@
     [items : (__tl_dyn-array GitObjectHeader)
       (__tl_make-array GitObjectHeader 0)]
     [cursor : i64 0]
-    (begin
-      (unless
-        (git-object-limits-valid? limits)
-        (return (Err "git object: invalid limits")))
-      (when
-        (> length limits.max-object-bytes)
-        (return (Err "git object: object exceeds byte limit")))
-      (while (< cursor length)
+    (unless
+      (git-object-limits-valid? limits)
+      (return (Err "git object: invalid limits")))
+    (when
+      (> length limits.max-object-bytes)
+      (return (Err "git object: object exceeds byte limit")))
+    (while (< cursor length)
+      (let
+        [line-end : i64 (git-object-find-byte bytes cursor 10)]
+        (when (< line-end 0) (return (Err "git object: unterminated header")))
+        (when
+          (= line-end cursor)
+          (return (Ok (GitObjectHeaders items (+ line-end 1)))))
+        (when
+          (= (git-object-byte bytes cursor) 32)
+          (return (Err "git object: orphan continuation")))
+        (when
+          (>= (array-length items) limits.max-headers)
+          (return (Err "git object: header limit exceeded")))
         (let
-          [line-end : i64 (git-object-find-byte bytes cursor 10)]
-          (begin
-            (when
-              (< line-end 0)
-              (return (Err "git object: unterminated header")))
-            (when
-              (= line-end cursor)
-              (return (Ok (GitObjectHeaders items (+ line-end 1)))))
-            (when
-              (= (git-object-byte bytes cursor) 32)
-              (return (Err "git object: orphan continuation")))
-            (when
-              (>= (array-length items) limits.max-headers)
-              (return (Err "git object: header limit exceeded")))
+          [space : i64 (git-object-find-byte bytes cursor 32)]
+          [value-end : i64 line-end]
+          [next : i64 (+ line-end 1)]
+          (when
+            (or
+              (< space 0)
+              (>= space line-end)
+              (not
+                (git-object-header-key-valid?
+                  (string.substring bytes cursor (- space cursor))
+                  (- space cursor))))
+            (return (Err "git object: invalid header name")))
+          (while (and (< next length) (= (git-object-byte bytes next) 32))
             (let
-              [space : i64 (git-object-find-byte bytes cursor 32)]
-              [value-end : i64 line-end]
-              [next : i64 (+ line-end 1)]
-              (begin
-                (when
-                  (or
-                    (< space 0)
-                    (>= space line-end)
-                    (not
-                      (git-object-header-key-valid?
-                        (string.substring bytes cursor (- space cursor))
-                        (- space cursor))))
-                  (return (Err "git object: invalid header name")))
-                (while (and (< next length) (= (git-object-byte bytes next) 32))
-                  (let
-                    [continuation-end : i64
-                      (git-object-find-byte bytes next 10)]
-                    (begin
-                      (when
-                        (< continuation-end 0)
-                        (return (Err "git object: truncated continuation")))
-                      (set! value-end continuation-end)
-                      (set! next (+ continuation-end 1)))))
-                (let
-                  [header-name : String
-                    (string.substring bytes cursor (- space cursor))]
-                  [header-value : String
-                    (string.substring
-                      bytes
-                      (+ space 1)
-                      (- (- value-end space) 1))]
-                  [nul : i64 (git-object-find-byte (& header-value) 0 0)]
-                  (begin
-                    (when (>= nul 0) (return (Err "git object: NUL in header")))
-                    (__tl_array-push!
-                      items
-                      (GitObjectHeader header-name header-value))
-                    (set! cursor next))))))))
-      (Ok (GitObjectHeaders items length)))))
+              [continuation-end : i64 (git-object-find-byte bytes next 10)]
+              (when
+                (< continuation-end 0)
+                (return (Err "git object: truncated continuation")))
+              (set! value-end continuation-end)
+              (set! next (+ continuation-end 1))))
+          (let
+            [header-name : String
+              (string.substring bytes cursor (- space cursor))]
+            [header-value : String
+              (string.substring bytes (+ space 1) (- (- value-end space) 1))]
+            [nul : i64 (git-object-find-byte (& header-value) 0 0)]
+            (when (>= nul 0) (return (Err "git object: NUL in header")))
+            (__tl_array-push! items (GitObjectHeader header-name header-value))
+            (set! cursor next)))))
+    (Ok (GitObjectHeaders items length))))
 
 (defstruct GitCommit
   (tree GitObjectId)
@@ -452,100 +423,95 @@
         [extra : (__tl_dyn-array GitObjectHeader)
           (__tl_make-array GitObjectHeader 0)]
         [index : i64 0]
-        (begin
-          (while (< index (array-length parsed.items))
-            (let
-              [header : (& parsed GitObjectHeader)
-                (& (array-ref parsed.items index))]
-              (begin
-                (when
-                  (!=
-                    stage
-                    (cond
-                      [(string.eq header.name "tree") 0]
-                      [(string.eq header.name "parent") 1]
-                      [(string.eq header.name "author") 1]
-                      [(string.eq header.name "committer") 2]
-                      [else 3]))
-                  (return (Err "git object: commit headers out of order")))
+        (while (< index (array-length parsed.items))
+          (let
+            [header : (& parsed GitObjectHeader)
+              (& (array-ref parsed.items index))]
+            (when
+              (!=
+                stage
                 (cond
-                  [(string.eq header.name "tree")
-                    (begin
-                      (set! stage 1)
-                      (set! tree-count (+ tree-count 1))
-                      (when
-                        (> tree-count 1)
-                        (return (Err "git object: duplicate commit tree")))
-                      (match (git-object-id-from-hex format (& header.value))
-                        [(Err error) (return (Err error))]
-                        [(Ok id) (set! tree id)]))]
-                  [(string.eq header.name "parent")
-                    (match (git-object-id-from-hex format (& header.value))
-                      [(Err error) (return (Err error))]
-                      [(Ok id) (__tl_array-push! parents id)])]
-                  [(string.eq header.name "author")
-                    (begin
-                      (set! stage 2)
-                      (set! author-count (+ author-count 1))
-                      (when
-                        (> author-count 1)
-                        (return (Err "git object: duplicate commit author")))
-                      (when
-                        (>= (git-object-find-byte (& header.value) 0 10) 0)
-                        (return (Err "git object: continued commit author")))
-                      (set!
-                        author
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))]
-                  [(string.eq header.name "committer")
-                    (begin
-                      (set! stage 3)
-                      (set! committer-count (+ committer-count 1))
-                      (when
-                        (> committer-count 1)
-                        (return (Err "git object: duplicate commit committer")))
-                      (when
-                        (>= (git-object-find-byte (& header.value) 0 10) 0)
-                        (return (Err "git object: continued commit committer")))
-                      (set!
-                        committer
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))]
-                  [else
-                    (__tl_array-push!
-                      extra
-                      (GitObjectHeader
-                        (string.substring
-                          (& header.name)
-                          0
-                          (string.string-length (& header.name)))
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))])
-                (set! index (+ index 1)))))
-          (if (or
-            (!= tree-count 1)
-            (!= author-count 1)
-            (!= committer-count 1)
-            (= (string.string-length (& author)) 0)
-            (= (string.string-length (& committer)) 0))
-            (Err "git object: required commit header missing")
-            (Ok
-              (GitCommit
-                tree
-                parents
-                author
-                committer
-                extra
-                (string.substring
-                  bytes
-                  parsed.message-start
-                  (- (string.string-length bytes) parsed.message-start)))))))]))
+                  [(string.eq header.name "tree") 0]
+                  [(string.eq header.name "parent") 1]
+                  [(string.eq header.name "author") 1]
+                  [(string.eq header.name "committer") 2]
+                  [else 3]))
+              (return (Err "git object: commit headers out of order")))
+            (cond
+              [(string.eq header.name "tree")
+                (set! stage 1)
+                (set! tree-count (+ tree-count 1))
+                (when
+                  (> tree-count 1)
+                  (return (Err "git object: duplicate commit tree")))
+                (match (git-object-id-from-hex format (& header.value))
+                  [(Err error) (return (Err error))]
+                  [(Ok id) (set! tree id)])]
+              [(string.eq header.name "parent")
+                (match (git-object-id-from-hex format (& header.value))
+                  [(Err error) (return (Err error))]
+                  [(Ok id) (__tl_array-push! parents id)])]
+              [(string.eq header.name "author")
+                (set! stage 2)
+                (set! author-count (+ author-count 1))
+                (when
+                  (> author-count 1)
+                  (return (Err "git object: duplicate commit author")))
+                (when
+                  (>= (git-object-find-byte (& header.value) 0 10) 0)
+                  (return (Err "git object: continued commit author")))
+                (set!
+                  author
+                  (string.substring
+                    (& header.value)
+                    0
+                    (string.string-length (& header.value))))]
+              [(string.eq header.name "committer")
+                (set! stage 3)
+                (set! committer-count (+ committer-count 1))
+                (when
+                  (> committer-count 1)
+                  (return (Err "git object: duplicate commit committer")))
+                (when
+                  (>= (git-object-find-byte (& header.value) 0 10) 0)
+                  (return (Err "git object: continued commit committer")))
+                (set!
+                  committer
+                  (string.substring
+                    (& header.value)
+                    0
+                    (string.string-length (& header.value))))]
+              [else
+                (__tl_array-push!
+                  extra
+                  (GitObjectHeader
+                    (string.substring
+                      (& header.name)
+                      0
+                      (string.string-length (& header.name)))
+                    (string.substring
+                      (& header.value)
+                      0
+                      (string.string-length (& header.value)))))])
+            (set! index (+ index 1))))
+        (if (or
+          (!= tree-count 1)
+          (!= author-count 1)
+          (!= committer-count 1)
+          (= (string.string-length (& author)) 0)
+          (= (string.string-length (& committer)) 0))
+          (Err "git object: required commit header missing")
+          (Ok
+            (GitCommit
+              tree
+              parents
+              author
+              committer
+              extra
+              (string.substring
+                bytes
+                parsed.message-start
+                (- (string.string-length bytes) parsed.message-start))))))]))
 
 (defenum GitTreeEntryKind
   (Tree)
@@ -599,28 +565,26 @@
     [left-length : i64 (string.string-length left)]
     [right-length : i64 (string.string-length right)]
     [index : i64 0]
-    (begin
-      (while (and (< index left-length) (< index right-length))
-        (let
-          [a : i64 (git-object-byte left index)]
-          [b : i64 (git-object-byte right index)]
-          (begin
-            (when (!= a b) (return (- a b)))
-            (set! index (+ index 1)))))
+    (while (and (< index left-length) (< index right-length))
       (let
-        [a : i64
-          (if (< index left-length)
-            (git-object-byte left index)
-            (if left-tree
-              47
-              0))]
-        [b : i64
-          (if (< index right-length)
-            (git-object-byte right index)
-            (if right-tree
-              47
-              0))]
-        (- a b)))))
+        [a : i64 (git-object-byte left index)]
+        [b : i64 (git-object-byte right index)]
+        (when (!= a b) (return (- a b)))
+        (set! index (+ index 1))))
+    (let
+      [a : i64
+        (if (< index left-length)
+          (git-object-byte left index)
+          (if left-tree
+            47
+            0))]
+      [b : i64
+        (if (< index right-length)
+          (git-object-byte right index)
+          (if right-tree
+            47
+            0))]
+      (- a b))))
 
 (define (git-object-decode-tree
   [format : GitObjectFormat]
@@ -632,109 +596,92 @@
     [entries : (__tl_dyn-array GitTreeEntry) (__tl_make-array GitTreeEntry 0)]
     [cursor : i64 0]
     [comparisons : i64 0]
-    (begin
-      (unless
-        (git-object-limits-valid? limits)
-        (return (Err "git object: invalid limits")))
+    (unless
+      (git-object-limits-valid? limits)
+      (return (Err "git object: invalid limits")))
+    (when
+      (> length limits.max-object-bytes)
+      (return (Err "git object: tree exceeds byte limit")))
+    (while (< cursor length)
       (when
-        (> length limits.max-object-bytes)
-        (return (Err "git object: tree exceeds byte limit")))
-      (while (< cursor length)
-        (begin
+        (>= (array-length entries) limits.max-tree-entries)
+        (return (Err "git object: tree entry limit exceeded")))
+      (let
+        [space : i64 (git-object-find-byte bytes cursor 32)]
+        [mode : i64 0]
+        (when
+          (or (< space 0) (= space cursor) (> (- space cursor) 6))
+          (return (Err "git object: malformed tree mode")))
+        (when
+          (and (> (- space cursor) 1) (= (git-object-byte bytes cursor) 48))
+          (return (Err "git object: noncanonical tree mode")))
+        (let
+          [index : i64 cursor]
+          (while (< index space)
+            (let
+              [digit : i64 (- (git-object-byte bytes index) 48)]
+              (when
+                (or (< digit 0) (> digit 7))
+                (return (Err "git object: invalid octal tree mode")))
+              (set! mode (+ (* mode 8) digit))
+              (set! index (+ index 1)))))
+        (let
+          [mode-code : i64 (git-object-tree-mode mode)]
+          [name-start : i64 (+ space 1)]
+          [nul : i64 (git-object-find-byte bytes (+ space 1) 0)]
           (when
-            (>= (array-length entries) limits.max-tree-entries)
-            (return (Err "git object: tree entry limit exceeded")))
+            (= mode-code 0)
+            (return (Err "git object: unsupported tree mode")))
+          (when
+            (or (< nul 0) (= nul name-start))
+            (return (Err "git object: malformed tree name")))
+          (when
+            (> width (- length (+ nul 1)))
+            (return (Err "git object: truncated tree object ID")))
           (let
-            [space : i64 (git-object-find-byte bytes cursor 32)]
-            [mode : i64 0]
-            (begin
-              (when
-                (or (< space 0) (= space cursor) (> (- space cursor) 6))
-                (return (Err "git object: malformed tree mode")))
-              (when
-                (and
-                  (> (- space cursor) 1)
-                  (= (git-object-byte bytes cursor) 48))
-                (return (Err "git object: noncanonical tree mode")))
+            [name : String
+              (string.substring bytes name-start (- nul name-start))]
+            [slash : i64 (git-object-find-byte (& name) 0 47)]
+            (when (>= slash 0) (return (Err "git object: forbidden tree name")))
+            (let
+              [prior-index : i64 0]
+              (while (< prior-index (array-length entries))
+                (let
+                  [prior : (& entries GitTreeEntry)
+                    (& (array-ref entries prior-index))]
+                  (when
+                    (>= comparisons limits.max-name-comparisons)
+                    (return
+                      (Err "git object: tree name comparison limit exceeded")))
+                  (set! comparisons (+ comparisons 1))
+                  (when
+                    (string.eq (& prior.name) (& name))
+                    (return (Err "git object: duplicate tree name")))
+                  (set! prior-index (+ prior-index 1)))))
+            (when
+              (> (array-length entries) 0)
               (let
-                [index : i64 cursor]
-                (while (< index space)
-                  (let
-                    [digit : i64 (- (git-object-byte bytes index) 48)]
-                    (begin
-                      (when
-                        (or (< digit 0) (> digit 7))
-                        (return (Err "git object: invalid octal tree mode")))
-                      (set! mode (+ (* mode 8) digit))
-                      (set! index (+ index 1))))))
-              (let
-                [mode-code : i64 (git-object-tree-mode mode)]
-                [name-start : i64 (+ space 1)]
-                [nul : i64 (git-object-find-byte bytes (+ space 1) 0)]
-                (begin
-                  (when
-                    (= mode-code 0)
-                    (return (Err "git object: unsupported tree mode")))
-                  (when
-                    (or (< nul 0) (= nul name-start))
-                    (return (Err "git object: malformed tree name")))
-                  (when
-                    (> width (- length (+ nul 1)))
-                    (return (Err "git object: truncated tree object ID")))
-                  (let
-                    [name : String
-                      (string.substring bytes name-start (- nul name-start))]
-                    [slash : i64 (git-object-find-byte (& name) 0 47)]
-                    (begin
-                      (when
-                        (>= slash 0)
-                        (return (Err "git object: forbidden tree name")))
-                      (let
-                        [prior-index : i64 0]
-                        (while (< prior-index (array-length entries))
-                          (let
-                            [prior : (& entries GitTreeEntry)
-                              (& (array-ref entries prior-index))]
-                            (begin
-                              (when
-                                (>= comparisons limits.max-name-comparisons)
-                                (return
-                                  (Err
-                                    "git object: tree name comparison limit exceeded")))
-                              (set! comparisons (+ comparisons 1))
-                              (when
-                                (string.eq (& prior.name) (& name))
-                                (return (Err "git object: duplicate tree name")))
-                              (set! prior-index (+ prior-index 1))))))
-                      (when
-                        (> (array-length entries) 0)
-                        (let
-                          [previous : (& entries GitTreeEntry)
-                            (& (array-ref entries (- (array-length entries) 1)))]
-                          (when
-                            (>=
-                              (git-object-tree-name-compare
-                                (& previous.name)
-                                (= previous.mode 16384)
-                                (& name)
-                                (= mode 16384))
-                              0)
-                            (return
-                              (Err "git object: tree entries out of order")))))
-                      (match (git-object-id-from-binary
-                        format
-                        (string.substring bytes (+ nul 1) width))
-                        [(Err error) (return (Err error))]
-                        [(Ok id)
-                          (__tl_array-push!
-                            entries
-                            (GitTreeEntry
-                              mode
-                              (git-object-tree-kind mode-code)
-                              name
-                              id))])
-                      (set! cursor (+ (+ nul 1) width))))))))))
-      (Ok (GitTree entries)))))
+                [previous : (& entries GitTreeEntry)
+                  (& (array-ref entries (- (array-length entries) 1)))]
+                (when
+                  (>=
+                    (git-object-tree-name-compare
+                      (& previous.name)
+                      (= previous.mode 16384)
+                      (& name)
+                      (= mode 16384))
+                    0)
+                  (return (Err "git object: tree entries out of order")))))
+            (match (git-object-id-from-binary
+              format
+              (string.substring bytes (+ nul 1) width))
+              [(Err error) (return (Err error))]
+              [(Ok id)
+                (__tl_array-push!
+                  entries
+                  (GitTreeEntry mode (git-object-tree-kind mode-code) name id))])
+            (set! cursor (+ (+ nul 1) width))))))
+    (Ok (GitTree entries))))
 
 (defstruct GitTag
   (target GitObjectId)
@@ -788,110 +735,102 @@
         [extra : (__tl_dyn-array GitObjectHeader)
           (__tl_make-array GitObjectHeader 0)]
         [index : i64 0]
-        (begin
-          (while (< index (array-length parsed.items))
-            (let
-              [header : (& parsed GitObjectHeader)
-                (& (array-ref parsed.items index))]
-              (begin
+        (while (< index (array-length parsed.items))
+          (let
+            [header : (& parsed GitObjectHeader)
+              (& (array-ref parsed.items index))]
+            (when
+              (cond
+                [(string.eq header.name "object") (!= stage 0)]
+                [(string.eq header.name "type") (!= stage 1)]
+                [(string.eq header.name "tag") (!= stage 2)]
+                [(string.eq header.name "tagger") (!= stage 3)]
+                [else (< stage 3)])
+              (return (Err "git object: tag headers out of order")))
+            (set!
+              stage
+              (cond
+                [(string.eq header.name "object") 1]
+                [(string.eq header.name "type") 2]
+                [(string.eq header.name "tag") 3]
+                [else 4]))
+            (cond
+              [(string.eq header.name "object")
+                (set! object-count (+ object-count 1))
                 (when
-                  (cond
-                    [(string.eq header.name "object") (!= stage 0)]
-                    [(string.eq header.name "type") (!= stage 1)]
-                    [(string.eq header.name "tag") (!= stage 2)]
-                    [(string.eq header.name "tagger") (!= stage 3)]
-                    [else (< stage 3)])
-                  (return (Err "git object: tag headers out of order")))
+                  (> object-count 1)
+                  (return (Err "git object: duplicate tag object")))
+                (match (git-object-id-from-hex format (& header.value))
+                  [(Err error) (return (Err error))]
+                  [(Ok id) (set! target id)])]
+              [(string.eq header.name "type")
+                (set! type-count (+ type-count 1))
+                (when
+                  (> type-count 1)
+                  (return (Err "git object: duplicate tag type")))
+                (set! target-code (git-object-kind-from-name (& header.value)))]
+              [(string.eq header.name "tag")
+                (set! tag-count (+ tag-count 1))
+                (when
+                  (> tag-count 1)
+                  (return (Err "git object: duplicate tag name")))
                 (set!
-                  stage
-                  (cond
-                    [(string.eq header.name "object") 1]
-                    [(string.eq header.name "type") 2]
-                    [(string.eq header.name "tag") 3]
-                    [else 4]))
-                (cond
-                  [(string.eq header.name "object")
-                    (begin
-                      (set! object-count (+ object-count 1))
-                      (when
-                        (> object-count 1)
-                        (return (Err "git object: duplicate tag object")))
-                      (match (git-object-id-from-hex format (& header.value))
-                        [(Err error) (return (Err error))]
-                        [(Ok id) (set! target id)]))]
-                  [(string.eq header.name "type")
-                    (begin
-                      (set! type-count (+ type-count 1))
-                      (when
-                        (> type-count 1)
-                        (return (Err "git object: duplicate tag type")))
-                      (set!
-                        target-code
-                        (git-object-kind-from-name (& header.value))))]
-                  [(string.eq header.name "tag")
-                    (begin
-                      (set! tag-count (+ tag-count 1))
-                      (when
-                        (> tag-count 1)
-                        (return (Err "git object: duplicate tag name")))
-                      (set!
-                        name
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))]
-                  [(string.eq header.name "tagger")
-                    (begin
-                      (set! tagger-count (+ tagger-count 1))
-                      (when
-                        (> tagger-count 1)
-                        (return (Err "git object: duplicate tagger")))
-                      (when
-                        (>= (git-object-find-byte (& header.value) 0 10) 0)
-                        (return (Err "git object: continued tagger")))
-                      (set!
-                        tagger
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))]
-                  [else
-                    (__tl_array-push!
-                      extra
-                      (GitObjectHeader
-                        (string.substring
-                          (& header.name)
-                          0
-                          (string.string-length (& header.name)))
-                        (string.substring
-                          (& header.value)
-                          0
-                          (string.string-length (& header.value)))))])
-                (set! index (+ index 1)))))
-          (if (or
-            (!= object-count 1)
-            (!= type-count 1)
-            (!= tag-count 1)
-            (= target-code 0)
-            (= (string.string-length (& name)) 0)
-            (not
-              (git-object-refname-valid?
-                (str_cat.str-cat "refs/tags/" name)
-                false))
-            (and (= tagger-count 1) (= (string.string-length (& tagger)) 0)))
-            (Err "git object: required tag header missing or invalid")
-            (Ok
-              (GitTag
-                target
-                (git-object-kind-from-code target-code)
-                name
-                (= tagger-count 1)
-                tagger
-                extra
-                (string.substring
-                  bytes
-                  parsed.message-start
-                  (- (string.string-length bytes) parsed.message-start)))))))]))
+                  name
+                  (string.substring
+                    (& header.value)
+                    0
+                    (string.string-length (& header.value))))]
+              [(string.eq header.name "tagger")
+                (set! tagger-count (+ tagger-count 1))
+                (when
+                  (> tagger-count 1)
+                  (return (Err "git object: duplicate tagger")))
+                (when
+                  (>= (git-object-find-byte (& header.value) 0 10) 0)
+                  (return (Err "git object: continued tagger")))
+                (set!
+                  tagger
+                  (string.substring
+                    (& header.value)
+                    0
+                    (string.string-length (& header.value))))]
+              [else
+                (__tl_array-push!
+                  extra
+                  (GitObjectHeader
+                    (string.substring
+                      (& header.name)
+                      0
+                      (string.string-length (& header.name)))
+                    (string.substring
+                      (& header.value)
+                      0
+                      (string.string-length (& header.value)))))])
+            (set! index (+ index 1))))
+        (if (or
+          (!= object-count 1)
+          (!= type-count 1)
+          (!= tag-count 1)
+          (= target-code 0)
+          (= (string.string-length (& name)) 0)
+          (not
+            (git-object-refname-valid?
+              (str_cat.str-cat "refs/tags/" name)
+              false))
+          (and (= tagger-count 1) (= (string.string-length (& tagger)) 0)))
+          (Err "git object: required tag header missing or invalid")
+          (Ok
+            (GitTag
+              target
+              (git-object-kind-from-code target-code)
+              name
+              (= tagger-count 1)
+              tagger
+              extra
+              (string.substring
+                bytes
+                parsed.message-start
+                (- (string.string-length bytes) parsed.message-start))))))]))
 
 (defstruct GitObjectRecord
   (id GitObjectId)
@@ -954,167 +893,142 @@
     [expected-code : i64 0]
     [depth : i64 0]
     [lookups : i64 0]
-    (begin
-      (unless
-        (git-object-limits-valid? limits)
-        (return (Err "git object: invalid limits")))
-      (when
-        (> (array-length refs) limits.max-refs)
-        (return (Err "git object: advertised ref limit exceeded")))
-      (match selector
-        [(ExactId hex)
+    (unless
+      (git-object-limits-valid? limits)
+      (return (Err "git object: invalid limits")))
+    (when
+      (> (array-length refs) limits.max-refs)
+      (return (Err "git object: advertised ref limit exceeded")))
+    (match selector
+      [(ExactId hex)
+        (set! mode 1)
+        (match (git-object-id-from-hex format hex)
+          [(Err error) (return (Err error))]
+          [(Ok id) (set! selected id.hex)])]
+      [(Branch name)
+        (set! mode 2)
+        (unless
+          (and
+            (git-object-refname-valid? name false)
+            (>= (string.string-length name) 11)
+            (string.eq (string.substring name 0 11) "refs/heads/"))
+          (return (Err "git object: invalid branch selector")))
+        (set! selected (string.substring name 0 (string.string-length name)))]
+      [(Tag name)
+        (set! mode 3)
+        (unless
+          (and
+            (git-object-refname-valid? name false)
+            (>= (string.string-length name) 10)
+            (string.eq (string.substring name 0 10) "refs/tags/"))
+          (return (Err "git object: invalid tag selector")))
+        (set! selected (string.substring name 0 (string.string-length name)))])
+    (while (< ref-index (array-length refs))
+      (let
+        [advert : (& refs GitAdvertisedRef) (& (array-ref refs ref-index))]
+        (unless
+          (git-object-validated-advertisement? format advert)
+          (return (Err "git object: malformed advertised ref")))
+        (if (= mode 1)
           (begin
-            (set! mode 1)
-            (match (git-object-id-from-hex format hex)
-              [(Err error) (return (Err error))]
-              [(Ok id) (set! selected id.hex)]))]
-        [(Branch name)
-          (begin
-            (set! mode 2)
-            (unless
-              (and
-                (git-object-refname-valid? name false)
-                (>= (string.string-length name) 11)
-                (string.eq (string.substring name 0 11) "refs/heads/"))
-              (return (Err "git object: invalid branch selector")))
-            (set!
-              selected
-              (string.substring name 0 (string.string-length name))))]
-        [(Tag name)
-          (begin
-            (set! mode 3)
-            (unless
-              (and
-                (git-object-refname-valid? name false)
-                (>= (string.string-length name) 10)
-                (string.eq (string.substring name 0 10) "refs/tags/"))
-              (return (Err "git object: invalid tag selector")))
-            (set!
-              selected
-              (string.substring name 0 (string.string-length name))))])
-      (while (< ref-index (array-length refs))
-        (let
-          [advert : (& refs GitAdvertisedRef) (& (array-ref refs ref-index))]
-          (begin
-            (unless
-              (git-object-validated-advertisement? format advert)
-              (return (Err "git object: malformed advertised ref")))
-            (if (= mode 1)
-              (begin
+            (when
+              (string.eq (& advert.id.hex) (& selected))
+              (set! matches (+ matches 1))
+              (set! current (git-object-id-copy format (& advert.id))))
+            (match (& advert.peeled)
+              [(Absent) unit]
+              [(Present peeled-id)
                 (when
-                  (string.eq (& advert.id.hex) (& selected))
-                  (begin
-                    (set! matches (+ matches 1))
-                    (set! current (git-object-id-copy format (& advert.id)))))
-                (match (& advert.peeled)
-                  [(Absent) unit]
-                  [(Present peeled-id)
-                    (when
-                      (string.eq (& peeled-id.hex) (& selected))
-                      (begin
-                        (set! matches (+ matches 1))
-                        (set! current (git-object-id-copy format peeled-id))))]))
-              (when
-                (string.eq (& advert.name) (& selected))
-                (begin
+                  (string.eq (& peeled-id.hex) (& selected))
                   (set! matches (+ matches 1))
-                  (set! current (git-object-id-copy format (& advert.id)))))))
-          (set! ref-index (+ ref-index 1))))
-      (when
-        (= matches 0)
-        (return (Err "git object: revision is not advertised")))
-      (when
-        (and (!= mode 1) (> matches 1))
-        (return (Err "git object: ambiguous advertised ref")))
-      (while true
-        (begin
+                  (set! current (git-object-id-copy format peeled-id)))]))
           (when
-            (>= lookups limits.max-lookups)
-            (return (Err "git object: lookup limit exceeded")))
+            (string.eq (& advert.name) (& selected))
+            (set! matches (+ matches 1))
+            (set! current (git-object-id-copy format (& advert.id)))))
+        (set! ref-index (+ ref-index 1))))
+    (when (= matches 0) (return (Err "git object: revision is not advertised")))
+    (when
+      (and (!= mode 1) (> matches 1))
+      (return (Err "git object: ambiguous advertised ref")))
+    (while true
+      (when
+        (>= lookups limits.max-lookups)
+        (return (Err "git object: lookup limit exceeded")))
+      (when
+        (> depth limits.max-peel-depth)
+        (return (Err "git object: tag depth exceeded")))
+      (let
+        [index : i64 0]
+        (while (< index (array-length seen))
           (when
-            (> depth limits.max-peel-depth)
-            (return (Err "git object: tag depth exceeded")))
-          (let
-            [index : i64 0]
-            (while (< index (array-length seen))
-              (begin
-                (when
-                  (string.eq (array-ref seen index) (& current.hex))
-                  (return (Err "git object: tag cycle")))
-                (set! index (+ index 1)))))
-          (__tl_array-push!
-            seen
-            (string.substring
-              (& current.hex)
-              0
-              (string.string-length (& current.hex))))
-          (set! lookups (+ lookups 1))
-          (match (lookup
-            (string.substring
-              (& current.hex)
-              0
-              (string.string-length (& current.hex))))
-            [(Missing) (return (Err "git object: object is missing"))]
-            [(Ok record)
-              (begin
-                (unless
-                  (and
-                    (git-object-id-valid? format (& record.id))
-                    (string.eq (& record.id.hex) (& current.hex))
-                    (<=
-                      (string.string-length (& record.content))
-                      limits.max-object-bytes))
-                  (return (Err "git object: invalid lookup result")))
-                (match (git-object-identity
-                  format
-                  (match (& record.kind)
-                    [(Blob) (Blob)]
-                    [(Tree) (Tree)]
-                    [(Commit) (Commit)]
-                    [(Tag) (Tag)])
-                  (& record.content)
-                  digest)
-                  [(Err error) (return (Err error))]
-                  [(Ok verified)
-                    (unless
-                      (string.eq (& verified.hex) (& current.hex))
-                      (return (Err "git object: object digest mismatch")))])
-                (when
-                  (and
-                    (!= expected-code 0)
-                    (!=
-                      expected-code
-                      (git-object-kind-from-name
-                        (git-object-kind-name
-                          (match (& record.kind)
-                            [(Blob) (Blob)]
-                            [(Tree) (Tree)]
-                            [(Commit) (Commit)]
-                            [(Tag) (Tag)])))))
-                  (return (Err "git object: tag target type mismatch")))
-                (match (& record.kind)
-                  [(Commit)
-                    (match (git-object-decode-commit
-                      format
-                      (& record.content)
-                      limits)
-                      [(Err error) (return (Err error))]
-                      [(Ok _) (return (Ok current))])]
-                  [(Tag)
-                    (match (git-object-decode-tag
-                      format
-                      (& record.content)
-                      limits)
-                      [(Err error) (return (Err error))]
-                      [(Ok tag)
-                        (begin
-                          (set! current tag.target)
-                          (set!
-                            expected-code
-                            (git-object-kind-from-name
-                              (git-object-kind-name tag.target-kind)))
-                          (set! depth (+ depth 1)))])]
-                  [_
-                    (return
-                      (Err "git object: revision does not resolve to a commit"))]))])))
-      (Err "git object: unreachable peel state"))))
+            (string.eq (array-ref seen index) (& current.hex))
+            (return (Err "git object: tag cycle")))
+          (set! index (+ index 1))))
+      (__tl_array-push!
+        seen
+        (string.substring
+          (& current.hex)
+          0
+          (string.string-length (& current.hex))))
+      (set! lookups (+ lookups 1))
+      (match (lookup
+        (string.substring
+          (& current.hex)
+          0
+          (string.string-length (& current.hex))))
+        [(Missing) (return (Err "git object: object is missing"))]
+        [(Ok record)
+          (unless
+            (and
+              (git-object-id-valid? format (& record.id))
+              (string.eq (& record.id.hex) (& current.hex))
+              (<=
+                (string.string-length (& record.content))
+                limits.max-object-bytes))
+            (return (Err "git object: invalid lookup result")))
+          (match (git-object-identity
+            format
+            (match (& record.kind)
+              [(Blob) (Blob)]
+              [(Tree) (Tree)]
+              [(Commit) (Commit)]
+              [(Tag) (Tag)])
+            (& record.content)
+            digest)
+            [(Err error) (return (Err error))]
+            [(Ok verified)
+              (unless
+                (string.eq (& verified.hex) (& current.hex))
+                (return (Err "git object: object digest mismatch")))])
+          (when
+            (and
+              (!= expected-code 0)
+              (!=
+                expected-code
+                (git-object-kind-from-name
+                  (git-object-kind-name
+                    (match (& record.kind)
+                      [(Blob) (Blob)]
+                      [(Tree) (Tree)]
+                      [(Commit) (Commit)]
+                      [(Tag) (Tag)])))))
+            (return (Err "git object: tag target type mismatch")))
+          (match (& record.kind)
+            [(Commit)
+              (match (git-object-decode-commit format (& record.content) limits)
+                [(Err error) (return (Err error))]
+                [(Ok _) (return (Ok current))])]
+            [(Tag)
+              (match (git-object-decode-tag format (& record.content) limits)
+                [(Err error) (return (Err error))]
+                [(Ok tag)
+                  (set! current tag.target)
+                  (set!
+                    expected-code
+                    (git-object-kind-from-name
+                      (git-object-kind-name tag.target-kind)))
+                  (set! depth (+ depth 1))])]
+            [_
+              (return (Err "git object: revision does not resolve to a commit"))])]))
+    (Err "git object: unreachable peel state")))

@@ -76,25 +76,22 @@
     [source : String (byte_buf.to-string (io.read-file input-path))]
     [markdown : String
       (doc_render.doc-render-markdown (doc_extract.doc-extract-source source))]
-    (begin
-      (doc-write-text output-path markdown)
-      (doc-print-wrote output-path)
-      0)))
+    (doc-write-text output-path markdown)
+    (doc-print-wrote output-path)
+    0))
 
 (define (doc-read-modules [idx : i64] [end : i64]) : doc_module_vec.Vec
   (let
     [i : i64 idx]
     [modules : doc_module_vec.Vec (doc_module_vec.with-capacity (- end idx))]
-    (begin
-      (while (< i end)
-        (begin
-          (doc_module_vec.push-ref!
-            (&mut modules)
-            (doc_render.DocModule.Module
-              (io.arg i)
-              (doc_extract.doc-extract-file (io.arg i))))
-          (set! i (+ i 1))))
-      modules)))
+    (while (< i end)
+      (doc_module_vec.push-ref!
+        (&mut modules)
+        (doc_render.DocModule.Module
+          (io.arg i)
+          (doc_extract.doc-extract-file (io.arg i))))
+      (set! i (+ i 1)))
+    modules))
 
 (define (doc-modules-from-package-sources-from
   [paths : doc_svec.Vec]
@@ -104,21 +101,19 @@
     unit
     (let
       [path : String (doc_svec.get (& paths) index "")]
-      (begin
-        (doc_module_vec.push-ref!
-          modules
-          (doc_render.DocModule.Module
-            (owned_view.compiler-owned-shared-view path)
-            (doc_extract.doc-extract-file path)))
-        (doc-modules-from-package-sources-from paths (+ index 1) modules)))))
+      (doc_module_vec.push-ref!
+        modules
+        (doc_render.DocModule.Module
+          (owned_view.compiler-owned-shared-view path)
+          (doc_extract.doc-extract-file path)))
+      (doc-modules-from-package-sources-from paths (+ index 1) modules))))
 
 (define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (doc_svec.len (& paths)))]
-    (begin
-      (doc-modules-from-package-sources-from paths 0 (&mut modules))
-      modules)))
+    (doc-modules-from-package-sources-from paths 0 (&mut modules))
+    modules))
 
 (define (doc-modules-from-package-sources-relative-from
   [paths : (& paths doc_svec.Vec)]
@@ -131,17 +126,16 @@
       [path : String (doc_svec.get (& paths) index "")]
       [relative : String
         (compiler_load.compiler-load-root-relative-path root path)]
-      (begin
-        (doc_module_vec.push-ref!
-          modules
-          (doc_render.DocModule.Module
-            relative
-            (doc_extract.doc-extract-file path)))
-        (doc-modules-from-package-sources-relative-from
-          paths
-          root
-          (+ index 1)
-          modules)))))
+      (doc_module_vec.push-ref!
+        modules
+        (doc_render.DocModule.Module
+          relative
+          (doc_extract.doc-extract-file path)))
+      (doc-modules-from-package-sources-relative-from
+        paths
+        root
+        (+ index 1)
+        modules))))
 
 (define (doc-modules-from-package-source-set
   [source-set : (& source-set package_source_core.PackageSourceSet)]) : doc_module_vec.Vec
@@ -150,13 +144,12 @@
       (compiler_load.compiler-load-normalize-path source-set.manifest-dir)]
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (doc_svec.len (& source-set.sources)))]
-    (begin
-      (doc-modules-from-package-sources-relative-from
-        source-set.sources
-        root
-        0
-        (&mut modules))
-      modules)))
+    (doc-modules-from-package-sources-relative-from
+      source-set.sources
+      root
+      0
+      (&mut modules))
+    modules))
 
 (define (doc-path-set-new) : doc_path_map.Map
   (doc_path_map.with-capacity 64))
@@ -187,9 +180,8 @@
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [seen : doc_path_map.Map (doc-path-set-new)]
-    (begin
-      (doc-modules-from-paths-into paths (&mut seen) (&mut modules))
-      modules)))
+    (doc-modules-from-paths-into paths (&mut seen) (&mut modules))
+    modules))
 
 (define (doc-generated-modules-from-source-paths-into
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -294,40 +286,39 @@
   [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
   (let
     [intern-state : ci.InternCompatState intern-state]
-    (begin
-      (compiler_load.compiler-load-session-state-use-with-intern-state!
-        load-state
-        (owned_view.compiler-owned-shared-view intern-state))
-      (ast.ast-node-pool-context-install! pools)
-      (ci.intern-compat-state-install! intern-state)
-      (let
-        [lazy-mode : bool
-          (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
-            (owned_view.compiler-owned-shared-view load-state))]
-        [_eager : unit
-          (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
-            (owned_view.compiler-owned-shared-view load-state)
-            false)]
-        [loaded : compiler_load.ResultCompilerLoadWithPaths
-          (compiler_load.compiler-load-file-with-paths-and-roots-cfg-with-pools
-            (owned_view.compiler-owned-shared-view load-state)
-            input-path
-            (sym_i64_env.sym-i64-empty)
-            stdlib-roots
-            (sym_i64_env.sym-i64-empty)
-            pools)]
-        [_publish : unit
-          (begin
-            ;; The stateful loader extends the explicit segmented context. Do not
-            ;; overwrite it with the stale compatibility-global view on return;
-            ;; publish the completed owner for the remaining legacy readers.
-            (ast.ast-node-pool-context-install! pools)
-            (ci.intern-compat-state-capture-from-globals! (&mut intern-state)))]
-        [_restore : unit
-          (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
-            load-state
-            lazy-mode)]
-        loaded))))
+    (compiler_load.compiler-load-session-state-use-with-intern-state!
+      load-state
+      (owned_view.compiler-owned-shared-view intern-state))
+    (ast.ast-node-pool-context-install! pools)
+    (ci.intern-compat-state-install! intern-state)
+    (let
+      [lazy-mode : bool
+        (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
+          (owned_view.compiler-owned-shared-view load-state))]
+      [_eager : unit
+        (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+          (owned_view.compiler-owned-shared-view load-state)
+          false)]
+      [loaded : compiler_load.ResultCompilerLoadWithPaths
+        (compiler_load.compiler-load-file-with-paths-and-roots-cfg-with-pools
+          (owned_view.compiler-owned-shared-view load-state)
+          input-path
+          (sym_i64_env.sym-i64-empty)
+          stdlib-roots
+          (sym_i64_env.sym-i64-empty)
+          pools)]
+      [_publish : unit
+        (begin
+          ;; The stateful loader extends the explicit segmented context. Do not
+          ;; overwrite it with the stale compatibility-global view on return;
+          ;; publish the completed owner for the remaining legacy readers.
+          (ast.ast-node-pool-context-install! pools)
+          (ci.intern-compat-state-capture-from-globals! (&mut intern-state)))]
+      [_restore : unit
+        (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+          load-state
+          lazy-mode)]
+      loaded)))
 
 (define (doc-generate-loaded-file
   [input-path : String]
@@ -373,39 +364,35 @@
                   intern-state)
                   [(Ok modules) modules]
                   [(Err _) (doc_module_vec.new)])]
-              (begin
-                (doc-write-text
-                  output-path
-                  (doc-render-loaded-markdown
-                    input-path
-                    paths
-                    (doc_render.doc-module-list-append
-                      generated-modules
-                      source-generated-modules)))
-                (doc-print-wrote output-path)
-                0))]
+              (doc-write-text
+                output-path
+                (doc-render-loaded-markdown
+                  input-path
+                  paths
+                  (doc_render.doc-module-list-append
+                    generated-modules
+                    source-generated-modules)))
+              (doc-print-wrote output-path)
+              0)]
           [(Err message)
-            (begin
-              (io.print-error message)
-              1)])]
+            (io.print-error message)
+            1])]
       [(Err diag)
-        (begin
-          (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
-          1)])))
+        (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
+        1])))
 
 (define (doc-ensure-directory [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
     [(OkIoUnit) true]
     [(ErrIoUnit error)
-      (begin
-        (io.print-error
-          (str_cat.str-cat
-            "doc: cannot create output directory '"
-            path
-            "': "
-            (io.error-message error)
-            "\n"))
-        false)]))
+      (io.print-error
+        (str_cat.str-cat
+          "doc: cannot create output directory '"
+          path
+          "': "
+          (io.error-message error)
+          "\n"))
+      false]))
 
 (define (doc-linux-graphical-session?) : bool
   (let
@@ -461,9 +448,8 @@
   (match (package_source_core.package-source-set-digest
     (owned_view.compiler-owned-shared-view source-set))
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat "doc: " message "\n"))
-        1)]
+      (io.print-error (str_cat.str-cat "doc: " message "\n"))
+      1]
     [(Ok source-digest)
       (let
         [target-dir : String
@@ -541,19 +527,17 @@
     manifest-path
     has-manifest)
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat message "\n"))
-        1)]
+      (io.print-error (str_cat.str-cat message "\n"))
+      1]
     [(Ok source-set)
       (match output-path
         [(Some out)
-          (begin
-            (doc-write-text
-              out
-              (doc_render.doc-render-module-graph-markdown
-                (doc-modules-from-package-sources source-set.sources)))
-            (doc-print-wrote out)
-            0)]
+          (doc-write-text
+            out
+            (doc_render.doc-render-module-graph-markdown
+              (doc-modules-from-package-sources source-set.sources)))
+          (doc-print-wrote out)
+          0]
         [(No) (doc-generate-package-local-site source-set open? no-deps?)])]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
@@ -562,54 +546,48 @@
       (byte_buf.to-string
         (io.read-file (owned_view.compiler-owned-shared-view input-path)))]
     [html : String (doc_html.doc-html-render-source input-path source)]
-    (begin
-      (doc-write-text output-path html)
-      (doc-print-wrote output-path)
-      0)))
+    (doc-write-text output-path html)
+    (doc-print-wrote output-path)
+    0))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let
     [modules : doc_module_vec.Vec (doc-read-modules 2 (- (io.arg-count) 1))]
-    (begin
-      (doc-write-text
-        output-path
-        (doc_html.doc-html-render-module-graph modules))
-      (doc-print-wrote output-path)
-      0)))
+    (doc-write-text output-path (doc_html.doc-html-render-module-graph modules))
+    (doc-print-wrote output-path)
+    0))
 
 (define (doc-test-file [input-path : String] [stdlib-roots : doc_svec.Vec]) : i64
   (let
     [report : doc_test.DocTestRunReport
       (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
-    (begin
-      (if (doc_test.doc-test-run-report-ok?
-        (owned_view.compiler-owned-shared-view report))
-        (io.print-format
-          "{}"
-          (str_cat.str-cat
-            (doc_test.doc-test-run-report-render
-              (owned_view.compiler-owned-shared-view report))
-            "\n"))
-        (io.print-error
+    (if (doc_test.doc-test-run-report-ok?
+      (owned_view.compiler-owned-shared-view report))
+      (io.print-format
+        "{}"
+        (str_cat.str-cat
           (doc_test.doc-test-run-report-render
-            (owned_view.compiler-owned-shared-view report))))
-      (doc_test.doc-test-run-report-status report))))
+            (owned_view.compiler-owned-shared-view report))
+          "\n"))
+      (io.print-error
+        (doc_test.doc-test-run-report-render
+          (owned_view.compiler-owned-shared-view report))))
+    (doc_test.doc-test-run-report-status report)))
 
 (define (doc-stdlib-roots [idx : i64]) : doc_svec.Vec
   (let
     [i : i64 idx]
     [n : i64 (io.arg-count)]
     [roots : doc_svec.Vec (doc_svec.new)]
-    (begin
-      (while (< i n)
-        (if (string.eq (io.arg i) "--stdlib-root")
-          (if (< (+ i 1) n)
-            (begin
-              (doc_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
-              (set! i (+ i 2)))
-            (set! i n))
-          (set! i (+ i 1))))
-      roots)))
+    (while (< i n)
+      (if (string.eq (io.arg i) "--stdlib-root")
+        (if (< (+ i 1) n)
+          (begin
+            (doc_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
+            (set! i (+ i 2)))
+          (set! i n))
+        (set! i (+ i 1))))
+    roots))
 
 (define (doc-modules-from-input-paths-before-last
   [paths : (& paths doc_svec.Vec)]
@@ -619,18 +597,16 @@
     [i : i64 index]
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (- last-index index))]
-    (begin
-      (while (< i last-index)
-        (let
-          [path : String (doc_svec.get (& paths) i "")]
-          (begin
-            (doc_module_vec.push-ref!
-              (&mut modules)
-              (doc_render.DocModule.Module
-                (owned_view.compiler-owned-shared-view path)
-                (doc_extract.doc-extract-file path)))
-            (set! i (+ i 1)))))
-      modules)))
+    (while (< i last-index)
+      (let
+        [path : String (doc_svec.get (& paths) i "")]
+        (doc_module_vec.push-ref!
+          (&mut modules)
+          (doc_render.DocModule.Module
+            (owned_view.compiler-owned-shared-view path)
+            (doc_extract.doc-extract-file path)))
+        (set! i (+ i 1))))
+    modules))
 
 (define (doc-generate-module-graph-from-input-paths [paths : doc_svec.Vec]) : i64
   (let
@@ -640,29 +616,26 @@
         paths
         0
         (- (doc_svec.len (& paths)) 1))]
-    (begin
-      (doc-write-text
-        output-path
-        (doc_render.doc-render-module-graph-markdown modules))
-      (doc-print-wrote output-path)
-      0)))
+    (doc-write-text
+      output-path
+      (doc_render.doc-render-module-graph-markdown modules))
+    (doc-print-wrote output-path)
+    0))
 
 (define (doc-test-batch-paths-from-text [text : String]) : doc_svec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [paths : doc_svec.Vec (doc_svec.new)]
-    (begin
-      (while (< i n)
-        (let
-          [line-end : i64 (source_text.line-end text i)]
-          [line : String (string.substring text i (- line-end i))]
-          (begin
-            (if (> (string.string-length line) 0)
-              (doc_svec.push-ref! (&mut paths) line)
-              unit)
-            (set! i (source_text.next-line-start text line-end)))))
-      paths)))
+    (while (< i n)
+      (let
+        [line-end : i64 (source_text.line-end text i)]
+        [line : String (string.substring text i (- line-end i))]
+        (if (> (string.string-length line) 0)
+          (doc_svec.push-ref! (&mut paths) line)
+          unit)
+        (set! i (source_text.next-line-start text line-end))))
+    paths))
 
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
@@ -717,42 +690,40 @@
     [has-manifest : bool false]
     [stdlib-roots : doc_svec.Vec (doc_svec.new)]
     [batch-list : DocMaybeString (No)]
-    (begin
-      (set! doc-test-prefix-cache-stats false)
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (doc_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--manifest-path")
-            (if has-manifest
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "doc: duplicate --manifest-path")
-              (begin
-                (set! manifest-path (cli_option.cli-args-value (& args)))
-                (set! has-manifest true)))]
-          [(string.eq args.name "--batch")
-            (match batch-list
-              [(Some _)
-                (cli_option.cli-args-fail! (&mut args) "doc: duplicate --batch")]
-              [(No)
-                (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
-          [(string.eq args.name "--prefix-cache-stats")
-            (set! doc-test-prefix-cache-stats true)]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
-          [else
-            (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
-      (if args.failed
-        (Err args.error)
-        (doc-test-config-finish
-          input-paths
-          manifest-path
-          has-manifest
-          stdlib-roots
-          batch-list)))))
+    (set! doc-test-prefix-cache-stats false)
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--stdlib-root")
+          (doc_svec.push-ref!
+            (&mut stdlib-roots)
+            (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "--manifest-path")
+          (if has-manifest
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "doc: duplicate --manifest-path")
+            (begin
+              (set! manifest-path (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [(string.eq args.name "--batch")
+          (match batch-list
+            [(Some _)
+              (cli_option.cli-args-fail! (&mut args) "doc: duplicate --batch")]
+            [(No) (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
+        [(string.eq args.name "--prefix-cache-stats")
+          (set! doc-test-prefix-cache-stats true)]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
+        [else
+          (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+    (if args.failed
+      (Err args.error)
+      (doc-test-config-finish
+        input-paths
+        manifest-path
+        has-manifest
+        stdlib-roots
+        batch-list))))
 
 (define (doc-test-files-from
   [input-paths : (& input-paths doc_svec.Vec)]
@@ -836,9 +807,8 @@
     manifest-path
     has-manifest)
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat message "\n"))
-        1)]
+      (io.print-error (str_cat.str-cat message "\n"))
+      1]
     [(Ok source-set) (doc-test-package-files source-set.sources stdlib-roots 0)]))
 
 (define (doc-default-config-finish
@@ -881,64 +851,60 @@
     [open? : bool false]
     [no-deps? : bool false]
     [stdlib-roots : doc_svec.Vec (doc_svec.new)]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (doc_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "-o")
-            (match output-path
-              [(Some _)
-                (cli_option.cli-args-fail! (&mut args) "doc: duplicate -o")]
-              [(No)
-                (set! output-path (Some (cli_option.cli-args-value (& args))))])]
-          ;; An empty --manifest-path value reads as absent, so a later one is
-          ;; not a duplicate.
-          [(string.eq args.name "--manifest-path")
-            (if (not (string.eq manifest-path ""))
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "doc: duplicate --manifest-path")
-              (set! manifest-path (cli_option.cli-args-value (& args))))]
-          [(string.eq args.name "--open")
-            (if open?
-              (cli_option.cli-args-fail! (&mut args) "doc: duplicate --open")
-              (set! open? true))]
-          [(string.eq args.name "--no-deps")
-            (if no-deps?
-              (cli_option.cli-args-fail! (&mut args) "doc: duplicate --no-deps")
-              (set! no-deps? true))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
-          [else
-            (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
-      (if args.failed
-        (Err args.error)
-        (doc-default-config-finish
-          input-paths
-          output-path
-          (string.copy (& manifest-path))
-          (not (string.eq manifest-path ""))
-          open?
-          no-deps?
-          stdlib-roots)))))
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--stdlib-root")
+          (doc_svec.push-ref!
+            (&mut stdlib-roots)
+            (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "-o")
+          (match output-path
+            [(Some _)
+              (cli_option.cli-args-fail! (&mut args) "doc: duplicate -o")]
+            [(No)
+              (set! output-path (Some (cli_option.cli-args-value (& args))))])]
+        ;; An empty --manifest-path value reads as absent, so a later one is
+        ;; not a duplicate.
+        [(string.eq args.name "--manifest-path")
+          (if (not (string.eq manifest-path ""))
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "doc: duplicate --manifest-path")
+            (set! manifest-path (cli_option.cli-args-value (& args))))]
+        [(string.eq args.name "--open")
+          (if open?
+            (cli_option.cli-args-fail! (&mut args) "doc: duplicate --open")
+            (set! open? true))]
+        [(string.eq args.name "--no-deps")
+          (if no-deps?
+            (cli_option.cli-args-fail! (&mut args) "doc: duplicate --no-deps")
+            (set! no-deps? true))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown flag ")]
+        [else
+          (doc_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+    (if args.failed
+      (Err args.error)
+      (doc-default-config-finish
+        input-paths
+        output-path
+        (string.copy (& manifest-path))
+        (not (string.eq manifest-path ""))
+        open?
+        no-deps?
+        stdlib-roots))))
 
 (define (doc-invalid-args) : i64
-  (begin
-    (io.print-error "doc: expected input and output paths")
-    1))
+  (io.print-error "doc: expected input and output paths")
+  1)
 
 (define (doc-invalid-load-args) : i64
-  (begin
-    (io.print-error "doc: expected --load input and output paths")
-    1))
+  (io.print-error "doc: expected --load input and output paths")
+  1)
 
 (define (doc-invalid-html-args) : i64
-  (begin
-    (io.print-error "doc: expected --html input and output paths")
-    1))
+  (io.print-error "doc: expected --html input and output paths")
+  1)
 
 (define (doc-run-explicit-default
   [input-paths : doc_svec.Vec]
@@ -982,35 +948,32 @@
 ;; command-kind argument, so kind-relative arguments are at `base+1`, `base+2`,
 ;; ... The unified dispatcher passes base=2.
 (define (doc-main-test [base : i64]) : i64
-  (begin
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
-    (match (doc-test-config-from base (io.arg-count))
-      [(Ok config)
-        (match config
-          [(File input-paths stdlib-roots)
-            (let
-              [status : i64
-                (begin
-                  (if doc-test-prefix-cache-stats
-                    (tc.tc-prefix-snapshot-cache-clear!)
-                    unit)
-                  (doc-test-files
-                    input-paths
-                    stdlib-roots
-                    (> (doc_svec.len (& input-paths)) 1)
-                    0))]
+  (compiler_load.compiler-load-session-cache-enable!)
+  (compiler_load.compiler-load-session-program-cache-disable!)
+  (match (doc-test-config-from base (io.arg-count))
+    [(Ok config)
+      (match config
+        [(File input-paths stdlib-roots)
+          (let
+            [status : i64
               (begin
                 (if doc-test-prefix-cache-stats
-                  (tc.tc-prefix-snapshot-cache-print-stats "doc-test-batch")
+                  (tc.tc-prefix-snapshot-cache-clear!)
                   unit)
-                status))]
-          [(Package manifest-path has-manifest stdlib-roots)
-            (doc-test-package manifest-path has-manifest stdlib-roots)])]
-      [(Err message)
-        (begin
-          (io.print-error message)
-          1)])))
+                (doc-test-files
+                  input-paths
+                  stdlib-roots
+                  (> (doc_svec.len (& input-paths)) 1)
+                  0))]
+            (if doc-test-prefix-cache-stats
+              (tc.tc-prefix-snapshot-cache-print-stats "doc-test-batch")
+              unit)
+            status)]
+        [(Package manifest-path has-manifest stdlib-roots)
+          (doc-test-package manifest-path has-manifest stdlib-roots)])]
+    [(Err message)
+      (io.print-error message)
+      1]))
 
 (define (doc-main-html [base : i64]) : i64
   (if (= (io.arg-count) (+ base 3))
@@ -1041,9 +1004,8 @@
             open?
             no-deps?)])]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))
 
 (define (doc-main-dispatch [kind : i64] [base : i64]) : i64
   (match kind

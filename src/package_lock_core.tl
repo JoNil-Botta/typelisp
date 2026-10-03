@@ -108,19 +108,18 @@
     [idx : i64 0]
     [done : bool false]
     [less : bool false]
-    (begin
-      (while (and (not done) (< idx limit))
-        (let
-          [lc : i64 (package-lock-char-code-at left idx)]
-          [rc : i64 (package-lock-char-code-at right idx)]
-          (if (= lc rc)
-            (set! idx (+ idx 1))
-            (begin
-              (set! less (< lc rc))
-              (set! done true)))))
-      (if done
-        less
-        (< left-len right-len)))))
+    (while (and (not done) (< idx limit))
+      (let
+        [lc : i64 (package-lock-char-code-at left idx)]
+        [rc : i64 (package-lock-char-code-at right idx)]
+        (if (= lc rc)
+          (set! idx (+ idx 1))
+          (begin
+            (set! less (< lc rc))
+            (set! done true)))))
+    (if done
+      less
+      (< left-len right-len))))
 
 (define (package-lock-alias-char? [c : char]) : bool
   (let
@@ -137,14 +136,13 @@
     [n : i64 (string.string-length value)]
     [i : i64 0]
     [ok : bool (> n 0)]
-    (begin
-      (while ok
-        (if (< i n)
-          (if (package-lock-alias-char? (string.string-ref value i))
-            (set! i (+ i 1))
-            (set! ok false))
-          (set! ok false)))
-      (= i n))))
+    (while ok
+      (if (< i n)
+        (if (package-lock-alias-char? (string.string-ref value i))
+          (set! i (+ i 1))
+          (set! ok false))
+        (set! ok false)))
+    (= i n)))
 
 (define (package-lock-entry-list-fallback) : PackageLockEntry
   (PackageLockEntry "" "" (Rev) "" ""))
@@ -192,24 +190,19 @@
   [entries : (&mut entries package_lock_entry_vec.Vec)]
   [entry : PackageLockEntry]
   [index : i64]) : unit
-  (begin
-    (package_lock_entry_vec.push-ref!
-      entries
-      (package-lock-entry-list-fallback))
-    (let
-      [write : i64 (- (package_lock_entry_vec.len entries) 1)]
-      (begin
-        (while (> write index)
-          (let
-            [previous : PackageLockEntry
-              (package_lock_entry_vec.get
-                entries
-                (- write 1)
-                (package-lock-entry-list-fallback))]
-            (begin
-              (package_lock_entry_vec.set-ref! entries write previous)
-              (set! write (- write 1)))))
-        (package_lock_entry_vec.set-ref! entries index entry)))))
+  (package_lock_entry_vec.push-ref! entries (package-lock-entry-list-fallback))
+  (let
+    [write : i64 (- (package_lock_entry_vec.len entries) 1)]
+    (while (> write index)
+      (let
+        [previous : PackageLockEntry
+          (package_lock_entry_vec.get
+            entries
+            (- write 1)
+            (package-lock-entry-list-fallback))]
+        (package_lock_entry_vec.set-ref! entries write previous)
+        (set! write (- write 1))))
+    (package_lock_entry_vec.set-ref! entries index entry)))
 
 (define (package-lock-entry-list-insert
   [entries : package_lock_entry_vec.Vec]
@@ -542,9 +535,8 @@
       (match (reader.data-result source)
         [(Err message) (Err (str_cat.str-cat "package-lock: " message))]
         [(Ok form) (package-lock-from-form form)])]
-    (begin
-      (reader.sp-node-pool-truncate! mark)
-      result)))
+    (reader.sp-node-pool-truncate! mark)
+    result))
 
 (define (package-lock-quote-text) : String
   "\"")
@@ -559,56 +551,53 @@
     [out : String ""]
     [slash : String (package-lock-backslash-text)]
     [quote : String (package-lock-quote-text)]
-    (begin
-      (while (< i n)
-        (begin
-          (let
-            [code : i64 (package-lock-char-code-at text i)]
-            (cond
-              [(= code 34)
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    (owned_view.compiler-owned-shared-view slash)
-                    (owned_view.compiler-owned-shared-view quote)
-                    ""))]
-              [(= code 92)
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    (owned_view.compiler-owned-shared-view slash)
-                    (owned_view.compiler-owned-shared-view slash)
-                    ""))]
-              [(= code 10)
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    (owned_view.compiler-owned-shared-view slash)
-                    "n"
-                    ""))]
-              [(= code 9)
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    (owned_view.compiler-owned-shared-view slash)
-                    "t"
-                    ""))]
-              [(= code 13)
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    (owned_view.compiler-owned-shared-view slash)
-                    "r"
-                    ""))]
-              [else
-                (set! out (str_cat.str-cat out (string.substring text i 1) ""))]))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (let
+        [code : i64 (package-lock-char-code-at text i)]
+        (cond
+          [(= code 34)
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (owned_view.compiler-owned-shared-view slash)
+                (owned_view.compiler-owned-shared-view quote)
+                ""))]
+          [(= code 92)
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (owned_view.compiler-owned-shared-view slash)
+                (owned_view.compiler-owned-shared-view slash)
+                ""))]
+          [(= code 10)
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (owned_view.compiler-owned-shared-view slash)
+                "n"
+                ""))]
+          [(= code 9)
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (owned_view.compiler-owned-shared-view slash)
+                "t"
+                ""))]
+          [(= code 13)
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (owned_view.compiler-owned-shared-view slash)
+                "r"
+                ""))]
+          [else (set! out (str_cat.str-cat out (string.substring text i 1) ""))]))
+      (set! i (+ i 1)))
+    out))
 
 (define (package-lock-quote-string [text : String]) : String
   (str_cat.str-cat
@@ -738,27 +727,24 @@
     [attempt : i64 0]
     [done : bool false]
     [error-message : String ""]
-    (begin
-      (while (and (not done) (< attempt 6000))
-        (match (io.try-file-exists? (& path))
-          [(ErrIoBool error)
-            (begin
-              (set! error-message (io.error-message error))
-              (set! done true))]
-          [(OkIoBool exists)
-            (if exists
-              (match (time.sleep-ms 10)
-                [(ErrTimeUnit error)
-                  (begin
-                    (set! error-message (time.error-message error))
-                    (set! done true))]
-                [(OkTimeUnit) (set! attempt (+ attempt 1))])
-              (set! done true))]))
-      (if (> (string.string-length error-message) 0)
-        (Err error-message)
-        (if (>= attempt 6000)
-          (Err "package-lock transaction test pause timed out")
-          (Ok ""))))))
+    (while (and (not done) (< attempt 6000))
+      (match (io.try-file-exists? (& path))
+        [(ErrIoBool error)
+          (set! error-message (io.error-message error))
+          (set! done true)]
+        [(OkIoBool exists)
+          (if exists
+            (match (time.sleep-ms 10)
+              [(ErrTimeUnit error)
+                (set! error-message (time.error-message error))
+                (set! done true)]
+              [(OkTimeUnit) (set! attempt (+ attempt 1))])
+            (set! done true))]))
+    (if (> (string.string-length error-message) 0)
+      (Err error-message)
+      (if (>= attempt 6000)
+        (Err "package-lock transaction test pause timed out")
+        (Ok "")))))
 
 (define (package-lock-transaction-maybe-pause [phase : String]) : ResultPackageLockString
   (if (package-lock-transaction-pause? phase)
@@ -773,9 +759,8 @@
     (Ok "")))
 
 (define (package-lock-stage-next-sequence) : i64
-  (begin
-    (set! package-lock-stage-sequence (+ package-lock-stage-sequence 1))
-    package-lock-stage-sequence))
+  (set! package-lock-stage-sequence (+ package-lock-stage-sequence 1))
+  package-lock-stage-sequence)
 
 ;; The lock file a package root publishes. Replacement goes through a
 ;; transient sibling `<lock>.stage.<pid>.<sequence>.<attempt>`; the infix and
@@ -801,23 +786,21 @@
     [index : i64 (string.string-length (& prefix))]
     [runs : i64 0]
     [ok : bool (string.is-string-prefix-at name (& prefix) 0)]
-    (begin
-      (while (and ok (< runs 3))
-        (let
-          [start : i64 index]
-          (begin
-            (while (and
-              (< index len)
-              (package-lock-decimal-digit? (string.string-ref name index)))
-              (set! index (+ index 1)))
-            (set! runs (+ runs 1))
-            (cond
-              [(= index start) (set! ok false)]
-              [(= runs 3) unit]
-              [(and (< index len) (= (string.string-ref name index) '.'))
-                (set! index (+ index 1))]
-              [else (set! ok false)]))))
-      (and ok (= index len)))))
+    (while (and ok (< runs 3))
+      (let
+        [start : i64 index]
+        (while (and
+          (< index len)
+          (package-lock-decimal-digit? (string.string-ref name index)))
+          (set! index (+ index 1)))
+        (set! runs (+ runs 1))
+        (cond
+          [(= index start) (set! ok false)]
+          [(= runs 3) unit]
+          [(and (< index len) (= (string.string-ref name index) '.'))
+            (set! index (+ index 1))]
+          [else (set! ok false)])))
+    (and ok (= index len))))
 
 (define (package-lock-stage-path
   [destination : String]
@@ -854,35 +837,32 @@
           "injected test failure")))
     (match (io.file-write handle (byte_buf.str-as-bytes (& source)))
       [(ErrIoUnit error)
-        (begin
-          (io.file-close handle)
-          (package-lock-remove-stage (string.copy path))
-          (Err
-            (package-lock-transaction-error
-              "stage-write"
-              path
-              (io.error-message error))))]
+        (io.file-close handle)
+        (package-lock-remove-stage (string.copy path))
+        (Err
+          (package-lock-transaction-error
+            "stage-write"
+            path
+            (io.error-message error)))]
       [(OkIoUnit)
         (match (io.file-flush handle)
           [(ErrIoUnit error)
-            (begin
-              (io.file-close handle)
-              (package-lock-remove-stage (string.copy path))
-              (Err
-                (package-lock-transaction-error
-                  "stage-flush"
-                  path
-                  (io.error-message error))))]
+            (io.file-close handle)
+            (package-lock-remove-stage (string.copy path))
+            (Err
+              (package-lock-transaction-error
+                "stage-flush"
+                path
+                (io.error-message error)))]
           [(OkIoUnit)
             (match (io.file-close handle)
               [(ErrIoUnit error)
-                (begin
-                  (package-lock-remove-stage (string.copy path))
-                  (Err
-                    (package-lock-transaction-error
-                      "stage-close"
-                      path
-                      (io.error-message error))))]
+                (package-lock-remove-stage (string.copy path))
+                (Err
+                  (package-lock-transaction-error
+                    "stage-close"
+                    path
+                    (io.error-message error)))]
               [(OkIoUnit) (Ok path)])])])))
 
 (define (package-lock-stage-write-attempt
@@ -1082,19 +1062,17 @@
   [stage : String]) : ResultPackageLockCommit
   (match (package-lock-transaction-maybe-pause "before-lock")
     [(Err message)
-      (begin
-        (package-lock-remove-stage stage)
-        (Err message))]
+      (package-lock-remove-stage stage)
+      (Err message)]
     [(Ok _)
       (match (fs.file-lock-acquire (& guard))
         [(ErrFsFileLock error)
-          (begin
-            (package-lock-remove-stage stage)
-            (Err
-              (package-lock-transaction-error
-                "coordination-lock"
-                guard
-                (io.error-message error))))]
+          (package-lock-remove-stage stage)
+          (Err
+            (package-lock-transaction-error
+              "coordination-lock"
+              guard
+              (io.error-message error)))]
         [(OkFsFileLock lock)
           (package-lock-transaction-under-lock snapshot source stage lock)])]))
 
@@ -1105,9 +1083,8 @@
   [stage : String]) : ResultPackageLockCommit
   (match (package-lock-stage-validate (string.copy stage) (string.copy source))
     [(Err message)
-      (begin
-        (package-lock-remove-stage stage)
-        (Err message))]
+      (package-lock-remove-stage stage)
+      (Err message)]
     [(Ok _)
       (if (package-lock-transaction-fault? "after-stage")
         (begin

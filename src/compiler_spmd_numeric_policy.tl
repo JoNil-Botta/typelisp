@@ -493,123 +493,114 @@
       [cast-rows : i64 0]
       [supported-binary : i64 0]
       [supported-casts : i64 0]
-      (begin
-        (while (< backend-index 3)
-          (let
-            [context-index : i64 0]
-            [backend : CompilerSpmdNumericBackend
-              (compiler-spmd-numeric-backend-at backend-index)]
-            (begin
-              (while (< context-index 5)
+      (while (< backend-index 3)
+        (let
+          [context-index : i64 0]
+          [backend : CompilerSpmdNumericBackend
+            (compiler-spmd-numeric-backend-at backend-index)]
+          (while (< context-index 5)
+            (let
+              [lane-index : i64 0]
+              [context : CompilerSpmdNumericContext
+                (compiler-spmd-numeric-context-at context-index)]
+              (while (< lane-index 10)
                 (let
-                  [lane-index : i64 0]
-                  [context : CompilerSpmdNumericContext
-                    (compiler-spmd-numeric-context-at context-index)]
-                  (begin
-                    (while (< lane-index 10)
-                      (let
-                        [source : ast.AstType
-                          (compiler-spmd-numeric-lane-at lane-index)]
-                        [op-index : i64 0]
-                        [destination-index : i64 0]
-                        (begin
-                          (while (< op-index 18)
-                            (let
-                              [op : ast.AstBinOp
-                                (compiler-spmd-numeric-binop-at op-index)]
-                              [decision : CompilerSpmdNumericDecision
-                                (compiler-spmd-numeric-binary-decision
-                                  (clone source)
-                                  (if (compiler-spmd-numeric-comparison-op? op)
-                                    (Bool)
-                                    (clone source))
-                                  context
-                                  backend
-                                  op)]
-                              (begin
-                                (set! binary-rows (+ binary-rows 1))
-                                (if (compiler-spmd-numeric-decision-supported?
-                                  decision)
-                                  (set! supported-binary (+ supported-binary 1))
-                                  unit)
-                                (set! op-index (+ op-index 1)))))
-                          (while (< destination-index 10)
-                            (let
-                              [decision : CompilerSpmdNumericDecision
-                                (compiler-spmd-numeric-conversion-decision
-                                  (clone source)
-                                  (compiler-spmd-numeric-lane-at
-                                    destination-index)
-                                  context
-                                  backend)]
-                              (begin
-                                (set! cast-rows (+ cast-rows 1))
-                                (if (compiler-spmd-numeric-decision-supported?
-                                  decision)
-                                  (set! supported-casts (+ supported-casts 1))
-                                  unit)
-                                (set! destination-index (+ destination-index 1)))))
-                          (set! lane-index (+ lane-index 1)))))
-                    (set! context-index (+ context-index 1)))))
-              (set! backend-index (+ backend-index 1)))))
-        (and
-          (= binary-rows 2700)
-          (= cast-rows 1500)
-          (= supported-binary 2104)
-          (= supported-casts 936)
-          (match (compiler-spmd-numeric-binary-decision
-            (I8)
-            (I8)
-            (DirectMap)
-            (Avx2)
-            (Mul)).strategy
-            [(OwnedVectorExpansion) true]
-            [_ false])
-          (match (compiler-spmd-numeric-binary-decision
-            (I64)
-            (I64)
-            (DirectMap)
-            (Avx512)
-            (Mod)).strategy
-            [(MaskedPlannerExpansion) true]
-            [_ false])
-          (match (compiler-spmd-numeric-binary-decision
-            (I64)
-            (I64)
-            (MaskedControl)
-            (Avx512)
-            (Shl)).strategy
-            [(CheckedActiveLaneExpansion) true]
-            [_ false])
-          (match (compiler-spmd-numeric-conversion-decision
-            (I64)
-            (I32)
-            (DirectMap)
-            (Avx2)).strategy
-            [(OwnedVectorExpansion) true]
-            [_ false])
-          (not
-            (compiler-spmd-numeric-decision-supported?
-              (compiler-spmd-numeric-conversion-decision
-                (I32)
-                (F32)
-                (PrivateHelper)
-                (Avx512))))
-          (not
-            (compiler-spmd-numeric-decision-supported?
-              (compiler-spmd-numeric-conversion-decision
-                (Char)
-                (I64)
-                (DirectMap)
-                (Avx512))))
-          (not
-            (compiler-spmd-numeric-decision-supported?
-              (compiler-spmd-numeric-binary-decision
-                (Bool)
-                (Bool)
-                (MaskedControl)
-                (Avx512)
-                (Add)))))))))
+                  [source : ast.AstType
+                    (compiler-spmd-numeric-lane-at lane-index)]
+                  [op-index : i64 0]
+                  [destination-index : i64 0]
+                  (while (< op-index 18)
+                    (let
+                      [op : ast.AstBinOp
+                        (compiler-spmd-numeric-binop-at op-index)]
+                      [decision : CompilerSpmdNumericDecision
+                        (compiler-spmd-numeric-binary-decision
+                          (clone source)
+                          (if (compiler-spmd-numeric-comparison-op? op)
+                            (Bool)
+                            (clone source))
+                          context
+                          backend
+                          op)]
+                      (set! binary-rows (+ binary-rows 1))
+                      (if (compiler-spmd-numeric-decision-supported? decision)
+                        (set! supported-binary (+ supported-binary 1))
+                        unit)
+                      (set! op-index (+ op-index 1))))
+                  (while (< destination-index 10)
+                    (let
+                      [decision : CompilerSpmdNumericDecision
+                        (compiler-spmd-numeric-conversion-decision
+                          (clone source)
+                          (compiler-spmd-numeric-lane-at destination-index)
+                          context
+                          backend)]
+                      (set! cast-rows (+ cast-rows 1))
+                      (if (compiler-spmd-numeric-decision-supported? decision)
+                        (set! supported-casts (+ supported-casts 1))
+                        unit)
+                      (set! destination-index (+ destination-index 1))))
+                  (set! lane-index (+ lane-index 1))))
+              (set! context-index (+ context-index 1))))
+          (set! backend-index (+ backend-index 1))))
+      (and
+        (= binary-rows 2700)
+        (= cast-rows 1500)
+        (= supported-binary 2104)
+        (= supported-casts 936)
+        (match (compiler-spmd-numeric-binary-decision
+          (I8)
+          (I8)
+          (DirectMap)
+          (Avx2)
+          (Mul)).strategy
+          [(OwnedVectorExpansion) true]
+          [_ false])
+        (match (compiler-spmd-numeric-binary-decision
+          (I64)
+          (I64)
+          (DirectMap)
+          (Avx512)
+          (Mod)).strategy
+          [(MaskedPlannerExpansion) true]
+          [_ false])
+        (match (compiler-spmd-numeric-binary-decision
+          (I64)
+          (I64)
+          (MaskedControl)
+          (Avx512)
+          (Shl)).strategy
+          [(CheckedActiveLaneExpansion) true]
+          [_ false])
+        (match (compiler-spmd-numeric-conversion-decision
+          (I64)
+          (I32)
+          (DirectMap)
+          (Avx2)).strategy
+          [(OwnedVectorExpansion) true]
+          [_ false])
+        (not
+          (compiler-spmd-numeric-decision-supported?
+            (compiler-spmd-numeric-conversion-decision
+              (I32)
+              (F32)
+              (PrivateHelper)
+              (Avx512))))
+        (not
+          (compiler-spmd-numeric-decision-supported?
+            (compiler-spmd-numeric-conversion-decision
+              (Char)
+              (I64)
+              (DirectMap)
+              (Avx512))))
+        (not
+          (compiler-spmd-numeric-decision-supported?
+            (compiler-spmd-numeric-binary-decision
+              (Bool)
+              (Bool)
+              (MaskedControl)
+              (Avx512)
+              (Add))))))))
 
 (cfg
   test

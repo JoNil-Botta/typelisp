@@ -301,14 +301,13 @@
               left-id
               middle-id
               right-id)]
-          (begin
-            ;; An explicitly owned session can also be the installed
-            ;; compatibility owner. Keep that owner's scalar/address snapshot
-            ;; coherent without touching an unrelated installed table.
-            (if (= (ci.intern-active-table-id) table-id)
-              (ci.intern-active-structural-sync! structural-table-cell)
-              unit)
-            (InternStructuralKey raw)))))))
+          ;; An explicitly owned session can also be the installed
+          ;; compatibility owner. Keep that owner's scalar/address snapshot
+          ;; coherent without touching an unrelated installed table.
+          (if (= (ci.intern-active-table-id) table-id)
+            (ci.intern-active-structural-sync! structural-table-cell)
+            unit)
+          (InternStructuralKey raw))))))
 
 (define (intern-structural-session-composite-pair-key
   [handle : InternStructuralSessionHandle]
@@ -556,14 +555,13 @@
         [index : i64 (- (bit-and raw (ci.intern-structural-key-index-mask)) 1)]
         [persistent : String
           (ci.intern-persistent-copy-in-arena persistent-arena name)]
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset
-                (ptr-cast (__tl_array-data rendered-names) : (MutPtr String))
-                index)
-              persistent))
-          persistent)))))
+        (unsafe
+          (ptr-write!
+            (ptr-offset
+              (ptr-cast (__tl_array-data rendered-names) : (MutPtr String))
+              index)
+            persistent))
+        persistent))))
 
 ;; Classification-only paths should not materialize all four record lanes.
 ;; The hot form accepts a value already proven to be in the table-backed
@@ -648,14 +646,12 @@
           0)]
       [index : i64 0]
       [count : i64 0]
-      (begin
-        (while (< index table.len)
-          (begin
-            (if (= (cast (array-ref table.kinds index) : i64) kind)
-              (set! count (+ count 1))
-              unit)
-            (set! index (+ index 1))))
-        count))))
+      (while (< index table.len)
+        (if (= (cast (array-ref table.kinds index) : i64) kind)
+          (set! count (+ count 1))
+          unit)
+        (set! index (+ index 1)))
+      count)))
 
 (define (intern-structural-session-source-name-component-valid?
   [handle : InternStructuralSessionHandle]

@@ -78,10 +78,9 @@
     (match (scaffold-try-write-file path contents)
       [(OkIoUnit) 0]
       [(ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat "scaffold: could not write " path "\n"))
-          1)])))
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not write " path "\n"))
+        1])))
 
 ;; Create the package-local build-output ignore without changing an existing
 ;; repository policy during `typelisp init`.
@@ -112,13 +111,9 @@
         (scaffold-bin-source))]
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view src-dir))
       [(ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat
-              "scaffold: could not create directory "
-              src-dir
-              "\n"))
-          1)]
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not create directory " src-dir "\n"))
+        1]
       [(OkIoUnit)
         (let
           [pkg-code : i64
@@ -158,10 +153,9 @@
       2)
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view name))
       [(ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat "scaffold: could not create directory " name "\n"))
-          1)]
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not create directory " name "\n"))
+        1]
       [(OkIoUnit)
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
@@ -174,9 +168,8 @@
     (scaffold-emit "." name is-lib)))
 
 (define (scaffold-usage) : i64
-  (begin
-    (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
-    2))
+  (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
+  2)
 
 ;; Parse `[--lib] <name>` from argv starting at `idx`, bounded by `count`, then
 ;; dispatch to `new` or `init`.

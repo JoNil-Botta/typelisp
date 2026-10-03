@@ -29,13 +29,12 @@
   [src : doc_module_vec.Vec]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (doc_module_vec.push-ref!
-        out
-        (doc-module-list-ref (owned_view.compiler-owned-shared-view src) index))
-      (doc-module-list-append-from out src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (doc_module_vec.push-ref!
+      out
+      (doc-module-list-ref (owned_view.compiler-owned-shared-view src) index))
+    (doc-module-list-append-from out src (+ index 1) count)))
 
 (define (doc-module-list-append
   [left : doc_module_vec.Vec]
@@ -47,10 +46,9 @@
       (doc-module-list-count (owned_view.compiler-owned-shared-view right))]
     [out : doc_module_vec.Vec
       (doc_module_vec.with-capacity (+ left-count right-count))]
-    (begin
-      (doc-module-list-append-from (&mut out) left 0 left-count)
-      (doc-module-list-append-from (&mut out) right 0 right-count)
-      out)))
+    (doc-module-list-append-from (&mut out) left 0 left-count)
+    (doc-module-list-append-from (&mut out) right 0 right-count)
+    out))
 
 (define (doc-module-path [module : DocModule]) : String
   (match module
@@ -86,24 +84,22 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref text i)]
-          (begin
-            (if (doc-render-anchor-char? c)
-              (set! out (str_cat.str-cat out (string.substring text i 1)))
-              (let
-                [code : i64 (doc-render-code c)]
-                (set!
-                  out
-                  (str_cat.str-cat
-                    out
-                    "_"
-                    (doc-render-hex-digit (/ code 16))
-                    (doc-render-hex-digit (% code 16))))))
-            (set! i (+ i 1)))))
-      out)))
+    (while (< i n)
+      (let
+        [c : char (string.string-ref text i)]
+        (if (doc-render-anchor-char? c)
+          (set! out (str_cat.str-cat out (string.substring text i 1)))
+          (let
+            [code : i64 (doc-render-code c)]
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "_"
+                (doc-render-hex-digit (/ code 16))
+                (doc-render-hex-digit (% code 16))))))
+        (set! i (+ i 1))))
+    out))
 
 (define (doc-render-anchor [name : (& name str)]) : String
   (str_cat.str-cat "tl-" (doc-render-anchor-field name)))
@@ -166,12 +162,10 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (begin
-          (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
+      (set! i (+ i 1)))
+    out))
 
 (define (doc-render-code-block [source : String]) : String
   (str_cat.str-cat "```typelisp\n" source "\n```\n"))

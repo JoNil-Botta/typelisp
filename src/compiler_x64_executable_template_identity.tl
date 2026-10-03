@@ -14,22 +14,21 @@
     (let
       [at : i64 0]
       [start : i64 0]
-      (begin
-        (while (< at index)
-          (let
-            [end : i64 (string.index-of-byte names start (cast '|' : u8))]
-            (if (< end 0)
-              (io.panic "x64 executable template: enum name is missing")
-              (begin
-                (set! start (+ end 1))
-                (set! at (+ at 1))))))
+      (while (< at index)
         (let
-          [separator : i64 (string.index-of-byte names start (cast '|' : u8))]
-          [end : i64
-            (if (< separator 0)
-              (string.string-length names)
-              separator)]
-          (string.substring names start (- end start)))))))
+          [end : i64 (string.index-of-byte names start (cast '|' : u8))]
+          (if (< end 0)
+            (io.panic "x64 executable template: enum name is missing")
+            (begin
+              (set! start (+ end 1))
+              (set! at (+ at 1))))))
+      (let
+        [separator : i64 (string.index-of-byte names start (cast '|' : u8))]
+        [end : i64
+          (if (< separator 0)
+            (string.string-length names)
+            separator)]
+        (string.substring names start (- end start))))))
 
 (define (compiler-x64-template-target-name
   [target : x64.CompilerX64TemplateTarget]) : String

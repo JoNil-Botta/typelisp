@@ -129,38 +129,34 @@
     [probes : i64 0]
     [index : i64 -1]
     [fresh : bool false]
-    (begin
-      (while (and (< index 0) (< probes table-capacity))
-        (let
-          [marker : i64 (array-ref slots slot)]
-          (if (= marker 0)
-            (begin
-              (set! index (array-ref counts scope-index))
-              (if (>=
-                index
-                (compiler-profile-summary-exact-scope-capacity scope))
-                (io.panic
-                  "compile-profile summary exact scope capacity exceeded")
-                unit)
-              (set! (array-ref names (+ dense-offset index)) name)
-              (set! (array-ref keys (+ dense-offset index)) key)
-              (set! (array-ref slots slot) (+ index 1))
-              (set! (array-ref counts scope-index) (+ index 1))
-              (set! fresh true))
-            (let
-              [candidate : i64 (- marker 1)]
-              (if (= (array-ref keys (+ dense-offset candidate)) key)
-                (set! index candidate)
-                (begin
-                  (set!
-                    slot
-                    (+
-                      table-offset
-                      (% (+ (- slot table-offset) 1) table-capacity)))
-                  (set! probes (+ probes 1))))))))
-      (if (< index 0)
-        (io.panic "compile-profile summary exact table is full")
-        (compiler-profile-summary-record-at! state scope index elapsed fresh)))))
+    (while (and (< index 0) (< probes table-capacity))
+      (let
+        [marker : i64 (array-ref slots slot)]
+        (if (= marker 0)
+          (begin
+            (set! index (array-ref counts scope-index))
+            (if (>= index (compiler-profile-summary-exact-scope-capacity scope))
+              (io.panic "compile-profile summary exact scope capacity exceeded")
+              unit)
+            (set! (array-ref names (+ dense-offset index)) name)
+            (set! (array-ref keys (+ dense-offset index)) key)
+            (set! (array-ref slots slot) (+ index 1))
+            (set! (array-ref counts scope-index) (+ index 1))
+            (set! fresh true))
+          (let
+            [candidate : i64 (- marker 1)]
+            (if (= (array-ref keys (+ dense-offset candidate)) key)
+              (set! index candidate)
+              (begin
+                (set!
+                  slot
+                  (+
+                    table-offset
+                    (% (+ (- slot table-offset) 1) table-capacity)))
+                (set! probes (+ probes 1))))))))
+    (if (< index 0)
+      (io.panic "compile-profile summary exact table is full")
+      (compiler-profile-summary-record-at! state scope index elapsed fresh))))
 
 (define (compiler-profile-summary-reset!
   [state : profile_state.CompilerProfileState]) : unit
@@ -177,20 +173,17 @@
       (profile_state.compiler-profile-state-summary-exact-counts state)]
     [scope : i64 0]
     [slot : i64 0]
-    (begin
-      (while (< scope compiler-profile-summary-scope-count)
-        (begin
-          (set! (array-ref counts scope) 0)
-          (set! (array-ref total-elapsed scope) 0)
-          (set! (array-ref total-calls scope) 0)
-          (set! scope (+ scope 1))))
-      (while (< slot compiler-profile-summary-exact-table-capacity)
-        (begin
-          (set! (array-ref exact-slots slot) 0)
-          (set! slot (+ slot 1))))
-      (set! (array-ref exact-counts 0) 0)
-      (set! (array-ref exact-counts 1) 0)
-      (set! (array-ref exact-counts 2) 0))))
+    (while (< scope compiler-profile-summary-scope-count)
+      (set! (array-ref counts scope) 0)
+      (set! (array-ref total-elapsed scope) 0)
+      (set! (array-ref total-calls scope) 0)
+      (set! scope (+ scope 1)))
+    (while (< slot compiler-profile-summary-exact-table-capacity)
+      (set! (array-ref exact-slots slot) 0)
+      (set! slot (+ slot 1)))
+    (set! (array-ref exact-counts 0) 0)
+    (set! (array-ref exact-counts 1) 0)
+    (set! (array-ref exact-counts 2) 0)))
 
 (define (compiler-profile-summary-offset [scope : i64] [rank : i64]) : i64
   (+ (* scope compiler-profile-summary-top-count) rank))
@@ -214,14 +207,11 @@
       (profile_state.compiler-profile-state-summary-keys state)]
     [rank : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< rank count))
-        (if (=
-          (array-ref keys (compiler-profile-summary-offset scope rank))
-          key)
-          (set! found rank)
-          (set! rank (+ rank 1))))
-      found)))
+    (while (and (< found 0) (< rank count))
+      (if (= (array-ref keys (compiler-profile-summary-offset scope rank)) key)
+        (set! found rank)
+        (set! rank (+ rank 1))))
+    found))
 
 (define (compiler-profile-summary-swap!
   [state : profile_state.CompilerProfileState]
@@ -244,17 +234,16 @@
       (compiler-profile-summary-array-element-shared-view names li)]
     [elapsed : i64 (array-ref elapsed-values li)]
     [calls : i64 (array-ref call-values li)]
-    (begin
-      (set! (array-ref keys li) (array-ref keys ri))
-      (set!
-        (array-ref names li)
-        (compiler-profile-summary-array-element-shared-view names ri))
-      (set! (array-ref elapsed-values li) (array-ref elapsed-values ri))
-      (set! (array-ref call-values li) (array-ref call-values ri))
-      (set! (array-ref keys ri) key)
-      (set! (array-ref names ri) name)
-      (set! (array-ref elapsed-values ri) elapsed)
-      (set! (array-ref call-values ri) calls))))
+    (set! (array-ref keys li) (array-ref keys ri))
+    (set!
+      (array-ref names li)
+      (compiler-profile-summary-array-element-shared-view names ri))
+    (set! (array-ref elapsed-values li) (array-ref elapsed-values ri))
+    (set! (array-ref call-values li) (array-ref call-values ri))
+    (set! (array-ref keys ri) key)
+    (set! (array-ref names ri) name)
+    (set! (array-ref elapsed-values ri) elapsed)
+    (set! (array-ref call-values ri) calls)))
 
 (define (compiler-profile-summary-bubble!
   [state : profile_state.CompilerProfileState]
@@ -269,15 +258,14 @@
         (profile_state.compiler-profile-state-summary-elapsed state)]
       [i : i64 (compiler-profile-summary-offset scope rank)]
       [p : i64 (compiler-profile-summary-offset scope (- rank 1))]
-      (if (compiler-profile-summary-better?
-        (array-ref keys i)
-        (array-ref elapsed-values i)
-        (array-ref keys p)
-        (array-ref elapsed-values p))
-        (begin
-          (compiler-profile-summary-swap! state scope rank (- rank 1))
-          (compiler-profile-summary-bubble! state scope (- rank 1)))
-        unit))))
+      (when
+        (compiler-profile-summary-better?
+          (array-ref keys i)
+          (array-ref elapsed-values i)
+          (array-ref keys p)
+          (array-ref elapsed-values p))
+        (compiler-profile-summary-swap! state scope rank (- rank 1))
+        (compiler-profile-summary-bubble! state scope (- rank 1))))))
 
 (define (compiler-profile-summary-consider!
   [state : profile_state.CompilerProfileState]
@@ -302,37 +290,35 @@
     (if (>= found 0)
       (let
         [index : i64 (compiler-profile-summary-offset scope found)]
-        (begin
-          (set!
-            (array-ref elapsed-values index)
-            (+ (array-ref elapsed-values index) elapsed))
-          (set!
-            (array-ref call-values index)
-            (+ (array-ref call-values index) calls))
-          (compiler-profile-summary-bubble! state scope found)))
+        (set!
+          (array-ref elapsed-values index)
+          (+ (array-ref elapsed-values index) elapsed))
+        (set!
+          (array-ref call-values index)
+          (+ (array-ref call-values index) calls))
+        (compiler-profile-summary-bubble! state scope found))
       (let
         [rank : i64
           (if (< count compiler-profile-summary-top-count)
             count
             (- count 1))]
         [index : i64 (compiler-profile-summary-offset scope rank)]
-        (if (or
-          (< count compiler-profile-summary-top-count)
-          (compiler-profile-summary-better?
-            key
-            elapsed
-            (array-ref keys index)
-            (array-ref elapsed-values index)))
-          (begin
-            (set! (array-ref keys index) key)
-            (set! (array-ref names index) name)
-            (set! (array-ref elapsed-values index) elapsed)
-            (set! (array-ref call-values index) calls)
-            (if (< count compiler-profile-summary-top-count)
-              (set! (array-ref counts scope) (+ count 1))
-              unit)
-            (compiler-profile-summary-bubble! state scope rank))
-          unit)))))
+        (when
+          (or
+            (< count compiler-profile-summary-top-count)
+            (compiler-profile-summary-better?
+              key
+              elapsed
+              (array-ref keys index)
+              (array-ref elapsed-values index)))
+          (set! (array-ref keys index) key)
+          (set! (array-ref names index) name)
+          (set! (array-ref elapsed-values index) elapsed)
+          (set! (array-ref call-values index) calls)
+          (if (< count compiler-profile-summary-top-count)
+            (set! (array-ref counts scope) (+ count 1))
+            unit)
+          (compiler-profile-summary-bubble! state scope rank))))))
 
 (define (compiler-profile-summary-note-key!
   [state : profile_state.CompilerProfileState]
@@ -345,14 +331,13 @@
       (profile_state.compiler-profile-state-summary-total-elapsed state)]
     [total-calls : (__tl_dyn-array i64)
       (profile_state.compiler-profile-state-summary-total-calls state)]
-    (begin
-      (set!
-        (array-ref total-elapsed scope)
-        (+ (array-ref total-elapsed scope) elapsed))
-      (set! (array-ref total-calls scope) (+ (array-ref total-calls scope) 1))
-      (if (compiler-profile-summary-exact-scope? scope)
-        (compiler-profile-summary-note-exact! state scope key name elapsed)
-        (compiler-profile-summary-consider! state scope key name elapsed 1)))))
+    (set!
+      (array-ref total-elapsed scope)
+      (+ (array-ref total-elapsed scope) elapsed))
+    (set! (array-ref total-calls scope) (+ (array-ref total-calls scope) 1))
+    (if (compiler-profile-summary-exact-scope? scope)
+      (compiler-profile-summary-note-exact! state scope key name elapsed)
+      (compiler-profile-summary-consider! state scope key name elapsed 1))))
 
 (define (compiler-profile-summary-note!
   [state : profile_state.CompilerProfileState]
@@ -372,25 +357,23 @@
     [index : i64 0]
     [last : i64 -1]
     [source-end : i64 -1]
-    (begin
-      (while (< index length)
-        (begin
-          (if (and
-            (< source-end 0)
-            (< (+ index 1) length)
-            (= (string.string-ref name index) ':')
-            (= (string.string-ref name (+ index 1)) ':'))
-            (set! source-end index)
-            unit)
-          (if (= (string.string-ref name index) '/')
-            (set! last index)
-            unit)
-          (set! index (+ index 1))))
-      (if (>= source-end 0)
-        (string.substring name 0 source-end)
-        (if (< last 0)
-          "<root>"
-          (string.substring name 0 last))))))
+    (while (< index length)
+      (if (and
+        (< source-end 0)
+        (< (+ index 1) length)
+        (= (string.string-ref name index) ':')
+        (= (string.string-ref name (+ index 1)) ':'))
+        (set! source-end index)
+        unit)
+      (if (= (string.string-ref name index) '/')
+        (set! last index)
+        unit)
+      (set! index (+ index 1)))
+    (if (>= source-end 0)
+      (string.substring name 0 source-end)
+      (if (< last 0)
+        "<root>"
+        (string.substring name 0 last)))))
 
 (define (compiler-profile-summary-note-module!
   [state : profile_state.CompilerProfileState]
@@ -431,43 +414,39 @@
         compiler-profile-summary-top-count)]
     [index : i64 0]
     [top-count : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [offset : i64 (+ dense-offset index)]
-          [rank : i64 0]
-          (begin
-            (while (and
-              (< rank top-count)
-              (let
-                [other : i64 (array-ref top (+ top-offset rank))]
-                (not
-                  (compiler-profile-summary-better?
-                    (array-ref keys offset)
-                    (array-ref elapsed-values offset)
-                    (array-ref keys (+ dense-offset other))
-                    (array-ref elapsed-values (+ dense-offset other))))))
-              (set! rank (+ rank 1)))
-            (if (< rank compiler-profile-summary-top-count)
-              (let
-                [shift : i64
-                  (if (< top-count compiler-profile-summary-top-count)
-                    top-count
-                    (- compiler-profile-summary-top-count 1))]
-                (begin
-                  (while (> shift rank)
-                    (begin
-                      (set!
-                        (array-ref top (+ top-offset shift))
-                        (array-ref top (+ top-offset (- shift 1))))
-                      (set! shift (- shift 1))))
-                  (set! (array-ref top (+ top-offset rank)) index)
-                  (if (< top-count compiler-profile-summary-top-count)
-                    (set! top-count (+ top-count 1))
-                    unit)))
-              unit)
-            (set! index (+ index 1)))))
-      (set! (array-ref counts scope) top-count))))
+    (while (< index count)
+      (let
+        [offset : i64 (+ dense-offset index)]
+        [rank : i64 0]
+        (while (and
+          (< rank top-count)
+          (let
+            [other : i64 (array-ref top (+ top-offset rank))]
+            (not
+              (compiler-profile-summary-better?
+                (array-ref keys offset)
+                (array-ref elapsed-values offset)
+                (array-ref keys (+ dense-offset other))
+                (array-ref elapsed-values (+ dense-offset other))))))
+          (set! rank (+ rank 1)))
+        (if (< rank compiler-profile-summary-top-count)
+          (let
+            [shift : i64
+              (if (< top-count compiler-profile-summary-top-count)
+                top-count
+                (- compiler-profile-summary-top-count 1))]
+            (while (> shift rank)
+              (set!
+                (array-ref top (+ top-offset shift))
+                (array-ref top (+ top-offset (- shift 1))))
+              (set! shift (- shift 1)))
+            (set! (array-ref top (+ top-offset rank)) index)
+            (if (< top-count compiler-profile-summary-top-count)
+              (set! top-count (+ top-count 1))
+              unit))
+          unit)
+        (set! index (+ index 1))))
+    (set! (array-ref counts scope) top-count)))
 
 (define (compiler-profile-summary-line
   [scope-name : String]
@@ -497,86 +476,81 @@
   [scope : i64]
   [scope-name : String]
   [kind : String]) : unit
-  (begin
-    (if (compiler-profile-summary-exact-scope? scope)
-      (compiler-profile-summary-rank-exact! state scope)
-      unit)
-    (let
-      [counts : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-counts state)]
-      [names : (__tl_dyn-array String)
-        (profile_state.compiler-profile-state-summary-names state)]
-      [elapsed-values : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-elapsed state)]
-      [call-values : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-calls state)]
-      [exact-names : (__tl_dyn-array String)
-        (profile_state.compiler-profile-state-summary-exact-names state)]
-      [exact-elapsed : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-exact-elapsed state)]
-      [exact-calls : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-exact-calls state)]
-      [exact-top : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-exact-top state)]
-      [total-elapsed : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-total-elapsed state)]
-      [total-calls : (__tl_dyn-array i64)
-        (profile_state.compiler-profile-state-summary-total-calls state)]
-      [count : i64 (array-ref counts scope)]
-      [rank : i64 0]
-      [shown-elapsed : i64 0]
-      [shown-calls : i64 0]
-      (begin
-        (while (< rank count)
-          (let
-            [index : i64 (compiler-profile-summary-offset scope rank)]
-            [exact-index : i64
-              (if (compiler-profile-summary-exact-scope? scope)
-                (compiler-profile-summary-exact-offset
-                  scope
-                  (array-ref
-                    exact-top
-                    (+
-                      (*
-                        (compiler-profile-summary-exact-scope-index scope)
-                        compiler-profile-summary-top-count)
-                      rank)))
-                0)]
-            [elapsed : i64
-              (if (compiler-profile-summary-exact-scope? scope)
-                (array-ref exact-elapsed exact-index)
-                (array-ref elapsed-values index))]
-            [calls : i64
-              (if (compiler-profile-summary-exact-scope? scope)
-                (array-ref exact-calls exact-index)
-                (array-ref call-values index))]
-            (begin
-              (compiler-profile-summary-line
-                (owned_view.compiler-owned-shared-view scope-name)
-                (owned_view.compiler-owned-shared-view kind)
-                (+ rank 1)
-                (if (compiler-profile-summary-exact-scope? scope)
-                  (if (string.eq kind "module")
-                    (compiler-profile-summary-module
-                      (array-ref exact-names exact-index))
-                    (owned_view.compiler-owned-array-element-shared-view
-                      exact-names
-                      exact-index))
-                  (owned_view.compiler-owned-array-element-shared-view
-                    names
-                    index))
-                elapsed
-                calls)
-              (set! shown-elapsed (+ shown-elapsed elapsed))
-              (set! shown-calls (+ shown-calls calls))
-              (set! rank (+ rank 1)))))
+  (if (compiler-profile-summary-exact-scope? scope)
+    (compiler-profile-summary-rank-exact! state scope)
+    unit)
+  (let
+    [counts : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-counts state)]
+    [names : (__tl_dyn-array String)
+      (profile_state.compiler-profile-state-summary-names state)]
+    [elapsed-values : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-elapsed state)]
+    [call-values : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-calls state)]
+    [exact-names : (__tl_dyn-array String)
+      (profile_state.compiler-profile-state-summary-exact-names state)]
+    [exact-elapsed : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-exact-elapsed state)]
+    [exact-calls : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-exact-calls state)]
+    [exact-top : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-exact-top state)]
+    [total-elapsed : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-total-elapsed state)]
+    [total-calls : (__tl_dyn-array i64)
+      (profile_state.compiler-profile-state-summary-total-calls state)]
+    [count : i64 (array-ref counts scope)]
+    [rank : i64 0]
+    [shown-elapsed : i64 0]
+    [shown-calls : i64 0]
+    (while (< rank count)
+      (let
+        [index : i64 (compiler-profile-summary-offset scope rank)]
+        [exact-index : i64
+          (if (compiler-profile-summary-exact-scope? scope)
+            (compiler-profile-summary-exact-offset
+              scope
+              (array-ref
+                exact-top
+                (+
+                  (*
+                    (compiler-profile-summary-exact-scope-index scope)
+                    compiler-profile-summary-top-count)
+                  rank)))
+            0)]
+        [elapsed : i64
+          (if (compiler-profile-summary-exact-scope? scope)
+            (array-ref exact-elapsed exact-index)
+            (array-ref elapsed-values index))]
+        [calls : i64
+          (if (compiler-profile-summary-exact-scope? scope)
+            (array-ref exact-calls exact-index)
+            (array-ref call-values index))]
         (compiler-profile-summary-line
           (owned_view.compiler-owned-shared-view scope-name)
           (owned_view.compiler-owned-shared-view kind)
-          0
-          "<remainder>"
-          (- (array-ref total-elapsed scope) shown-elapsed)
-          (- (array-ref total-calls scope) shown-calls))))))
+          (+ rank 1)
+          (if (compiler-profile-summary-exact-scope? scope)
+            (if (string.eq kind "module")
+              (compiler-profile-summary-module
+                (array-ref exact-names exact-index))
+              (owned_view.compiler-owned-array-element-shared-view
+                exact-names
+                exact-index))
+            (owned_view.compiler-owned-array-element-shared-view names index))
+          elapsed
+          calls)
+        (set! shown-elapsed (+ shown-elapsed elapsed))
+        (set! shown-calls (+ shown-calls calls))
+        (set! rank (+ rank 1))))
+    (compiler-profile-summary-line
+      (owned_view.compiler-owned-shared-view scope-name)
+      (owned_view.compiler-owned-shared-view kind)
+      0
+      "<remainder>"
+      (- (array-ref total-elapsed scope) shown-elapsed)
+      (- (array-ref total-calls scope) shown-calls))))
 
 (define (compiler-profile-summary-exact-find
   [state : profile_state.CompilerProfileState]
@@ -592,127 +566,118 @@
       (profile_state.compiler-profile-state-summary-exact-names state)]
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (if (string.eq (array-ref names (+ offset index)) name)
-          (set! found (+ offset index))
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< found 0) (< index count))
+      (if (string.eq (array-ref names (+ offset index)) name)
+        (set! found (+ offset index))
+        (set! index (+ index 1))))
+    found))
 
 (define (compiler-profile-summary-exact-regression [scope : i64]) : unit
   (let
     [state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
-    (begin
-      (compiler-profile-summary-reset! state)
-      ;; "target" begins below the retained top eight, then returns to first.
-      (compiler-profile-summary-note! state scope "target" 1)
-      (compiler-profile-summary-note! state scope "a" 10)
-      (compiler-profile-summary-note! state scope "b" 10)
-      (compiler-profile-summary-note! state scope "c" 10)
-      (compiler-profile-summary-note! state scope "d" 10)
-      (compiler-profile-summary-note! state scope "e" 10)
-      (compiler-profile-summary-note! state scope "f" 10)
-      (compiler-profile-summary-note! state scope "g" 10)
-      (compiler-profile-summary-note! state scope "h" 10)
-      (compiler-profile-summary-note! state scope "i" 10)
-      (compiler-profile-summary-note! state scope "target" 100)
-      (compiler-profile-summary-note! state scope "target" 100)
-      (compiler-profile-summary-rank-exact! state scope)
-      (let
-        [target : i64
-          (compiler-profile-summary-exact-find state scope "target")]
-        [top-offset : i64
-          (*
-            (compiler-profile-summary-exact-scope-index scope)
-            compiler-profile-summary-top-count)]
-        [first : i64
-          (compiler-profile-summary-exact-offset
-            scope
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-top state)
-              top-offset))]
-        [exact-names : (__tl_dyn-array String)
-          (profile_state.compiler-profile-state-summary-exact-names state)]
-        [rank : i64 0]
-        [shown-elapsed : i64 0]
-        [shown-calls : i64 0]
-        [expected : String "target"]
-        (begin
-          (test.assert-string-eq
-            (& (array-ref exact-names first))
-            (& expected)
-            "exact recurring row returns to rank one")
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-elapsed state)
-              target)
-            201
-            "exact recurring row retains elapsed time")
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-calls state)
-              target)
-            3
-            "exact recurring row retains call count")
-          (while (<
-            rank
-            (array-ref
-              (profile_state.compiler-profile-state-summary-counts state)
-              scope))
-            (let
-              [index : i64
-                (compiler-profile-summary-exact-offset
-                  scope
-                  (array-ref
-                    (profile_state.compiler-profile-state-summary-exact-top
-                      state)
-                    (+ top-offset rank)))]
-              (begin
-                (set!
-                  shown-elapsed
-                  (+
-                    shown-elapsed
-                    (array-ref
-                      (profile_state.compiler-profile-state-summary-exact-elapsed
-                        state)
-                      index)))
-                (set!
-                  shown-calls
-                  (+
-                    shown-calls
-                    (array-ref
-                      (profile_state.compiler-profile-state-summary-exact-calls
-                        state)
-                      index)))
-                (set! rank (+ rank 1)))))
-          (test.assert-i64-eq
-            (-
+    (compiler-profile-summary-reset! state)
+    ;; "target" begins below the retained top eight, then returns to first.
+    (compiler-profile-summary-note! state scope "target" 1)
+    (compiler-profile-summary-note! state scope "a" 10)
+    (compiler-profile-summary-note! state scope "b" 10)
+    (compiler-profile-summary-note! state scope "c" 10)
+    (compiler-profile-summary-note! state scope "d" 10)
+    (compiler-profile-summary-note! state scope "e" 10)
+    (compiler-profile-summary-note! state scope "f" 10)
+    (compiler-profile-summary-note! state scope "g" 10)
+    (compiler-profile-summary-note! state scope "h" 10)
+    (compiler-profile-summary-note! state scope "i" 10)
+    (compiler-profile-summary-note! state scope "target" 100)
+    (compiler-profile-summary-note! state scope "target" 100)
+    (compiler-profile-summary-rank-exact! state scope)
+    (let
+      [target : i64 (compiler-profile-summary-exact-find state scope "target")]
+      [top-offset : i64
+        (*
+          (compiler-profile-summary-exact-scope-index scope)
+          compiler-profile-summary-top-count)]
+      [first : i64
+        (compiler-profile-summary-exact-offset
+          scope
+          (array-ref
+            (profile_state.compiler-profile-state-summary-exact-top state)
+            top-offset))]
+      [exact-names : (__tl_dyn-array String)
+        (profile_state.compiler-profile-state-summary-exact-names state)]
+      [rank : i64 0]
+      [shown-elapsed : i64 0]
+      [shown-calls : i64 0]
+      [expected : String "target"]
+      (test.assert-string-eq
+        (& (array-ref exact-names first))
+        (& expected)
+        "exact recurring row returns to rank one")
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-elapsed state)
+          target)
+        201
+        "exact recurring row retains elapsed time")
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-calls state)
+          target)
+        3
+        "exact recurring row retains call count")
+      (while (<
+        rank
+        (array-ref
+          (profile_state.compiler-profile-state-summary-counts state)
+          scope))
+        (let
+          [index : i64
+            (compiler-profile-summary-exact-offset
+              scope
               (array-ref
-                (profile_state.compiler-profile-state-summary-total-elapsed
+                (profile_state.compiler-profile-state-summary-exact-top state)
+                (+ top-offset rank)))]
+          (set!
+            shown-elapsed
+            (+
+              shown-elapsed
+              (array-ref
+                (profile_state.compiler-profile-state-summary-exact-elapsed
                   state)
-                scope)
-              shown-elapsed)
-            20
-            "exact recurring scope remainder retains elapsed time")
-          (test.assert-i64-eq
-            (-
+                index)))
+          (set!
+            shown-calls
+            (+
+              shown-calls
               (array-ref
-                (profile_state.compiler-profile-state-summary-total-calls state)
-                scope)
-              shown-calls)
-            2
-            "exact recurring scope remainder retains call count"))))))
+                (profile_state.compiler-profile-state-summary-exact-calls state)
+                index)))
+          (set! rank (+ rank 1))))
+      (test.assert-i64-eq
+        (-
+          (array-ref
+            (profile_state.compiler-profile-state-summary-total-elapsed state)
+            scope)
+          shown-elapsed)
+        20
+        "exact recurring scope remainder retains elapsed time")
+      (test.assert-i64-eq
+        (-
+          (array-ref
+            (profile_state.compiler-profile-state-summary-total-calls state)
+            scope)
+          shown-calls)
+        2
+        "exact recurring scope remainder retains call count"))))
 
 (test
   compiler-profile-summary-exact-eviction-reentry
-  (begin
-    (compiler-profile-summary-exact-regression
-      compiler-profile-summary-optimizer-pass)
-    (compiler-profile-summary-exact-regression
-      compiler-profile-summary-optimizer-module)
-    (compiler-profile-summary-exact-regression
-      compiler-profile-summary-backend-module)))
+  (compiler-profile-summary-exact-regression
+    compiler-profile-summary-optimizer-pass)
+  (compiler-profile-summary-exact-regression
+    compiler-profile-summary-optimizer-module)
+  (compiler-profile-summary-exact-regression
+    compiler-profile-summary-backend-module))
 
 (test
   compiler-profile-summary-job-isolation
@@ -721,121 +686,119 @@
       (profile_state.compiler-profile-state-new)]
     [right : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
-    (begin
-      (compiler-profile-summary-reset! left)
-      (compiler-profile-summary-reset! right)
-      ;; Interleave overlapping optimizer and backend identities.
-      (compiler-profile-summary-note!
-        left
-        compiler-profile-summary-optimizer-pass
-        "shared-pass"
-        11)
-      (compiler-profile-summary-note!
-        right
-        compiler-profile-summary-optimizer-pass
-        "shared-pass"
-        3)
-      (compiler-profile-summary-note!
-        left
-        compiler-profile-summary-backend-module
-        "shared/module::left"
-        7)
-      (compiler-profile-summary-note!
-        right
-        compiler-profile-summary-backend-module
-        "shared/module::right"
-        19)
-      (compiler-profile-summary-note!
-        left
-        compiler-profile-summary-optimizer-pass
-        "shared-pass"
-        5)
-      (compiler-profile-summary-reset! right)
-      (compiler-profile-summary-note!
-        right
-        compiler-profile-summary-optimizer-pass
-        "right-only"
-        23)
-      (compiler-profile-summary-rank-exact!
-        left
-        compiler-profile-summary-optimizer-pass)
-      (compiler-profile-summary-rank-exact!
-        left
-        compiler-profile-summary-backend-module)
-      (compiler-profile-summary-rank-exact!
-        right
-        compiler-profile-summary-optimizer-pass)
-      (let
-        [left-names : (__tl_dyn-array String)
-          (profile_state.compiler-profile-state-summary-exact-names left)]
-        [right-names : (__tl_dyn-array String)
-          (profile_state.compiler-profile-state-summary-exact-names right)]
-        [left-pass : i64
-          (compiler-profile-summary-exact-find
-            left
-            compiler-profile-summary-optimizer-pass
-            "shared-pass")]
-        [left-backend : i64
-          (compiler-profile-summary-exact-find
-            left
-            compiler-profile-summary-backend-module
-            "shared/module::left")]
-        [right-pass : i64
-          (compiler-profile-summary-exact-find
-            right
-            compiler-profile-summary-optimizer-pass
-            "right-only")]
-        [left-pass-top : i64
-          (compiler-profile-summary-exact-offset
-            compiler-profile-summary-optimizer-pass
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-top left)
-              0))]
-        [right-pass-top : i64
-          (compiler-profile-summary-exact-offset
-            compiler-profile-summary-optimizer-pass
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-top right)
-              0))]
-        [left-pass-name : String "shared-pass"]
-        [right-pass-name : String "right-only"]
-        (begin
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-elapsed left)
-              left-pass)
-            16
-            "left optimizer elapsed survives right reset")
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-calls left)
-              left-pass)
-            2
-            "left optimizer calls stay independent")
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-elapsed left)
-              left-backend)
-            7
-            "left backend row survives right reset")
-          (test.assert-i64-eq
-            (compiler-profile-summary-exact-find
-              right
-              compiler-profile-summary-optimizer-pass
-              "shared-pass")
-            -1
-            "right reset removes only right rows")
-          (test.assert-i64-eq
-            (array-ref
-              (profile_state.compiler-profile-state-summary-exact-elapsed right)
-              right-pass)
-            23
-            "right optimizer row remains independent")
-          (test.assert-string-eq
-            (& (array-ref left-names left-pass-top))
-            (& left-pass-name)
-            "left top row is ranked from left state")
-          (test.assert-string-eq
-            (& (array-ref right-names right-pass-top))
-            (& right-pass-name)
-            "right top row is ranked from right state"))))))
+    (compiler-profile-summary-reset! left)
+    (compiler-profile-summary-reset! right)
+    ;; Interleave overlapping optimizer and backend identities.
+    (compiler-profile-summary-note!
+      left
+      compiler-profile-summary-optimizer-pass
+      "shared-pass"
+      11)
+    (compiler-profile-summary-note!
+      right
+      compiler-profile-summary-optimizer-pass
+      "shared-pass"
+      3)
+    (compiler-profile-summary-note!
+      left
+      compiler-profile-summary-backend-module
+      "shared/module::left"
+      7)
+    (compiler-profile-summary-note!
+      right
+      compiler-profile-summary-backend-module
+      "shared/module::right"
+      19)
+    (compiler-profile-summary-note!
+      left
+      compiler-profile-summary-optimizer-pass
+      "shared-pass"
+      5)
+    (compiler-profile-summary-reset! right)
+    (compiler-profile-summary-note!
+      right
+      compiler-profile-summary-optimizer-pass
+      "right-only"
+      23)
+    (compiler-profile-summary-rank-exact!
+      left
+      compiler-profile-summary-optimizer-pass)
+    (compiler-profile-summary-rank-exact!
+      left
+      compiler-profile-summary-backend-module)
+    (compiler-profile-summary-rank-exact!
+      right
+      compiler-profile-summary-optimizer-pass)
+    (let
+      [left-names : (__tl_dyn-array String)
+        (profile_state.compiler-profile-state-summary-exact-names left)]
+      [right-names : (__tl_dyn-array String)
+        (profile_state.compiler-profile-state-summary-exact-names right)]
+      [left-pass : i64
+        (compiler-profile-summary-exact-find
+          left
+          compiler-profile-summary-optimizer-pass
+          "shared-pass")]
+      [left-backend : i64
+        (compiler-profile-summary-exact-find
+          left
+          compiler-profile-summary-backend-module
+          "shared/module::left")]
+      [right-pass : i64
+        (compiler-profile-summary-exact-find
+          right
+          compiler-profile-summary-optimizer-pass
+          "right-only")]
+      [left-pass-top : i64
+        (compiler-profile-summary-exact-offset
+          compiler-profile-summary-optimizer-pass
+          (array-ref
+            (profile_state.compiler-profile-state-summary-exact-top left)
+            0))]
+      [right-pass-top : i64
+        (compiler-profile-summary-exact-offset
+          compiler-profile-summary-optimizer-pass
+          (array-ref
+            (profile_state.compiler-profile-state-summary-exact-top right)
+            0))]
+      [left-pass-name : String "shared-pass"]
+      [right-pass-name : String "right-only"]
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-elapsed left)
+          left-pass)
+        16
+        "left optimizer elapsed survives right reset")
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-calls left)
+          left-pass)
+        2
+        "left optimizer calls stay independent")
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-elapsed left)
+          left-backend)
+        7
+        "left backend row survives right reset")
+      (test.assert-i64-eq
+        (compiler-profile-summary-exact-find
+          right
+          compiler-profile-summary-optimizer-pass
+          "shared-pass")
+        -1
+        "right reset removes only right rows")
+      (test.assert-i64-eq
+        (array-ref
+          (profile_state.compiler-profile-state-summary-exact-elapsed right)
+          right-pass)
+        23
+        "right optimizer row remains independent")
+      (test.assert-string-eq
+        (& (array-ref left-names left-pass-top))
+        (& left-pass-name)
+        "left top row is ranked from left state")
+      (test.assert-string-eq
+        (& (array-ref right-names right-pass-top))
+        (& right-pass-name)
+        "right top row is ranked from right state"))))

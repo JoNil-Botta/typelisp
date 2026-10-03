@@ -73,19 +73,18 @@
     [idx : i64 0]
     [done : bool false]
     [less : bool false]
-    (begin
-      (while (and (not done) (< idx limit))
-        (let
-          [lc : i64 (package-source-char-code-at left idx)]
-          [rc : i64 (package-source-char-code-at right idx)]
-          (if (= lc rc)
-            (set! idx (+ idx 1))
-            (begin
-              (set! less (< lc rc))
-              (set! done true)))))
-      (if done
-        less
-        (< left-len right-len)))))
+    (while (and (not done) (< idx limit))
+      (let
+        [lc : i64 (package-source-char-code-at left idx)]
+        [rc : i64 (package-source-char-code-at right idx)]
+        (if (= lc rc)
+          (set! idx (+ idx 1))
+          (begin
+            (set! less (< lc rc))
+            (set! done true)))))
+    (if done
+      less
+      (< left-len right-len))))
 
 (define (package-source-vec-insert-slot-from
   [items : (& items svec.Vec)]
@@ -111,12 +110,10 @@
   (let
     [idx : i64 start]
     [cur : svec.Vec out]
-    (begin
-      (while (< idx end)
-        (begin
-          (svec.push-ref! (&mut cur) (svec.get (& items) idx ""))
-          (set! idx (+ idx 1))))
-      cur)))
+    (while (< idx end)
+      (svec.push-ref! (&mut cur) (svec.get (& items) idx ""))
+      (set! idx (+ idx 1)))
+    cur))
 
 (define (package-source-vec-insert-at
   [items : svec.Vec]
@@ -124,13 +121,12 @@
   [slot : i64]) : svec.Vec
   (let
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
-    (begin
-      (set! out (package-source-vec-copy-range items out 0 slot))
-      (svec.push-ref! (&mut out) value)
-      (set!
-        out
-        (package-source-vec-copy-range items out slot (svec.len (& items))))
-      out)))
+    (set! out (package-source-vec-copy-range items out 0 slot))
+    (svec.push-ref! (&mut out) value)
+    (set!
+      out
+      (package-source-vec-copy-range items out slot (svec.len (& items))))
+    out))
 
 (define (package-source-vec-insert [items : svec.Vec] [value : String]) : svec.Vec
   (let
@@ -536,9 +532,8 @@
       (compiler_load.compiler-load-normalize-path
         (package-source-root-join source-set.manifest-dir manifest.entry))]
     [items : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut items) entry)
-      items)))
+    (svec.push-ref! (&mut items) entry)
+    items))
 
 (define (package-source-scan-dir
   [command : String]
@@ -719,12 +714,11 @@
   [end : i64]) : i64
   (let
     [index : i64 start]
-    (begin
-      (while (and
-        (< index end)
-        (not (fs.path-separator? (string.string-ref relative index))))
-        (set! index (+ index 1)))
-      index)))
+    (while (and
+      (< index end)
+      (not (fs.path-separator? (string.string-ref relative index))))
+      (set! index (+ index 1)))
+    index))
 
 ;; Check the directory segments that lead to one source. The root's own
 ;; manifest is allowed; a manifest below it is a nested-package boundary.
@@ -736,37 +730,32 @@
     [cursor : i64 0]
     [prefix : String ""]
     [eligible : bool true]
-    (begin
-      (while (and eligible (>= end 0) (< cursor end))
-        (let
-          [separator : i64
-            (package-source-relative-separator relative cursor end)]
-          [name : String
-            (string.substring relative cursor (- separator cursor))]
-          (begin
-            (if (or
-              (= (string.string-length name) 0)
-              (package-source-skip-dir?
-                (owned_view.compiler-owned-shared-view name)))
-              (set! eligible false)
-              (let
-                [next-prefix : String
-                  (package-source-relative-join prefix name)]
-                [parent : String (package-source-root-join root next-prefix)]
-                (begin
-                  (set! prefix next-prefix)
-                  ;; Match recursive discovery: every parent must be a real
-                  ;; directory, never a symlink or Windows reparse point.
-                  (match (fs.try-file-kind-no-follow (& parent))
-                    [(ErrFsFileKind _) (set! eligible false)]
-                    [(OkFsFileKind kind)
-                      (if (and
-                        (fs.file-kind-directory? kind)
-                        (not (package-source-dir-has-manifest? parent)))
-                        unit
-                        (set! eligible false))]))))
-            (set! cursor (+ separator 1)))))
-      eligible)))
+    (while (and eligible (>= end 0) (< cursor end))
+      (let
+        [separator : i64
+          (package-source-relative-separator relative cursor end)]
+        [name : String (string.substring relative cursor (- separator cursor))]
+        (if (or
+          (= (string.string-length name) 0)
+          (package-source-skip-dir?
+            (owned_view.compiler-owned-shared-view name)))
+          (set! eligible false)
+          (let
+            [next-prefix : String (package-source-relative-join prefix name)]
+            [parent : String (package-source-root-join root next-prefix)]
+            (set! prefix next-prefix)
+            ;; Match recursive discovery: every parent must be a real
+            ;; directory, never a symlink or Windows reparse point.
+            (match (fs.try-file-kind-no-follow (& parent))
+              [(ErrFsFileKind _) (set! eligible false)]
+              [(OkFsFileKind kind)
+                (if (and
+                  (fs.file-kind-directory? kind)
+                  (not (package-source-dir-has-manifest? parent)))
+                  unit
+                  (set! eligible false))])))
+        (set! cursor (+ separator 1))))
+    eligible))
 
 ;; Parent-policy half of the single-path check. This intentionally does not
 ;; require the file itself to exist so an unsaved open document can still be
@@ -860,30 +849,26 @@
   (let
     [next : i64 hash]
     [index : i64 0]
-    (begin
-      (while (< index 8)
-        (begin
-          (set!
-            next
-            (package-source-binding-hash-byte next (shr value (* index 8))))
-          (set! index (+ index 1))))
-      next)))
+    (while (< index 8)
+      (set!
+        next
+        (package-source-binding-hash-byte next (shr value (* index 8))))
+      (set! index (+ index 1)))
+    next))
 
 (define (package-source-binding-hash-string [hash : i64] [text : String]) : i64
   (let
     [next : i64 hash]
     [index : i64 0]
     [count : i64 (string.string-length text)]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            next
-            (package-source-binding-hash-byte
-              next
-              (cast (string.string-ref text index) : i64)))
-          (set! index (+ index 1))))
-      next)))
+    (while (< index count)
+      (set!
+        next
+        (package-source-binding-hash-byte
+          next
+          (cast (string.string-ref text index) : i64)))
+      (set! index (+ index 1)))
+    next))
 
 (define (package-source-binding-hash-bytes
   [hash : i64]
@@ -892,16 +877,14 @@
     [next : i64 hash]
     [index : i64 0]
     [count : i64 (array-length bytes)]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            next
-            (package-source-binding-hash-byte
-              next
-              (cast (array-ref bytes index) : i64)))
-          (set! index (+ index 1))))
-      next)))
+    (while (< index count)
+      (set!
+        next
+        (package-source-binding-hash-byte
+          next
+          (cast (array-ref bytes index) : i64)))
+      (set! index (+ index 1)))
+    next))
 
 (define (package-source-binding-relative-path
   [root : (& root str)]

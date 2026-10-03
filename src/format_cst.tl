@@ -62,11 +62,10 @@
   [src : (& src (__tl_dyn-array FormatCst))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (format-cst-vec-copy-range! dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (format-cst-vec-copy-range! dst src (+ index 1) count)))
 
 (define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
   (let
@@ -77,20 +76,17 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array FormatCst) (__tl_make-array FormatCst new-cap)]
-    (begin
-      (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
-      (set! v.slots bigger))))
+    (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
+    (set! v.slots bigger)))
 
 (define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (format-cst-vec-grow! v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+  (if (< v.len (array-length v.slots))
+    unit
+    (format-cst-vec-grow! v))
+  (let
+    [index : i64 v.len]
+    (set! (array-ref v.slots index) value)
+    (set! v.len (+ index 1))))
 
 (define (fmt-cst-list-nil) : FormatCstList
   (FormatCstList (__tl_make-array FormatCst 0) 0 0))
@@ -104,17 +100,15 @@
   (match (fmt-cst-list-step items)
     [(Empty) unit]
     [(Item node rest)
-      (begin
-        (format-cst-vec-push! v node)
-        (fmt-cst-vec-push-list! v rest))]))
+      (format-cst-vec-push! v node)
+      (fmt-cst-vec-push-list! v rest)]))
 
 (define (fmt-cst-list-cons [head : FormatCst] [rest : FormatCstList]) : FormatCstList
   (let
     [out : FormatCstVec (format-cst-vec-new)]
-    (begin
-      (format-cst-vec-push! (&mut out) head)
-      (fmt-cst-vec-push-list! (&mut out) rest)
-      (fmt-cst-list-from-vec out))))
+    (format-cst-vec-push! (&mut out) head)
+    (fmt-cst-vec-push-list! (&mut out) rest)
+    (fmt-cst-list-from-vec out)))
 
 (define (fmt-cst-list-step [items : (& items FormatCstList)]) : FormatCstListStep
   (let
@@ -169,9 +163,8 @@
           [(Ok parsed)
             (match parsed
               [(Parsed node next)
-                (begin
-                  (format-cst-vec-push! items node)
-                  (fmt-parse-seq-into-result stream next stop-tag items))])]
+                (format-cst-vec-push! items node)
+                (fmt-parse-seq-into-result stream next stop-tag items)])]
           [(Err err) (Err err)])])))
 
 (define (fmt-parse-seq-result
@@ -204,16 +197,15 @@
             [(Ok parsed)
               (match parsed
                 [(Parsed node next)
-                  (begin
-                    (format-cst-vec-push! (&mut items) node)
-                    (match (fmt-parse-seq-into-result
-                      stream
-                      next
-                      stop-tag
-                      (&mut items))
-                      [(Ok final)
-                        (Ok (ParsedList (fmt-cst-list-from-vec items) final))]
-                      [(Err err) (Err err)]))])]
+                  (format-cst-vec-push! (&mut items) node)
+                  (match (fmt-parse-seq-into-result
+                    stream
+                    next
+                    stop-tag
+                    (&mut items))
+                    [(Ok final)
+                      (Ok (ParsedList (fmt-cst-list-from-vec items) final))]
+                    [(Err err) (Err err)])])]
             [(Err err) (Err err)]))])))
 
 (define (fmt-parse-one-primary-result

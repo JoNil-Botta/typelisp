@@ -100,61 +100,51 @@
     [rows : ExprList (comptime.expr-list-empty)]
     [resets : ExprList (comptime.expr-list-empty)]
     [index : i64 (comptime.expr-list-length entries)]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (match (comptime.expr-list-nth entries index)
-            [(Expr.Call name fields)
-              (let
-                [counter : Expr name]
-                [row : Expr (comptime.expr-list-nth fields 0)]
-                [kind : String
-                  (if (> (comptime.expr-list-length fields) 1)
-                    (match (comptime.expr-list-nth fields 1)
-                      [(Expr.Var value) value]
-                      [_
-                        (comptime-error
-                          "defcounters: a kind must be a bare name")])
-                    "count")]
-                (begin
-                  (set!
-                    decls
-                    (comptime.expr-list-cons
-                      `(define ,counter : i64
-                        0)
-                      decls))
-                  (set!
-                    resets
-                    (comptime.expr-list-cons `(set! ,counter 0) resets))
-                  (set!
-                    rows
-                    (comptime.expr-list-cons
-                      (match kind
-                        ["count" `(profile-counter-row! ,row ,counter)]
-                        ["us" `(profile-counter-row! ,row (/ ,counter 1000))]
-                        ["kb" `(profile-counter-row! ,row (/ ,counter 1024))]
-                        ["live" `(profile-counter-live-row! ,row ,counter)]
-                        ["bare" `(profile-counter-bare-row! ,row ,counter)]
-                        [_
-                          (comptime-error
-                            "defcounters: a kind must be `us`, `kb`, `live` or `bare`")])
-                      rows))))]
-            [_
-              (comptime-error
-                "defcounters: an entry must be `(name \"row\" [kind])`")])))
-      `(begin
-        ,@decls
-        (define (,(comptime.expr-var
-            (comptime.string-append table-name "-emit!"))) : unit
-          (begin
-            ,@rows
-            unit))
-        (define (,(comptime.expr-var
-            (comptime.string-append table-name "-reset!"))) : unit
-          (begin
-            ,@resets
-            unit))))))
+    (while (> index 0)
+      (set! index (- index 1))
+      (match (comptime.expr-list-nth entries index)
+        [(Expr.Call name fields)
+          (let
+            [counter : Expr name]
+            [row : Expr (comptime.expr-list-nth fields 0)]
+            [kind : String
+              (if (> (comptime.expr-list-length fields) 1)
+                (match (comptime.expr-list-nth fields 1)
+                  [(Expr.Var value) value]
+                  [_ (comptime-error "defcounters: a kind must be a bare name")])
+                "count")]
+            (set!
+              decls
+              (comptime.expr-list-cons
+                `(define ,counter : i64
+                  0)
+                decls))
+            (set! resets (comptime.expr-list-cons `(set! ,counter 0) resets))
+            (set!
+              rows
+              (comptime.expr-list-cons
+                (match kind
+                  ["count" `(profile-counter-row! ,row ,counter)]
+                  ["us" `(profile-counter-row! ,row (/ ,counter 1000))]
+                  ["kb" `(profile-counter-row! ,row (/ ,counter 1024))]
+                  ["live" `(profile-counter-live-row! ,row ,counter)]
+                  ["bare" `(profile-counter-bare-row! ,row ,counter)]
+                  [_
+                    (comptime-error
+                      "defcounters: a kind must be `us`, `kb`, `live` or `bare`")])
+                rows)))]
+        [_
+          (comptime-error
+            "defcounters: an entry must be `(name \"row\" [kind])`")]))
+    `(begin
+      ,@decls
+      (define (,(comptime.expr-var (comptime.string-append table-name "-emit!"))) : unit
+        ,@rows
+        unit)
+      (define (,(comptime.expr-var
+          (comptime.string-append table-name "-reset!"))) : unit
+        ,@resets
+        unit))))
 
 (defmacro (defslots [table : Expr] [first : Expr] [entries : Expr ...]) : Decls
   (let
@@ -166,70 +156,64 @@
     [decls : ExprList (comptime.expr-list-empty)]
     [rows : ExprList (comptime.expr-list-empty)]
     [index : i64 count]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (match (comptime.expr-list-nth entries index)
-            [(Expr.Call name fields)
+    (while (> index 0)
+      (set! index (- index 1))
+      (match (comptime.expr-list-nth entries index)
+        [(Expr.Call name fields)
+          (let
+            [slot : Expr name]
+            [value : Expr `(profile-slot-value address ,slot)]
+            [field-count : i64 (comptime.expr-list-length fields)]
+            [kind : String
+              (if (> field-count 1)
+                (match (comptime.expr-list-nth fields 1)
+                  [(Expr.Var kind-name) kind-name]
+                  [_ (comptime-error "defslots: a kind must be a bare name")])
+                "count")]
+            (set!
+              decls
+              (comptime.expr-list-cons
+                `(define ,slot : i64
+                  (+ ,first ,(comptime.expr-int index)))
+                decls))
+            (if (> field-count 0)
               (let
-                [slot : Expr name]
-                [value : Expr `(profile-slot-value address ,slot)]
-                [field-count : i64 (comptime.expr-list-length fields)]
-                [kind : String
-                  (if (> field-count 1)
-                    (match (comptime.expr-list-nth fields 1)
-                      [(Expr.Var kind-name) kind-name]
+                [row : Expr (comptime.expr-list-nth fields 0)]
+                (set!
+                  rows
+                  (comptime.expr-list-cons
+                    (match kind
+                      ["count" `(profile-counter-row! ,row ,value)]
+                      ["us" `(profile-counter-row! ,row (/ ,value 1000))]
+                      ["kb" `(profile-counter-row! ,row (/ ,value 1024))]
+                      ["live" `(profile-counter-live-row! ,row ,value)]
+                      ["bare" `(profile-counter-bare-row! ,row ,value)]
                       [_
-                        (comptime-error "defslots: a kind must be a bare name")])
-                    "count")]
-                (begin
-                  (set!
-                    decls
-                    (comptime.expr-list-cons
-                      `(define ,slot : i64
-                        (+ ,first ,(comptime.expr-int index)))
-                      decls))
-                  (if (> field-count 0)
-                    (let
-                      [row : Expr (comptime.expr-list-nth fields 0)]
-                      (set!
-                        rows
-                        (comptime.expr-list-cons
-                          (match kind
-                            ["count" `(profile-counter-row! ,row ,value)]
-                            ["us" `(profile-counter-row! ,row (/ ,value 1000))]
-                            ["kb" `(profile-counter-row! ,row (/ ,value 1024))]
-                            ["live" `(profile-counter-live-row! ,row ,value)]
-                            ["bare" `(profile-counter-bare-row! ,row ,value)]
-                            [_
-                              (comptime-error
-                                "defslots: a kind must be `us`, `kb`, `live` or `bare`")])
-                          rows)))
-                    unit)))]
-            [_
-              (comptime-error
-                "defslots: an entry must be `(name [\"row\" [kind]])`")])))
-      (let
-        [end : Expr
-          `(define ,(comptime.expr-var
-            (comptime.string-append table-name "-end")) : i64
-            (+ ,first ,(comptime.expr-int count)))]
-        (cfg
-          compile-profile
-          (if (> (comptime.expr-list-length rows) 0)
-            `(begin
-              ,@decls
-              ,end
-              (define (,(comptime.expr-var
-                  (comptime.string-append table-name "-emit!"))
-                [address : u64]) : unit
-                (begin
-                  ,@rows
-                  unit)))
-            `(begin
-              ,@decls
-              ,end))
+                        (comptime-error
+                          "defslots: a kind must be `us`, `kb`, `live` or `bare`")])
+                    rows)))
+              unit))]
+        [_
+          (comptime-error
+            "defslots: an entry must be `(name [\"row\" [kind]])`")]))
+    (let
+      [end : Expr
+        `(define ,(comptime.expr-var (comptime.string-append table-name "-end")) : i64
+          (+ ,first ,(comptime.expr-int count)))]
+      (cfg
+        compile-profile
+        (if (> (comptime.expr-list-length rows) 0)
           `(begin
             ,@decls
-            ,end))))))
+            ,end
+            (define (,(comptime.expr-var
+                (comptime.string-append table-name "-emit!"))
+              [address : u64]) : unit
+              ,@rows
+              unit))
+          `(begin
+            ,@decls
+            ,end))
+        `(begin
+          ,@decls
+          ,end)))))

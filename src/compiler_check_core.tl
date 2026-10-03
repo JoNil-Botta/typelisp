@@ -109,16 +109,14 @@
     [index : i64 0]
     [out : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-with-capacity count)]
-    (begin
-      (while (< index count)
-        (begin
-          (cdiag.compiler-diagnostic-list-push!
-            (&mut out)
-            (compiler-check-diagnostic-with-fallback-path
-              (cdiag.compiler-diagnostic-list-get diagnostics index)
-              (owned_view.compiler-owned-shared-view path)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (cdiag.compiler-diagnostic-list-push!
+        (&mut out)
+        (compiler-check-diagnostic-with-fallback-path
+          (cdiag.compiler-diagnostic-list-get diagnostics index)
+          (owned_view.compiler-owned-shared-view path)))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-check-diagnostic-before?
   [left : (& left cdiag.CompilerDiagnostic)]
@@ -144,14 +142,13 @@
     [count : i64 sorted.len]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (if (compiler-check-diagnostic-before?
-          (& diag)
-          (cdiag.compiler-diagnostic-list-ref sorted index))
-          (set! found true)
-          (set! index (+ index 1))))
-      (cdiag.compiler-diagnostic-list-insert! sorted index diag))))
+    (while (and (not found) (< index count))
+      (if (compiler-check-diagnostic-before?
+        (& diag)
+        (cdiag.compiler-diagnostic-list-ref sorted index))
+        (set! found true)
+        (set! index (+ index 1))))
+    (cdiag.compiler-diagnostic-list-insert! sorted index diag)))
 
 (define (compiler-check-diagnostic-list-insert-all-source-order
   [incoming : cdiag.CompilerDiagnosticList]
@@ -160,11 +157,10 @@
     [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (compiler-check-diagnostic-list-insert-source-order
-          (cdiag.compiler-diagnostic-list-get incoming index)
-          sorted)
-        (set! index (+ index 1))))))
+      (compiler-check-diagnostic-list-insert-source-order
+        (cdiag.compiler-diagnostic-list-get incoming index)
+        sorted)
+      (set! index (+ index 1)))))
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
@@ -176,29 +172,25 @@
       [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
-      (begin
-        (while (< index count)
-          (begin
-            (cdiag.compiler-diagnostic-list-push!
-              (&mut owned-parse)
-              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
-            (set! index (+ index 1))))
-        (match result
-          [(Ok _ advisories) (Err (box owned-parse) advisories)]
-          [(Err semantic-diagnostics advisories)
-            (begin
-              (compiler-check-diagnostic-list-insert-all-source-order
-                (deref semantic-diagnostics)
-                (&mut owned-parse))
-              (Err (box owned-parse) advisories))])))))
+      (while (< index count)
+        (cdiag.compiler-diagnostic-list-push!
+          (&mut owned-parse)
+          (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
+        (set! index (+ index 1)))
+      (match result
+        [(Ok _ advisories) (Err (box owned-parse) advisories)]
+        [(Err semantic-diagnostics advisories)
+          (compiler-check-diagnostic-list-insert-all-source-order
+            (deref semantic-diagnostics)
+            (&mut owned-parse))
+          (Err (box owned-parse) advisories)]))))
 
 (define (compiler-check-reset-pools!) : unit
   (compiler_load.compiler-load-session-reset-pools!))
 
 (define (compiler-check-reset-interns!) : unit
-  (begin
-    (compiler_load.compiler-load-session-reset-interns!)
-    (tc.compiler-typecheck-reset-intern-owned-state!)))
+  (compiler_load.compiler-load-session-reset-interns!)
+  (tc.compiler-typecheck-reset-intern-owned-state!))
 
 (define (compiler-check-program
   [path : String]
@@ -525,10 +517,9 @@
             job)
             [(Ok summary _ advisories) (Ok summary advisories)]
             [(Err diagnostics advisories) (Err diagnostics advisories)])])]
-    (begin
-      (tc.tc-job-state-set-semantic-observer! job previous)
-      (request.consumer request.consumer-context)
-      result)))
+    (tc.tc-job-state-set-semantic-observer! job previous)
+    (request.consumer request.consumer-context)
+    result))
 
 (define (compiler-check-source-with-roots-and-cfg-and-job-state
   [path : String]
@@ -586,21 +577,18 @@
     [index : i64 0]
     [rejected : bool false]
     [status : source_overlay.CompilerSourceOverlayStatus (Ok)]
-    (begin
-      (while (and (not rejected) (< index count))
-        (let
-          [root : String (svec.get stdlib-roots index "")]
-          (begin
-            (match (source_overlay.compiler-source-overlay-check-not-under
-              overlay
-              (& root))
-              [(Err failure)
-                (begin
-                  (set! status (Err failure))
-                  (set! rejected true))]
-              [(Ok) unit])
-            (set! index (+ index 1)))))
-      status)))
+    (while (and (not rejected) (< index count))
+      (let
+        [root : String (svec.get stdlib-roots index "")]
+        (match (source_overlay.compiler-source-overlay-check-not-under
+          overlay
+          (& root))
+          [(Err failure)
+            (set! status (Err failure))
+            (set! rejected true)]
+          [(Ok) unit])
+        (set! index (+ index 1))))
+    status))
 
 ;; The ledger's verdict on a finished overlay check: a recording failure, or,
 ;; when the check `passed`, an admitted entry it never read and whose candidate

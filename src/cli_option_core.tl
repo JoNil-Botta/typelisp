@@ -59,28 +59,25 @@
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 start]
-    (begin
-      (while (and (< i n) (cli-spec-space? (string.string-ref specs i)))
-        (set! i (+ i 1)))
-      i)))
+    (while (and (< i n) (cli-spec-space? (string.string-ref specs i)))
+      (set! i (+ i 1)))
+    i))
 
 (define (cli-spec-token-end [specs : (& specs str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length specs)]
     [i : i64 start]
-    (begin
-      (while (and (< i n) (not (cli-spec-space? (string.string-ref specs i))))
-        (set! i (+ i 1)))
-      i)))
+    (while (and (< i n) (not (cli-spec-space? (string.string-ref specs i))))
+      (set! i (+ i 1)))
+    i))
 
 ;; End of the `|`-separated spelling at `start` in an entry ending at `end`.
 (define (cli-spec-alias-end [specs : (& specs str)] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
-    (begin
-      (while (and (< i end) (not (= (string.string-ref specs i) '|')))
-        (set! i (+ i 1)))
-      i)))
+    (while (and (< i end) (not (= (string.string-ref specs i) '|')))
+      (set! i (+ i 1)))
+    i))
 
 (define (cli-spec-entry-names?
   [specs : (& specs str)]
@@ -90,18 +87,16 @@
   (let
     [alias : i64 start]
     [found : bool false]
-    (begin
-      (while (and (not found) (< alias end))
-        (let
-          [alias-end : i64 (cli-spec-alias-end specs alias end)]
-          (begin
-            (set!
-              found
-              (and
-                (= (- alias-end alias) (string.string-length arg))
-                (string.is-string-prefix-at specs arg alias)))
-            (set! alias (+ alias-end 1)))))
-      found)))
+    (while (and (not found) (< alias end))
+      (let
+        [alias-end : i64 (cli-spec-alias-end specs alias end)]
+        (set!
+          found
+          (and
+            (= (- alias-end alias) (string.string-length arg))
+            (string.is-string-prefix-at specs arg alias)))
+        (set! alias (+ alias-end 1))))
+    found))
 
 ;; Find `arg` in a spec table: its canonical name and how many values it takes.
 (define (cli-option-lookup [specs : (& specs str)] [arg : (& arg str)]) : CliOptionMatch
@@ -110,40 +105,32 @@
     [i : i64 (cli-spec-skip-space specs 0)]
     [result : CliOptionMatch (None)]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (let
-          [end : i64 (cli-spec-token-end specs i)]
-          (begin
-            (when
-              (and
-                (not (= (string.string-ref specs i) '<'))
-                (cli-spec-entry-names? specs i end arg))
-              (let
-                [value : i64 (cli-spec-skip-space specs end)]
-                [arity : i64 0]
-                (begin
-                  (while (and
-                    (< value n)
-                    (= (string.string-ref specs value) '<'))
-                    (begin
-                      (set! arity (+ arity 1))
-                      (set!
-                        value
-                        (cli-spec-skip-space
-                          specs
-                          (cli-spec-token-end specs value)))))
-                  (set!
-                    result
-                    (Found
-                      (string.substring
-                        specs
-                        i
-                        (- (cli-spec-alias-end specs i end) i))
-                      arity))
-                  (set! found true))))
-            (set! i (cli-spec-skip-space specs end)))))
-      result)))
+    (while (and (not found) (< i n))
+      (let
+        [end : i64 (cli-spec-token-end specs i)]
+        (when
+          (and
+            (not (= (string.string-ref specs i) '<'))
+            (cli-spec-entry-names? specs i end arg))
+          (let
+            [value : i64 (cli-spec-skip-space specs end)]
+            [arity : i64 0]
+            (while (and (< value n) (= (string.string-ref specs value) '<'))
+              (set! arity (+ arity 1))
+              (set!
+                value
+                (cli-spec-skip-space specs (cli-spec-token-end specs value))))
+            (set!
+              result
+              (Found
+                (string.substring
+                  specs
+                  i
+                  (- (cli-spec-alias-end specs i end) i))
+                arity))
+            (set! found true)))
+        (set! i (cli-spec-skip-space specs end))))
+    result))
 
 (define (cli-option-missing-value-message
   [command : (& command str)]
@@ -151,9 +138,8 @@
   (string.concat4-borrowed command ": " option " requires a value"))
 
 (define (cli-args-fail! [args : (&mut args CliArgs)] [message : String]) : unit
-  (begin
-    (set! args.error message)
-    (set! args.failed true)))
+  (set! args.error message)
+  (set! args.failed true))
 
 ;; Fail with `prefix` followed by the current argument, as in
 ;; "clean: unknown flag --bogus".
@@ -176,24 +162,21 @@
     (let
       [index : i64 args.next]
       [arg : String (io.arg index)]
-      (begin
-        (set! args.index index)
-        (match (cli-option-lookup (& args.specs) (& arg))
-          [(None)
-            (begin
-              (set! args.name "")
-              (set! args.next (+ index 1)))]
-          [(Found name arity)
-            (begin
-              (set! args.name name)
-              (set! args.next (+ index (+ arity 1)))
-              (when
-                (> args.next args.count)
-                (cli-args-fail!
-                  args
-                  (cli-option-missing-value-message (& args.command) (& arg)))))])
-        (set! args.arg arg)
-        (not args.failed)))))
+      (set! args.index index)
+      (match (cli-option-lookup (& args.specs) (& arg))
+        [(None)
+          (set! args.name "")
+          (set! args.next (+ index 1))]
+        [(Found name arity)
+          (set! args.name name)
+          (set! args.next (+ index (+ arity 1)))
+          (when
+            (> args.next args.count)
+            (cli-args-fail!
+              args
+              (cli-option-missing-value-message (& args.command) (& arg))))])
+      (set! args.arg arg)
+      (not args.failed))))
 
 ;; The first (or `n`th) value of the current option.
 (define (cli-args-value [args : (& args CliArgs)]) : String

@@ -485,23 +485,22 @@
   [offset : i64]
   [detail : i64]
   [message : String]) : unit
-  (if scan.ok
-    (begin
-      (set! scan.ok false)
-      (set!
-        scan.error
-        (if (< view 0)
-          (LinkerDwarfError code -1 -1 0 unit-at offset detail message)
-          (LinkerDwarfError
-            code
-            (array-ref scan.views view).input
-            (array-ref scan.views view).section
-            (array-ref scan.views view).kind
-            unit-at
-            offset
-            detail
-            message))))
-    unit))
+  (when
+    scan.ok
+    (set! scan.ok false)
+    (set!
+      scan.error
+      (if (< view 0)
+        (LinkerDwarfError code -1 -1 0 unit-at offset detail message)
+        (LinkerDwarfError
+          code
+          (array-ref scan.views view).input
+          (array-ref scan.views view).section
+          (array-ref scan.views view).kind
+          unit-at
+          offset
+          detail
+          message)))))
 
 ;: `linker-dwarf-fail-detail!` without an offending value.
 (define (linker-dwarf-fail!
@@ -567,17 +566,16 @@
       (if signed?
         (leb128.decode-signed (& (array-ref scan.views view).bytes) at end)
         (leb128.decode-unsigned (& (array-ref scan.views view).bytes) at end))]
-    (begin
-      (if decoded.ok?
-        unit
-        (linker-dwarf-fail!
-          scan
-          linker-dwarf-error-leb
-          view
-          unit-at
-          at
-          "dwarf: truncated, overlong or oversized LEB128"))
-      decoded)))
+    (if decoded.ok?
+      unit
+      (linker-dwarf-fail!
+        scan
+        linker-dwarf-error-leb
+        view
+        unit-at
+        at
+        "dwarf: truncated, overlong or oversized LEB128"))
+    decoded))
 
 ;: The unsigned integer of `width` (1, 2, 3, 4 or 8) bytes at `at`.
 (define (linker-dwarf-read
@@ -603,16 +601,14 @@
     [index : i64 0]
     [found : i64 -1]
     [count : i64 (array-length scan.views)]
-    (begin
-      (while (and (< index count) (< found 0))
-        (begin
-          (if (and
-            (= (array-ref scan.views index).input input)
-            (= (array-ref scan.views index).kind kind))
-            (set! found index)
-            unit)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< index count) (< found 0))
+      (if (and
+        (= (array-ref scan.views index).input input)
+        (= (array-ref scan.views index).kind kind))
+        (set! found index)
+        unit)
+      (set! index (+ index 1)))
+    found))
 
 ;; --- abbreviation tables ---------------------------------------------------------------
 ;: Whether `form` is a form code this layer decodes.
@@ -635,18 +631,16 @@
     [index : i64 0]
     [found : i64 -1]
     [count : i64 scan.tables.len]
-    (begin
-      (while (and (< index count) (< found 0))
-        (begin
-          (if (and
-            (= (array-ref scan.table-views.slots index) view)
-            (= (array-ref scan.tables.slots index).offset offset))
-            (set! found index)
-            unit)
-          (set! index (+ index 1))))
-      (if (>= found 0)
-        found
-        (linker-dwarf-parse-abbrev-table! scan view offset unit-at)))))
+    (while (and (< index count) (< found 0))
+      (if (and
+        (= (array-ref scan.table-views.slots index) view)
+        (= (array-ref scan.tables.slots index).offset offset))
+        (set! found index)
+        unit)
+      (set! index (+ index 1)))
+    (if (>= found 0)
+      found
+      (linker-dwarf-parse-abbrev-table! scan view offset unit-at))))
 
 (define (linker-dwarf-parse-abbrev-table!
   [scan : (&mut scan LinkerDwarfScan)]
@@ -658,171 +652,153 @@
     [first : i64 scan.entry-code.len]
     [at : i64 offset]
     [done : bool false]
-    (begin
-      (if (or (< offset 0) (>= offset end))
-        (linker-dwarf-fail!
-          scan
-          linker-dwarf-error-abbrev
-          view
-          unit-at
-          offset
-          "dwarf: abbreviation offset lies outside .debug_abbrev")
-        unit)
-      (while (and scan.ok (not done))
-        (let
-          [code : leb128.Decoded
-            (linker-dwarf-leb! scan view unit-at at end false)]
-          (cond
-            [(not scan.ok) unit]
-            [(= code.value 0)
-              (begin
-                (set! at code.next)
-                (set! done true))]
-            [(>= scan.entry-code.len scan.limits.max-abbrev-entries)
-              (linker-dwarf-fail!
-                scan
-                linker-dwarf-error-abbrev-limit
-                view
-                unit-at
-                at
-                "dwarf: abbreviation entry limit exceeded")]
-            [else
-              (let
-                [tag : leb128.Decoded
-                  (linker-dwarf-leb! scan view unit-at code.next end false)]
-                [children-at : i64 tag.next]
-                [first-spec : i64 scan.spec-form.len]
-                [specs : i64 0]
-                (begin
-                  (if (and scan.ok (or (<= tag.value 0) (< code.value 0)))
+    (if (or (< offset 0) (>= offset end))
+      (linker-dwarf-fail!
+        scan
+        linker-dwarf-error-abbrev
+        view
+        unit-at
+        offset
+        "dwarf: abbreviation offset lies outside .debug_abbrev")
+      unit)
+    (while (and scan.ok (not done))
+      (let
+        [code : leb128.Decoded
+          (linker-dwarf-leb! scan view unit-at at end false)]
+        (cond
+          [(not scan.ok) unit]
+          [(= code.value 0)
+            (set! at code.next)
+            (set! done true)]
+          [(>= scan.entry-code.len scan.limits.max-abbrev-entries)
+            (linker-dwarf-fail!
+              scan
+              linker-dwarf-error-abbrev-limit
+              view
+              unit-at
+              at
+              "dwarf: abbreviation entry limit exceeded")]
+          [else
+            (let
+              [tag : leb128.Decoded
+                (linker-dwarf-leb! scan view unit-at code.next end false)]
+              [children-at : i64 tag.next]
+              [first-spec : i64 scan.spec-form.len]
+              [specs : i64 0]
+              (if (and scan.ok (or (<= tag.value 0) (< code.value 0)))
+                (linker-dwarf-fail!
+                  scan
+                  linker-dwarf-error-abbrev
+                  view
+                  unit-at
+                  at
+                  "dwarf: abbreviation with a zero or oversized tag or code")
+                unit)
+              (if (and
+                scan.ok
+                (linker-dwarf-need! scan view unit-at children-at 1 end))
+                (let
+                  [children : i64
+                    (byte_le.byte-le-at
+                      (& (array-ref scan.views view).bytes)
+                      children-at)]
+                  [spec-at : i64 (+ children-at 1)]
+                  [specs-done : bool false]
+                  (if (> children 1)
                     (linker-dwarf-fail!
                       scan
                       linker-dwarf-error-abbrev
                       view
                       unit-at
-                      at
-                      "dwarf: abbreviation with a zero or oversized tag or code")
+                      children-at
+                      "dwarf: DW_CHILDREN is neither 0 nor 1")
                     unit)
-                  (if (and
-                    scan.ok
-                    (linker-dwarf-need! scan view unit-at children-at 1 end))
+                  (while (and scan.ok (not specs-done))
                     (let
-                      [children : i64
-                        (byte_le.byte-le-at
-                          (& (array-ref scan.views view).bytes)
-                          children-at)]
-                      [spec-at : i64 (+ children-at 1)]
-                      [specs-done : bool false]
-                      (begin
-                        (if (> children 1)
+                      [name : leb128.Decoded
+                        (linker-dwarf-leb! scan view unit-at spec-at end false)]
+                      [form : leb128.Decoded
+                        (if scan.ok
+                          (linker-dwarf-leb!
+                            scan
+                            view
+                            unit-at
+                            name.next
+                            end
+                            false)
+                          name)]
+                      (cond
+                        [(not scan.ok) unit]
+                        [(and (= name.value 0) (= form.value 0))
+                          (set! spec-at form.next)
+                          (set! specs-done true)]
+                        [(or (= name.value 0) (= form.value 0))
                           (linker-dwarf-fail!
                             scan
                             linker-dwarf-error-abbrev
                             view
                             unit-at
-                            children-at
-                            "dwarf: DW_CHILDREN is neither 0 nor 1")
-                          unit)
-                        (while (and scan.ok (not specs-done))
+                            spec-at
+                            "dwarf: attribute specification with a zero name or form")]
+                        [(not (linker-dwarf-known-form? form.value))
+                          (linker-dwarf-fail-detail!
+                            scan
+                            linker-dwarf-error-form
+                            view
+                            unit-at
+                            name.next
+                            form.value
+                            "dwarf: unknown attribute form")]
+                        [(>= scan.spec-form.len scan.limits.max-attribute-specs)
+                          (linker-dwarf-fail!
+                            scan
+                            linker-dwarf-error-abbrev-limit
+                            view
+                            unit-at
+                            spec-at
+                            "dwarf: attribute specification limit exceeded")]
+                        [else
                           (let
-                            [name : leb128.Decoded
-                              (linker-dwarf-leb!
-                                scan
-                                view
-                                unit-at
-                                spec-at
-                                end
-                                false)]
-                            [form : leb128.Decoded
-                              (if scan.ok
+                            [constant : leb128.Decoded
+                              (if (= form.value 0x21)
                                 (linker-dwarf-leb!
                                   scan
                                   view
                                   unit-at
-                                  name.next
+                                  form.next
                                   end
-                                  false)
-                                name)]
-                            (cond
-                              [(not scan.ok) unit]
-                              [(and (= name.value 0) (= form.value 0))
-                                (begin
-                                  (set! spec-at form.next)
-                                  (set! specs-done true))]
-                              [(or (= name.value 0) (= form.value 0))
-                                (linker-dwarf-fail!
-                                  scan
-                                  linker-dwarf-error-abbrev
-                                  view
-                                  unit-at
-                                  spec-at
-                                  "dwarf: attribute specification with a zero name or form")]
-                              [(not (linker-dwarf-known-form? form.value))
-                                (linker-dwarf-fail-detail!
-                                  scan
-                                  linker-dwarf-error-form
-                                  view
-                                  unit-at
-                                  name.next
-                                  form.value
-                                  "dwarf: unknown attribute form")]
-                              [(>=
-                                  scan.spec-form.len
-                                  scan.limits.max-attribute-specs)
-                                (linker-dwarf-fail!
-                                  scan
-                                  linker-dwarf-error-abbrev-limit
-                                  view
-                                  unit-at
-                                  spec-at
-                                  "dwarf: attribute specification limit exceeded")]
-                              [else
-                                (let
-                                  [constant : leb128.Decoded
-                                    (if (= form.value 0x21)
-                                      (linker-dwarf-leb!
-                                        scan
-                                        view
-                                        unit-at
-                                        form.next
-                                        end
-                                        true)
-                                      (leb128.Decoded true 0 form.next))]
-                                  (begin
-                                    (dwarf_i64_vec.push-ref!
-                                      (&mut scan.spec-attribute)
-                                      name.value)
-                                    (dwarf_i64_vec.push-ref!
-                                      (&mut scan.spec-form)
-                                      form.value)
-                                    (dwarf_i64_vec.push-ref!
-                                      (&mut scan.spec-const)
-                                      constant.value)
-                                    (set! specs (+ specs 1))
-                                    (set! spec-at constant.next)))])))
-                        (if scan.ok
-                          (begin
+                                  true)
+                                (leb128.Decoded true 0 form.next))]
                             (dwarf_i64_vec.push-ref!
-                              (&mut scan.entry-code)
-                              code.value)
+                              (&mut scan.spec-attribute)
+                              name.value)
                             (dwarf_i64_vec.push-ref!
-                              (&mut scan.entry-tag)
-                              tag.value)
+                              (&mut scan.spec-form)
+                              form.value)
                             (dwarf_i64_vec.push-ref!
-                              (&mut scan.entry-children)
-                              children)
-                            (dwarf_i64_vec.push-ref!
-                              (&mut scan.entry-first-spec)
-                              first-spec)
-                            (dwarf_i64_vec.push-ref!
-                              (&mut scan.entry-specs)
-                              specs)
-                            (set! at spec-at))
-                          unit)))
-                    unit)))])))
-      (if scan.ok
-        (linker-dwarf-finish-abbrev-table! scan view offset at first unit-at)
-        -1))))
+                              (&mut scan.spec-const)
+                              constant.value)
+                            (set! specs (+ specs 1))
+                            (set! spec-at constant.next))])))
+                  (if scan.ok
+                    (begin
+                      (dwarf_i64_vec.push-ref!
+                        (&mut scan.entry-code)
+                        code.value)
+                      (dwarf_i64_vec.push-ref! (&mut scan.entry-tag) tag.value)
+                      (dwarf_i64_vec.push-ref!
+                        (&mut scan.entry-children)
+                        children)
+                      (dwarf_i64_vec.push-ref!
+                        (&mut scan.entry-first-spec)
+                        first-spec)
+                      (dwarf_i64_vec.push-ref! (&mut scan.entry-specs) specs)
+                      (set! at spec-at))
+                    unit))
+                unit))])))
+    (if scan.ok
+      (linker-dwarf-finish-abbrev-table! scan view offset at first unit-at)
+      -1)))
 
 ;: Register a parsed table after checking its codes are unique.
 (define (linker-dwarf-finish-abbrev-table!
@@ -836,65 +812,58 @@
     [count : i64 (- scan.entry-code.len first)]
     [dense : bool true]
     [index : i64 0]
-    (begin
-      ;; Codes are almost always exactly 1..n in order, which cannot repeat;
-      ;; any other table is sorted to find a repeat in O(n log n).
-      (while (and dense (< index count))
-        (begin
-          (if (!= (array-ref scan.entry-code.slots (+ first index)) (+ index 1))
-            (set! dense false)
-            unit)
-          (set! index (+ index 1))))
-      (if (not dense)
-        (let
-          [codes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-          [zeros : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-          (begin
-            (set! index 0)
-            (while (< index count)
-              (begin
-                (set!
-                  (array-ref codes index)
-                  (array-ref scan.entry-code.slots (+ first index)))
-                (set! index (+ index 1))))
-            (let
-              [order : (__tl_dyn-array i64)
-                (linker-dwarf-order (& codes) (& zeros) count)]
-              (begin
-                (set! index 1)
-                (while (and scan.ok (< index count))
-                  (begin
-                    (if (=
-                      (array-ref codes (array-ref order index))
-                      (array-ref codes (array-ref order (- index 1))))
-                      (linker-dwarf-fail-detail!
-                        scan
-                        linker-dwarf-error-abbrev
-                        view
-                        unit-at
-                        offset
-                        (array-ref codes (array-ref order index))
-                        "dwarf: duplicate abbreviation code in one table")
-                      unit)
-                    (set! index (+ index 1))))))))
+    ;; Codes are almost always exactly 1..n in order, which cannot repeat;
+    ;; any other table is sorted to find a repeat in O(n log n).
+    (while (and dense (< index count))
+      (if (!= (array-ref scan.entry-code.slots (+ first index)) (+ index 1))
+        (set! dense false)
         unit)
-      (if (and scan.ok (linker-dwarf-charge! scan (- end offset) view offset))
+      (set! index (+ index 1)))
+    (if (not dense)
+      (let
+        [codes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [zeros : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        (set! index 0)
+        (while (< index count)
+          (set!
+            (array-ref codes index)
+            (array-ref scan.entry-code.slots (+ first index)))
+          (set! index (+ index 1)))
         (let
-          [table : i64 scan.tables.len]
-          (begin
-            (dwarf_table_vec.push-ref!
-              (&mut scan.tables)
-              (LinkerDwarfAbbrevTable
-                (array-ref scan.views view).input
-                (array-ref scan.views view).section
-                (array-ref scan.views view).kind
+          [order : (__tl_dyn-array i64)
+            (linker-dwarf-order (& codes) (& zeros) count)]
+          (set! index 1)
+          (while (and scan.ok (< index count))
+            (if (=
+              (array-ref codes (array-ref order index))
+              (array-ref codes (array-ref order (- index 1))))
+              (linker-dwarf-fail-detail!
+                scan
+                linker-dwarf-error-abbrev
+                view
+                unit-at
                 offset
-                end
-                count))
-            (dwarf_i64_vec.push-ref! (&mut scan.table-views) view)
-            (dwarf_i64_vec.push-ref! (&mut scan.table-first) first)
-            table))
-        -1))))
+                (array-ref codes (array-ref order index))
+                "dwarf: duplicate abbreviation code in one table")
+              unit)
+            (set! index (+ index 1)))))
+      unit)
+    (if (and scan.ok (linker-dwarf-charge! scan (- end offset) view offset))
+      (let
+        [table : i64 scan.tables.len]
+        (dwarf_table_vec.push-ref!
+          (&mut scan.tables)
+          (LinkerDwarfAbbrevTable
+            (array-ref scan.views view).input
+            (array-ref scan.views view).section
+            (array-ref scan.views view).kind
+            offset
+            end
+            count))
+        (dwarf_i64_vec.push-ref! (&mut scan.table-views) view)
+        (dwarf_i64_vec.push-ref! (&mut scan.table-first) first)
+        table)
+      -1)))
 
 (define (linker-dwarf-abbrev-entry
   [scan : (& scan LinkerDwarfScan)]
@@ -911,14 +880,12 @@
       (let
         [index : i64 0]
         [found : i64 -1]
-        (begin
-          (while (and (< index count) (< found 0))
-            (begin
-              (if (= (array-ref scan.entry-code.slots (+ first index)) code)
-                (set! found (+ first index))
-                unit)
-              (set! index (+ index 1))))
-          found)))))
+        (while (and (< index count) (< found 0))
+          (if (= (array-ref scan.entry-code.slots (+ first index)) code)
+            (set! found (+ first index))
+            unit)
+          (set! index (+ index 1)))
+        found))))
 
 ;; --- attribute classes -------------------------------------------------------------------
 ;: Attributes whose section offset names a location list (DWARF 3/4
@@ -1148,310 +1115,285 @@
   [nested : i64]) : bool
   (let
     [at : i64 start]
-    (begin
-      (while (and scan.ok (< at end))
-        (let
-          [op : i64
-            (byte_le.byte-le-at (& (array-ref scan.views ctx.view).bytes) at)]
-          [shape : i64 (linker-dwarf-operand-shape op)]
-          [operand : i64 (+ at 1)]
-          (cond
-            [(< shape 0)
-              (linker-dwarf-fail-detail!
-                scan
-                linker-dwarf-error-expression
-                ctx.view
-                ctx.offset
-                at
-                op
-                "dwarf: expression operator not admitted")]
-            [(= shape linker-dwarf-operand-none) (set! at operand)]
-            [(or
-                (= shape linker-dwarf-operand-1)
-                (= shape linker-dwarf-operand-2)
-                (= shape linker-dwarf-operand-4)
-                (= shape linker-dwarf-operand-8))
-              (if (linker-dwarf-need!
+    (while (and scan.ok (< at end))
+      (let
+        [op : i64
+          (byte_le.byte-le-at (& (array-ref scan.views ctx.view).bytes) at)]
+        [shape : i64 (linker-dwarf-operand-shape op)]
+        [operand : i64 (+ at 1)]
+        (cond
+          [(< shape 0)
+            (linker-dwarf-fail-detail!
+              scan
+              linker-dwarf-error-expression
+              ctx.view
+              ctx.offset
+              at
+              op
+              "dwarf: expression operator not admitted")]
+          [(= shape linker-dwarf-operand-none) (set! at operand)]
+          [(or
+              (= shape linker-dwarf-operand-1)
+              (= shape linker-dwarf-operand-2)
+              (= shape linker-dwarf-operand-4)
+              (= shape linker-dwarf-operand-8))
+            (if (linker-dwarf-need! scan ctx.view ctx.offset operand shape end)
+              (set! at (+ operand shape))
+              unit)]
+          [(= shape linker-dwarf-operand-branch)
+            (if (linker-dwarf-need! scan ctx.view ctx.offset operand 2 end)
+              (let
+                [raw : i64
+                  (byte_le.read-u16
+                    (& (array-ref scan.views ctx.view).bytes)
+                    operand)]
+                [target : i64
+                  (+
+                    (+ operand 2)
+                    (if (>= raw 32768)
+                      (- raw 65536)
+                      raw))]
+                (if (or (< target start) (> target end))
+                  (linker-dwarf-fail-detail!
+                    scan
+                    linker-dwarf-error-expression
+                    ctx.view
+                    ctx.offset
+                    at
+                    op
+                    "dwarf: expression branch leaves the expression")
+                  (set! at (+ operand 2))))
+              unit)]
+          [(or
+              (= shape linker-dwarf-operand-uleb)
+              (= shape linker-dwarf-operand-sleb))
+            (set!
+              at
+              (linker-dwarf-leb!
                 scan
                 ctx.view
                 ctx.offset
                 operand
-                shape
-                end)
-                (set! at (+ operand shape))
-                unit)]
-            [(= shape linker-dwarf-operand-branch)
-              (if (linker-dwarf-need! scan ctx.view ctx.offset operand 2 end)
-                (let
-                  [raw : i64
-                    (byte_le.read-u16
-                      (& (array-ref scan.views ctx.view).bytes)
-                      operand)]
-                  [target : i64
-                    (+
-                      (+ operand 2)
-                      (if (>= raw 32768)
-                        (- raw 65536)
-                        raw))]
-                  (if (or (< target start) (> target end))
-                    (linker-dwarf-fail-detail!
-                      scan
-                      linker-dwarf-error-expression
-                      ctx.view
-                      ctx.offset
-                      at
-                      op
-                      "dwarf: expression branch leaves the expression")
-                    (set! at (+ operand 2))))
-                unit)]
-            [(or
-                (= shape linker-dwarf-operand-uleb)
-                (= shape linker-dwarf-operand-sleb))
-              (set!
-                at
-                (linker-dwarf-leb!
-                  scan
-                  ctx.view
-                  ctx.offset
-                  operand
-                  end
-                  (= shape linker-dwarf-operand-sleb)).next)]
-            [(or
-                (= shape linker-dwarf-operand-uleb-uleb)
-                (= shape linker-dwarf-operand-uleb-sleb))
-              (let
-                [first : leb128.Decoded
-                  (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
-                (if scan.ok
-                  (set!
-                    at
-                    (linker-dwarf-leb!
-                      scan
-                      ctx.view
-                      ctx.offset
-                      first.next
-                      end
-                      (= shape linker-dwarf-operand-uleb-sleb)).next)
-                  unit))]
-            [(= shape linker-dwarf-operand-address)
-              (if (linker-dwarf-need!
+                end
+                (= shape linker-dwarf-operand-sleb)).next)]
+          [(or
+              (= shape linker-dwarf-operand-uleb-uleb)
+              (= shape linker-dwarf-operand-uleb-sleb))
+            (let
+              [first : leb128.Decoded
+                (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
+              (if scan.ok
+                (set!
+                  at
+                  (linker-dwarf-leb!
+                    scan
+                    ctx.view
+                    ctx.offset
+                    first.next
+                    end
+                    (= shape linker-dwarf-operand-uleb-sleb)).next)
+                unit))]
+          [(= shape linker-dwarf-operand-address)
+            (if (linker-dwarf-need!
+              scan
+              ctx.view
+              ctx.offset
+              operand
+              ctx.address-size
+              end)
+              (if (linker-dwarf-reference!
                 scan
-                ctx.view
-                ctx.offset
+                ctx
                 operand
                 ctx.address-size
-                end)
-                (if (linker-dwarf-reference!
-                  scan
-                  ctx
+                attribute
+                form
+                op
+                linker-dwarf-ref-address
+                -1
+                (linker-dwarf-read
+                  (& (array-ref scan.views ctx.view).bytes)
                   operand
-                  ctx.address-size
-                  attribute
-                  form
-                  op
-                  linker-dwarf-ref-address
-                  -1
-                  (linker-dwarf-read
-                    (& (array-ref scan.views ctx.view).bytes)
-                    operand
-                    ctx.address-size))
-                  (set! at (+ operand ctx.address-size))
-                  unit)
-                unit)]
-            [(or
-                (= shape linker-dwarf-operand-info-ref)
-                (= shape linker-dwarf-operand-implicit-pointer))
+                  ctx.address-size))
+                (set! at (+ operand ctx.address-size))
+                unit)
+              unit)]
+          [(or
+              (= shape linker-dwarf-operand-info-ref)
+              (= shape linker-dwarf-operand-implicit-pointer))
+            (if (and
+              (linker-dwarf-need! scan ctx.view ctx.offset operand 4 end)
+              (linker-dwarf-reference!
+                scan
+                ctx
+                operand
+                4
+                attribute
+                form
+                op
+                linker-dwarf-ref-info
+                ctx.kind
+                (byte_le.read-u32
+                  (& (array-ref scan.views ctx.view).bytes)
+                  operand)))
+              (if (= shape linker-dwarf-operand-implicit-pointer)
+                (set!
+                  at
+                  (linker-dwarf-leb!
+                    scan
+                    ctx.view
+                    ctx.offset
+                    (+ operand 4)
+                    end
+                    true).next)
+                (set! at (+ operand 4)))
+              unit)]
+          [(or
+              (= shape linker-dwarf-operand-unit-ref-2)
+              (= shape linker-dwarf-operand-unit-ref-4))
+            (let
+              [width : i64
+                (if (= shape linker-dwarf-operand-unit-ref-2)
+                  2
+                  4)]
               (if (and
-                (linker-dwarf-need! scan ctx.view ctx.offset operand 4 end)
+                (linker-dwarf-need! scan ctx.view ctx.offset operand width end)
                 (linker-dwarf-reference!
                   scan
                   ctx
                   operand
-                  4
+                  width
                   attribute
                   form
                   op
-                  linker-dwarf-ref-info
+                  linker-dwarf-ref-unit
                   ctx.kind
-                  (byte_le.read-u32
+                  (linker-dwarf-read
                     (& (array-ref scan.views ctx.view).bytes)
-                    operand)))
-                (if (= shape linker-dwarf-operand-implicit-pointer)
-                  (set!
-                    at
-                    (linker-dwarf-leb!
+                    operand
+                    width)))
+                (set! at (+ operand width))
+                unit))]
+          [(= shape linker-dwarf-operand-address-index)
+            (let
+              [index : leb128.Decoded
+                (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
+              (if (and
+                scan.ok
+                (linker-dwarf-reference!
+                  scan
+                  ctx
+                  operand
+                  (- index.next operand)
+                  attribute
+                  form
+                  op
+                  linker-dwarf-ref-address-index
+                  linker-dwarf-section-addr
+                  index.value))
+                (set! at index.next)
+                unit))]
+          [(or
+              (= shape linker-dwarf-operand-block)
+              (= shape linker-dwarf-operand-expression))
+            (let
+              [length : leb128.Decoded
+                (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
+              (cond
+                [(not scan.ok) unit]
+                [(not
+                    (linker-dwarf-need!
                       scan
                       ctx.view
                       ctx.offset
-                      (+ operand 4)
-                      end
-                      true).next)
-                  (set! at (+ operand 4)))
-                unit)]
-            [(or
-                (= shape linker-dwarf-operand-unit-ref-2)
-                (= shape linker-dwarf-operand-unit-ref-4))
-              (let
-                [width : i64
-                  (if (= shape linker-dwarf-operand-unit-ref-2)
-                    2
-                    4)]
+                      length.next
+                      length.value
+                      end))
+                  unit]
+                [(= shape linker-dwarf-operand-block)
+                  (set! at (+ length.next length.value))]
+                [(> nested 0)
+                  (linker-dwarf-fail-detail!
+                    scan
+                    linker-dwarf-error-expression
+                    ctx.view
+                    ctx.offset
+                    at
+                    op
+                    "dwarf: nested DW_OP_entry_value")]
+                [(linker-dwarf-expression!
+                    scan
+                    ctx
+                    length.next
+                    (+ length.next length.value)
+                    attribute
+                    form
+                    (+ nested 1))
+                  (set! at (+ length.next length.value))]
+                [else unit]))]
+          [else
+            ;; Typed-stack operators name a base-type DIE by unit offset.
+            (let
+              [prefix : i64
+                (cond [(= shape linker-dwarf-operand-deref-type) 1] [else 0])]
+              [lead : leb128.Decoded
+                (if (= shape linker-dwarf-operand-regval-type)
+                  (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)
+                  (leb128.Decoded true 0 (+ operand prefix)))]
+              [type-at : i64 lead.next]
+              [type : leb128.Decoded
                 (if (and
+                  scan.ok
                   (linker-dwarf-need!
                     scan
                     ctx.view
                     ctx.offset
                     operand
-                    width
-                    end)
+                    prefix
+                    end))
+                  (linker-dwarf-leb! scan ctx.view ctx.offset type-at end false)
+                  lead)]
+              (if (and
+                scan.ok
+                (or
+                  (= type.value 0)
                   (linker-dwarf-reference!
                     scan
                     ctx
-                    operand
-                    width
+                    type-at
+                    (- type.next type-at)
                     attribute
                     form
                     op
                     linker-dwarf-ref-unit
                     ctx.kind
-                    (linker-dwarf-read
-                      (& (array-ref scan.views ctx.view).bytes)
-                      operand
-                      width)))
-                  (set! at (+ operand width))
-                  unit))]
-            [(= shape linker-dwarf-operand-address-index)
-              (let
-                [index : leb128.Decoded
-                  (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
-                (if (and
-                  scan.ok
-                  (linker-dwarf-reference!
+                    type.value)))
+                (if (= shape linker-dwarf-operand-const-type)
+                  (if (linker-dwarf-need!
                     scan
-                    ctx
-                    operand
-                    (- index.next operand)
-                    attribute
-                    form
-                    op
-                    linker-dwarf-ref-address-index
-                    linker-dwarf-section-addr
-                    index.value))
-                  (set! at index.next)
-                  unit))]
-            [(or
-                (= shape linker-dwarf-operand-block)
-                (= shape linker-dwarf-operand-expression))
-              (let
-                [length : leb128.Decoded
-                  (linker-dwarf-leb! scan ctx.view ctx.offset operand end false)]
-                (cond
-                  [(not scan.ok) unit]
-                  [(not
-                      (linker-dwarf-need!
+                    ctx.view
+                    ctx.offset
+                    type.next
+                    1
+                    end)
+                    (let
+                      [size : i64
+                        (byte_le.byte-le-at
+                          (& (array-ref scan.views ctx.view).bytes)
+                          type.next)]
+                      (if (linker-dwarf-need!
                         scan
                         ctx.view
                         ctx.offset
-                        length.next
-                        length.value
-                        end))
-                    unit]
-                  [(= shape linker-dwarf-operand-block)
-                    (set! at (+ length.next length.value))]
-                  [(> nested 0)
-                    (linker-dwarf-fail-detail!
-                      scan
-                      linker-dwarf-error-expression
-                      ctx.view
-                      ctx.offset
-                      at
-                      op
-                      "dwarf: nested DW_OP_entry_value")]
-                  [(linker-dwarf-expression!
-                      scan
-                      ctx
-                      length.next
-                      (+ length.next length.value)
-                      attribute
-                      form
-                      (+ nested 1))
-                    (set! at (+ length.next length.value))]
-                  [else unit]))]
-            [else
-              ;; Typed-stack operators name a base-type DIE by unit offset.
-              (let
-                [prefix : i64
-                  (cond [(= shape linker-dwarf-operand-deref-type) 1] [else 0])]
-                [lead : leb128.Decoded
-                  (if (= shape linker-dwarf-operand-regval-type)
-                    (linker-dwarf-leb!
-                      scan
-                      ctx.view
-                      ctx.offset
-                      operand
-                      end
-                      false)
-                    (leb128.Decoded true 0 (+ operand prefix)))]
-                [type-at : i64 lead.next]
-                [type : leb128.Decoded
-                  (if (and
-                    scan.ok
-                    (linker-dwarf-need!
-                      scan
-                      ctx.view
-                      ctx.offset
-                      operand
-                      prefix
-                      end))
-                    (linker-dwarf-leb!
-                      scan
-                      ctx.view
-                      ctx.offset
-                      type-at
-                      end
-                      false)
-                    lead)]
-                (if (and
-                  scan.ok
-                  (or
-                    (= type.value 0)
-                    (linker-dwarf-reference!
-                      scan
-                      ctx
-                      type-at
-                      (- type.next type-at)
-                      attribute
-                      form
-                      op
-                      linker-dwarf-ref-unit
-                      ctx.kind
-                      type.value)))
-                  (if (= shape linker-dwarf-operand-const-type)
-                    (if (linker-dwarf-need!
-                      scan
-                      ctx.view
-                      ctx.offset
-                      type.next
-                      1
-                      end)
-                      (let
-                        [size : i64
-                          (byte_le.byte-le-at
-                            (& (array-ref scan.views ctx.view).bytes)
-                            type.next)]
-                        (if (linker-dwarf-need!
-                          scan
-                          ctx.view
-                          ctx.offset
-                          (+ type.next 1)
-                          size
-                          end)
-                          (set! at (+ (+ type.next 1) size))
-                          unit))
-                      unit)
-                    (set! at type.next))
-                  unit))])))
-      scan.ok)))
+                        (+ type.next 1)
+                        size
+                        end)
+                        (set! at (+ (+ type.next 1) size))
+                        unit))
+                    unit)
+                  (set! at type.next))
+                unit))])))
+    scan.ok))
 
 ;; --- attribute values ------------------------------------------------------------------------
 (define (linker-dwarf-field-fail) : LinkerDwarfField
@@ -1541,29 +1483,27 @@
   [form : i64]) : LinkerDwarfField
   (cond
     [(> length scan.limits.max-block-bytes)
-      (begin
-        (linker-dwarf-fail-detail!
-          scan
-          linker-dwarf-error-block
-          ctx.view
-          ctx.offset
-          at
-          length
-          "dwarf: block exceeds the block limit")
-        (linker-dwarf-field-fail))]
+      (linker-dwarf-fail-detail!
+        scan
+        linker-dwarf-error-block
+        ctx.view
+        ctx.offset
+        at
+        length
+        "dwarf: block exceeds the block limit")
+      (linker-dwarf-field-fail)]
     [(not (linker-dwarf-need! scan ctx.view ctx.offset at length ctx.end))
       (linker-dwarf-field-fail)]
     [(and (linker-dwarf-expression-attribute? attribute) (>= ctx.version 4))
-      (begin
-        (linker-dwarf-fail-detail!
-          scan
-          linker-dwarf-error-attribute
-          ctx.view
-          ctx.offset
-          at
-          attribute
-          "dwarf: DWARF 4/5 block form on an expression attribute")
-        (linker-dwarf-field-fail))]
+      (linker-dwarf-fail-detail!
+        scan
+        linker-dwarf-error-attribute
+        ctx.view
+        ctx.offset
+        at
+        attribute
+        "dwarf: DWARF 4/5 block form on an expression attribute")
+      (linker-dwarf-field-fail)]
     [(linker-dwarf-expression-attribute? attribute)
       (if (linker-dwarf-expression! scan ctx at (+ at length) attribute form 0)
         (LinkerDwarfField (+ at length) 0)
@@ -1649,16 +1589,15 @@
         (cond
           [(not scan.ok) (linker-dwarf-field-fail)]
           [(> length.value scan.limits.max-block-bytes)
-            (begin
-              (linker-dwarf-fail-detail!
-                scan
-                linker-dwarf-error-block
-                ctx.view
-                ctx.offset
-                at
-                length.value
-                "dwarf: expression exceeds the block limit")
-              (linker-dwarf-field-fail))]
+            (linker-dwarf-fail-detail!
+              scan
+              linker-dwarf-error-block
+              ctx.view
+              ctx.offset
+              at
+              length.value
+              "dwarf: expression exceeds the block limit")
+            (linker-dwarf-field-fail)]
           [(not
               (linker-dwarf-need!
                 scan
@@ -1681,26 +1620,25 @@
     [(= form 0x08)
       (let
         [end-at : i64 at]
-        (begin
-          (while (and
-            (< end-at ctx.end)
-            (!=
-              (byte_le.byte-le-at
-                (& (array-ref scan.views ctx.view).bytes)
-                end-at)
-              0))
-            (set! end-at (+ end-at 1)))
-          (if (< end-at ctx.end)
-            (LinkerDwarfField (+ end-at 1) 0)
-            (begin
-              (linker-dwarf-fail!
-                scan
-                linker-dwarf-error-string
-                ctx.view
-                ctx.offset
-                at
-                "dwarf: inline string is not terminated inside its unit")
-              (linker-dwarf-field-fail)))))]
+        (while (and
+          (< end-at ctx.end)
+          (!=
+            (byte_le.byte-le-at
+              (& (array-ref scan.views ctx.view).bytes)
+              end-at)
+            0))
+          (set! end-at (+ end-at 1)))
+        (if (< end-at ctx.end)
+          (LinkerDwarfField (+ end-at 1) 0)
+          (begin
+            (linker-dwarf-fail!
+              scan
+              linker-dwarf-error-string
+              ctx.view
+              ctx.offset
+              at
+              "dwarf: inline string is not terminated inside its unit")
+            (linker-dwarf-field-fail))))]
     [(= form 0x0c) (linker-dwarf-fixed-value! scan ctx at 1)]
     [(= form 0x19) (LinkerDwarfField at 1)]
     [(or (= form 0x0d) (= form 0x0f))
@@ -1879,27 +1817,25 @@
         (cond
           [(not scan.ok) (linker-dwarf-field-fail)]
           [(or indirect? (= actual.value 0x16))
-            (begin
-              (linker-dwarf-fail-detail!
-                scan
-                linker-dwarf-error-form
-                ctx.view
-                ctx.offset
-                at
-                actual.value
-                "dwarf: DW_FORM_indirect names DW_FORM_indirect")
-              (linker-dwarf-field-fail))]
+            (linker-dwarf-fail-detail!
+              scan
+              linker-dwarf-error-form
+              ctx.view
+              ctx.offset
+              at
+              actual.value
+              "dwarf: DW_FORM_indirect names DW_FORM_indirect")
+            (linker-dwarf-field-fail)]
           [(not (linker-dwarf-known-form? actual.value))
-            (begin
-              (linker-dwarf-fail-detail!
-                scan
-                linker-dwarf-error-form
-                ctx.view
-                ctx.offset
-                at
-                actual.value
-                "dwarf: unknown attribute form")
-              (linker-dwarf-field-fail))]
+            (linker-dwarf-fail-detail!
+              scan
+              linker-dwarf-error-form
+              ctx.view
+              ctx.offset
+              at
+              actual.value
+              "dwarf: unknown attribute form")
+            (linker-dwarf-field-fail)]
           [else
             (linker-dwarf-form!
               scan
@@ -1912,16 +1848,15 @@
     [else
       ;; DW_FORM_ref_sup4/8, DW_FORM_strp_sup and the GNU alt forms name a
       ;; supplementary file this layer does not take.
-      (begin
-        (linker-dwarf-fail-detail!
-          scan
-          linker-dwarf-error-form
-          ctx.view
-          ctx.offset
-          at
-          form
-          "dwarf: supplementary-file form not admitted")
-        (linker-dwarf-field-fail))]))
+      (linker-dwarf-fail-detail!
+        scan
+        linker-dwarf-error-form
+        ctx.view
+        ctx.offset
+        at
+        form
+        "dwarf: supplementary-file form not admitted")
+      (linker-dwarf-field-fail)]))
 
 ;; --- units ---------------------------------------------------------------------------------
 ;: Whether unit version `version` is admitted in a section of `kind`.
@@ -1947,18 +1882,17 @@
   (let
     [low : i64 first]
     [high : i64 (+ first count)]
-    (begin
-      (while (< low high)
-        (let
-          [middle : i64 (+ low (/ (- high low) 2))]
-          (if (< (array-ref scan.die-offsets.slots middle) absolute)
-            (set! low (+ middle 1))
-            (set! high middle))))
-      (if (and
-        (< low (+ first count))
-        (= (array-ref scan.die-offsets.slots low) absolute))
-        low
-        -1))))
+    (while (< low high)
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        (if (< (array-ref scan.die-offsets.slots middle) absolute)
+          (set! low (+ middle 1))
+          (set! high middle))))
+    (if (and
+      (< low (+ first count))
+      (= (array-ref scan.die-offsets.slots low) absolute))
+      low
+      -1)))
 
 ;: Scan the unit at `offset` of unit view `view`: its header, abbreviation
 ;: table and every DIE. Returns the offset past the unit, or -1.
@@ -1975,222 +1909,213 @@
       (or
         (= kind linker-dwarf-section-types)
         (= kind linker-dwarf-section-types-dwo))]
-    (begin
+    (when
+      (>= scan.units.len scan.limits.max-units)
+      (linker-dwarf-fail!
+        scan
+        linker-dwarf-error-unit-limit
+        view
+        offset
+        offset
+        "dwarf: unit limit exceeded")
+      (return -1))
+    (when
+      (not (linker-dwarf-need! scan view offset offset 6 length))
+      (return -1))
+    (let
+      [unit-length : i64
+        (byte_le.read-u32 (& (array-ref scan.views view).bytes) offset)]
+      [version : i64
+        (byte_le.read-u16 (& (array-ref scan.views view).bytes) (+ offset 4))]
+      [end : i64 (+ (+ offset 4) unit-length)]
       (when
-        (>= scan.units.len scan.limits.max-units)
-        (linker-dwarf-fail!
+        (>= unit-length 0xfffffff0)
+        (linker-dwarf-fail-detail!
           scan
-          linker-dwarf-error-unit-limit
+          (if (= unit-length 0xffffffff)
+            linker-dwarf-error-dwarf64
+            linker-dwarf-error-unit)
           view
           offset
           offset
-          "dwarf: unit limit exceeded")
+          unit-length
+          "dwarf: DWARF64 or reserved unit length")
         (return -1))
       (when
-        (not (linker-dwarf-need! scan view offset offset 6 length))
+        (> end length)
+        (linker-dwarf-fail-detail!
+          scan
+          linker-dwarf-error-truncated
+          view
+          offset
+          offset
+          unit-length
+          "dwarf: unit runs past the end of its section")
+        (return -1))
+      (when
+        (not (linker-dwarf-version-admitted? kind version))
+        (linker-dwarf-fail-detail!
+          scan
+          linker-dwarf-error-version
+          view
+          offset
+          (+ offset 4)
+          version
+          "dwarf: unit version not admitted for its section")
         (return -1))
       (let
-        [unit-length : i64
-          (byte_le.read-u32 (& (array-ref scan.views view).bytes) offset)]
-        [version : i64
-          (byte_le.read-u16 (& (array-ref scan.views view).bytes) (+ offset 4))]
-        [end : i64 (+ (+ offset 4) unit-length)]
-        (begin
+        [v5? : bool (= version 5)]
+        [fixed : i64 (cond [v5? 12] [types? 23] [else 11])]
+        (when
+          (not (linker-dwarf-need! scan view offset offset fixed end))
+          (return -1))
+        (let
+          [unit-type : i64
+            (cond
+              [v5?
+                (byte_le.byte-le-at
+                  (& (array-ref scan.views view).bytes)
+                  (+ offset 6))]
+              [(= kind linker-dwarf-section-types) 2]
+              [(= kind linker-dwarf-section-types-dwo) 6]
+              [(= kind linker-dwarf-section-info-dwo) 5]
+              [else 1])]
+          [address-size : i64
+            (byte_le.byte-le-at
+              (& (array-ref scan.views view).bytes)
+              (if v5?
+                (+ offset 7)
+                (+ offset 10)))]
+          [abbrev-offset : i64
+            (byte_le.read-u32
+              (& (array-ref scan.views view).bytes)
+              (if v5?
+                (+ offset 8)
+                (+ offset 6)))]
+          [extra : i64
+            (cond
+              [(not v5?) 0]
+              [(or (= unit-type 4) (= unit-type 5)) 8]
+              [(or (= unit-type 2) (= unit-type 6)) 12]
+              [else 0])]
+          [die-offset : i64 (+ (+ offset fixed) extra)]
           (when
-            (>= unit-length 0xfffffff0)
+            (and v5? (not (linker-dwarf-unit-type-admitted? kind unit-type)))
             (linker-dwarf-fail-detail!
               scan
-              (if (= unit-length 0xffffffff)
-                linker-dwarf-error-dwarf64
-                linker-dwarf-error-unit)
+              linker-dwarf-error-unit-type
               view
               offset
-              offset
-              unit-length
-              "dwarf: DWARF64 or reserved unit length")
+              (+ offset 6)
+              unit-type
+              "dwarf: unit type not admitted for its section")
             (return -1))
           (when
-            (> end length)
+            (not (or (= address-size 4) (= address-size 8)))
             (linker-dwarf-fail-detail!
               scan
-              linker-dwarf-error-truncated
+              linker-dwarf-error-unit
               view
               offset
               offset
-              unit-length
-              "dwarf: unit runs past the end of its section")
+              address-size
+              "dwarf: address size is neither 4 nor 8")
             (return -1))
           (when
-            (not (linker-dwarf-version-admitted? kind version))
-            (linker-dwarf-fail-detail!
-              scan
-              linker-dwarf-error-version
-              view
-              offset
-              (+ offset 4)
-              version
-              "dwarf: unit version not admitted for its section")
+            (not
+              (linker-dwarf-need!
+                scan
+                view
+                offset
+                offset
+                (- die-offset offset)
+                end))
             (return -1))
           (let
-            [v5? : bool (= version 5)]
-            [fixed : i64 (cond [v5? 12] [types? 23] [else 11])]
-            (begin
-              (when
-                (not (linker-dwarf-need! scan view offset offset fixed end))
-                (return -1))
-              (let
-                [unit-type : i64
-                  (cond
-                    [v5?
-                      (byte_le.byte-le-at
-                        (& (array-ref scan.views view).bytes)
-                        (+ offset 6))]
-                    [(= kind linker-dwarf-section-types) 2]
-                    [(= kind linker-dwarf-section-types-dwo) 6]
-                    [(= kind linker-dwarf-section-info-dwo) 5]
-                    [else 1])]
-                [address-size : i64
-                  (byte_le.byte-le-at
-                    (& (array-ref scan.views view).bytes)
-                    (if v5?
-                      (+ offset 7)
-                      (+ offset 10)))]
-                [abbrev-offset : i64
+            ;; Only skeleton, split and type units carry an 8-byte id
+            ;; or signature; the header check above covered it.
+            [id-at : i64
+              (cond
+                [(and v5? (> extra 0)) (+ offset 12)]
+                [types? (+ offset 11)]
+                [else -1])]
+            [identity : i64
+              (if (>= id-at 0)
+                (byte_le.read-u64 (& (array-ref scan.views view).bytes) id-at)
+                0)]
+            [type-offset : i64
+              (cond
+                [(and v5? (= extra 12))
                   (byte_le.read-u32
                     (& (array-ref scan.views view).bytes)
-                    (if v5?
-                      (+ offset 8)
-                      (+ offset 6)))]
-                [extra : i64
-                  (cond
-                    [(not v5?) 0]
-                    [(or (= unit-type 4) (= unit-type 5)) 8]
-                    [(or (= unit-type 2) (= unit-type 6)) 12]
-                    [else 0])]
-                [die-offset : i64 (+ (+ offset fixed) extra)]
-                (begin
-                  (when
-                    (and
-                      v5?
-                      (not (linker-dwarf-unit-type-admitted? kind unit-type)))
-                    (linker-dwarf-fail-detail!
-                      scan
-                      linker-dwarf-error-unit-type
-                      view
-                      offset
-                      (+ offset 6)
-                      unit-type
-                      "dwarf: unit type not admitted for its section")
-                    (return -1))
-                  (when
-                    (not (or (= address-size 4) (= address-size 8)))
-                    (linker-dwarf-fail-detail!
-                      scan
-                      linker-dwarf-error-unit
-                      view
-                      offset
-                      offset
-                      address-size
-                      "dwarf: address size is neither 4 nor 8")
-                    (return -1))
-                  (when
-                    (not
-                      (linker-dwarf-need!
-                        scan
-                        view
-                        offset
-                        offset
-                        (- die-offset offset)
-                        end))
-                    (return -1))
-                  (let
-                    ;; Only skeleton, split and type units carry an 8-byte id
-                    ;; or signature; the header check above covered it.
-                    [id-at : i64
-                      (cond
-                        [(and v5? (> extra 0)) (+ offset 12)]
-                        [types? (+ offset 11)]
-                        [else -1])]
-                    [identity : i64
-                      (if (>= id-at 0)
-                        (byte_le.read-u64
-                          (& (array-ref scan.views view).bytes)
-                          id-at)
-                        0)]
-                    [type-offset : i64
-                      (cond
-                        [(and v5? (= extra 12))
-                          (byte_le.read-u32
-                            (& (array-ref scan.views view).bytes)
-                            (+ offset 20))]
-                        [types?
-                          (byte_le.read-u32
-                            (& (array-ref scan.views view).bytes)
-                            (+ offset 19))]
-                        [else -1])]
-                    [abbrev-view : i64
-                      (linker-dwarf-find-view
-                        scan
-                        input
-                        (if split?
-                          linker-dwarf-section-abbrev-dwo
-                          linker-dwarf-section-abbrev))]
-                    (begin
-                      (when
-                        (< abbrev-view 0)
-                        (linker-dwarf-fail-detail!
-                          scan
-                          linker-dwarf-error-missing-section
-                          view
-                          offset
-                          (if v5?
-                            (+ offset 8)
-                            (+ offset 6))
-                          (if split?
-                            linker-dwarf-section-abbrev-dwo
-                            linker-dwarf-section-abbrev)
-                          "dwarf: unit needs an abbreviation section that was not supplied")
-                        (return -1))
-                      (let
-                        [table : i64
-                          (linker-dwarf-abbrev-table!
-                            scan
-                            abbrev-view
-                            abbrev-offset
-                            offset)]
-                        [ctx : LinkerDwarfUnitContext
-                          (LinkerDwarfUnitContext
-                            view
-                            scan.units.len
-                            offset
-                            end
-                            version
-                            address-size
-                            kind
-                            split?)]
-                        (if (< table 0)
-                          -1
-                          (linker-dwarf-walk-unit!
-                            scan
-                            (& ctx)
-                            table
-                            die-offset
-                            unit-type
-                            abbrev-offset
-                            (if (or (= extra 8) (= extra 12))
-                              identity
-                              0)
-                            (= extra 8)
-                            (if types?
-                              identity
-                              (if (= extra 12)
-                                identity
-                                0))
-                            type-offset
-                            (if v5?
-                              (+ offset 8)
-                              (+ offset 6))
-                            (array-ref scan.views view).relocatable))))))))))))))
+                    (+ offset 20))]
+                [types?
+                  (byte_le.read-u32
+                    (& (array-ref scan.views view).bytes)
+                    (+ offset 19))]
+                [else -1])]
+            [abbrev-view : i64
+              (linker-dwarf-find-view
+                scan
+                input
+                (if split?
+                  linker-dwarf-section-abbrev-dwo
+                  linker-dwarf-section-abbrev))]
+            (when
+              (< abbrev-view 0)
+              (linker-dwarf-fail-detail!
+                scan
+                linker-dwarf-error-missing-section
+                view
+                offset
+                (if v5?
+                  (+ offset 8)
+                  (+ offset 6))
+                (if split?
+                  linker-dwarf-section-abbrev-dwo
+                  linker-dwarf-section-abbrev)
+                "dwarf: unit needs an abbreviation section that was not supplied")
+              (return -1))
+            (let
+              [table : i64
+                (linker-dwarf-abbrev-table!
+                  scan
+                  abbrev-view
+                  abbrev-offset
+                  offset)]
+              [ctx : LinkerDwarfUnitContext
+                (LinkerDwarfUnitContext
+                  view
+                  scan.units.len
+                  offset
+                  end
+                  version
+                  address-size
+                  kind
+                  split?)]
+              (if (< table 0)
+                -1
+                (linker-dwarf-walk-unit!
+                  scan
+                  (& ctx)
+                  table
+                  die-offset
+                  unit-type
+                  abbrev-offset
+                  (if (or (= extra 8) (= extra 12))
+                    identity
+                    0)
+                  (= extra 8)
+                  (if types?
+                    identity
+                    (if (= extra 12)
+                      identity
+                      0))
+                  type-offset
+                  (if v5?
+                    (+ offset 8)
+                    (+ offset 6))
+                  (array-ref scan.views view).relocatable)))))))))
 
 ;: Walk the DIEs of the unit in `ctx` from `die-offset` and register the unit.
 (define (linker-dwarf-walk-unit!
@@ -2219,237 +2144,221 @@
     [ranges-base : i64 -1]
     [gnu-id : i64 0]
     [has-gnu-id : bool false]
-    (begin
-      (when
-        (not
-          (linker-dwarf-charge! scan (- ctx.end ctx.offset) ctx.view ctx.offset))
-        (return -1))
-      ;; The header's abbreviation offset is itself a relocatable section
-      ;; offset; attribute and form -1 mark a header field.
-      (when
-        (not
-          (linker-dwarf-reference!
-            scan
-            ctx
-            abbrev-field
-            4
-            -1
-            -1
-            -1
-            linker-dwarf-ref-section-offset
-            (if ctx.split?
-              linker-dwarf-section-abbrev-dwo
-              linker-dwarf-section-abbrev)
-            abbrev-offset))
-        (return -1))
-      (while (and scan.ok (< at ctx.end))
-        (let
-          [code : leb128.Decoded
-            (linker-dwarf-leb! scan ctx.view ctx.offset at ctx.end false)]
-          (cond
-            [(not scan.ok) unit]
-            [(= code.value 0)
-              (begin
-                (if (> depth 0)
-                  (set! depth (- depth 1))
-                  unit)
-                (set! at code.next))]
-            [(and (> count 0) (= depth 0))
-              (linker-dwarf-fail!
-                scan
-                linker-dwarf-error-nesting
-                ctx.view
-                ctx.offset
-                at
-                "dwarf: a second top-level DIE follows the unit's root")]
-            [else
-              (let
-                [entry : i64 (linker-dwarf-abbrev-entry scan table code.value)]
-                (cond
-                  [(< entry 0)
-                    (linker-dwarf-fail-detail!
-                      scan
-                      linker-dwarf-error-abbrev-code
-                      ctx.view
-                      ctx.offset
-                      at
-                      code.value
-                      "dwarf: DIE names an abbreviation code its table does not define")]
-                  [(>= scan.dies scan.limits.max-dies)
-                    (linker-dwarf-fail!
-                      scan
-                      linker-dwarf-error-die-limit
-                      ctx.view
-                      ctx.offset
-                      at
-                      "dwarf: DIE limit exceeded")]
-                  [else
-                    (let
-                      [spec : i64 (array-ref scan.entry-first-spec.slots entry)]
-                      [spec-end : i64
-                        (+
-                          (array-ref scan.entry-first-spec.slots entry)
-                          (array-ref scan.entry-specs.slots entry))]
-                      [pos : i64 code.next]
-                      [root? : bool (= count 0)]
-                      (begin
-                        (dwarf_i64_vec.push-ref! (&mut scan.die-offsets) at)
-                        (set! scan.dies (+ scan.dies 1))
-                        (set! count (+ count 1))
-                        (if root?
-                          (set! root-tag (array-ref scan.entry-tag.slots entry))
-                          unit)
-                        (while (and scan.ok (< spec spec-end))
-                          (if (>= scan.attributes scan.limits.max-attributes)
-                            (linker-dwarf-fail!
-                              scan
-                              linker-dwarf-error-attribute-limit
-                              ctx.view
-                              ctx.offset
-                              pos
-                              "dwarf: attribute limit exceeded")
-                            (let
-                              [attribute : i64
-                                (array-ref scan.spec-attribute.slots spec)]
-                              [field : LinkerDwarfField
-                                (linker-dwarf-form!
-                                  scan
-                                  ctx
-                                  pos
-                                  attribute
-                                  (array-ref scan.spec-form.slots spec)
-                                  (array-ref scan.spec-const.slots spec)
-                                  false)]
-                              (begin
-                                (set! scan.attributes (+ scan.attributes 1))
-                                (if (and root? (>= field.next 0))
-                                  (cond
-                                    [(= attribute 0x72)
-                                      (set! str-offsets-base field.value)]
-                                    [(or
-                                        (= attribute 0x73)
-                                        (= attribute 0x2133))
-                                      (set! addr-base field.value)]
-                                    [(= attribute 0x74)
-                                      (set! rnglists-base field.value)]
-                                    [(= attribute 0x8c)
-                                      (set! loclists-base field.value)]
-                                    [(= attribute 0x2132)
-                                      (set! ranges-base field.value)]
-                                    [(= attribute 0x2131)
-                                      (begin
-                                        (set! gnu-id field.value)
-                                        (set! has-gnu-id true))]
-                                    [else unit])
-                                  unit)
-                                (set! pos field.next)
-                                (set! spec (+ spec 1))))))
-                        (if (and
-                          scan.ok
-                          (= (array-ref scan.entry-children.slots entry) 1))
-                          (if (>= depth scan.limits.max-depth)
-                            (linker-dwarf-fail!
-                              scan
-                              linker-dwarf-error-depth-limit
-                              ctx.view
-                              ctx.offset
-                              at
-                              "dwarf: DIE nesting limit exceeded")
-                            (set! depth (+ depth 1)))
-                          unit)
-                        (set! at pos)))]))])))
-      (cond
-        [(not scan.ok) -1]
-        [(= count 0)
-          (begin
+    (when
+      (not
+        (linker-dwarf-charge! scan (- ctx.end ctx.offset) ctx.view ctx.offset))
+      (return -1))
+    ;; The header's abbreviation offset is itself a relocatable section
+    ;; offset; attribute and form -1 mark a header field.
+    (when
+      (not
+        (linker-dwarf-reference!
+          scan
+          ctx
+          abbrev-field
+          4
+          -1
+          -1
+          -1
+          linker-dwarf-ref-section-offset
+          (if ctx.split?
+            linker-dwarf-section-abbrev-dwo
+            linker-dwarf-section-abbrev)
+          abbrev-offset))
+      (return -1))
+    (while (and scan.ok (< at ctx.end))
+      (let
+        [code : leb128.Decoded
+          (linker-dwarf-leb! scan ctx.view ctx.offset at ctx.end false)]
+        (cond
+          [(not scan.ok) unit]
+          [(= code.value 0)
+            (if (> depth 0)
+              (set! depth (- depth 1))
+              unit)
+            (set! at code.next)]
+          [(and (> count 0) (= depth 0))
             (linker-dwarf-fail!
-              scan
-              linker-dwarf-error-unit
-              ctx.view
-              ctx.offset
-              die-offset
-              "dwarf: unit has no root DIE")
-            -1)]
-        [(> depth 0)
-          (begin
-            (linker-dwarf-fail-detail!
               scan
               linker-dwarf-error-nesting
               ctx.view
               ctx.offset
-              ctx.end
-              depth
-              "dwarf: unit ends inside an open sibling list")
-            -1)]
-        [(and
-            (>= type-offset 0)
-            (<
-              (linker-dwarf-die-index
-                scan
-                first
-                count
-                (+ ctx.offset type-offset))
-              0))
-          (begin
-            (linker-dwarf-fail-detail!
-              scan
-              linker-dwarf-error-reference
-              ctx.view
-              ctx.offset
-              ctx.offset
-              type-offset
-              "dwarf: type unit's type offset is not a DIE of the unit")
-            -1)]
-        [(and has-header-id has-gnu-id (!= header-id gnu-id))
-          (begin
-            (linker-dwarf-fail!
-              scan
-              linker-dwarf-error-split
-              ctx.view
-              ctx.offset
-              ctx.offset
-              "dwarf: unit header and DW_AT_GNU_dwo_id disagree")
-            -1)]
-        [else
-          (let
-            [unit-type : i64
+              at
+              "dwarf: a second top-level DIE follows the unit's root")]
+          [else
+            (let
+              [entry : i64 (linker-dwarf-abbrev-entry scan table code.value)]
               (cond
-                [(and (= header-type 1) (= root-tag 0x3c)) 3]
-                [(and (= header-type 1) (= ctx.version 4) has-gnu-id) 4]
-                [else header-type])]
-            [has-id : bool (or has-header-id has-gnu-id)]
-            (begin
-              (dwarf_unit_vec.push-ref!
-                (&mut scan.units)
-                (LinkerDwarfUnit
-                  (array-ref scan.views ctx.view).input
-                  (array-ref scan.views ctx.view).section
-                  ctx.kind
-                  relocatable
-                  ctx.offset
-                  ctx.end
-                  ctx.version
-                  unit-type
-                  ctx.address-size
-                  abbrev-offset
-                  die-offset
-                  first
-                  count
-                  root-tag
-                  signature
-                  type-offset
-                  (if has-header-id
-                    header-id
-                    gnu-id)
-                  has-id
-                  str-offsets-base
-                  addr-base
-                  rnglists-base
-                  loclists-base
-                  ranges-base
-                  -1))
-              (dwarf_i64_vec.push-ref! (&mut scan.unit-views) ctx.view)
-              ctx.end))]))))
+                [(< entry 0)
+                  (linker-dwarf-fail-detail!
+                    scan
+                    linker-dwarf-error-abbrev-code
+                    ctx.view
+                    ctx.offset
+                    at
+                    code.value
+                    "dwarf: DIE names an abbreviation code its table does not define")]
+                [(>= scan.dies scan.limits.max-dies)
+                  (linker-dwarf-fail!
+                    scan
+                    linker-dwarf-error-die-limit
+                    ctx.view
+                    ctx.offset
+                    at
+                    "dwarf: DIE limit exceeded")]
+                [else
+                  (let
+                    [spec : i64 (array-ref scan.entry-first-spec.slots entry)]
+                    [spec-end : i64
+                      (+
+                        (array-ref scan.entry-first-spec.slots entry)
+                        (array-ref scan.entry-specs.slots entry))]
+                    [pos : i64 code.next]
+                    [root? : bool (= count 0)]
+                    (dwarf_i64_vec.push-ref! (&mut scan.die-offsets) at)
+                    (set! scan.dies (+ scan.dies 1))
+                    (set! count (+ count 1))
+                    (if root?
+                      (set! root-tag (array-ref scan.entry-tag.slots entry))
+                      unit)
+                    (while (and scan.ok (< spec spec-end))
+                      (if (>= scan.attributes scan.limits.max-attributes)
+                        (linker-dwarf-fail!
+                          scan
+                          linker-dwarf-error-attribute-limit
+                          ctx.view
+                          ctx.offset
+                          pos
+                          "dwarf: attribute limit exceeded")
+                        (let
+                          [attribute : i64
+                            (array-ref scan.spec-attribute.slots spec)]
+                          [field : LinkerDwarfField
+                            (linker-dwarf-form!
+                              scan
+                              ctx
+                              pos
+                              attribute
+                              (array-ref scan.spec-form.slots spec)
+                              (array-ref scan.spec-const.slots spec)
+                              false)]
+                          (set! scan.attributes (+ scan.attributes 1))
+                          (if (and root? (>= field.next 0))
+                            (cond
+                              [(= attribute 0x72)
+                                (set! str-offsets-base field.value)]
+                              [(or (= attribute 0x73) (= attribute 0x2133))
+                                (set! addr-base field.value)]
+                              [(= attribute 0x74)
+                                (set! rnglists-base field.value)]
+                              [(= attribute 0x8c)
+                                (set! loclists-base field.value)]
+                              [(= attribute 0x2132)
+                                (set! ranges-base field.value)]
+                              [(= attribute 0x2131)
+                                (set! gnu-id field.value)
+                                (set! has-gnu-id true)]
+                              [else unit])
+                            unit)
+                          (set! pos field.next)
+                          (set! spec (+ spec 1)))))
+                    (if (and
+                      scan.ok
+                      (= (array-ref scan.entry-children.slots entry) 1))
+                      (if (>= depth scan.limits.max-depth)
+                        (linker-dwarf-fail!
+                          scan
+                          linker-dwarf-error-depth-limit
+                          ctx.view
+                          ctx.offset
+                          at
+                          "dwarf: DIE nesting limit exceeded")
+                        (set! depth (+ depth 1)))
+                      unit)
+                    (set! at pos))]))])))
+    (cond
+      [(not scan.ok) -1]
+      [(= count 0)
+        (linker-dwarf-fail!
+          scan
+          linker-dwarf-error-unit
+          ctx.view
+          ctx.offset
+          die-offset
+          "dwarf: unit has no root DIE")
+        -1]
+      [(> depth 0)
+        (linker-dwarf-fail-detail!
+          scan
+          linker-dwarf-error-nesting
+          ctx.view
+          ctx.offset
+          ctx.end
+          depth
+          "dwarf: unit ends inside an open sibling list")
+        -1]
+      [(and
+        (>= type-offset 0)
+        (<
+          (linker-dwarf-die-index scan first count (+ ctx.offset type-offset))
+          0))
+        (linker-dwarf-fail-detail!
+          scan
+          linker-dwarf-error-reference
+          ctx.view
+          ctx.offset
+          ctx.offset
+          type-offset
+          "dwarf: type unit's type offset is not a DIE of the unit")
+        -1]
+      [(and has-header-id has-gnu-id (!= header-id gnu-id))
+        (linker-dwarf-fail!
+          scan
+          linker-dwarf-error-split
+          ctx.view
+          ctx.offset
+          ctx.offset
+          "dwarf: unit header and DW_AT_GNU_dwo_id disagree")
+        -1]
+      [else
+        (let
+          [unit-type : i64
+            (cond
+              [(and (= header-type 1) (= root-tag 0x3c)) 3]
+              [(and (= header-type 1) (= ctx.version 4) has-gnu-id) 4]
+              [else header-type])]
+          [has-id : bool (or has-header-id has-gnu-id)]
+          (dwarf_unit_vec.push-ref!
+            (&mut scan.units)
+            (LinkerDwarfUnit
+              (array-ref scan.views ctx.view).input
+              (array-ref scan.views ctx.view).section
+              ctx.kind
+              relocatable
+              ctx.offset
+              ctx.end
+              ctx.version
+              unit-type
+              ctx.address-size
+              abbrev-offset
+              die-offset
+              first
+              count
+              root-tag
+              signature
+              type-offset
+              (if has-header-id
+                header-id
+                gnu-id)
+              has-id
+              str-offsets-base
+              addr-base
+              rnglists-base
+              loclists-base
+              ranges-base
+              -1))
+          (dwarf_i64_vec.push-ref! (&mut scan.unit-views) ctx.view)
+          ctx.end)])))
 
 ;; --- ordering ------------------------------------------------------------------------------
 ;: Whether position `a` sorts before position `b` by (`primary`, `secondary`,
@@ -2498,10 +2407,9 @@
               (array-ref order larger))
               (let
                 [held : i64 (array-ref order node)]
-                (begin
-                  (set! (array-ref order node) (array-ref order larger))
-                  (set! (array-ref order larger) held)
-                  (set! node larger)))
+                (set! (array-ref order node) (array-ref order larger))
+                (set! (array-ref order larger) held)
+                (set! node larger))
               (set! done true))))))))
 
 ;: The positions 0..count-1 ordered by (`primary`, `secondary`, position).
@@ -2512,26 +2420,22 @@
   (let
     [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref order index) index)
-          (set! index (+ index 1))))
-      (set! index (- (/ count 2) 1))
-      (while (>= index 0)
-        (begin
-          (linker-dwarf-sift! primary secondary (&mut order) index count)
-          (set! index (- index 1))))
-      (set! index (- count 1))
-      (while (> index 0)
-        (let
-          [held : i64 (array-ref order 0)]
-          (begin
-            (set! (array-ref order 0) (array-ref order index))
-            (set! (array-ref order index) held)
-            (linker-dwarf-sift! primary secondary (&mut order) 0 index)
-            (set! index (- index 1)))))
-      order)))
+    (while (< index count)
+      (set! (array-ref order index) index)
+      (set! index (+ index 1)))
+    (set! index (- (/ count 2) 1))
+    (while (>= index 0)
+      (linker-dwarf-sift! primary secondary (&mut order) index count)
+      (set! index (- index 1)))
+    (set! index (- count 1))
+    (while (> index 0)
+      (let
+        [held : i64 (array-ref order 0)]
+        (set! (array-ref order 0) (array-ref order index))
+        (set! (array-ref order index) held)
+        (linker-dwarf-sift! primary secondary (&mut order) 0 index)
+        (set! index (- index 1))))
+    order))
 
 ;; --- split units ----------------------------------------------------------------------------
 ;: Pair every split compile unit with the one skeleton unit that carries its
@@ -2542,62 +2446,58 @@
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [split : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref ids index) (array-ref scan.units.slots index).dwo-id)
-          (set!
-            (array-ref split index)
-            (cond
-              [(not (array-ref scan.units.slots index).has-id) 2]
-              [(= (array-ref scan.units.slots index).unit-type 5) 1]
-              [(= (array-ref scan.units.slots index).unit-type 4) 0]
-              [else 2]))
-          (set! index (+ index 1))))
-      (let
-        [order : (__tl_dyn-array i64)
-          (linker-dwarf-order (& ids) (& split) count)]
-        [run : i64 0]
-        (while (and scan.ok (< run count))
-          (let
-            [id : i64 (array-ref ids (array-ref order run))]
-            [end : i64 run]
-            [skeleton : i64 -1]
-            [unit-index : i64 -1]
-            (begin
-              (while (and
-                (< end count)
-                (= (array-ref ids (array-ref order end)) id))
-                (let
-                  [member : i64 (array-ref order end)]
-                  (begin
-                    (cond
-                      [(= (array-ref split member) 0)
-                        (if (>= skeleton 0)
-                          (linker-dwarf-fail!
-                            scan
-                            linker-dwarf-error-split
-                            (array-ref scan.unit-views.slots member)
-                            (array-ref scan.units.slots member).offset
-                            (array-ref scan.units.slots member).offset
-                            "dwarf: two skeleton units carry one dwo id")
-                          (set! skeleton member))]
-                      [(= (array-ref split member) 1)
-                        (if (>= unit-index 0)
-                          (linker-dwarf-fail!
-                            scan
-                            linker-dwarf-error-split
-                            (array-ref scan.unit-views.slots member)
-                            (array-ref scan.units.slots member).offset
-                            (array-ref scan.units.slots member).offset
-                            "dwarf: two split units carry one dwo id")
-                          (set! unit-index member))]
-                      [else unit])
-                    (set! end (+ end 1)))))
-              (if (and scan.ok (>= skeleton 0) (>= unit-index 0))
-                (linker-dwarf-set-skeleton! scan unit-index skeleton)
-                unit)
-              (set! run end))))))))
+    (while (< index count)
+      (set! (array-ref ids index) (array-ref scan.units.slots index).dwo-id)
+      (set!
+        (array-ref split index)
+        (cond
+          [(not (array-ref scan.units.slots index).has-id) 2]
+          [(= (array-ref scan.units.slots index).unit-type 5) 1]
+          [(= (array-ref scan.units.slots index).unit-type 4) 0]
+          [else 2]))
+      (set! index (+ index 1)))
+    (let
+      [order : (__tl_dyn-array i64)
+        (linker-dwarf-order (& ids) (& split) count)]
+      [run : i64 0]
+      (while (and scan.ok (< run count))
+        (let
+          [id : i64 (array-ref ids (array-ref order run))]
+          [end : i64 run]
+          [skeleton : i64 -1]
+          [unit-index : i64 -1]
+          (while (and
+            (< end count)
+            (= (array-ref ids (array-ref order end)) id))
+            (let
+              [member : i64 (array-ref order end)]
+              (cond
+                [(= (array-ref split member) 0)
+                  (if (>= skeleton 0)
+                    (linker-dwarf-fail!
+                      scan
+                      linker-dwarf-error-split
+                      (array-ref scan.unit-views.slots member)
+                      (array-ref scan.units.slots member).offset
+                      (array-ref scan.units.slots member).offset
+                      "dwarf: two skeleton units carry one dwo id")
+                    (set! skeleton member))]
+                [(= (array-ref split member) 1)
+                  (if (>= unit-index 0)
+                    (linker-dwarf-fail!
+                      scan
+                      linker-dwarf-error-split
+                      (array-ref scan.unit-views.slots member)
+                      (array-ref scan.units.slots member).offset
+                      (array-ref scan.units.slots member).offset
+                      "dwarf: two split units carry one dwo id")
+                    (set! unit-index member))]
+                [else unit])
+              (set! end (+ end 1))))
+          (if (and scan.ok (>= skeleton 0) (>= unit-index 0))
+            (linker-dwarf-set-skeleton! scan unit-index skeleton)
+            unit)
+          (set! run end))))))
 
 ;: Rewrite unit `index` with skeleton `skeleton`.
 (define (linker-dwarf-set-skeleton!
@@ -2643,25 +2543,24 @@
   (let
     [low : i64 0]
     [high : i64 scan.units.len]
-    (begin
-      ;; Units are stored in canonical view order and, within a view, by
-      ;; offset, so (view, end) increases along the array.
-      (while (< low high)
-        (let
-          [middle : i64 (+ low (/ (- high low) 2))]
-          (if (or
-            (< (array-ref scan.unit-views.slots middle) view)
-            (and
-              (= (array-ref scan.unit-views.slots middle) view)
-              (<= (array-ref scan.units.slots middle).end absolute)))
-            (set! low (+ middle 1))
-            (set! high middle))))
-      (if (and
-        (< low scan.units.len)
-        (= (array-ref scan.unit-views.slots low) view)
-        (<= (array-ref scan.units.slots low).offset absolute))
-        low
-        -1))))
+    ;; Units are stored in canonical view order and, within a view, by
+    ;; offset, so (view, end) increases along the array.
+    (while (< low high)
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        (if (or
+          (< (array-ref scan.unit-views.slots middle) view)
+          (and
+            (= (array-ref scan.unit-views.slots middle) view)
+            (<= (array-ref scan.units.slots middle).end absolute)))
+          (set! low (+ middle 1))
+          (set! high middle))))
+    (if (and
+      (< low scan.units.len)
+      (= (array-ref scan.unit-views.slots low) view)
+      (<= (array-ref scan.units.slots low).offset absolute))
+      low
+      -1)))
 
 ;: Whether a NUL-terminated string starts at `offset` of view `view`.
 (define (linker-dwarf-string-at?
@@ -2692,18 +2591,17 @@
   [kind : i64]) : i64
   (let
     [view : i64 (linker-dwarf-find-view scan input kind)]
-    (begin
-      (if (< view 0)
-        (linker-dwarf-fail-detail!
-          scan
-          linker-dwarf-error-missing-section
-          (array-ref scan.unit-views.slots unit-index)
-          (array-ref scan.units.slots unit-index).offset
-          (array-ref scan.references.slots reference).offset
-          kind
-          "dwarf: a reference targets a section that was not supplied")
-        unit)
-      view)))
+    (if (< view 0)
+      (linker-dwarf-fail-detail!
+        scan
+        linker-dwarf-error-missing-section
+        (array-ref scan.unit-views.slots unit-index)
+        (array-ref scan.units.slots unit-index).offset
+        (array-ref scan.references.slots reference).offset
+        kind
+        "dwarf: a reference targets a section that was not supplied")
+      unit)
+    view))
 
 ;: Record a failed check of reference `reference`.
 (define (linker-dwarf-reference-fail!
@@ -2757,271 +2655,265 @@
     [skeleton : i64 record.skeleton]
     [split? : bool (linker-dwarf-split-section? record.kind)]
     [target : i64 -1]
-    (begin
-      (cond
-        [(= ref.class linker-dwarf-ref-unit)
-          (if (<
-            (linker-dwarf-die-index
+    (cond
+      [(= ref.class linker-dwarf-ref-unit)
+        (if (<
+          (linker-dwarf-die-index
+            scan
+            record.first-die
+            record.die-count
+            (+ record.offset ref.value))
+          0)
+          (linker-dwarf-reference-fail!
+            scan
+            reference
+            linker-dwarf-error-reference
+            "dwarf: unit reference does not name a DIE of its unit")
+          (set! target ref.unit))]
+      [(= ref.class linker-dwarf-ref-info)
+        (if record.relocatable
+          unit
+          (let
+            [holder : i64 (linker-dwarf-unit-at scan view ref.value)]
+            (if (or
+              (< holder 0)
+              (<
+                (linker-dwarf-die-index
+                  scan
+                  (array-ref scan.units.slots holder).first-die
+                  (array-ref scan.units.slots holder).die-count
+                  ref.value)
+                0))
+              (linker-dwarf-reference-fail!
+                scan
+                reference
+                linker-dwarf-error-reference
+                "dwarf: section reference does not name a DIE")
+              (set! target holder))))]
+      [(= ref.class linker-dwarf-ref-signature)
+        (let
+          [low : i64 0]
+          [high : i64 (array-length signature-order)]
+          (while (< low high)
+            (let
+              [middle : i64 (+ low (/ (- high low) 2))]
+              (if (<
+                (array-ref signatures (array-ref signature-order middle))
+                ref.value)
+                (set! low (+ middle 1))
+                (set! high middle))))
+          (if (and
+            (< low (array-length signature-order))
+            (= (array-ref signatures (array-ref signature-order low)) ref.value))
+            (set! target (array-ref signature-order low))
+            unit))]
+      [(or
+          (= ref.class linker-dwarf-ref-string)
+          (= ref.class linker-dwarf-ref-line-string))
+        (let
+          [strings : i64
+            (linker-dwarf-target-view!
               scan
-              record.first-die
-              record.die-count
-              (+ record.offset ref.value))
-            0)
+              ref.unit
+              reference
+              record.input
+              ref.target-kind)]
+          (if (and
+            (>= strings 0)
+            (not record.relocatable)
+            (not (linker-dwarf-string-at? scan strings ref.value)))
             (linker-dwarf-reference-fail!
               scan
               reference
-              linker-dwarf-error-reference
-              "dwarf: unit reference does not name a DIE of its unit")
-            (set! target ref.unit))]
-        [(= ref.class linker-dwarf-ref-info)
-          (if record.relocatable
-            unit
-            (let
-              [holder : i64 (linker-dwarf-unit-at scan view ref.value)]
-              (if (or
-                (< holder 0)
-                (<
-                  (linker-dwarf-die-index
-                    scan
-                    (array-ref scan.units.slots holder).first-die
-                    (array-ref scan.units.slots holder).die-count
-                    ref.value)
-                  0))
-                (linker-dwarf-reference-fail!
-                  scan
-                  reference
-                  linker-dwarf-error-reference
-                  "dwarf: section reference does not name a DIE")
-                (set! target holder))))]
-        [(= ref.class linker-dwarf-ref-signature)
-          (let
-            [low : i64 0]
-            [high : i64 (array-length signature-order)]
-            (begin
-              (while (< low high)
-                (let
-                  [middle : i64 (+ low (/ (- high low) 2))]
-                  (if (<
-                    (array-ref signatures (array-ref signature-order middle))
-                    ref.value)
-                    (set! low (+ middle 1))
-                    (set! high middle))))
-              (if (and
-                (< low (array-length signature-order))
-                (=
-                  (array-ref signatures (array-ref signature-order low))
-                  ref.value))
-                (set! target (array-ref signature-order low))
-                unit)))]
-        [(or
-            (= ref.class linker-dwarf-ref-string)
-            (= ref.class linker-dwarf-ref-line-string))
-          (let
-            [strings : i64
+              linker-dwarf-error-string
+              "dwarf: string offset does not start a terminated string")
+            unit))]
+      [(= ref.class linker-dwarf-ref-string-index)
+        (let
+          [base : i64
+            (cond
+              [(not split?) record.str-offsets-base]
+              [(= record.version 5) 8]
+              [else 0])]
+          [table : i64
+            (if (< base 0)
+              -1
               (linker-dwarf-target-view!
                 scan
                 ref.unit
                 reference
                 record.input
-                ref.target-kind)]
-            (if (and
-              (>= strings 0)
-              (not record.relocatable)
-              (not (linker-dwarf-string-at? scan strings ref.value)))
+                ref.target-kind))]
+          (cond
+            [(< base 0)
               (linker-dwarf-reference-fail!
                 scan
                 reference
-                linker-dwarf-error-string
-                "dwarf: string offset does not start a terminated string")
-              unit))]
-        [(= ref.class linker-dwarf-ref-string-index)
-          (let
-            [base : i64
-              (cond
-                [(not split?) record.str-offsets-base]
-                [(= record.version 5) 8]
-                [else 0])]
-            [table : i64
-              (if (< base 0)
-                -1
-                (linker-dwarf-target-view!
-                  scan
-                  ref.unit
-                  reference
-                  record.input
-                  ref.target-kind))]
-            (cond
-              [(< base 0)
-                (linker-dwarf-reference-fail!
-                  scan
-                  reference
-                  linker-dwarf-error-index
-                  "dwarf: string index in a unit without DW_AT_str_offsets_base")]
-              [(< table 0) unit]
-              [(and (not split?) record.relocatable) unit]
-              [(or
-                  (< ref.value 0)
-                  (>
-                    (+ (+ base (* ref.value 4)) 4)
-                    (array-length (array-ref scan.views table).bytes)))
-                (linker-dwarf-reference-fail!
-                  scan
-                  reference
-                  linker-dwarf-error-index
-                  "dwarf: string index outside the string offsets table")]
-              [(array-ref scan.views table).relocatable unit]
-              [else
-                (let
-                  [strings : i64
-                    (linker-dwarf-target-view!
-                      scan
-                      ref.unit
-                      reference
-                      record.input
-                      (if split?
-                        linker-dwarf-section-str-dwo
-                        linker-dwarf-section-str))]
-                  (if (and
-                    (>= strings 0)
-                    (not
-                      (linker-dwarf-string-at?
-                        scan
-                        strings
-                        (byte_le.read-u32
-                          (& (array-ref scan.views table).bytes)
-                          (+ base (* ref.value 4))))))
-                    (linker-dwarf-reference-fail!
-                      scan
-                      reference
-                      linker-dwarf-error-string
-                      "dwarf: string offsets entry does not start a terminated string")
-                    unit))]))]
-        [(= ref.class linker-dwarf-ref-address-index)
-          (let
-            [owner : i64
-              (if split?
-                skeleton
-                ref.unit)]
-            (if (< owner 0)
-              unit
+                linker-dwarf-error-index
+                "dwarf: string index in a unit without DW_AT_str_offsets_base")]
+            [(< table 0) unit]
+            [(and (not split?) record.relocatable) unit]
+            [(or
+                (< ref.value 0)
+                (>
+                  (+ (+ base (* ref.value 4)) 4)
+                  (array-length (array-ref scan.views table).bytes)))
+              (linker-dwarf-reference-fail!
+                scan
+                reference
+                linker-dwarf-error-index
+                "dwarf: string index outside the string offsets table")]
+            [(array-ref scan.views table).relocatable unit]
+            [else
               (let
-                [base : i64 (array-ref scan.units.slots owner).addr-base]
-                [table : i64
-                  (if (< base 0)
-                    -1
-                    (linker-dwarf-target-view!
+                [strings : i64
+                  (linker-dwarf-target-view!
+                    scan
+                    ref.unit
+                    reference
+                    record.input
+                    (if split?
+                      linker-dwarf-section-str-dwo
+                      linker-dwarf-section-str))]
+                (if (and
+                  (>= strings 0)
+                  (not
+                    (linker-dwarf-string-at?
                       scan
-                      ref.unit
-                      reference
-                      (array-ref scan.units.slots owner).input
-                      linker-dwarf-section-addr))]
-                (cond
-                  [(< base 0)
-                    (linker-dwarf-reference-fail!
-                      scan
-                      reference
-                      linker-dwarf-error-index
-                      "dwarf: address index in a unit without an address base")]
-                  [(< table 0) unit]
-                  [(array-ref scan.units.slots owner).relocatable unit]
-                  [(or
-                      (< ref.value 0)
-                      (>
-                        (+
-                          (+ base (* ref.value record.address-size))
-                          record.address-size)
-                        (array-length (array-ref scan.views table).bytes)))
-                    (linker-dwarf-reference-fail!
-                      scan
-                      reference
-                      linker-dwarf-error-index
-                      "dwarf: address index outside the address table")]
-                  [else unit]))))]
-        [(or
-            (= ref.class linker-dwarf-ref-rnglist-index)
-            (= ref.class linker-dwarf-ref-loclist-index))
-          (let
-            [base : i64
-              (cond
-                [split? 12]
-                [(= ref.class linker-dwarf-ref-rnglist-index)
-                  record.rnglists-base]
-                [else record.loclists-base])]
-            [table : i64
-              (if (< base 0)
-                -1
-                (linker-dwarf-target-view!
-                  scan
-                  ref.unit
-                  reference
-                  record.input
-                  ref.target-kind))]
-            (cond
-              [(< base 0)
-                (linker-dwarf-reference-fail!
-                  scan
-                  reference
-                  linker-dwarf-error-index
-                  "dwarf: list index in a unit without a list base")]
-              [(< table 0) unit]
-              [(and (not split?) record.relocatable) unit]
-              [else (linker-dwarf-check-list-index! scan reference table base)]))]
-        [(= ref.class linker-dwarf-ref-section-offset)
-          (let
-            [owner : i64
-              (if (and
-                split?
-                (not (linker-dwarf-split-section? ref.target-kind)))
-                skeleton
-                ref.unit)]
-            (if (< owner 0)
-              unit
-              (let
-                [table : i64
+                      strings
+                      (byte_le.read-u32
+                        (& (array-ref scan.views table).bytes)
+                        (+ base (* ref.value 4))))))
+                  (linker-dwarf-reference-fail!
+                    scan
+                    reference
+                    linker-dwarf-error-string
+                    "dwarf: string offsets entry does not start a terminated string")
+                  unit))]))]
+      [(= ref.class linker-dwarf-ref-address-index)
+        (let
+          [owner : i64
+            (if split?
+              skeleton
+              ref.unit)]
+          (if (< owner 0)
+            unit
+            (let
+              [base : i64 (array-ref scan.units.slots owner).addr-base]
+              [table : i64
+                (if (< base 0)
+                  -1
                   (linker-dwarf-target-view!
                     scan
                     ref.unit
                     reference
                     (array-ref scan.units.slots owner).input
-                    ref.target-kind)]
-                [base : i64
-                  (if (and
-                    split?
-                    (= ref.target-kind linker-dwarf-section-ranges)
-                    (>= (array-ref scan.units.slots owner).ranges-base 0))
-                    (array-ref scan.units.slots owner).ranges-base
-                    0)]
-                (if (and
-                  (>= table 0)
-                  (not record.relocatable)
-                  (not (array-ref scan.views table).relocatable)
-                  (or
-                    (< ref.value 0)
-                    (>
-                      (+ base ref.value)
-                      (array-length (array-ref scan.views table).bytes))))
+                    linker-dwarf-section-addr))]
+              (cond
+                [(< base 0)
                   (linker-dwarf-reference-fail!
                     scan
                     reference
-                    linker-dwarf-error-reference
-                    "dwarf: section offset past the end of its target section")
-                  unit))))]
-        [else unit])
-      (if (and scan.ok (>= target 0))
-        (set!
-          (array-ref scan.references.slots reference)
-          (LinkerDwarfReference
-            ref.unit
-            ref.offset
-            ref.width
-            ref.attribute
-            ref.form
-            ref.op
-            ref.class
-            ref.target-kind
-            ref.value
-            target))
-        unit))))
+                    linker-dwarf-error-index
+                    "dwarf: address index in a unit without an address base")]
+                [(< table 0) unit]
+                [(array-ref scan.units.slots owner).relocatable unit]
+                [(or
+                    (< ref.value 0)
+                    (>
+                      (+
+                        (+ base (* ref.value record.address-size))
+                        record.address-size)
+                      (array-length (array-ref scan.views table).bytes)))
+                  (linker-dwarf-reference-fail!
+                    scan
+                    reference
+                    linker-dwarf-error-index
+                    "dwarf: address index outside the address table")]
+                [else unit]))))]
+      [(or
+          (= ref.class linker-dwarf-ref-rnglist-index)
+          (= ref.class linker-dwarf-ref-loclist-index))
+        (let
+          [base : i64
+            (cond
+              [split? 12]
+              [(= ref.class linker-dwarf-ref-rnglist-index)
+                record.rnglists-base]
+              [else record.loclists-base])]
+          [table : i64
+            (if (< base 0)
+              -1
+              (linker-dwarf-target-view!
+                scan
+                ref.unit
+                reference
+                record.input
+                ref.target-kind))]
+          (cond
+            [(< base 0)
+              (linker-dwarf-reference-fail!
+                scan
+                reference
+                linker-dwarf-error-index
+                "dwarf: list index in a unit without a list base")]
+            [(< table 0) unit]
+            [(and (not split?) record.relocatable) unit]
+            [else (linker-dwarf-check-list-index! scan reference table base)]))]
+      [(= ref.class linker-dwarf-ref-section-offset)
+        (let
+          [owner : i64
+            (if (and split? (not (linker-dwarf-split-section? ref.target-kind)))
+              skeleton
+              ref.unit)]
+          (if (< owner 0)
+            unit
+            (let
+              [table : i64
+                (linker-dwarf-target-view!
+                  scan
+                  ref.unit
+                  reference
+                  (array-ref scan.units.slots owner).input
+                  ref.target-kind)]
+              [base : i64
+                (if (and
+                  split?
+                  (= ref.target-kind linker-dwarf-section-ranges)
+                  (>= (array-ref scan.units.slots owner).ranges-base 0))
+                  (array-ref scan.units.slots owner).ranges-base
+                  0)]
+              (if (and
+                (>= table 0)
+                (not record.relocatable)
+                (not (array-ref scan.views table).relocatable)
+                (or
+                  (< ref.value 0)
+                  (>
+                    (+ base ref.value)
+                    (array-length (array-ref scan.views table).bytes))))
+                (linker-dwarf-reference-fail!
+                  scan
+                  reference
+                  linker-dwarf-error-reference
+                  "dwarf: section offset past the end of its target section")
+                unit))))]
+      [else unit])
+    (if (and scan.ok (>= target 0))
+      (set!
+        (array-ref scan.references.slots reference)
+        (LinkerDwarfReference
+          ref.unit
+          ref.offset
+          ref.width
+          ref.attribute
+          ref.form
+          ref.op
+          ref.class
+          ref.target-kind
+          ref.value
+          target))
+      unit)))
 
 ;; --- entry point ---------------------------------------------------------------------------------
 ;: Whether every limit is usable.
@@ -3064,160 +2956,149 @@
     [sections : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [total : i64 0]
     [index : i64 0]
-    (begin
-      (when
-        (not (linker-dwarf-limits-valid? (& limits)))
-        (return
-          (Err
-            (LinkerDwarfError
-              linker-dwarf-error-invalid-limits
-              -1
-              -1
-              0
-              -1
-              0
-              0
-              "dwarf: invalid scan limits"))))
-      (when
-        (> count limits.max-views)
-        (return
-          (Err
-            (LinkerDwarfError
-              linker-dwarf-error-view-limit
-              -1
-              -1
-              0
-              -1
-              0
-              count
-              "dwarf: view limit exceeded"))))
+    (when
+      (not (linker-dwarf-limits-valid? (& limits)))
+      (return
+        (Err
+          (LinkerDwarfError
+            linker-dwarf-error-invalid-limits
+            -1
+            -1
+            0
+            -1
+            0
+            0
+            "dwarf: invalid scan limits"))))
+    (when
+      (> count limits.max-views)
+      (return
+        (Err
+          (LinkerDwarfError
+            linker-dwarf-error-view-limit
+            -1
+            -1
+            0
+            -1
+            0
+            count
+            "dwarf: view limit exceeded"))))
+    (while (< index count)
+      (set! (array-ref inputs index) (array-ref views index).input)
+      (set! (array-ref sections index) (array-ref views index).section)
+      (set! total (+ total (array-length (array-ref views index).bytes)))
+      (set! index (+ index 1)))
+    (when
+      (> total limits.max-bytes)
+      (return
+        (Err
+          (LinkerDwarfError
+            linker-dwarf-error-byte-limit
+            -1
+            -1
+            0
+            -1
+            0
+            total
+            "dwarf: byte limit exceeded"))))
+    (let
+      [order : (__tl_dyn-array i64)
+        (linker-dwarf-order (& inputs) (& sections) count)]
+      [sorted : (__tl_dyn-array LinkerDwarfView)
+        (__tl_make-array LinkerDwarfView count)]
+      (set! index 0)
       (while (< index count)
-        (begin
-          (set! (array-ref inputs index) (array-ref views index).input)
-          (set! (array-ref sections index) (array-ref views index).section)
-          (set! total (+ total (array-length (array-ref views index).bytes)))
-          (set! index (+ index 1))))
-      (when
-        (> total limits.max-bytes)
-        (return
-          (Err
-            (LinkerDwarfError
-              linker-dwarf-error-byte-limit
-              -1
-              -1
-              0
-              -1
-              0
-              total
-              "dwarf: byte limit exceeded"))))
+        (set!
+          (array-ref sorted index)
+          (array-ref views (array-ref order index)))
+        (set! index (+ index 1)))
       (let
-        [order : (__tl_dyn-array i64)
-          (linker-dwarf-order (& inputs) (& sections) count)]
-        [sorted : (__tl_dyn-array LinkerDwarfView)
-          (__tl_make-array LinkerDwarfView count)]
-        (begin
-          (set! index 0)
-          (while (< index count)
-            (begin
-              (set!
-                (array-ref sorted index)
-                (array-ref views (array-ref order index)))
-              (set! index (+ index 1))))
+        [scan : LinkerDwarfScan (linker-dwarf-scan-new sorted limits)]
+        (set! index 1)
+        (while (and scan.ok (< index count))
+          (if (and
+            (=
+              (array-ref scan.views index).input
+              (array-ref scan.views (- index 1)).input)
+            (=
+              (array-ref scan.views index).section
+              (array-ref scan.views (- index 1)).section))
+            (linker-dwarf-fail!
+              (&mut scan)
+              linker-dwarf-error-duplicate-view
+              index
+              -1
+              0
+              "dwarf: two views share one input and section")
+            unit)
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (and scan.ok (< index count))
           (let
-            [scan : LinkerDwarfScan (linker-dwarf-scan-new sorted limits)]
-            (begin
-              (set! index 1)
-              (while (and scan.ok (< index count))
-                (begin
-                  (if (and
-                    (=
-                      (array-ref scan.views index).input
-                      (array-ref scan.views (- index 1)).input)
-                    (=
-                      (array-ref scan.views index).section
-                      (array-ref scan.views (- index 1)).section))
-                    (linker-dwarf-fail!
-                      (&mut scan)
-                      linker-dwarf-error-duplicate-view
-                      index
-                      -1
-                      0
-                      "dwarf: two views share one input and section")
-                    unit)
-                  (set! index (+ index 1))))
-              (set! index 0)
-              (while (and scan.ok (< index count))
-                (let
-                  [kind : i64 (array-ref scan.views index).kind]
-                  (begin
-                    (if (linker-dwarf-unit-section? kind)
-                      (let
-                        [at : i64 0]
-                        [end : i64
-                          (array-length (array-ref scan.views index).bytes)]
-                        (while (and scan.ok (>= at 0) (< at end))
-                          (set!
-                            at
-                            (linker-dwarf-scan-unit! (&mut scan) index at))))
-                      (if (and
-                        (!= kind linker-dwarf-section-abbrev)
-                        (!= kind linker-dwarf-section-abbrev-dwo))
-                        (dwarf_ledger_vec.push-ref!
-                          (&mut scan.ledger)
-                          (LinkerDwarfLedgerEntry
-                            (array-ref scan.views index).input
-                            (array-ref scan.views index).section
-                            kind
-                            (linker-dwarf-ledger-reason kind)))
-                        unit))
-                    (set! index (+ index 1)))))
-              (if scan.ok
-                (linker-dwarf-pair-skeletons! (&mut scan))
-                unit)
-              (if scan.ok
-                (linker-dwarf-check-references! (&mut scan))
-                unit)
-              (if scan.ok
-                (let
-                  [units : (__tl_dyn-array LinkerDwarfUnit)
-                    (__tl_make-array LinkerDwarfUnit scan.units.len)]
-                  [tables : (__tl_dyn-array LinkerDwarfAbbrevTable)
-                    (__tl_make-array LinkerDwarfAbbrevTable scan.tables.len)]
-                  [references : (__tl_dyn-array LinkerDwarfReference)
-                    (__tl_make-array LinkerDwarfReference scan.references.len)]
-                  [ledger : (__tl_dyn-array LinkerDwarfLedgerEntry)
-                    (__tl_make-array LinkerDwarfLedgerEntry scan.ledger.len)]
-                  (begin
-                    (dwarf_unit_vec.copy-range!
-                      (&mut units)
-                      (& scan.units.slots)
-                      0
-                      scan.units.len)
-                    (dwarf_table_vec.copy-range!
-                      (&mut tables)
-                      (& scan.tables.slots)
-                      0
-                      scan.tables.len)
-                    (dwarf_reference_vec.copy-range!
-                      (&mut references)
-                      (& scan.references.slots)
-                      0
-                      scan.references.len)
-                    (dwarf_ledger_vec.copy-range!
-                      (&mut ledger)
-                      (& scan.ledger.slots)
-                      0
-                      scan.ledger.len)
-                    (Ok
-                      (LinkerDwarfInventory
-                        units
-                        tables
-                        references
-                        ledger
-                        scan.dies
-                        scan.attributes
-                        scan.work))))
-                (Err scan.error)))))))))
+            [kind : i64 (array-ref scan.views index).kind]
+            (if (linker-dwarf-unit-section? kind)
+              (let
+                [at : i64 0]
+                [end : i64 (array-length (array-ref scan.views index).bytes)]
+                (while (and scan.ok (>= at 0) (< at end))
+                  (set! at (linker-dwarf-scan-unit! (&mut scan) index at))))
+              (if (and
+                (!= kind linker-dwarf-section-abbrev)
+                (!= kind linker-dwarf-section-abbrev-dwo))
+                (dwarf_ledger_vec.push-ref!
+                  (&mut scan.ledger)
+                  (LinkerDwarfLedgerEntry
+                    (array-ref scan.views index).input
+                    (array-ref scan.views index).section
+                    kind
+                    (linker-dwarf-ledger-reason kind)))
+                unit))
+            (set! index (+ index 1))))
+        (if scan.ok
+          (linker-dwarf-pair-skeletons! (&mut scan))
+          unit)
+        (if scan.ok
+          (linker-dwarf-check-references! (&mut scan))
+          unit)
+        (if scan.ok
+          (let
+            [units : (__tl_dyn-array LinkerDwarfUnit)
+              (__tl_make-array LinkerDwarfUnit scan.units.len)]
+            [tables : (__tl_dyn-array LinkerDwarfAbbrevTable)
+              (__tl_make-array LinkerDwarfAbbrevTable scan.tables.len)]
+            [references : (__tl_dyn-array LinkerDwarfReference)
+              (__tl_make-array LinkerDwarfReference scan.references.len)]
+            [ledger : (__tl_dyn-array LinkerDwarfLedgerEntry)
+              (__tl_make-array LinkerDwarfLedgerEntry scan.ledger.len)]
+            (dwarf_unit_vec.copy-range!
+              (&mut units)
+              (& scan.units.slots)
+              0
+              scan.units.len)
+            (dwarf_table_vec.copy-range!
+              (&mut tables)
+              (& scan.tables.slots)
+              0
+              scan.tables.len)
+            (dwarf_reference_vec.copy-range!
+              (&mut references)
+              (& scan.references.slots)
+              0
+              scan.references.len)
+            (dwarf_ledger_vec.copy-range!
+              (&mut ledger)
+              (& scan.ledger.slots)
+              0
+              scan.ledger.len)
+            (Ok
+              (LinkerDwarfInventory
+                units
+                tables
+                references
+                ledger
+                scan.dies
+                scan.attributes
+                scan.work)))
+          (Err scan.error))))))
 
 ;: Check every reference, resolving signatures through the type units.
 (define (linker-dwarf-check-references! [scan : (&mut scan LinkerDwarfScan)]) : unit
@@ -3227,40 +3108,35 @@
     [type-units : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [typed : i64 0]
-    (begin
-      (while (< index count)
+    (while (< index count)
+      (set!
+        (array-ref signatures index)
+        (array-ref scan.units.slots index).signature)
+      (if (or
+        (= (array-ref scan.units.slots index).unit-type 2)
+        (= (array-ref scan.units.slots index).unit-type 6))
         (begin
-          (set!
-            (array-ref signatures index)
-            (array-ref scan.units.slots index).signature)
-          (if (or
-            (= (array-ref scan.units.slots index).unit-type 2)
-            (= (array-ref scan.units.slots index).unit-type 6))
-            (begin
-              (set! (array-ref type-units index) 0)
-              (set! typed (+ typed 1)))
-            (set! (array-ref type-units index) 1))
-          (set! index (+ index 1))))
-      (let
-        ;; Order type units first, by signature, then drop the rest.
-        [order : (__tl_dyn-array i64)
-          (linker-dwarf-order (& type-units) (& signatures) count)]
-        [signature-order : (__tl_dyn-array i64) (__tl_make-array i64 typed)]
-        [reference : i64 0]
-        [total : i64 scan.references.len]
-        (begin
-          (set! index 0)
-          (while (< index typed)
-            (begin
-              (set! (array-ref signature-order index) (array-ref order index))
-              (set! index (+ index 1))))
-          (if (linker-dwarf-charge! scan total -1 0)
-            (while (and scan.ok (< reference total))
-              (begin
-                (linker-dwarf-check-reference!
-                  scan
-                  reference
-                  (& signatures)
-                  (& signature-order))
-                (set! reference (+ reference 1))))
-            unit))))))
+          (set! (array-ref type-units index) 0)
+          (set! typed (+ typed 1)))
+        (set! (array-ref type-units index) 1))
+      (set! index (+ index 1)))
+    (let
+      ;; Order type units first, by signature, then drop the rest.
+      [order : (__tl_dyn-array i64)
+        (linker-dwarf-order (& type-units) (& signatures) count)]
+      [signature-order : (__tl_dyn-array i64) (__tl_make-array i64 typed)]
+      [reference : i64 0]
+      [total : i64 scan.references.len]
+      (set! index 0)
+      (while (< index typed)
+        (set! (array-ref signature-order index) (array-ref order index))
+        (set! index (+ index 1)))
+      (if (linker-dwarf-charge! scan total -1 0)
+        (while (and scan.ok (< reference total))
+          (linker-dwarf-check-reference!
+            scan
+            reference
+            (& signatures)
+            (& signature-order))
+          (set! reference (+ reference 1)))
+        unit))))

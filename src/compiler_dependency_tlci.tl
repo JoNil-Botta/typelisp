@@ -569,19 +569,18 @@
       [payload : (__tl_dyn-array u8) (__tl_make-array u8 payload-len)]
       [sections : (__tl_dyn-array tlci.TlciAuxSection)
         (__tl_make-array tlci.TlciAuxSection 1)]
-      (begin
-        (if (>= payload-len 8)
-          (tlci.tlci-set-u64! (&mut payload) 0 digest)
-          unit)
-        (set!
-          (array-ref sections 0)
-          (tlci.TlciAuxSection
-            tlci.tlci-aux-kind-package-source-binding
-            schema
-            payload))
-        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-          [(Ok packed) packed]
-          [(Err message) (io.panic message)])))))
+      (if (>= payload-len 8)
+        (tlci.tlci-set-u64! (&mut payload) 0 digest)
+        unit)
+      (set!
+        (array-ref sections 0)
+        (tlci.TlciAuxSection
+          tlci.tlci-aux-kind-package-source-binding
+          schema
+          payload))
+      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+        [(Ok packed) packed]
+        [(Err message) (io.panic message)]))))
 
 (cfg
   test
@@ -670,210 +669,205 @@
           (load.compiler-load-session-state-new)]
         [parse-state : load.CompilerLoadSessionState
           (load.compiler-load-session-state-new)]
-        (begin
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (owned_view.compiler-owned-shared-view good-bytes))
-            (return (io.panic "dependency tlci: unable to write trusted image")))
-          (let
-            [first : i64
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view state)
-                (owned_view.compiler-owned-shared-view source-set))]
-            [second : i64
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view state)
-                (owned_view.compiler-owned-shared-view source-set))]
-            [observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe state)]
-            (unless
-              (and
-                (= first 0)
-                (= second first)
-                (= observed.entries 1)
-                (= observed.generation 1)
-                (= observed.unavailable 0)
-                (= observed.metadata-only 1)
-                (= observed.trusted-code 0)
-                (= observed.code-bytes 0)
-                (= observed.fixup-bytes 0)
-                (= observed.entry-bytes 0)
-                (= observed.import-bytes 0)
-                (match (load.compiler-load-dependency-catalog-lookup-macro
-                  (owned_view.compiler-owned-shared-view state)
-                  first
-                  "metadata_dep/missing")
-                  [(MetadataOnly) true]
-                  [_ false]))
-              (return
-                (io.panic
-                  "dependency tlci: trusted metadata observation mismatch"))))
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (compiler-dependency-tlci-test-emit
-                (compiler-dependency-tlci-test-image
-                  "metadata_dep"
-                  (compiler-dependency-tlci-test-opposite-platform)
-                  (compiler-dependency-tlci-test-rodata
-                    tlci.tlci-package-source-binding-schema-version
-                    digest
-                    8))))
-            (return
-              (io.panic "dependency tlci: unable to write cross-host image")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              opposite-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view opposite-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(TrustedMetadataOnly image)
-                (and
-                  (=
-                    image.host-platform
-                    (compiler-dependency-tlci-test-opposite-platform))
-                  (= (array-length image.code) 0))]
-              [_ false])
-            (return
-              (io.panic
-                "dependency tlci: cross-host metadata image was not admitted")))
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (compiler-dependency-tlci-test-emit
-                (compiler-dependency-tlci-test-image
-                  "metadata_dep"
-                  (tlci.tlci-build-host-platform)
-                  (compiler-dependency-tlci-test-rodata
-                    tlci.tlci-package-source-binding-schema-version
-                    wrong-digest
-                    8))))
-            (return (io.panic "dependency tlci: unable to write stale image")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              stale-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view stale-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(Unavailable (StaleSource expected actual))
-                (and (= expected digest) (= actual wrong-digest))]
-              [_ false])
-            (return
-              (io.panic "dependency tlci: stale image was not classified")))
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (compiler-dependency-tlci-test-emit
-                (compiler-dependency-tlci-test-image
-                  "wrong_dep"
-                  (tlci.tlci-build-host-platform)
-                  (compiler-dependency-tlci-test-rodata
-                    tlci.tlci-package-source-binding-schema-version
-                    digest
-                    8))))
-            (return
-              (io.panic "dependency tlci: unable to write identity mismatch")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              mismatch-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view mismatch-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(Unavailable (PackageMismatch expected-name _ actual-name _))
-                (and
-                  (string.eq expected-name "metadata_dep")
-                  (string.eq actual-name "wrong_dep"))]
-              [_ false])
-            (return
-              (io.panic "dependency tlci: identity mismatch was not classified")))
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (compiler-dependency-tlci-test-emit
-                (compiler-dependency-tlci-test-image
-                  "metadata_dep"
-                  (tlci.tlci-build-host-platform)
-                  (compiler-dependency-tlci-test-rodata 2 digest 8))))
-            (return
-              (io.panic "dependency tlci: unable to write unsupported schema")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              unsupported-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view unsupported-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(Unavailable (Unsupported _)) true]
-              [_ false])
-            (return
-              (io.panic
-                "dependency tlci: unsupported schema was not classified")))
-          (unless
-            (compiler-dependency-tlci-test-write-bytes
-              artifact
-              (compiler-dependency-tlci-test-emit
-                (compiler-dependency-tlci-test-image
-                  "metadata_dep"
-                  (tlci.tlci-build-host-platform)
-                  (compiler-dependency-tlci-test-rodata
-                    tlci.tlci-package-source-binding-schema-version
-                    digest
-                    7))))
-            (return
-              (io.panic "dependency tlci: unable to write malformed schema")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              malformed-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view malformed-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(Unavailable (Malformed _)) true]
-              [_ false])
-            (return
-              (io.panic "dependency tlci: malformed schema was not classified")))
-          (match (fs.try-remove-file (& artifact))
-            [(OkIoUnit) unit]
-            [(ErrIoUnit error) (return (io.panic (io.error-message error)))])
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              missing-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view missing-state)
-                (owned_view.compiler-owned-shared-view source-set)))
-              [(Unavailable (Missing path)) (string.eq path artifact)]
-              [_ false])
-            (return
-              (io.panic "dependency tlci: missing image was not classified")))
-          (unless
-            (compiler-dependency-tlci-test-write-text artifact "not a tlci")
-            (return (io.panic "dependency tlci: unable to write parse failure")))
-          (unless
-            (match (load.compiler-load-dependency-catalog-admitted-image
-              parse-state
-              (compiler-dependency-tlci-prepare-source-set!
-                (owned_view.compiler-owned-shared-view parse-state)
-                source-set))
-              [(Unavailable (Malformed _)) true]
-              [_ false])
-            (return
-              (io.panic "dependency tlci: malformed image was not classified")))
-          (compiler-dependency-tlci-test-release!
-            (owned_view.compiler-owned-shared-view state))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (owned_view.compiler-owned-shared-view good-bytes))
+          (return (io.panic "dependency tlci: unable to write trusted image")))
+        (let
+          [first : i64
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view state)
+              (owned_view.compiler-owned-shared-view source-set))]
+          [second : i64
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view state)
+              (owned_view.compiler-owned-shared-view source-set))]
+          [observed : load.CompilerLoadDependencyCatalogObservation
+            (load.compiler-load-dependency-catalog-observe state)]
           (unless
             (and
-              (=
-                (load.compiler-load-dependency-catalog-observe state).entries
-                0)
-              (=
-                (load.compiler-load-dependency-catalog-observe opposite-state).entries
-                1))
-            (return (io.panic "dependency tlci: session release leaked state")))
-          (compiler-dependency-tlci-test-release! opposite-state)
-          (compiler-dependency-tlci-test-release! stale-state)
-          (compiler-dependency-tlci-test-release! mismatch-state)
-          (compiler-dependency-tlci-test-release! unsupported-state)
-          (compiler-dependency-tlci-test-release! malformed-state)
-          (compiler-dependency-tlci-test-release! missing-state)
-          (compiler-dependency-tlci-test-release! parse-state)
-          (compiler-dependency-tlci-test-write-bytes artifact good-bytes)
-          unit)))))
+              (= first 0)
+              (= second first)
+              (= observed.entries 1)
+              (= observed.generation 1)
+              (= observed.unavailable 0)
+              (= observed.metadata-only 1)
+              (= observed.trusted-code 0)
+              (= observed.code-bytes 0)
+              (= observed.fixup-bytes 0)
+              (= observed.entry-bytes 0)
+              (= observed.import-bytes 0)
+              (match (load.compiler-load-dependency-catalog-lookup-macro
+                (owned_view.compiler-owned-shared-view state)
+                first
+                "metadata_dep/missing")
+                [(MetadataOnly) true]
+                [_ false]))
+            (return
+              (io.panic
+                "dependency tlci: trusted metadata observation mismatch"))))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (compiler-dependency-tlci-test-emit
+              (compiler-dependency-tlci-test-image
+                "metadata_dep"
+                (compiler-dependency-tlci-test-opposite-platform)
+                (compiler-dependency-tlci-test-rodata
+                  tlci.tlci-package-source-binding-schema-version
+                  digest
+                  8))))
+          (return
+            (io.panic "dependency tlci: unable to write cross-host image")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            opposite-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view opposite-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(TrustedMetadataOnly image)
+              (and
+                (=
+                  image.host-platform
+                  (compiler-dependency-tlci-test-opposite-platform))
+                (= (array-length image.code) 0))]
+            [_ false])
+          (return
+            (io.panic
+              "dependency tlci: cross-host metadata image was not admitted")))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (compiler-dependency-tlci-test-emit
+              (compiler-dependency-tlci-test-image
+                "metadata_dep"
+                (tlci.tlci-build-host-platform)
+                (compiler-dependency-tlci-test-rodata
+                  tlci.tlci-package-source-binding-schema-version
+                  wrong-digest
+                  8))))
+          (return (io.panic "dependency tlci: unable to write stale image")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            stale-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view stale-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(Unavailable (StaleSource expected actual))
+              (and (= expected digest) (= actual wrong-digest))]
+            [_ false])
+          (return (io.panic "dependency tlci: stale image was not classified")))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (compiler-dependency-tlci-test-emit
+              (compiler-dependency-tlci-test-image
+                "wrong_dep"
+                (tlci.tlci-build-host-platform)
+                (compiler-dependency-tlci-test-rodata
+                  tlci.tlci-package-source-binding-schema-version
+                  digest
+                  8))))
+          (return
+            (io.panic "dependency tlci: unable to write identity mismatch")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            mismatch-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view mismatch-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(Unavailable (PackageMismatch expected-name _ actual-name _))
+              (and
+                (string.eq expected-name "metadata_dep")
+                (string.eq actual-name "wrong_dep"))]
+            [_ false])
+          (return
+            (io.panic "dependency tlci: identity mismatch was not classified")))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (compiler-dependency-tlci-test-emit
+              (compiler-dependency-tlci-test-image
+                "metadata_dep"
+                (tlci.tlci-build-host-platform)
+                (compiler-dependency-tlci-test-rodata 2 digest 8))))
+          (return
+            (io.panic "dependency tlci: unable to write unsupported schema")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            unsupported-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view unsupported-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(Unavailable (Unsupported _)) true]
+            [_ false])
+          (return
+            (io.panic "dependency tlci: unsupported schema was not classified")))
+        (unless
+          (compiler-dependency-tlci-test-write-bytes
+            artifact
+            (compiler-dependency-tlci-test-emit
+              (compiler-dependency-tlci-test-image
+                "metadata_dep"
+                (tlci.tlci-build-host-platform)
+                (compiler-dependency-tlci-test-rodata
+                  tlci.tlci-package-source-binding-schema-version
+                  digest
+                  7))))
+          (return
+            (io.panic "dependency tlci: unable to write malformed schema")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            malformed-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view malformed-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(Unavailable (Malformed _)) true]
+            [_ false])
+          (return
+            (io.panic "dependency tlci: malformed schema was not classified")))
+        (match (fs.try-remove-file (& artifact))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (return (io.panic (io.error-message error)))])
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            missing-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view missing-state)
+              (owned_view.compiler-owned-shared-view source-set)))
+            [(Unavailable (Missing path)) (string.eq path artifact)]
+            [_ false])
+          (return
+            (io.panic "dependency tlci: missing image was not classified")))
+        (unless
+          (compiler-dependency-tlci-test-write-text artifact "not a tlci")
+          (return (io.panic "dependency tlci: unable to write parse failure")))
+        (unless
+          (match (load.compiler-load-dependency-catalog-admitted-image
+            parse-state
+            (compiler-dependency-tlci-prepare-source-set!
+              (owned_view.compiler-owned-shared-view parse-state)
+              source-set))
+            [(Unavailable (Malformed _)) true]
+            [_ false])
+          (return
+            (io.panic "dependency tlci: malformed image was not classified")))
+        (compiler-dependency-tlci-test-release!
+          (owned_view.compiler-owned-shared-view state))
+        (unless
+          (and
+            (= (load.compiler-load-dependency-catalog-observe state).entries 0)
+            (=
+              (load.compiler-load-dependency-catalog-observe opposite-state).entries
+              1))
+          (return (io.panic "dependency tlci: session release leaked state")))
+        (compiler-dependency-tlci-test-release! opposite-state)
+        (compiler-dependency-tlci-test-release! stale-state)
+        (compiler-dependency-tlci-test-release! mismatch-state)
+        (compiler-dependency-tlci-test-release! unsupported-state)
+        (compiler-dependency-tlci-test-release! malformed-state)
+        (compiler-dependency-tlci-test-release! missing-state)
+        (compiler-dependency-tlci-test-release! parse-state)
+        (compiler-dependency-tlci-test-write-bytes artifact good-bytes)
+        unit))))

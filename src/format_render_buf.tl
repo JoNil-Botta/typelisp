@@ -6,12 +6,10 @@
   (let
     [i : i64 0]
     [out : String ""]
-    (begin
-      (while (< i count)
-        (begin
-          (set! out (str_cat.str-cat out " " ""))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i count)
+      (set! out (str_cat.str-cat out " " ""))
+      (set! i (+ i 1)))
+    out))
 
 ;; Flat byte buffer for the render pass. The chunk-list `TextBuf` allocates a
 ;; cons per appended fragment, and rendering the corpus appends roughly one
@@ -34,23 +32,21 @@
       unit
       (let
         [newcap : i64 cap]
-        (begin
-          (while (< newcap needed)
-            (set! newcap (* newcap 2)))
-          (let
-            [bigger : (__tl_dyn-array u8) (__tl_make-array u8 newcap)]
-            [n : i64 buf.len]
-            (begin
-              (if (> n 0)
-                (string.str-copy-bytes-into
-                  (unsafe
-                    (ptr-cast (__tl_array-data cur) : (Ptr u8)))
-                  (unsafe
-                    (__tl_array-data bigger))
-                  0
-                  n)
-                unit)
-              (set! buf.data bigger))))))))
+        (while (< newcap needed)
+          (set! newcap (* newcap 2)))
+        (let
+          [bigger : (__tl_dyn-array u8) (__tl_make-array u8 newcap)]
+          [n : i64 buf.len]
+          (if (> n 0)
+            (string.str-copy-bytes-into
+              (unsafe
+                (ptr-cast (__tl_array-data cur) : (Ptr u8)))
+              (unsafe
+                (__tl_array-data bigger))
+              0
+              n)
+            unit)
+          (set! buf.data bigger))))))
 
 (define (fmt-render-buf-append [buf : (&mut buf FmtRenderBuf)] [s : String]) : unit
   (let
@@ -59,16 +55,15 @@
       unit
       (let
         [base : i64 buf.len]
-        (begin
-          (fmt-render-buf-reserve buf (+ base slen))
-          (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& s)))
-            (unsafe
-              (__tl_array-data buf.data))
-            base
-            slen)
-          (set! buf.len (+ base slen)))))))
+        (fmt-render-buf-reserve buf (+ base slen))
+        (string.str-copy-bytes-into
+          (unsafe
+            (string-data (& s)))
+          (unsafe
+            (__tl_array-data buf.data))
+          base
+          slen)
+        (set! buf.len (+ base slen))))))
 
 (define (fmt-render-buf-string [buf : FmtRenderBuf]) : String
   (let
@@ -80,6 +75,5 @@
 
 ;; Append a newline plus `indent` spaces to the buffer in place.
 (define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64]) : unit
-  (begin
-    (fmt-render-buf-append buf "\n")
-    (fmt-render-buf-append buf (spaces indent))))
+  (fmt-render-buf-append buf "\n")
+  (fmt-render-buf-append buf (spaces indent)))

@@ -23,21 +23,19 @@
 (define (source-text-skip-space [text : (& text str)] [i : i64] [n : i64]) : i64
   (let
     [j : i64 i]
-    (begin
-      (while (and (< j n) (source-text-space? (string.string-ref text j)))
-        (set! j (+ j 1)))
-      j)))
+    (while (and (< j n) (source-text-space? (string.string-ref text j)))
+      (set! j (+ j 1)))
+    j))
 
 ;; Offset just past the `\n` that ends the line containing `i`, or `n`.
 (define (source-text-skip-line [text : (& text str)] [i : i64] [n : i64]) : i64
   (let
     [j : i64 i]
-    (begin
-      (while (and (< j n) (not (= (string.string-ref text j) '\n')))
-        (set! j (+ j 1)))
-      (if (< j n)
-        (+ j 1)
-        j))))
+    (while (and (< j n) (not (= (string.string-ref text j) '\n')))
+      (set! j (+ j 1)))
+    (if (< j n)
+      (+ j 1)
+      j)))
 
 ;; Offset just past the string literal whose opening quote is at `i`. An
 ;; escape skips two bytes, so an unterminated literal ending in `\` stops at
@@ -46,18 +44,16 @@
   (let
     [j : i64 (+ i 1)]
     [done : bool false]
-    (begin
-      (while (and (< j n) (not done))
-        (let
-          [c : char (string.string-ref text j)]
-          (cond
-            [(= c '\\') (set! j (+ j 2))]
-            [(= c '"')
-              (begin
-                (set! done true)
-                (set! j (+ j 1)))]
-            [else (set! j (+ j 1))])))
-      j)))
+    (while (and (< j n) (not done))
+      (let
+        [c : char (string.string-ref text j)]
+        (cond
+          [(= c '\\') (set! j (+ j 2))]
+          [(= c '"')
+            (set! done true)
+            (set! j (+ j 1))]
+          [else (set! j (+ j 1))])))
+    j))
 
 (define (source-text-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -111,19 +107,13 @@
     [i : i64 0]
     [line : i64 0]
     [col : i64 0]
-    (begin
-      (while (and (< i n) (< line line0))
-        (begin
-          (when (= (string.string-ref text i) '\n') (set! line (+ line 1)))
-          (set! i (+ i 1))))
-      (while (and
-        (< i n)
-        (< col col0)
-        (not (= (string.string-ref text i) '\n')))
-        (begin
-          (set! i (+ i 1))
-          (set! col (+ col 1))))
-      i)))
+    (while (and (< i n) (< line line0))
+      (when (= (string.string-ref text i) '\n') (set! line (+ line 1)))
+      (set! i (+ i 1)))
+    (while (and (< i n) (< col col0) (not (= (string.string-ref text i) '\n')))
+      (set! i (+ i 1))
+      (set! col (+ col 1)))
+    i))
 
 ;; 1-based line and column of byte offset `off` (clamped to the text), the
 ;; column counted in bytes or in UTF-16 code units.
@@ -140,20 +130,16 @@
     [i : i64 0]
     [line : i64 1]
     [col : i64 1]
-    (begin
-      (while (and (< i n) (< i off))
+    (while (and (< i n) (< i off))
+      (if (= (string.string-ref text i) '\n')
         (begin
-          (if (= (string.string-ref text i) '\n')
-            (begin
-              (set! line (+ line 1))
-              (set! col 1))
-            (set!
-              col
-              (+
-                col
-                (source-text-column-units (string.string-ref text i) utf16))))
-          (set! i (+ i 1))))
-      (SourceTextLineCol line col))))
+          (set! line (+ line 1))
+          (set! col 1))
+        (set!
+          col
+          (+ col (source-text-column-units (string.string-ref text i) utf16))))
+      (set! i (+ i 1)))
+    (SourceTextLineCol line col)))
 
 ;; Line-start table of one text: `starts[k]` is the byte offset of 1-based line
 ;; `k + 1`. Built once per text, it turns span-to-offset conversion into an
@@ -163,27 +149,22 @@
     [n : i64 (string.string-length text)]
     [index : i64 0]
     [line-count : i64 1]
-    (begin
+    (while (< index n)
+      (when
+        (= (string.string-ref text index) '\n')
+        (set! line-count (+ line-count 1)))
+      (set! index (+ index 1)))
+    (let
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 line-count)]
+      [line-index : i64 1]
+      (set! index 0)
       (while (< index n)
-        (begin
-          (when
-            (= (string.string-ref text index) '\n')
-            (set! line-count (+ line-count 1)))
-          (set! index (+ index 1))))
-      (let
-        [starts : (__tl_dyn-array i64) (__tl_make-array i64 line-count)]
-        [line-index : i64 1]
-        (begin
-          (set! index 0)
-          (while (< index n)
-            (begin
-              (when
-                (= (string.string-ref text index) '\n')
-                (begin
-                  (set! (array-ref starts line-index) (+ index 1))
-                  (set! line-index (+ line-index 1))))
-              (set! index (+ index 1))))
-          starts)))))
+        (when
+          (= (string.string-ref text index) '\n')
+          (set! (array-ref starts line-index) (+ index 1))
+          (set! line-index (+ line-index 1)))
+        (set! index (+ index 1)))
+      starts)))
 
 ;; Byte offset where 1-based `line` starts, or -1 when the text has no such line.
 (define (source-text-line-start
@@ -200,14 +181,13 @@
   (let
     [low : i64 0]
     [high : i64 (array-length starts)]
-    (begin
-      (while (< low high)
-        (let
-          [mid : i64 (/ (+ low high) 2)]
-          (if (<= (array-ref starts mid) offset)
-            (set! low (+ mid 1))
-            (set! high mid))))
-      (- low 1))))
+    (while (< low high)
+      (let
+        [mid : i64 (/ (+ low high) 2)]
+        (if (<= (array-ref starts mid) offset)
+          (set! low (+ mid 1))
+          (set! high mid))))
+    (- low 1)))
 
 ;; True if `text` begins with `prefix`.
 (define (starts-with? [text : (& text str)] [prefix : (& prefix str)]) : bool
@@ -226,13 +206,12 @@
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
-    (begin
-      (while (and
-        (< i n)
-        (not (= (string.string-ref text i) '\n'))
-        (not (= (string.string-ref text i) '\r')))
-        (set! i (+ i 1)))
-      i)))
+    (while (and
+      (< i n)
+      (not (= (string.string-ref text i) '\n'))
+      (not (= (string.string-ref text i) '\r')))
+      (set! i (+ i 1)))
+    i))
 
 ;; Start of the line after the one `line-end` ended at `end`, consuming one
 ;; `\n`, `\r` or `\r\n` break. At the end of `text` it returns `end`.

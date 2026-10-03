@@ -36,14 +36,12 @@
     [n : i64 (string.string-length text)]
     [at : i64 0]
     [count : i64 0]
-    (begin
-      (while (< at n)
-        (begin
-          (when
-            (or (= at 0) (= (string.string-ref text (- at 1)) '\n'))
-            (set! count (+ count 1)))
-          (set! at (+ at 1))))
-      count)))
+    (while (< at n)
+      (when
+        (or (= at 0) (= (string.string-ref text (- at 1)) '\n'))
+        (set! count (+ count 1)))
+      (set! at (+ at 1)))
+    count))
 
 (define (compiler-x64-template-events [transcript : (& transcript str)]) : CompilerX64TemplateEventSeq
   (let
@@ -84,36 +82,34 @@
       [row : i64 0]
       [start : i64 0]
       [done : bool false]
-      (begin
-        (while (and (not done) (< at n))
-          (if (= (string.string-ref text at) '\n')
-            (if (= row index)
-              (set! done true)
-              (begin
-                (set! row (+ row 1))
-                (set! start (+ at 1))
-                (set! at (+ at 1))))
-            (set! at (+ at 1))))
-        (let
-          [end : i64
-            (if done
-              at
-              n)]
-          [code : char (string.string-ref text start)]
-          [detail-start : i64
-            (if (and
-              (< (+ start 1) end)
-              (= (string.string-ref text (+ start 1)) ':'))
-              (+ start 2)
-              end)]
-          [detail : String
-            (string.substring text detail-start (- end detail-start))]
-          (if (not (compiler-x64-template-event-code-known? code))
-            (Err "x64 executable template: unknown event family")
-            (if (and (= code 'O') (= (string.string-length detail) 0))
-              (Err
-                "x64 executable template: unsupported event needs provenance")
-              (Ok
-                (CompilerX64TemplateEvent
-                  (compiler-x64-template-event-kind-from-code code)
-                  detail)))))))))
+      (while (and (not done) (< at n))
+        (if (= (string.string-ref text at) '\n')
+          (if (= row index)
+            (set! done true)
+            (begin
+              (set! row (+ row 1))
+              (set! start (+ at 1))
+              (set! at (+ at 1))))
+          (set! at (+ at 1))))
+      (let
+        [end : i64
+          (if done
+            at
+            n)]
+        [code : char (string.string-ref text start)]
+        [detail-start : i64
+          (if (and
+            (< (+ start 1) end)
+            (= (string.string-ref text (+ start 1)) ':'))
+            (+ start 2)
+            end)]
+        [detail : String
+          (string.substring text detail-start (- end detail-start))]
+        (if (not (compiler-x64-template-event-code-known? code))
+          (Err "x64 executable template: unknown event family")
+          (if (and (= code 'O') (= (string.string-length detail) 0))
+            (Err "x64 executable template: unsupported event needs provenance")
+            (Ok
+              (CompilerX64TemplateEvent
+                (compiler-x64-template-event-kind-from-code code)
+                detail))))))))

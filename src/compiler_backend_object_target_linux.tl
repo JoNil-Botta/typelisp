@@ -28,31 +28,30 @@
 
 (define (compiler-backend-object-add-entry
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
-  (begin
-    (x64_catalog.compiler-x64-template-assert-structured!
-      (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectStartContribution)
-      (LinuxX64))
-    (let
-      [entry : String "_tl_start"]
-      [with-symbol : object_target.CompilerBackendObjectTargetParts
-        (object_target.compiler-backend-object-symbol-export-section
-          parts
-          (owned_view.compiler-owned-shared-view entry)
-          (Text)
-          (Function))]
-      [with-label : object_target.CompilerBackendObjectTargetParts
-        (object_target.compiler-backend-object-add-text
-          with-symbol
-          (cobj.CompilerObjectX64Instr.Label
-            (owned_view.compiler-owned-shared-view entry)))]
-      [with-main-call : object_target.CompilerBackendObjectTargetParts
-        (object_target.compiler-backend-object-add-call-instr
-          with-label
-          entry
-          "main")]
-      (object_target.compiler-backend-object-add-text-bytes
-        with-main-call
-        (compiler-backend-object-exit-bytes)))))
+  (x64_catalog.compiler-x64-template-assert-structured!
+    (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectStartContribution)
+    (LinuxX64))
+  (let
+    [entry : String "_tl_start"]
+    [with-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-export-section
+        parts
+        (owned_view.compiler-owned-shared-view entry)
+        (Text)
+        (Function))]
+    [with-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-symbol
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view entry)))]
+    [with-main-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-label
+        entry
+        "main")]
+    (object_target.compiler-backend-object-add-text-bytes
+      with-main-call
+      (compiler-backend-object-exit-bytes))))
 
 (define (compiler-backend-object-target-linux-image
   [parts : object_target.CompilerBackendObjectTargetParts]

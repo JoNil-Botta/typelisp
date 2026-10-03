@@ -66,18 +66,16 @@
         0)
       (match (build_run.source-tool-try-remove-file-if-exists path)
         [(OkIoUnit)
-          (begin
-            (clean-report false path)
-            0)]
+          (clean-report false path)
+          0]
         [(ErrIoUnit error)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "clean: failed to remove file "
-                path
-                ": "
-                (io.error-message error)))
-            1)]))
+          (io.print-error
+            (str_cat.str-cat
+              "clean: failed to remove file "
+              path
+              ": "
+              (io.error-message error)))
+          1]))
     0))
 
 (define (clean-remove-dir [dry-run : bool] [path : String]) : i64
@@ -88,27 +86,24 @@
         0)
       (match (build_run.source-tool-try-remove-dir-if-exists path)
         [(OkIoUnit)
-          (begin
-            (clean-report false path)
-            0)]
+          (clean-report false path)
+          0]
         [(ErrIoUnit error)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "clean: failed to remove directory "
-                path
-                ": "
-                (io.error-message error)))
-            1)]))
+          (io.print-error
+            (str_cat.str-cat
+              "clean: failed to remove directory "
+              path
+              ": "
+              (io.error-message error)))
+          1]))
     0))
 
 (define (clean-report-error
   [prefix : String]
   [path : String]
   [error : io.IoError]) : i64
-  (begin
-    (io.print-error (str_cat.str-cat prefix path ": " (io.error-message error)))
-    1))
+  (io.print-error (str_cat.str-cat prefix path ": " (io.error-message error)))
+  1)
 
 (define (clean-remove-tree-entry [path : String]) : i64
   (if (clean-vcs-metadata-path? path)
@@ -128,13 +123,12 @@
               [(ErrIoUnit error)
                 (clean-report-error "clean: failed to remove file " path error)])]
           [else
-            (begin
-              (io.print-error
-                (str_cat.str-cat
-                  "clean: refusing symbolic link or special filesystem node "
-                  path
-                  ""))
-              1)])])))
+            (io.print-error
+              (str_cat.str-cat
+                "clean: refusing symbolic link or special filesystem node "
+                path
+                ""))
+            1])])))
 
 (define (clean-remove-tree-entries
   [root : (& root str)]
@@ -205,66 +199,65 @@
 (define (clean-source [source : String] [dry-run : bool]) : i64
   (let
     [status : i64 0]
-    (begin
-      (set!
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension
             (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".s"))))
-      (set!
+            ".s"))))
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension
             (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".ir"))))
-      (set!
+            ".ir"))))
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension
             (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".o"))))
-      (set!
+            ".o"))))
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension
             (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".obj"))))
-      (set!
+            ".obj"))))
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension
             (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ""))))
-      (set!
+            ""))))
+    (set!
+      status
+      (clean-merge-status
         status
-        (clean-merge-status
-          status
-          (clean-remove-source-artifact
-            (owned_view.compiler-owned-shared-view source)
-            dry-run
-            (build_run.source-tool-replace-extension source ".exe"))))
-      status)))
+        (clean-remove-source-artifact
+          (owned_view.compiler-owned-shared-view source)
+          dry-run
+          (build_run.source-tool-replace-extension source ".exe"))))
+    status))
 
 (define (clean-package-name-safe? [name : String]) : bool
   (and
@@ -333,9 +326,8 @@
   (match (build_cli_core.build-load-manifest
     (owned_view.compiler-owned-shared-view manifest-path))
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat "Error: " message))
-        1)]
+      (io.print-error (str_cat.str-cat "Error: " message))
+      1]
     [(Ok manifest)
       (let
         [manifest-dir : String (load.compiler-load-dirname manifest-path)]
@@ -465,10 +457,9 @@
         (build_cli_core.build-discover-manifest-up "" 256))]
     (match resolved-manifest
       [(CompilerLoadNoPath)
-        (begin
-          (io.print-error
-            "clean: could not find typelisp.pkg from '.' or any parent directory")
-          1)]
+        (io.print-error
+          "clean: could not find typelisp.pkg from '.' or any parent directory")
+        1]
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
 
 (define (clean-experiments-artifact-path
@@ -496,9 +487,8 @@
   (match (build_cli_core.build-load-manifest
     (owned_view.compiler-owned-shared-view manifest-path))
     [(Err message)
-      (begin
-        (io.print-error (str_cat.str-cat "Error: " message))
-        1)]
+      (io.print-error (str_cat.str-cat "Error: " message))
+      1]
     [(Ok _)
       (let
         [path : String (clean-experiments-artifact-path manifest-path)]
@@ -523,10 +513,9 @@
         (build_cli_core.build-discover-manifest-up "" 256))]
     (match resolved-manifest
       [(CompilerLoadNoPath)
-        (begin
-          (io.print-error
-            "clean: could not find typelisp.pkg from '.' or any parent directory")
-          1)]
+        (io.print-error
+          "clean: could not find typelisp.pkg from '.' or any parent directory")
+        1]
       [(CompilerLoadSomePath path) (clean-experiments-from-path path dry-run)])))
 
 (define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
@@ -543,43 +532,41 @@
     [has-manifest : bool false]
     [experiments : bool false]
     [dry-run : bool false]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--dry-run") (set! dry-run true)]
-          [(string.eq args.name "--experiments")
-            (if experiments
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "clean: --experiments was provided more than once")
-              (set! experiments true))]
-          [(string.eq args.name "--manifest-path")
-            (if has-manifest
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "clean: --manifest-path was provided more than once")
-              (begin
-                (set! manifest (cli_option.cli-args-value (& args)))
-                (set! has-manifest true)))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "clean: unknown flag ")]
-          [has-source
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--dry-run") (set! dry-run true)]
+        [(string.eq args.name "--experiments")
+          (if experiments
             (cli_option.cli-args-fail!
               (&mut args)
-              "clean: accepts only one source file")]
-          [else
+              "clean: --experiments was provided more than once")
+            (set! experiments true))]
+        [(string.eq args.name "--manifest-path")
+          (if has-manifest
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "clean: --manifest-path was provided more than once")
             (begin
-              (set! source (string.copy (& args.arg)))
-              (set! has-source true))]))
-      (cond
-        [args.failed (Err args.error)]
-        [(and has-source has-manifest)
-          (Err "clean: cannot combine a source file with --manifest-path")]
-        [(and has-source experiments)
-          (Err "clean: cannot combine a source file with --experiments")]
-        [has-source (Ok (Source source dry-run))]
-        [experiments (Ok (Experiments manifest has-manifest dry-run))]
-        [else (Ok (Package manifest has-manifest dry-run))]))))
+              (set! manifest (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "clean: unknown flag ")]
+        [has-source
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "clean: accepts only one source file")]
+        [else
+          (set! source (string.copy (& args.arg)))
+          (set! has-source true)]))
+    (cond
+      [args.failed (Err args.error)]
+      [(and has-source has-manifest)
+        (Err "clean: cannot combine a source file with --manifest-path")]
+      [(and has-source experiments)
+        (Err "clean: cannot combine a source file with --experiments")]
+      [has-source (Ok (Source source dry-run))]
+      [experiments (Ok (Experiments manifest has-manifest dry-run))]
+      [else (Ok (Package manifest has-manifest dry-run))])))
 
 (define (clean-run-from [idx : i64] [count : i64]) : i64
   (match (clean-config-from idx count)
@@ -591,6 +578,5 @@
         [(Experiments manifest has-manifest dry-run)
           (clean-experiments manifest has-manifest dry-run)])]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))

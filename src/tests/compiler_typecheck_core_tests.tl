@@ -2050,6 +2050,167 @@
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
 
+;; Signature normalization reads and appends in one owner even when a decoy
+;; has the same numeric ids. Restore the installed pool before assertions.
+(test
+  tc-signature-construction-owning-pool
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_a : i64 (ast.ast-node-pool-context-type-push a (I64))]
+    [_b : i64 (ast.ast-node-pool-context-type-push b (Bool))]
+    [program : parser.ResultAstProgram
+      (parser.parse-ast-source-with-cfg-and-pools
+        "(define (probe [x : (& i64)] [ys : (Array i64 4)]) : (& i64) x)"
+        (parser.compiler-cfg-empty)
+        a)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx a)]
+    [before : i64 (ast.ast-node-pool-context-type-len b)]
+    [_install : unit (ast.ast-node-pool-context-install! b)]
+    [valid? : bool
+      (match program
+        [(Ok (Program decls))
+          (match (ast.ast-decl-list-step (deref decls))
+            [(Cons decl _)
+              (match (tc_core.tc-top-decl-type ctx decl)
+                [(Ok (Func args ret))
+                  (let
+                    [types : ast.AstTypeList
+                      (ast.ast-type-list-box-shared-view args)]
+                    [bases : i64
+                      (ast.ast-node-pool-context-type-segment-bases a)]
+                    [first : ast.AstType
+                      (ast.ast-type-segment-bases-get
+                        bases
+                        (ast.ast-type-list-get (& types) 0 -1))]
+                    [second : ast.AstType
+                      (ast.ast-type-segment-bases-get
+                        bases
+                        (ast.ast-type-list-get (& types) 1 -1))]
+                    [result : ast.AstType
+                      (ast.ast-type-segment-bases-get bases ret)]
+                    (and
+                      (= types.len 2)
+                      (match first
+                        [(Ref lifetime child)
+                          (and
+                            (not (= lifetime cbi.compiler-builtin-id-fix-empty))
+                            (match (ast.ast-type-segment-bases-get bases child)
+                              [(I64) true]
+                              [_ false])
+                            (match result
+                              [(Ref result-lifetime result-child)
+                                (and
+                                  (= lifetime result-lifetime)
+                                  (match (ast.ast-type-segment-bases-get
+                                    bases
+                                    result-child)
+                                    [(I64) true]
+                                    [_ false]))]
+                              [_ false]))]
+                        [_ false])
+                      (match second
+                        [(Array child count)
+                          (and
+                            (= count 4)
+                            (match (ast.ast-type-segment-bases-get bases child)
+                              [(I64) true]
+                              [_ false]))]
+                        [_ false])))]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [macro-params : ast.AstMacroParamList (ast.ast-macro-param-list-new)]
+    [_param : unit
+      (ast.ast-macro-param-list-push
+        (&mut macro-params)
+        (ast.ast-macro-param (ci.intern "signature-macro") (I64) false))]
+    [macro-types : ast.AstTypeList
+      (tc_core.tc-macro-param-type-list ctx macro-params)]
+    [macro? : bool
+      (and
+        (= macro-types.len 1)
+        (match (ast.ast-node-pool-context-type-get
+          a
+          (ast.ast-type-list-get (& macro-types) 0 -1))
+          [(I64) true]
+          [_ false]))]
+    [empty? : bool
+      (match (tc_core.tc-elide-function-signature
+        a
+        (ast.ast-param-list-new)
+        (Unit))
+        [(Ok signature) (= signature.params.len 0)]
+        [_ false])]
+    [reject? : bool
+      (match (tc_core.tc-elide-function-signature
+        a
+        (ast.ast-param-list-new)
+        (Ref cbi.compiler-builtin-id-fix-empty 0))
+        [(Err _) true]
+        [_ false])]
+    [unchanged? : bool (= before (ast.ast-node-pool-context-type-len b))]
+    [installed? : bool (ast.ast-node-pool-context-type-installed? b)]
+    (ast.ast-node-pool-context-install! installed)
+    (test.assert-true
+      valid?
+      "function signatures retain their owning child ids")
+    (test.assert-true macro? "macro parameter ids belong to their context")
+    (test.assert-true empty? "empty signatures remain supported")
+    (test.assert-true
+      reject?
+      "an elided output with no input lifetime is rejected")
+    (test.assert-true
+      unchanged?
+      "signature construction never appends to the decoy")
+    (test.assert-true
+      installed?
+      "signature construction never installs its owner")))
+
+(test
+  tc-signature-construction-shared-snapshot
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_prefix : i64 (ast.ast-node-pool-context-type-push a (I64))]
+    [snapshot : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot a)]
+    [_install : unit (ast.ast-node-pool-context-install! a)]
+    [retained : i64 (ast.ast-node-pool-reader-type-push (F64))]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [_param : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.ast-param-id (ci.intern "snapshot-param") (Bool) false))]
+    [valid? : bool
+      (match (tc_core.tc-elide-function-signature snapshot params (Unit))
+        [(Ok signature) (= signature.params.len 1)]
+        [_ false])]
+    [preserved? : bool
+      (match (ast.ast-node-pool-context-type-get a retained)
+        [(F64) true]
+        [_ false])]
+    [advanced? : bool (>= (ast.ast-node-pool-context-type-len snapshot) 3)]
+    [published? : bool (ast.ast-node-pool-context-type-installed? snapshot)]
+    (ast.ast-node-pool-context-install! installed)
+    (test.assert-true
+      valid?
+      "signature normalization accepts the shared snapshot")
+    (test.assert-true
+      preserved?
+      "normalization preserves newer legacy child ids")
+    (test.assert-true
+      advanced?
+      "normalization appends after the published cursor")
+    (test.assert-true
+      published?
+      "same-storage normalization publishes its state")))
+
 ;; The storage of the parameter list eliding a `count`-parameter signature, or
 ;; -1 when elision fails or changes the count.
 (define (tc-elided-signature-param-capacity [count : i64]) : i64
@@ -2062,10 +2223,7 @@
         (&mut params)
         (ast.ast-param-id (ci.intern "elided") (I64) false))
       (set! index (+ index 1)))
-    (match (tc_core.tc-elide-function-signature
-      (ast.ast-node-pool-context-type-segment-bases pools)
-      params
-      (I64))
+    (match (tc_core.tc-elide-function-signature pools params (I64))
       [(Ok signature)
         (if (= (ast.ast-param-list-len (& signature.params)) count)
           (array-length signature.params.slots)

@@ -16868,433 +16868,516 @@
       (Some (tc-name-id-list-head lifetimes))
       (No))))
 
+;; Signature normalization appends through its explicit owner. During the
+;; transition, legacy constructors can advance an installed snapshot sharing
+;; both tables; entry points publish the newer cursor before they append. An
+;; unrelated installed pool never satisfies that same-storage guard.
 (define (tc-elide-input-type-list
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [types : ast.AstTypeList]
   [index : i64]) : ResultTcElidedTypes
-  (tc-elide-input-type-list-at
-    type-bases
-    (& types)
-    0
-    index
-    (ast.ast-type-list-new)))
+  (tc-elide-input-type-list-at pools (& types) 0 index (ast.ast-type-list-new)))
 
 (define (tc-elide-input-type-list-at
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [types : (& types ast.AstTypeList)]
   [offset : i64]
   [index : i64]
   [out : ast.AstTypeList]) : ResultTcElidedTypes
-  (if (>= offset (ast.ast-type-list-len types))
-    (Ok (TcElidedTypes out index))
-    (let
-      [item : TcElidedType
-        (try
-          (tc-elide-input-type
-            type-bases
-            (ast.ast-type-segment-bases-get
-              type-bases
-              (ast.ast-type-list-get types offset (ast.ast-type-id-fallback)))
-            index))]
-      [next-out : ast.AstTypeList out]
-      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
-      (tc-elide-input-type-list-at
-        type-bases
-        types
-        (+ offset 1)
-        item.next-index
-        next-out))))
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (if (>= offset (ast.ast-type-list-len types))
+      (Ok (TcElidedTypes out index))
+      (let
+        [item : TcElidedType
+          (try
+            (tc-elide-input-type
+              pools
+              (ast.ast-type-segment-bases-get
+                type-bases
+                (ast.ast-type-list-get types offset (ast.ast-type-id-fallback)))
+              index))]
+        [next-out : ast.AstTypeList out]
+        (ast.ast-type-list-push
+          (&mut next-out)
+          (ast.ast-node-pool-context-type-push pools item.ty))
+        (tc-elide-input-type-list-at
+          pools
+          types
+          (+ offset 1)
+          item.next-index
+          next-out)))))
 
 (define (tc-elide-output-type-list
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [types : ast.AstTypeList]
   [lifetime : TcMaybeNameId]) : ResultTcElidedTypes
   (tc-elide-output-type-list-at
-    type-bases
+    pools
     (& types)
     0
     lifetime
     (ast.ast-type-list-new)))
 
 (define (tc-elide-output-type-list-at
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [types : (& types ast.AstTypeList)]
   [index : i64]
   [lifetime : TcMaybeNameId]
   [out : ast.AstTypeList]) : ResultTcElidedTypes
-  (if (>= index (ast.ast-type-list-len types))
-    (Ok (TcElidedTypes out 0))
-    (let
-      [item : TcElidedType
-        (try
-          (tc-elide-output-type
-            type-bases
-            (ast.ast-type-segment-bases-get
-              type-bases
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-            lifetime))]
-      [next-out : ast.AstTypeList out]
-      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
-      (tc-elide-output-type-list-at
-        type-bases
-        types
-        (+ index 1)
-        lifetime
-        next-out))))
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (if (>= index (ast.ast-type-list-len types))
+      (Ok (TcElidedTypes out 0))
+      (let
+        [item : TcElidedType
+          (try
+            (tc-elide-output-type
+              pools
+              (ast.ast-type-segment-bases-get
+                type-bases
+                (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+              lifetime))]
+        [next-out : ast.AstTypeList out]
+        (ast.ast-type-list-push
+          (&mut next-out)
+          (ast.ast-node-pool-context-type-push pools item.ty))
+        (tc-elide-output-type-list-at pools types (+ index 1) lifetime next-out)))))
 
 (define (tc-elide-function-type
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [args : ast.AstTypeList]
   [ret : ast.AstType]) : ResultTcElidedType
+  (if (and
+    (not (ast.ast-node-pool-context-type-installed? pools))
+    (=
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      (ast.ast-node-pool-reader-type-segment-bases))
+    (=
+      (ast.ast-node-pool-context-expr-segment-bases pools)
+      (ast.ast-node-pool-active-expr-segment-bases)))
+    (ast.ast-node-pool-context-publish-newer! pools)
+    unit)
   (let
-    [inputs : TcElidedTypes (try (tc-elide-input-type-list type-bases args 0))]
-    [input-types : ast.AstTypeList inputs.types]
-    [lifetime : TcMaybeNameId
-      (tc-signature-single-input-lifetime
-        type-bases
-        (tc-global-shared-view input-types))]
-    [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
-    (Ok
-      (TcElidedType (ast.ast-ty-func input-types output.ty) inputs.next-index))))
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (let
+      [inputs : TcElidedTypes (try (tc-elide-input-type-list pools args 0))]
+      [input-types : ast.AstTypeList inputs.types]
+      [lifetime : TcMaybeNameId
+        (tc-signature-single-input-lifetime
+          type-bases
+          (tc-global-shared-view input-types))]
+      [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
+      (Ok
+        (TcElidedType
+          (ast.ast-ty-func-with-pools pools input-types output.ty)
+          inputs.next-index)))))
 
 (define (tc-elide-input-type
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [ty : ast.AstType]
   [index : i64]) : ResultTcElidedType
-  (match (tc-global-shared-view ty)
-    [(Func args ret)
-      (tc-elide-function-type
-        type-bases
-        (ast.ast-type-list-box-shared-view args)
-        (ast.ast-type-segment-bases-get type-bases ret))]
-    [(Tuple elems)
-      (let
-        [items : TcElidedTypes
-          (try
-            (tc-elide-input-type-list
-              type-bases
-              (ast.ast-type-list-box-shared-view elems)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-tuple items.types) items.next-index)))]
-    [(Array elem count)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-array inner.ty count) inner.next-index)))]
-    [(DynArray elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-dyn-array inner.ty) inner.next-index)))]
-    [(Slice elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-slice inner.ty) inner.next-index)))]
-    [(Box elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-box inner.ty) inner.next-index)))]
-    [(Ptr elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-ptr inner.ty) inner.next-index)))]
-    [(MutPtr elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) inner.next-index)))]
-    [(Region region elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index)))]
-    [(Invalidate lifetime elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              index))]
-        (Ok
-          (TcElidedType
-            (ast.ast-ty-invalidate lifetime inner.ty)
-            inner.next-index)))]
-    [(Ref lifetime elem)
-      (let
-        [next-lifetime : i64
-          (if (tc-elided-lifetime? lifetime)
-            (tc-elided-lifetime-name index)
-            lifetime)]
-        [next-index : i64
-          (if (tc-elided-lifetime? lifetime)
-            (+ index 1)
-            index)]
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              next-index))]
-        (Ok
-          (TcElidedType
-            (ast.ast-ty-ref next-lifetime inner.ty)
-            inner.next-index)))]
-    [(MutRef lifetime elem)
-      (let
-        [next-lifetime : i64
-          (if (tc-elided-lifetime? lifetime)
-            (tc-elided-lifetime-name index)
-            lifetime)]
-        [next-index : i64
-          (if (tc-elided-lifetime? lifetime)
-            (+ index 1)
-            index)]
-        [inner : TcElidedType
-          (try
-            (tc-elide-input-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              next-index))]
-        (Ok
-          (TcElidedType
-            (ast.ast-ty-mut-ref next-lifetime inner.ty)
-            inner.next-index)))]
-    [_ (Ok (TcElidedType ty index))]))
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (match (tc-global-shared-view ty)
+      [(Func args ret)
+        (tc-elide-function-type
+          pools
+          (ast.ast-type-list-box-shared-view args)
+          (ast.ast-type-segment-bases-get type-bases ret))]
+      [(Tuple elems)
+        (let
+          [items : TcElidedTypes
+            (try
+              (tc-elide-input-type-list
+                pools
+                (ast.ast-type-list-box-shared-view elems)
+                index))]
+          (Ok (TcElidedType (ast.ast-ty-tuple items.types) items.next-index)))]
+      [(Array elem count)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-array-with-pools pools inner.ty count)
+              inner.next-index)))]
+      [(DynArray elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-dyn-array-with-pools pools inner.ty)
+              inner.next-index)))]
+      [(Slice elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-slice-with-pools pools inner.ty)
+              inner.next-index)))]
+      [(Box elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-box-with-pools pools inner.ty)
+              inner.next-index)))]
+      [(Ptr elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-ptr-with-pools pools inner.ty)
+              inner.next-index)))]
+      [(MutPtr elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-mut-ptr-with-pools pools inner.ty)
+              inner.next-index)))]
+      [(Region region elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-region-with-pools pools region inner.ty)
+              inner.next-index)))]
+      [(Invalidate lifetime elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-invalidate-with-pools pools lifetime inner.ty)
+              inner.next-index)))]
+      [(Ref lifetime elem)
+        (let
+          [next-lifetime : i64
+            (if (tc-elided-lifetime? lifetime)
+              (tc-elided-lifetime-name index)
+              lifetime)]
+          [next-index : i64
+            (if (tc-elided-lifetime? lifetime)
+              (+ index 1)
+              index)]
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                next-index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-ref-with-pools pools next-lifetime inner.ty)
+              inner.next-index)))]
+      [(MutRef lifetime elem)
+        (let
+          [next-lifetime : i64
+            (if (tc-elided-lifetime? lifetime)
+              (tc-elided-lifetime-name index)
+              lifetime)]
+          [next-index : i64
+            (if (tc-elided-lifetime? lifetime)
+              (+ index 1)
+              index)]
+          [inner : TcElidedType
+            (try
+              (tc-elide-input-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                next-index))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-mut-ref-with-pools pools next-lifetime inner.ty)
+              inner.next-index)))]
+      [_ (Ok (TcElidedType ty index))])))
 
 (define (tc-elide-output-type
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [ty : ast.AstType]
   [lifetime : TcMaybeNameId]) : ResultTcElidedType
-  (match (tc-global-shared-view ty)
-    [(Func args ret)
-      (tc-elide-function-type
-        type-bases
-        (ast.ast-type-list-box-shared-view args)
-        (ast.ast-type-segment-bases-get type-bases ret))]
-    [(Tuple elems)
-      (let
-        [items : TcElidedTypes
-          (try
-            (tc-elide-output-type-list
-              type-bases
-              (ast.ast-type-list-box-shared-view elems)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-tuple items.types) 0)))]
-    [(Array elem count)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-array inner.ty count) 0)))]
-    [(DynArray elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-dyn-array inner.ty) 0)))]
-    [(Slice elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-slice inner.ty) 0)))]
-    [(Box elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-box inner.ty) 0)))]
-    [(Ptr elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-ptr inner.ty) 0)))]
-    [(MutPtr elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) 0)))]
-    [(Region region elem)
-      (let
-        [inner : TcElidedType
-          (try
-            (tc-elide-output-type
-              type-bases
-              (ast.ast-type-segment-bases-get type-bases elem)
-              lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-region region inner.ty) 0)))]
-    [(Ref name elem)
-      (match lifetime
-        [(No)
-          (if (tc-elided-lifetime? name)
-            (Err
-              (tc-kind-message
-                (LifetimeMismatch)
-                "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
+  (let
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (match (tc-global-shared-view ty)
+      [(Func args ret)
+        (tc-elide-function-type
+          pools
+          (ast.ast-type-list-box-shared-view args)
+          (ast.ast-type-segment-bases-get type-bases ret))]
+      [(Tuple elems)
+        (let
+          [items : TcElidedTypes
+            (try
+              (tc-elide-output-type-list
+                pools
+                (ast.ast-type-list-box-shared-view elems)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-tuple items.types) 0)))]
+      [(Array elem count)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok
+            (TcElidedType (ast.ast-ty-array-with-pools pools inner.ty count) 0)))]
+      [(DynArray elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-dyn-array-with-pools pools inner.ty) 0)))]
+      [(Slice elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-slice-with-pools pools inner.ty) 0)))]
+      [(Box elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-box-with-pools pools inner.ty) 0)))]
+      [(Ptr elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-ptr-with-pools pools inner.ty) 0)))]
+      [(MutPtr elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok (TcElidedType (ast.ast-ty-mut-ptr-with-pools pools inner.ty) 0)))]
+      [(Region region elem)
+        (let
+          [inner : TcElidedType
+            (try
+              (tc-elide-output-type
+                pools
+                (ast.ast-type-segment-bases-get type-bases elem)
+                lifetime))]
+          (Ok
+            (TcElidedType
+              (ast.ast-ty-region-with-pools pools region inner.ty)
+              0)))]
+      [(Ref name elem)
+        (match lifetime
+          [(No)
+            (if (tc-elided-lifetime? name)
+              (Err
+                (tc-kind-message
+                  (LifetimeMismatch)
+                  "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
+              (let
+                [inner : TcElidedType
+                  (try
+                    (tc-elide-output-type
+                      pools
+                      (ast.ast-type-segment-bases-get type-bases elem)
+                      lifetime))]
+                (Ok
+                  (TcElidedType
+                    (ast.ast-ty-ref-with-pools pools name inner.ty)
+                    0))))]
+          [(Some source)
             (let
               [inner : TcElidedType
                 (try
                   (tc-elide-output-type
-                    type-bases
+                    pools
                     (ast.ast-type-segment-bases-get type-bases elem)
                     lifetime))]
-              (Ok (TcElidedType (ast.ast-ty-ref name inner.ty) 0))))]
-        [(Some source)
-          (let
-            [inner : TcElidedType
-              (try
-                (tc-elide-output-type
-                  type-bases
-                  (ast.ast-type-segment-bases-get type-bases elem)
-                  lifetime))]
-            (Ok
-              (TcElidedType
-                (ast.ast-ty-ref
-                  (if (tc-elided-lifetime? name)
-                    source
-                    name)
-                  inner.ty)
-                0)))])]
-    [(MutRef name elem)
-      (match lifetime
-        [(No)
-          (if (tc-elided-lifetime? name)
-            (Err
-              (tc-kind-message
-                (LifetimeMismatch)
-                "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
+              (Ok
+                (TcElidedType
+                  (ast.ast-ty-ref-with-pools
+                    pools
+                    (if (tc-elided-lifetime? name)
+                      source
+                      name)
+                    inner.ty)
+                  0)))])]
+      [(MutRef name elem)
+        (match lifetime
+          [(No)
+            (if (tc-elided-lifetime? name)
+              (Err
+                (tc-kind-message
+                  (LifetimeMismatch)
+                  "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
+              (let
+                [inner : TcElidedType
+                  (try
+                    (tc-elide-output-type
+                      pools
+                      (ast.ast-type-segment-bases-get type-bases elem)
+                      lifetime))]
+                (Ok
+                  (TcElidedType
+                    (ast.ast-ty-mut-ref-with-pools pools name inner.ty)
+                    0))))]
+          [(Some source)
             (let
               [inner : TcElidedType
                 (try
                   (tc-elide-output-type
-                    type-bases
+                    pools
                     (ast.ast-type-segment-bases-get type-bases elem)
                     lifetime))]
-              (Ok (TcElidedType (ast.ast-ty-mut-ref name inner.ty) 0))))]
-        [(Some source)
-          (let
-            [inner : TcElidedType
-              (try
-                (tc-elide-output-type
-                  type-bases
-                  (ast.ast-type-segment-bases-get type-bases elem)
-                  lifetime))]
-            (Ok
-              (TcElidedType
-                (ast.ast-ty-mut-ref
-                  (if (tc-elided-lifetime? name)
-                    source
-                    name)
-                  inner.ty)
-                0)))])]
-    [_ (Ok (TcElidedType ty 0))]))
+              (Ok
+                (TcElidedType
+                  (ast.ast-ty-mut-ref-with-pools
+                    pools
+                    (if (tc-elided-lifetime? name)
+                      source
+                      name)
+                    inner.ty)
+                  0)))])]
+      [_ (Ok (TcElidedType ty 0))])))
 
 (define (tc-elide-input-params-at
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [params : (& params ast.AstParamList)]
   [offset : i64]
   [index : i64]
   [out : ast.AstParamList]) : ResultTcElidedParams
+  (if (and
+    (not (ast.ast-node-pool-context-type-installed? pools))
+    (=
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      (ast.ast-node-pool-reader-type-segment-bases))
+    (=
+      (ast.ast-node-pool-context-expr-segment-bases pools)
+      (ast.ast-node-pool-active-expr-segment-bases)))
+    (ast.ast-node-pool-context-publish-newer! pools)
+    unit)
   (if (>= offset (ast.ast-param-list-len params))
     (Ok (TcElidedParams out index))
     (match (ast.ast-param-list-get params offset (ast.ast-param-fallback))
       [(Param name ty is-comptime)
         (let
-          [item : TcElidedType (try (tc-elide-input-type type-bases ty index))]
+          [item : TcElidedType (try (tc-elide-input-type pools ty index))]
           [next-out : ast.AstParamList out]
           (ast.ast-param-list-push
             (&mut next-out)
             (ast.ast-param-id name item.ty is-comptime))
           (tc-elide-input-params-at
-            type-bases
+            pools
             params
             (+ offset 1)
             item.next-index
             next-out))])))
 
-(define (tc-elided-param-type-list [params : (& params ast.AstParamList)]) : ast.AstTypeList
-  (tc-elided-param-type-list-at (& params) 0))
+(define (tc-elided-param-type-list
+  [pools : ast.AstNodePoolContext]
+  [params : (& params ast.AstParamList)]) : ast.AstTypeList
+  (tc-elided-param-type-list-at pools (& params) 0))
 
 (define (tc-elided-param-type-list-at
+  [pools : ast.AstNodePoolContext]
   [params : (& params ast.AstParamList)]
   [index : i64]) : ast.AstTypeList
   (if (>= index (ast.ast-param-list-len params))
     (ast.ast-type-list-new)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (ast.ast-type-cons ty (tc-elided-param-type-list-at params (+ index 1)))])))
+        (ast.ast-type-cons-with-pools
+          pools
+          ty
+          (tc-elided-param-type-list-at pools params (+ index 1)))])))
 
 (define (tc-elide-function-signature
-  [type-bases : i64]
+  [pools : ast.AstNodePoolContext]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : ResultTcElidedSignature
+  (if (and
+    (not (ast.ast-node-pool-context-type-installed? pools))
+    (=
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      (ast.ast-node-pool-reader-type-segment-bases))
+    (=
+      (ast.ast-node-pool-context-expr-segment-bases pools)
+      (ast.ast-node-pool-active-expr-segment-bases)))
+    (ast.ast-node-pool-context-publish-newer! pools)
+    unit)
   (let
-    [inputs : TcElidedParams
-      (try
-        (tc-elide-input-params-at
-          type-bases
-          (& params)
-          0
-          0
-          (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))))]
-    [input-params : ast.AstParamList inputs.params]
-    [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
-    [lifetime : TcMaybeNameId
-      (tc-signature-single-input-lifetime type-bases input-types)]
-    [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
-    (Ok (TcElidedSignature input-params output.ty))))
+    [type-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (let
+      [inputs : TcElidedParams
+        (try
+          (tc-elide-input-params-at
+            pools
+            (& params)
+            0
+            0
+            (ast.ast-param-list-with-capacity
+              (ast.ast-param-list-len (& params)))))]
+      [input-params : ast.AstParamList inputs.params]
+      [input-types : ast.AstTypeList
+        (tc-elided-param-type-list pools input-params)]
+      [lifetime : TcMaybeNameId
+        (tc-signature-single-input-lifetime type-bases input-types)]
+      [output : TcElidedType (try (tc-elide-output-type pools ret lifetime))]
+      (Ok (TcElidedSignature input-params output.ty)))))
 
 (define (tc-type-list-collect-reference-lifetimes
   [types : ast.AstTypeList]
@@ -23076,7 +23159,7 @@
   [ctx : TcContext]
   [args : ast.AstTypeList]
   [ret : ast.AstType]) : ResultTcUnit
-  (match (tc-elide-function-type (tc-context-type-bases ctx) args ret)
+  (match (tc-elide-function-type (tc-context-pools-live ctx) args ret)
     [(Ok normalized)
       (match normalized.ty
         [(Func normalized-args normalized-ret)
@@ -24643,7 +24726,7 @@
   (match maybe-ret
     [(Some ret)
       (match (tc-elide-function-signature
-        (tc-context-type-bases ctx)
+        (tc-context-pools-live ctx)
         params
         ret)
         [(Ok signature)
@@ -24661,7 +24744,7 @@
         [(Err message) (Err message)])]
     [(No)
       (match (tc-elide-input-params-at
-        (tc-context-type-bases ctx)
+        (tc-context-pools-live ctx)
         (& params)
         0
         0
@@ -25206,7 +25289,7 @@
             [(Err message) (Err message)]))]
       [(DefFn decl-meta _ params ret body-box _)
         (match (tc-elide-function-signature
-          (tc-context-type-bases ctx)
+          (tc-context-pools-live ctx)
           params
           ret)
           [(Ok signature)
@@ -28352,9 +28435,7 @@
       [(Param _ ty _)
         (let
           [resolved : ast.AstType (tc-resolve-type ctx ty)]
-          (ast.ast-type-list-push
-            out
-            (ast.ast-node-pool-reader-type-push resolved)))])
+          (ast.ast-type-list-push out (tc-context-type-push ctx resolved)))])
     (tc-param-type-list-into ctx params (+ index 1) out)))
 
 (define (tc-param-type-list [ctx : TcContext] [params : ast.AstParamList]) : ast.AstTypeList
@@ -28378,7 +28459,8 @@
       [(Param _ ty _ _)
         (ast.ast-type-list-push
           out
-          (ast.ast-node-pool-reader-type-push
+          (tc-context-type-push
+            ctx
             (tc-resolve-type ctx (tc-macro-signature-type ty))))])
     (tc-macro-param-type-list-into ctx params (+ index 1) out)))
 
@@ -29141,12 +29223,13 @@
               [_ (Err "typecheck: top-level value requires annotation")])]))]
     [(DefFn decl-meta _ params ret _ _)
       (match (tc-elide-function-signature
-        (tc-context-type-bases ctx)
+        (tc-context-pools-live ctx)
         params
         ret)
         [(Ok signature)
           (Ok
-            (ast.ast-ty-func
+            (ast.ast-ty-func-with-pools
+              (tc-context-pools-live ctx)
               (tc-param-type-list ctx signature.params)
               (tc-resolve-type ctx signature.ret)))]
         [(Err message) (Err message)])]
@@ -58126,7 +58209,7 @@
       (let
         [signature : TcElidedSignature
           (try
-            (tc-elide-function-signature (tc-context-type-bases ctx) params ret))]
+            (tc-elide-function-signature (tc-context-pools-live ctx) params ret))]
         (tc-lambda-expr-normalized-with-capture-check
           ctx
           env
@@ -58139,7 +58222,7 @@
         [inputs : TcElidedParams
           (try
             (tc-elide-input-params-at
-              (tc-context-type-bases ctx)
+              (tc-context-pools-live ctx)
               (& params)
               0
               0
@@ -113329,7 +113412,7 @@
   (match (tc-global-shared-view decl)
     [(DefFn decl-meta name params ret body-box _)
       (match (tc-elide-function-signature
-        (tc-context-type-bases ctx)
+        (tc-context-pools-live ctx)
         params
         ret)
         [(Ok signature)
@@ -113411,7 +113494,7 @@
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
       (match (tc-elide-function-signature
-        (tc-context-type-bases ctx)
+        (tc-context-pools-live ctx)
         params
         ret)
         [(Ok signature)

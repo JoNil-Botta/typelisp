@@ -275,6 +275,15 @@ installed decoy must not change that identity. The load self-test exercises
 colliding A/B IDs and an installed decoy whose pool length and table identity
 remain unchanged.
 
+`tc-signature-construction-owning-pool` normalizes a parsed function signature
+and a macro parameter list while a colliding decoy pool is installed. It checks
+owned reference/array children, the inferred return lifetime, empty signatures,
+and rejection of an elided return with no input lifetime. Both the decoy length
+and installed identity must remain unchanged. The shared-snapshot companion
+checks that newer legacy children survive an append through an older retained
+cursor and that the resulting same-storage owner is published. Keep the existing
+`tc-elided-signature-params-reserve-exactly` capacity boundary cases alongside it.
+
 `test --batch` and package test entries own their compiler pool context, load
 session and serial typecheck job. Their common finish boundary consumes the
 scalar result, clears aliases while the entry is alive, retires private storage,

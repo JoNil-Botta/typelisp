@@ -367,6 +367,17 @@ destroys unused destinations, restores a live allocation arena and clears the
 lowerer's handoff. Callers consume the returned result and pool context;
 they must not duplicate these release and adoption decisions.
 
+Function signature normalization carries the owning `AstNodePoolContext` for
+both reads and construction. Its scalar type-bases snapshot remains valid
+while reconstructed nodes append behind the stable segmented table. Ordinary
+and macro parameter type lists, and a top-level function's return node, append
+through their `TcContext` owner. An unrelated installed pool must neither supply
+those child ids nor receive the reconstructed nodes. Transitional normalization
+entry points reconcile newer installed cursors only when both segment tables
+belong to the same storage, using the existing publication operation. This
+prevents a retained snapshot from overwriting a newer legacy append; a foreign
+installed owner cannot trigger that publication.
+
 Package inline-test preflight owns AST/type pools and scratch storage per
 source file. Its cfg-name snapshot owns copied strings across per-file intern
 retirement. Pool-backed caches and derived dependency surfaces are cleared

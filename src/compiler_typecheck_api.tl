@@ -127,7 +127,7 @@
           (ast.ast-node-pool-context-install! pools)
           (ci.intern-compat-state-install! intern-state)
           (match generated-result
-            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+            [(Ok generated generated-paths)
               (match (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
                 load-state
                 job-state
@@ -137,20 +137,19 @@
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs)
                 (owned_view.compiler-owned-shared-view intern-state))
-                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                [(Ok expanded expanded-paths)
                   (begin
                     (ast.ast-node-pool-context-capture-active! pools)
                     (ci.intern-compat-state-capture-from-globals!
                       (&mut intern-state))
-                    (ResultCompilerDocExpand.Ok expanded expanded-paths))]
-                [(tc_core.ResultMacroExpand.Err diag)
+                    (Ok expanded expanded-paths))]
+                [(Err diag)
                   (begin
                     (ast.ast-node-pool-context-capture-active! pools)
                     (ci.intern-compat-state-capture-from-globals!
                       (&mut intern-state))
-                    (ResultCompilerDocExpand.Err diag))])]
-            [(spec.ResultGenProgramWithPaths.Err diag)
-              (ResultCompilerDocExpand.Err diag)]))))))
+                    (Err diag))])]
+            [(Err diag) (Err diag)]))))))
 
 (cfg
   test
@@ -212,9 +211,7 @@
                     ;; Publish generated IDs before legacy macro/symbol consumers run.
                     (ci.intern-compat-state-install! intern-state)
                     (match generated-result
-                      [(spec.ResultGenProgramWithPaths.Ok
-                          generated
-                          generated-paths)
+                      [(Ok generated generated-paths)
                         (let
                           [macro-result : tc_core.ResultMacroExpand
                             (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
@@ -233,9 +230,7 @@
                             (ci.intern-compat-state-capture-from-globals!
                               (&mut intern-state))
                             (match macro-result
-                              [(tc_core.ResultMacroExpand.Ok
-                                  expanded
-                                  expanded-paths)
+                              [(Ok expanded expanded-paths)
                                 (if (spec.compiler-specialize-needed-with-pools
                                   (owned_view.compiler-owned-shared-view
                                     expanded)
@@ -261,9 +256,7 @@
                                       (ci.intern-compat-state-install!
                                         intern-state)
                                       (match normalized-result
-                                        [(spec.ResultGenProgramWithPaths.Ok
-                                            normalized
-                                            normalized-paths)
+                                        [(Ok normalized normalized-paths)
                                           (if (spec.compiler-specialize-needed-with-pools
                                             (owned_view.compiler-owned-shared-view
                                               normalized)
@@ -281,8 +274,7 @@
                                                 (ci.intern-compat-state-capture-from-globals!
                                                   (&mut intern-state))
                                                 (match symbol-result
-                                                  [(csym.ResultCompilerSymbolsDiagnostic.Ok
-                                                      _)
+                                                  [(Ok _)
                                                     (let
                                                       [specialized-result : spec.ResultSpecProgramWithPaths
                                                         (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
@@ -301,7 +293,7 @@
                                                         (ci.intern-compat-state-install!
                                                           intern-state)
                                                         (match specialized-result
-                                                          [(spec.ResultSpecProgramWithPaths.Ok
+                                                          [(Ok
                                                               specialized
                                                               specialized-paths)
                                                             (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
@@ -317,14 +309,12 @@
                                                                 (ci.intern-source-name-session-from-state
                                                                   intern-state))
                                                               intern-state)]
-                                                          [(spec.ResultSpecProgramWithPaths.Err
-                                                              diag)
-                                                            (tc_core.ResultCompilerTypecheckChecked.Err
+                                                          [(Err diag)
+                                                            (Err
                                                               (cdiag.compiler-diagnostic-list-box-single
                                                                 diag))])))]
-                                                  [(csym.ResultCompilerSymbolsDiagnostic.Err
-                                                      diag)
-                                                    (tc_core.ResultCompilerTypecheckChecked.Err
+                                                  [(Err diag)
+                                                    (Err
                                                       (cdiag.compiler-diagnostic-list-box-single
                                                         diag))])))
                                             (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
@@ -340,9 +330,8 @@
                                                 (ci.intern-source-name-session-from-state
                                                   intern-state))
                                               intern-state))]
-                                        [(spec.ResultGenProgramWithPaths.Err
-                                            diag)
-                                          (tc_core.ResultCompilerTypecheckChecked.Err
+                                        [(Err diag)
+                                          (Err
                                             (cdiag.compiler-diagnostic-list-box-single
                                               diag))])))
                                   (tc_core.typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
@@ -358,13 +347,12 @@
                                       (ci.intern-source-name-session-from-state
                                         intern-state))
                                     intern-state))]
-                              [(tc_core.ResultMacroExpand.Err diag)
-                                (tc_core.ResultCompilerTypecheckChecked.Err
+                              [(Err diag)
+                                (Err
                                   (cdiag.compiler-diagnostic-list-box-single
                                     diag))])))]
-                      [(spec.ResultGenProgramWithPaths.Err diag)
-                        (tc_core.ResultCompilerTypecheckChecked.Err
-                          (cdiag.compiler-diagnostic-list-box-single diag))]))))))])]
+                      [(Err diag)
+                        (Err (cdiag.compiler-diagnostic-list-box-single diag))]))))))])]
     (begin
       (tc_core.tc-job-state-set-semantic-observer!
         observer-job
@@ -406,23 +394,15 @@
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       cfgs)
-      [(load.ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
+      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-cfg
           ""
           src
           prelude-seen
           stdlib-roots
           cfgs)
-          [(load.ResultCompilerLoadWithPaths.Ok
-              entry-decls
-              entry-paths
-              entry-modules
-              seen)
-            (load.ResultCompilerLoadWithPaths.Ok
+          [(Ok entry-decls entry-paths entry-modules seen)
+            (Ok
               (load.compiler-load-decl-list-append prelude-decls entry-decls)
               (load.compiler-load-decl-path-list-append
                 prelude-paths
@@ -431,33 +411,31 @@
                 prelude-modules
                 entry-modules)
               seen)]
-          [(load.ResultCompilerLoadWithPaths.Err diag)
-            (load.ResultCompilerLoadWithPaths.Err diag)])]
-      [(load.ResultCompilerLoadWithPaths.Err diag)
-        (load.ResultCompilerLoadWithPaths.Err diag)])))
+          [(Err diag) (Err diag)])]
+      [(Err diag) (Err diag)])))
 
 (define (typecheck-compiler-source-stdlib-import-kind?
   [kind : ast.AstImportKind]
   [path : String]) : bool
   (match kind
-    [(ast.AstImportKind.Module)
+    [(Module)
       (load.compiler-load-stdlib-import?
         (load.compiler-load-dotted-module-path path))]
     [_ false]))
 
 (define (typecheck-compiler-source-decl-has-stdlib-import? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind path _ _ _))
+    [(Import decl-meta (Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (typecheck-compiler-source-decl-has-stdlib-import? (deref inner-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
   [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) false]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) false]
+    [(Cons decl rest)
       (or
         (typecheck-compiler-source-decl-has-stdlib-import? decl)
         (typecheck-compiler-source-decls-have-stdlib-import? rest))]))
@@ -465,7 +443,7 @@
 (define (typecheck-compiler-source-program-has-stdlib-import?
   [program : ast.AstProgram]) : bool
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (typecheck-compiler-source-decls-have-stdlib-import? (deref decls-box))]))
 
 (define (typecheck-compiler-repl-expr
@@ -494,12 +472,12 @@
           ctx
           (owned_view.compiler-owned-shared-view program)
           (ast.ast-decl-path-list-new))
-          [(tc_core.ResultTcSourcePolicyDiagnostic.Ok)
+          [(Ok)
             (match (tc_core.tc-source-expr-policy-ok
               ctx
               (tc_core.tc-context-expr-bases ctx)
               (owned_view.compiler-owned-shared-view expr))
-              [(tc_core.ResultTcUnit.Ok)
+              [(Ok)
                 (let
                   [top-env : tc_core.TcTypeEnv
                     (try (tc_core.tc-build-top-env ctx program))]
@@ -507,22 +485,18 @@
                     ctx
                     top-env
                     decls
-                    (tc_core.CompilerTypecheckSummary 0 0 0))
-                    [(tc_core.ResultCompilerTypecheck.Ok _)
-                      (tc_core.tc-expr ctx top-env expr)]
-                    [(tc_core.ResultCompilerTypecheck.Err diag)
+                    (CompilerTypecheckSummary 0 0 0))
+                    [(Ok _) (tc_core.tc-expr ctx top-env expr)]
+                    [(Err diag)
                       (let
                         [diagnostics : cdiag.CompilerDiagnosticList
                           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
                         [first : cdiag.CompilerDiagnostic
                           (cdiag.compiler-diagnostic-list-first diagnostics)]
-                        (tc_core.ResultTcType.Err
-                          (cdiag.compiler-diagnostic-message first)))]))]
-              [(tc_core.ResultTcUnit.Err message)
-                (tc_core.ResultTcType.Err message)])]
-          [(tc_core.ResultTcSourcePolicyDiagnostic.Err diag)
-            (tc_core.ResultTcType.Err
-              (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))))
+                        (Err (cdiag.compiler-diagnostic-message first)))]))]
+              [(Err message) (Err message)])]
+          [(Err diag)
+            (Err (cdiag.compiler-diagnostic-message (__tl-box-place diag)))])))))
 
 (define (typecheck-compiler-source [src : String]) : tc_core.ResultCompilerTypecheck
   (let
@@ -533,24 +507,21 @@
       (match (parser.parse-ast-source-diagnostic
         ""
         (owned_view.compiler-owned-shared-view src))
-        [(parser.ResultAstProgramDiagnostic.Ok program)
+        [(Ok program)
           ;; Keep synthetic in-memory fixtures on the historical direct path,
           ;; but route real stdlib imports through the loader so macro imports
           ;; see loaded stdlib macro definitions and alias markers.
           (if (typecheck-compiler-source-program-has-stdlib-import?
             (owned_view.compiler-owned-shared-view program))
             (match (typecheck-compiler-source-load src)
-              [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+              [(Ok decls paths _ _)
                 (typecheck-compiler-program-with-paths
                   (ast.ast-program decls)
                   paths)]
-              [(load.ResultCompilerLoadWithPaths.Err diag)
-                (tc_core.ResultCompilerTypecheck.Err
-                  (cdiag.compiler-diagnostic-list-box-single diag))])
+              [(Err diag)
+                (Err (cdiag.compiler-diagnostic-list-box-single diag))])
             (typecheck-compiler-program program))]
-        [(parser.ResultAstProgramDiagnostic.Err diag)
-          (tc_core.ResultCompilerTypecheck.Err
-            (cdiag.compiler-diagnostic-list-box-single diag))])]
+        [(Err diag) (Err (cdiag.compiler-diagnostic-list-box-single diag))])]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
       result)))
@@ -558,5 +529,5 @@
 (define (compiler-typecheck-summary-score
   [summary : tc_core.CompilerTypecheckSummary]) : i64
   (match summary
-    [(tc_core.CompilerTypecheckSummary values functions externs)
+    [(CompilerTypecheckSummary values functions externs)
       (+ values (+ (* functions 10) (* externs 100)))]))

@@ -522,23 +522,21 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             [index : i64 0]
             [product-block : i64 shape.product-block]
-            (begin
-              (while (< index count)
-                (begin
-                  (if (and
-                    (< product-block 0)
-                    (lower-test-product-instr?
-                      (ir.compiler-ir-instr-seq-ref instrs index)))
-                    (set! product-block block-index)
-                    unit)
-                  (set! index (+ index 1))))
-              (lower-test-product-shape-blocks
-                rest
-                (+ block-index 1)
-                (LowerTestProductShape
-                  (+ shape.blocks 1)
-                  (+ shape.instrs count)
-                  product-block))))])]))
+            (while (< index count)
+              (if (and
+                (< product-block 0)
+                (lower-test-product-instr?
+                  (ir.compiler-ir-instr-seq-ref instrs index)))
+                (set! product-block block-index)
+                unit)
+              (set! index (+ index 1)))
+            (lower-test-product-shape-blocks
+              rest
+              (+ block-index 1)
+              (LowerTestProductShape
+                (+ shape.blocks 1)
+                (+ shape.instrs count)
+                product-block)))])]))
 
 (define (lower-test-optimized-product-shape [source : String] [name : String]) : LowerTestProductShape
   (match (lower.lower-compiler-source source)
@@ -881,9 +879,8 @@
           [copied : String
             (lower.lower-copy-string-into-pools "pool-owned" pools)]
           (and (arena.eq? (arena.current) home) (string.eq copied "pool-owned")))]
-      (begin
-        (arena.destroy-safe! owner)
-        ok))
+      (arena.destroy-safe! owner)
+      ok)
     "lower pool-copy helper restores caller arena"))
 
 (define (compiler-lower-maybe-span-start-ok?
@@ -1084,53 +1081,52 @@
     [prev-module-id : i64
       (lower.lower-entry-main-module-id-current lower-state)]
     [active-ok : bool false]
-    (begin
-      (lower.lower-entry-main-selection-install!
-        lower-state
-        (Some "app.main" 123))
-      (set!
-        active-ok
-        (and
-          (lower.lower-decl-entry-main?
-            lower-state
-            "src/app.tl"
-            "src/app.tl"
-            "app.main"
-            "main")
-          (lower.lower-decl-entry-main?
-            lower-state
-            "src\\app.tl"
-            "src/app.tl"
-            "app.main"
-            "main")
-          (not
-            (lower.lower-decl-entry-main?
-              lower-state
-              "src/app.tl"
-              "src/lib.tl"
-              "app.main"
-              "main"))
-          (not
-            (lower.lower-decl-entry-main?
-              lower-state
-              "src/app.tl"
-              "src/app.tl"
-              "app.main"
-              "helper"))))
-      (lower.lower-entry-main-selection-restore!
-        lower-state
-        prev-active
-        prev-module
-        prev-module-id)
+    (lower.lower-entry-main-selection-install!
+      lower-state
+      (Some "app.main" 123))
+    (set!
+      active-ok
       (and
-        active-ok
+        (lower.lower-decl-entry-main?
+          lower-state
+          "src/app.tl"
+          "src/app.tl"
+          "app.main"
+          "main")
+        (lower.lower-decl-entry-main?
+          lower-state
+          "src\\app.tl"
+          "src/app.tl"
+          "app.main"
+          "main")
+        (not
+          (lower.lower-decl-entry-main?
+            lower-state
+            "src/app.tl"
+            "src/lib.tl"
+            "app.main"
+            "main"))
         (not
           (lower.lower-decl-entry-main?
             lower-state
             "src/app.tl"
             "src/app.tl"
             "app.main"
-            "main"))))))
+            "helper"))))
+    (lower.lower-entry-main-selection-restore!
+      lower-state
+      prev-active
+      prev-module
+      prev-module-id)
+    (and
+      active-ok
+      (not
+        (lower.lower-decl-entry-main?
+          lower-state
+          "src/app.tl"
+          "src/app.tl"
+          "app.main"
+          "main")))))
 
 ;; Scalar match lowering smoke: an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
@@ -2000,17 +1996,13 @@
 ;; Nominal clone helpers are declaration macros now, so clone-producing lowering
 ;; fixtures must load the same implicit prelude as the compiler driver.
 (define (compiler-lower-clone-source-with-prelude [src : String]) : lower.ResultCompilerLower
-  (begin
-    (ci.intern-reset!)
-    (lower.lower-reset-intern-owned-state!)
-    (cbi.compiler-builtin-reset!)
-    (match (tc_api.typecheck-compiler-source-load src)
-      [(Ok decls paths _ _)
-        (lower-compiler-program-with-decl-paths
-          ""
-          (ast.ast-program decls)
-          paths)]
-      [(Err diag) (Err diag)])))
+  (ci.intern-reset!)
+  (lower.lower-reset-intern-owned-state!)
+  (cbi.compiler-builtin-reset!)
+  (match (tc_api.typecheck-compiler-source-load src)
+    [(Ok decls paths _ _)
+      (lower-compiler-program-with-decl-paths "" (ast.ast-program decls) paths)]
+    [(Err diag) (Err diag)]))
 
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
@@ -3252,17 +3244,15 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-spmd-call-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-spmd-call-count
+            (ir.compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-blocks-spmd-call-count [blocks : ir.CompilerIrBlockList]) : i64
   (match blocks
@@ -3274,14 +3264,12 @@
     [count : i64 blocks.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (ir.compiler-ir-array-shared-view slots index)
-            [(Block _ instrs)
-              (set! acc (+ acc (lower-test-instr-seq-spmd-call-count instrs)))])
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (match (ir.compiler-ir-array-shared-view slots index)
+        [(Block _ instrs)
+          (set! acc (+ acc (lower-test-instr-seq-spmd-call-count instrs)))])
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-function-spmd-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -3296,16 +3284,14 @@
     [count : i64 funcs.len]
     [index : i64 0]
     [result : i64 (- 0 1)]
-    (begin
-      (while (and (< index count) (< result 0))
-        (begin
-          (match (ir.compiler-ir-array-shared-view slots index)
-            [(Function fname _ _ _ blocks _)
-              (if (string.eq (ir.compiler-ir-symbol-text fname) name)
-                (set! result (lower-test-blocks-spmd-call-count blocks))
-                unit)])
-          (set! index (+ index 1))))
-      result)))
+    (while (and (< index count) (< result 0))
+      (match (ir.compiler-ir-array-shared-view slots index)
+        [(Function fname _ _ _ blocks _)
+          (if (string.eq (ir.compiler-ir-symbol-text fname) name)
+            (set! result (lower-test-blocks-spmd-call-count blocks))
+            unit)])
+      (set! index (+ index 1)))
+    result))
 
 (define (lower-test-vector-shape?
   [actual-lanes : i64]
@@ -3536,17 +3522,15 @@
     [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-phi-count
-                (ir.compiler-ir-array-shared-view slots index))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-phi-count
+            (ir.compiler-ir-array-shared-view slots index))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-splat-shape-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3557,21 +3541,17 @@
     [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-splat-shape-count
-                (owned_view.compiler-owned-array-element-shared-view
-                  slots
-                  index)
-                lanes
-                (owned_view.compiler-owned-shared-view elem-ty))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-splat-shape-count
+            (owned_view.compiler-owned-array-element-shared-view slots index)
+            lanes
+            (owned_view.compiler-owned-shared-view elem-ty))))
+      (set! index (+ index 1)))
+    acc))
 
 ;; The instruction kinds the count checks look for; each counts through its
 ;; own lower-test-instr-K-count predicate.
@@ -3652,18 +3632,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-count
-                (ir.compiler-ir-array-shared-view slots index)
-                kind)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-count
+            (ir.compiler-ir-array-shared-view slots index)
+            kind)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-blocks-count
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -3697,18 +3675,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-pack-shape-count
-                (ir.compiler-ir-array-shared-view slots index)
-                pools)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-pack-shape-count
+            (ir.compiler-ir-array-shared-view slots index)
+            pools)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-call-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3718,18 +3694,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-call-count
-                (ir.compiler-ir-array-shared-view slots index)
-                (ir.compiler-ir-global-shared-view name))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-call-count
+            (ir.compiler-ir-array-shared-view slots index)
+            (ir.compiler-ir-global-shared-view name))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-call-before?
   [instrs : ir.CompilerIrInstrSeq]
@@ -3742,23 +3716,21 @@
     [seen-first : bool false]
     [done : bool false]
     [result : bool false]
-    (begin
-      (while (and (< index count) (not done))
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-array-shared-view slots index)]
+    (while (and (< index count) (not done))
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-array-shared-view slots index)]
+        (if (lower-test-instr-call-name?
+          (ir.compiler-ir-global-shared-view instr)
+          second)
           (begin
-            (if (lower-test-instr-call-name?
-              (ir.compiler-ir-global-shared-view instr)
-              second)
-              (begin
-                (set! result seen-first)
-                (set! done true))
-              (if (lower-test-instr-call-name? instr first)
-                (set! seen-first true)
-                unit))
-            (set! index (+ index 1)))))
-      result)))
+            (set! result seen-first)
+            (set! done true))
+          (if (lower-test-instr-call-name? instr first)
+            (set! seen-first true)
+            unit))
+        (set! index (+ index 1))))
+    result))
 
 (define (lower-test-instr-seq-return-function-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3768,18 +3740,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-return-function-count
-                (ir.compiler-ir-array-shared-view slots index)
-                function-name)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-return-function-count
+            (ir.compiler-ir-array-shared-view slots index)
+            function-name)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-indirect-callee-function-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3789,18 +3759,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-indirect-callee-function-count
-                (ir.compiler-ir-array-shared-view slots index)
-                function-name)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-indirect-callee-function-count
+            (ir.compiler-ir-array-shared-view slots index)
+            function-name)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-call-arg-function-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3811,19 +3779,17 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-call-arg-function-count
-                (ir.compiler-ir-array-shared-view slots index)
-                call-name
-                function-name)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-call-arg-function-count
+            (ir.compiler-ir-array-shared-view slots index)
+            call-name
+            function-name)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-tail-call-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3833,18 +3799,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-tail-call-count
-                (ir.compiler-ir-array-shared-view slots index)
-                name)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-tail-call-count
+            (ir.compiler-ir-array-shared-view slots index)
+            name)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-vector-binop-op-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3854,18 +3818,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-binop-op-count
-                (ir.compiler-ir-array-shared-view slots index)
-                (owned_view.compiler-owned-shared-view want))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-vector-binop-op-count
+            (ir.compiler-ir-array-shared-view slots index)
+            (owned_view.compiler-owned-shared-view want))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-vector-shape-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3876,19 +3838,17 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-vector-shape-count
-                (ir.compiler-ir-array-shared-view slots index)
-                lanes
-                (ast.ast-global-shared-view elem-ty))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-vector-shape-count
+            (ir.compiler-ir-array-shared-view slots index)
+            lanes
+            (ast.ast-global-shared-view elem-ty))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-binop-op-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3898,18 +3858,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-binop-op-count
-                (ir.compiler-ir-array-shared-view slots index)
-                (ir.compiler-ir-global-shared-view op))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-binop-op-count
+            (ir.compiler-ir-array-shared-view slots index)
+            (ir.compiler-ir-global-shared-view op))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-i64-binop-op-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3919,18 +3877,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-i64-binop-op-count
-                (ir.compiler-ir-array-shared-view slots index)
-                (ir.compiler-ir-global-shared-view op))))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-i64-binop-op-count
+            (ir.compiler-ir-array-shared-view slots index)
+            (ir.compiler-ir-global-shared-view op))))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-instr-seq-store-global-count
   [instrs : ir.CompilerIrInstrSeq]
@@ -3940,18 +3896,16 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-store-global-count
-                (ir.compiler-ir-array-shared-view slots index)
-                name)))
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (set!
+        acc
+        (+
+          acc
+          (lower-test-instr-store-global-count
+            (ir.compiler-ir-array-shared-view slots index)
+            name)))
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-blocks-phi-count
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : i64
@@ -4277,60 +4231,54 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-call-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (ir.compiler-ir-global-shared-view name))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-call-count
+                (ir.compiler-ir-block-list-view blocks)
+                (ir.compiler-ir-global-shared-view name))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-functions-branch-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (Branch))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-count
+                (ir.compiler-ir-block-list-view blocks)
+                (Branch))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-functions-return-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (Return))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-count
+                (ir.compiler-ir-block-list-view blocks)
+                (Return))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-functions-tail-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4338,20 +4286,18 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-tail-call-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    name)))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-tail-call-count
+                (ir.compiler-ir-block-list-view blocks)
+                name)))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-functions-direct-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4367,40 +4313,36 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (Cpuid))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-count
+                (ir.compiler-ir-block-list-view blocks)
+                (Cpuid))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-functions-xgetbv-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (Xgetbv))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-count
+                (ir.compiler-ir-block-list-view blocks)
+                (Xgetbv))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-function-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4532,17 +4474,15 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (ir.compiler-ir-array-shared-view slots index)
-            [(Call _ found args _)
-              (when
-                (string.eq (ir.compiler-ir-symbol-text found) call-name)
-                (set! acc (+ acc (lower-test-call-args-distinct-vars args))))]
-            [_ unit])
-          (set! index (+ index 1))))
-      acc)))
+    (while (< index count)
+      (match (ir.compiler-ir-array-shared-view slots index)
+        [(Call _ found args _)
+          (when
+            (string.eq (ir.compiler-ir-symbol-text found) call-name)
+            (set! acc (+ acc (lower-test-call-args-distinct-vars args))))]
+        [_ unit])
+      (set! index (+ index 1)))
+    acc))
 
 (define (lower-test-blocks-distinct-arg-call-count
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -4630,20 +4570,18 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index funcs.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view funcs.slots index)
-            [(Function _ _ _ _ blocks _)
-              (set!
-                count
-                (+
-                  count
-                  (lower-test-blocks-count
-                    (ir.compiler-ir-block-list-view blocks)
-                    (Bitcast))))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index funcs.len)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
+        [(Function _ _ _ _ blocks _)
+          (set!
+            count
+            (+
+              count
+              (lower-test-blocks-count
+                (ir.compiler-ir-block-list-view blocks)
+                (Bitcast))))])
+      (set! index (+ index 1)))
+    count))
 
 (define (lower-test-function-store-global-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4874,41 +4812,40 @@
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
             [args : ast.AstExprList (ast.ast-expr-list-new)]
-            (begin
-              (ast.ast-expr-list-push
-                (&mut args)
-                (ast.ast-node-push
-                  (Literal (ast.ast-lit-generated-string "same"))))
-              (set!
-                (array-ref decls.slots decls.offset)
-                (ast.ast-decl-comptime-decl-with-meta
-                  (Some
-                    "point-family"
-                    "Point"
-                    (owned_view.compiler-owned-shared-view args)
-                    "")
-                  (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))))
-              (set!
-                (array-ref decls.slots (+ decls.offset 1))
-                (ast.ast-decl-comptime-decl-with-meta
-                  (Some "point-family" "Point" args "")
-                  (ast.ast-decl-list-get (& decls) 1 (ast.ast-decl-fallback))))
-              (match (lower-test-functions
-                (lower-compiler-program-with-decl-paths
-                  "app.tl"
-                  program
-                  (compiler-lower-generated-paths)))
-                [(Some functions)
-                  (and
-                    (lower-test-function-defined? functions "lib.tl::after")
-                    (lower-test-function-defined? functions "main")
-                    (=
-                      (lower-test-function-direct-call-count
-                        functions
-                        "main"
-                        "lib.tl::after")
-                      1))]
-                [_ false])))])]
+            (ast.ast-expr-list-push
+              (&mut args)
+              (ast.ast-node-push
+                (Literal (ast.ast-lit-generated-string "same"))))
+            (set!
+              (array-ref decls.slots decls.offset)
+              (ast.ast-decl-comptime-decl-with-meta
+                (Some
+                  "point-family"
+                  "Point"
+                  (owned_view.compiler-owned-shared-view args)
+                  "")
+                (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))))
+            (set!
+              (array-ref decls.slots (+ decls.offset 1))
+              (ast.ast-decl-comptime-decl-with-meta
+                (Some "point-family" "Point" args "")
+                (ast.ast-decl-list-get (& decls) 1 (ast.ast-decl-fallback))))
+            (match (lower-test-functions
+              (lower-compiler-program-with-decl-paths
+                "app.tl"
+                program
+                (compiler-lower-generated-paths)))
+              [(Some functions)
+                (and
+                  (lower-test-function-defined? functions "lib.tl::after")
+                  (lower-test-function-defined? functions "main")
+                  (=
+                    (lower-test-function-direct-call-count
+                      functions
+                      "main"
+                      "lib.tl::after")
+                    1))]
+              [_ false]))])]
     [(Err _) false]))
 
 (define (compiler-lower-module-symbol-source) : String
@@ -7672,23 +7609,22 @@
       (let
         [diag : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-box-shared-view diag-box)]
-        (begin
-          (unless
-            (string.eq (cdiag.compiler-diagnostic-message diag) want)
-            (io.panic
-              (str_cat.str-cat
-                "SPMD numeric diagnostic mismatch: got `"
-                (cdiag.compiler-diagnostic-message diag)
-                "`, expected `"
-                want
-                "`")))
-          (unless
-            (> (cdiag.compiler-diagnostic-line diag) 0)
-            (io.panic "SPMD numeric diagnostic has no source line"))
-          (unless
-            (> (cdiag.compiler-diagnostic-col diag) 0)
-            (io.panic "SPMD numeric diagnostic has no source column"))
-          true))]
+        (unless
+          (string.eq (cdiag.compiler-diagnostic-message diag) want)
+          (io.panic
+            (str_cat.str-cat
+              "SPMD numeric diagnostic mismatch: got `"
+              (cdiag.compiler-diagnostic-message diag)
+              "`, expected `"
+              want
+              "`")))
+        (unless
+          (> (cdiag.compiler-diagnostic-line diag) 0)
+          (io.panic "SPMD numeric diagnostic has no source line"))
+        (unless
+          (> (cdiag.compiler-diagnostic-col diag) 0)
+          (io.panic "SPMD numeric diagnostic has no source column"))
+        true)]
     [(Ok _ _) (io.panic "SPMD numeric source unexpectedly lowered")]))
 
 (test
@@ -7876,9 +7812,8 @@
               (compiler-lower-masked-cast-rows-ok?
                 (lower.CompilerLowerMode.Avx512)
                 "AVX-512"))]
-          (begin
-            (lower.lower-masked-census-admit-every-cast! false)
-            ok))))
+          (lower.lower-masked-census-admit-every-cast! false)
+          ok)))
     "masked SPMD casts that change lane representation reject at the cast, in the census and in the emitter"))
 
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
@@ -8922,20 +8857,19 @@
                 "fill"
                 lanes
                 (I64))]
-            (begin
-              (unless
-                (= shl-count 2)
-                (io.panic "lower: masked shift shl IR count mismatch"))
-              (unless
-                (= shr-count 2)
-                (io.panic "lower: masked shift shr IR count mismatch"))
-              (unless
-                (= abort-count 4)
-                (io.panic "lower: masked shift abort call count mismatch"))
-              (unless
-                (>= shape-count 20)
-                (io.panic "lower: masked shift vector shape count mismatch"))
-              true))])]
+            (unless
+              (= shl-count 2)
+              (io.panic "lower: masked shift shl IR count mismatch"))
+            (unless
+              (= shr-count 2)
+              (io.panic "lower: masked shift shr IR count mismatch"))
+            (unless
+              (= abort-count 4)
+              (io.panic "lower: masked shift abort call count mismatch"))
+            (unless
+              (>= shape-count 20)
+              (io.panic "lower: masked shift vector shape count mismatch"))
+            true)])]
     [(Err diag)
       (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
@@ -8967,54 +8901,52 @@
                 "fill"
                 lanes
                 (I16))]
-            (begin
-              (unless
-                (= shl-count 2)
-                (io.panic
-                  (str_cat.str-cat
-                    "lower: narrow masked shift shl IR count mismatch: "
-                    (string.int->string shl-count))))
-              (unless
-                (= shr-count 2)
-                (io.panic
-                  (str_cat.str-cat
-                    "lower: narrow masked shift shr IR count mismatch: "
-                    (string.int->string shr-count))))
-              (unless
-                (= abort-count 4)
-                (io.panic
-                  (str_cat.str-cat
-                    "lower: narrow masked shift abort call count mismatch: "
-                    (string.int->string abort-count))))
-              (unless
-                (>= shape-count 10)
-                (io.panic
-                  (str_cat.str-cat
-                    "lower: narrow masked shift vector shape count mismatch: "
-                    (string.int->string shape-count))))
-              true))])]
+            (unless
+              (= shl-count 2)
+              (io.panic
+                (str_cat.str-cat
+                  "lower: narrow masked shift shl IR count mismatch: "
+                  (string.int->string shl-count))))
+            (unless
+              (= shr-count 2)
+              (io.panic
+                (str_cat.str-cat
+                  "lower: narrow masked shift shr IR count mismatch: "
+                  (string.int->string shr-count))))
+            (unless
+              (= abort-count 4)
+              (io.panic
+                (str_cat.str-cat
+                  "lower: narrow masked shift abort call count mismatch: "
+                  (string.int->string abort-count))))
+            (unless
+              (>= shape-count 10)
+              (io.panic
+                (str_cat.str-cat
+                  "lower: narrow masked shift vector shape count mismatch: "
+                  (string.int->string shape-count))))
+            true)])]
     [(Err diag)
       (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (compiler-lower-masked-shift-tests-ok?) : bool
-  (begin
-    (unless
-      (compiler-lower-masked-if-shift-value-shape-ok?
-        (lower.CompilerLowerMode.Avx2))
-      (io.panic "lower: AVX2 masked shift shape mismatch"))
-    (unless
-      (compiler-lower-masked-if-shift-value-shape-ok?
-        (lower.CompilerLowerMode.Avx512))
-      (io.panic "lower: AVX-512 masked shift shape mismatch"))
-    (unless
-      (compiler-lower-masked-if-narrow-shift-shape-ok?
-        (lower.CompilerLowerMode.Avx2))
-      (io.panic "lower: AVX2 narrow masked shift shape mismatch"))
-    (unless
-      (compiler-lower-masked-if-narrow-shift-shape-ok?
-        (lower.CompilerLowerMode.Avx512))
-      (io.panic "lower: AVX-512 narrow masked shift shape mismatch"))
-    true))
+  (unless
+    (compiler-lower-masked-if-shift-value-shape-ok?
+      (lower.CompilerLowerMode.Avx2))
+    (io.panic "lower: AVX2 masked shift shape mismatch"))
+  (unless
+    (compiler-lower-masked-if-shift-value-shape-ok?
+      (lower.CompilerLowerMode.Avx512))
+    (io.panic "lower: AVX-512 masked shift shape mismatch"))
+  (unless
+    (compiler-lower-masked-if-narrow-shift-shape-ok?
+      (lower.CompilerLowerMode.Avx2))
+    (io.panic "lower: AVX2 narrow masked shift shape mismatch"))
+  (unless
+    (compiler-lower-masked-if-narrow-shift-shape-ok?
+      (lower.CompilerLowerMode.Avx512))
+    (io.panic "lower: AVX-512 narrow masked shift shape mismatch"))
+  true)
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
   (match (lower-test-functions
@@ -9287,74 +9219,73 @@
       (ci.intern-compat-state-generated-count (& intern-decoy))]
     [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
-    (begin
-      (ci.intern-compat-state-install! intern-decoy)
-      (ast.ast-node-pool-context-install! pools-b)
-      (let
-        [stripped-a : i64
-          (lower.lower-imported-spmd-ir-symbol (&mut intern-a) item-a)]
-        [diagnostic-line : i64
-          (match (lower.lower-imported-spmd-select
-            (& intern-a)
-            pools-a
-            (ci.intern-id-from-renderable name-a)
-            (& empty-callables)
-            "(-> i64 i64)"
-            (Scalar)
-            1
-            "v"
-            0
-            (I64)
-            origin-a)
-            [(Ok _) -1]
-            [(Err diag) (cdiag.compiler-diagnostic-line (__tl-box-place diag))])]
-        (set!
-          ok
-          (and
-            (= name-a name-b)
-            (= link-a link-b)
-            (string.eq
-              (ci.intern-source-name-session-handle-str source-a name-a)
-              "owner-a/item.field")
-            (string.eq
-              (ci.intern-source-name-session-handle-str source-b name-b)
-              "owner-b-plain")
-            (ci.intern-source-name-session-handle-qualified? source-a name-a)
-            (ci.intern-source-name-session-handle-dotted? source-a name-a)
-            (not
-              (ci.intern-source-name-session-handle-qualified? source-b name-b))
-            (not (ci.intern-source-name-session-handle-dotted? source-b name-b))
-            (string.eq
-              (ci.intern-compat-state-str (& intern-a) stripped-a)
-              "owner_a")
-            (string.eq
-              (lower.compiler-lower-state-name-text lower-a name-a)
-              "owner-a/item.field")
-            (string.eq
-              (lower.compiler-lower-state-name-text
-                lower-a
-                (cis.intern-structural-key-raw structural-a))
-              "owner-a/item.field/_tl_owner_a")
-            (= diagnostic-line 9)
-            (=
-              (ci.intern-compat-state-pool-len (& intern-decoy))
-              decoy-source-before)
-            (=
-              (ci.intern-compat-state-generated-count (& intern-decoy))
-              decoy-generated-before)
-            (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before))))
-      (ci.intern-compat-state-install! active-intern-before)
-      (ast.ast-node-pool-context-install! active-pools-before)
-      (ast.ast-node-pool-context-destroy-storage! pools-a)
-      (ast.ast-node-pool-context-destroy-storage! pools-b)
-      (unsafe
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena (& intern-a)))
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena (& intern-b)))
-        (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena (& intern-decoy))))
-      ok)))
+    (ci.intern-compat-state-install! intern-decoy)
+    (ast.ast-node-pool-context-install! pools-b)
+    (let
+      [stripped-a : i64
+        (lower.lower-imported-spmd-ir-symbol (&mut intern-a) item-a)]
+      [diagnostic-line : i64
+        (match (lower.lower-imported-spmd-select
+          (& intern-a)
+          pools-a
+          (ci.intern-id-from-renderable name-a)
+          (& empty-callables)
+          "(-> i64 i64)"
+          (Scalar)
+          1
+          "v"
+          0
+          (I64)
+          origin-a)
+          [(Ok _) -1]
+          [(Err diag) (cdiag.compiler-diagnostic-line (__tl-box-place diag))])]
+      (set!
+        ok
+        (and
+          (= name-a name-b)
+          (= link-a link-b)
+          (string.eq
+            (ci.intern-source-name-session-handle-str source-a name-a)
+            "owner-a/item.field")
+          (string.eq
+            (ci.intern-source-name-session-handle-str source-b name-b)
+            "owner-b-plain")
+          (ci.intern-source-name-session-handle-qualified? source-a name-a)
+          (ci.intern-source-name-session-handle-dotted? source-a name-a)
+          (not
+            (ci.intern-source-name-session-handle-qualified? source-b name-b))
+          (not (ci.intern-source-name-session-handle-dotted? source-b name-b))
+          (string.eq
+            (ci.intern-compat-state-str (& intern-a) stripped-a)
+            "owner_a")
+          (string.eq
+            (lower.compiler-lower-state-name-text lower-a name-a)
+            "owner-a/item.field")
+          (string.eq
+            (lower.compiler-lower-state-name-text
+              lower-a
+              (cis.intern-structural-key-raw structural-a))
+            "owner-a/item.field/_tl_owner_a")
+          (= diagnostic-line 9)
+          (=
+            (ci.intern-compat-state-pool-len (& intern-decoy))
+            decoy-source-before)
+          (=
+            (ci.intern-compat-state-generated-count (& intern-decoy))
+            decoy-generated-before)
+          (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before))))
+    (ci.intern-compat-state-install! active-intern-before)
+    (ast.ast-node-pool-context-install! active-pools-before)
+    (ast.ast-node-pool-context-destroy-storage! pools-a)
+    (ast.ast-node-pool-context-destroy-storage! pools-b)
+    (unsafe
+      (arena.tl_arena_destroy
+        (ci.intern-compat-state-persistent-arena (& intern-a)))
+      (arena.tl_arena_destroy
+        (ci.intern-compat-state-persistent-arena (& intern-b)))
+      (arena.tl_arena_destroy
+        (ci.intern-compat-state-persistent-arena (& intern-decoy))))
+    ok))
 
 (test
   compiler-lower-imported-spmd-owner-isolation
@@ -9389,65 +9320,130 @@
     [avx2-message-fragment : String "is not supported in AVX2 backend mode"]
     [origin : ast.AstExpr (Literal (ast.ast-lit-int 0))]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    (begin
-      (ast.ast-imported-spmd-specialization-list-push
-        (&mut specializations)
-        (ast.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            "spmd-call-v1")
-          (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
+    (ast.ast-imported-spmd-specialization-list-push
+      (&mut specializations)
+      (ast.AstImportedSpmdSpecialization
+        (lower-test-renderable-name-id-with-state (&mut interns) "spmd-call-v1")
+        (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
+        1
+        (lower-test-renderable-name-id-with-state (&mut interns) "v")
+        (lower-test-renderable-name-id-with-state (&mut interns) "v")
+        0
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          "_tl___fixture_helper_scalar")))
+    (ast.ast-imported-spmd-callable-list-push
+      (&mut callables)
+      (ast.AstImportedSpmdCallable
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          (owned_view.compiler-owned-shared-view signature))
+        (owned_view.compiler-owned-shared-view specializations)))
+    (ast.ast-imported-spmd-callable-list-push
+      (&mut duplicate-callables)
+      (ast.AstImportedSpmdCallable
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          (owned_view.compiler-owned-shared-view signature))
+        (owned_view.compiler-owned-shared-view specializations)))
+    (ast.ast-imported-spmd-callable-list-push
+      (&mut duplicate-callables)
+      (ast.AstImportedSpmdCallable
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          (owned_view.compiler-owned-shared-view signature))
+        specializations))
+    (ast.ast-imported-spmd-specialization-list-push
+      (&mut unsupported-specializations)
+      (ast.AstImportedSpmdSpecialization
+        (lower-test-renderable-name-id-with-state (&mut interns) "spmd-call-v2")
+        (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
+        1
+        (lower-test-renderable-name-id-with-state (&mut interns) "v")
+        (lower-test-renderable-name-id-with-state (&mut interns) "v")
+        0
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          "__fixture_helper_v2")))
+    (ast.ast-imported-spmd-callable-list-push
+      (&mut unsupported-callables)
+      (ast.AstImportedSpmdCallable
+        (lower-test-renderable-name-id-with-state
+          (&mut interns)
+          (owned_view.compiler-owned-shared-view signature))
+        unsupported-specializations))
+    (and
+      (match (lower.lower-imported-spmd-select
+        (& interns)
+        pools
+        canonical-name
+        (& callables)
+        (owned_view.compiler-owned-shared-view signature)
+        (Scalar)
+        1
+        "v"
+        0
+        (I64)
+        origin)
+        [(Ok selected)
+          (and
+            (string.eq
+              (ci.intern-compat-state-id-str interns selected.symbol)
+              "_tl___fixture_helper_scalar")
+            (string.eq
+              (ci.intern-compat-state-str
+                interns
+                (lower.lower-imported-spmd-ir-symbol (&mut interns) selected))
+              "__fixture_helper_scalar"))]
+        [(Err _) false])
+      (match (lower.lower-imported-spmd-select
+        (& interns)
+        pools
+        canonical-name
+        (& empty-callables)
+        (owned_view.compiler-owned-shared-view signature)
+        (Scalar)
+        1
+        "v"
+        0
+        (I64)
+        origin)
+        [(Ok _) false]
+        [(Err diag)
+          (let
+            [message : String
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag))]
+            (string.contains (& message) (& missing-message-fragment)))])
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
+          (& interns)
+          pools
+          canonical-name
+          (& callables)
+          "(-> i64 u64)"
+          (Scalar)
           1
-          (lower-test-renderable-name-id-with-state (&mut interns) "v")
-          (lower-test-renderable-name-id-with-state (&mut interns) "v")
+          "v"
           0
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            "_tl___fixture_helper_scalar")))
-      (ast.ast-imported-spmd-callable-list-push
-        (&mut callables)
-        (ast.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            (owned_view.compiler-owned-shared-view signature))
-          (owned_view.compiler-owned-shared-view specializations)))
-      (ast.ast-imported-spmd-callable-list-push
-        (&mut duplicate-callables)
-        (ast.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            (owned_view.compiler-owned-shared-view signature))
-          (owned_view.compiler-owned-shared-view specializations)))
-      (ast.ast-imported-spmd-callable-list-push
-        (&mut duplicate-callables)
-        (ast.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            (owned_view.compiler-owned-shared-view signature))
-          specializations))
-      (ast.ast-imported-spmd-specialization-list-push
-        (&mut unsupported-specializations)
-        (ast.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            "spmd-call-v2")
-          (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
-          1
-          (lower-test-renderable-name-id-with-state (&mut interns) "v")
-          (lower-test-renderable-name-id-with-state (&mut interns) "v")
+          (I64)
+          origin)
+        signature-message-fragment)
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
+          (& interns)
+          pools
+          canonical-name
+          (& callables)
+          (owned_view.compiler-owned-shared-view signature)
+          (Avx512)
+          8
+          "v"
           0
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            "__fixture_helper_v2")))
-      (ast.ast-imported-spmd-callable-list-push
-        (&mut unsupported-callables)
-        (ast.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state
-            (&mut interns)
-            (owned_view.compiler-owned-shared-view signature))
-          unsupported-specializations))
-      (and
-        (match (lower.lower-imported-spmd-select
+          (I64)
+          origin)
+        specialization-message-fragment)
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
           (& interns)
           pools
           canonical-name
@@ -9456,25 +9452,16 @@
           (Scalar)
           1
           "v"
-          0
+          -1
           (I64)
           origin)
-          [(Ok selected)
-            (and
-              (string.eq
-                (ci.intern-compat-state-id-str interns selected.symbol)
-                "_tl___fixture_helper_scalar")
-              (string.eq
-                (ci.intern-compat-state-str
-                  interns
-                  (lower.lower-imported-spmd-ir-symbol (&mut interns) selected))
-                "__fixture_helper_scalar"))]
-          [(Err _) false])
-        (match (lower.lower-imported-spmd-select
+        specialization-message-fragment)
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
           (& interns)
           pools
           canonical-name
-          (& empty-callables)
+          (& unsupported-callables)
           (owned_view.compiler-owned-shared-view signature)
           (Scalar)
           1
@@ -9482,97 +9469,36 @@
           0
           (I64)
           origin)
-          [(Ok _) false]
-          [(Err diag)
-            (let
-              [message : String
-                (cdiag.compiler-diagnostic-message (__tl-box-place diag))]
-              (string.contains (& message) (& missing-message-fragment)))])
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& callables)
-            "(-> i64 u64)"
-            (Scalar)
-            1
-            "v"
-            0
-            (I64)
-            origin)
-          signature-message-fragment)
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& callables)
-            (owned_view.compiler-owned-shared-view signature)
-            (Avx512)
-            8
-            "v"
-            0
-            (I64)
-            origin)
-          specialization-message-fragment)
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& callables)
-            (owned_view.compiler-owned-shared-view signature)
-            (Scalar)
-            1
-            "v"
-            -1
-            (I64)
-            origin)
-          specialization-message-fragment)
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& unsupported-callables)
-            (owned_view.compiler-owned-shared-view signature)
-            (Scalar)
-            1
-            "v"
-            0
-            (I64)
-            origin)
-          abi-message-fragment)
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& duplicate-callables)
-            (owned_view.compiler-owned-shared-view signature)
-            (Scalar)
-            1
-            "v"
-            0
-            (I64)
-            origin)
-          duplicate-message-fragment)
-        (compiler-lower-imported-spmd-selection-error-contains?
-          (lower.lower-imported-spmd-select
-            (& interns)
-            pools
-            canonical-name
-            (& callables)
-            signature
-            (Avx2)
-            4
-            "v"
-            0
-            (I64)
-            origin)
-          avx2-message-fragment)
-        (compiler-lower-imported-spmd-owner-isolation-ok?)))))
+        abi-message-fragment)
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
+          (& interns)
+          pools
+          canonical-name
+          (& duplicate-callables)
+          (owned_view.compiler-owned-shared-view signature)
+          (Scalar)
+          1
+          "v"
+          0
+          (I64)
+          origin)
+        duplicate-message-fragment)
+      (compiler-lower-imported-spmd-selection-error-contains?
+        (lower.lower-imported-spmd-select
+          (& interns)
+          pools
+          canonical-name
+          (& callables)
+          signature
+          (Avx2)
+          4
+          "v"
+          0
+          (I64)
+          origin)
+        avx2-message-fragment)
+      (compiler-lower-imported-spmd-owner-isolation-ok?))))
 
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
   (and
@@ -9615,20 +9541,18 @@
     [found : bool false]
     [ordinary : bool false]
     [index : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (ir.compiler-ir-array-shared-view functions.slots index)
-            [(Function fname _ _ _ _ function-abi)
-              (if (string.eq (ir.compiler-ir-symbol-text fname) name)
-                (begin
-                  (set! found true)
-                  (set!
-                    ordinary
-                    (ir.compiler-ir-function-abi-ordinary? function-abi)))
-                unit)])
-          (set! index (+ index 1))))
-      (and found ordinary))))
+    (while (< index functions.len)
+      (match (ir.compiler-ir-array-shared-view functions.slots index)
+        [(Function fname _ _ _ _ function-abi)
+          (if (string.eq (ir.compiler-ir-symbol-text fname) name)
+            (begin
+              (set! found true)
+              (set!
+                ordinary
+                (ir.compiler-ir-function-abi-ordinary? function-abi)))
+            unit)])
+      (set! index (+ index 1)))
+    (and found ordinary)))
 
 ;; Lower `src` in `mode`; the whole program must pass private ABI admission,
 ;; `caller` must keep the ordinary ABI, and the private helpers must have
@@ -11638,15 +11562,14 @@
     [grow-index : i64 1]
     [_grow : unit
       (while (< grow-index 16)
-        (begin
-          (set!
-            grown
-            (lower.lower-name-env-bind-logical-symbol-id
-              source-id
-              child-logical-id
-              grown-symbol-id
-              grown))
-          (set! grow-index (+ grow-index 1))))]
+        (set!
+          grown
+          (lower.lower-name-env-bind-logical-symbol-id
+            source-id
+            child-logical-id
+            grown-symbol-id
+            grown))
+        (set! grow-index (+ grow-index 1)))]
     [copied : lower.LowerNameEnv
       (lower.lower-name-env-copy-active (lower.lower-global-shared-view child))]
     [copy-branch : lower.LowerNameEnv
@@ -11760,9 +11683,8 @@
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    (begin
-      (lower.lower-active-global-name-cache-set! lower-state previous-global)
-      ok)))
+    (lower.lower-active-global-name-cache-set! lower-state previous-global)
+    ok))
 
 (test
   compiler-lower-name-env-dense-snapshots
@@ -11775,55 +11697,51 @@
     [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [scratch : arena.Arena (arena.make)]
     [index : i64 0]
-    (begin
-      ;; Grow while entry scratch is active, then retire it. The state and
-      ;; reused table must still be valid for the next batch entry.
-      (in-arena
-        scratch
-        (while (< index 128)
-          (begin
-            (lower.lower-alias-overlay-record! state index (+ index 1000))
-            (set! index (+ index 1)))))
-      (unsafe
-        (arena.tl_arena_destroy (arena.raw-handle scratch)))
+    ;; Grow while entry scratch is active, then retire it. The state and
+    ;; reused table must still be valid for the next batch entry.
+    (in-arena
+      scratch
+      (while (< index 128)
+        (lower.lower-alias-overlay-record! state index (+ index 1000))
+        (set! index (+ index 1))))
+    (unsafe
+      (arena.tl_arena_destroy (arena.raw-handle scratch)))
+    (let
+      [before : lower_i64_i64_map.Map
+        (lower.compiler-lower-state-read
+          state
+          lower_i64_i64_map.Map
+          lower.alias-overlay-ids)]
+      [capacity : i64 (lower_i64_i64_map.capacity (& before))]
+      [storage : i64
+        (cast
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data before.slots) : (Ptr i64))))
+          : i64)]
+      (lower.lower-alias-overlay-reset! state)
+      (lower.lower-alias-overlay-seed-from-env! state Nil)
       (let
-        [before : lower_i64_i64_map.Map
+        [after : lower_i64_i64_map.Map
           (lower.compiler-lower-state-read
             state
             lower_i64_i64_map.Map
             lower.alias-overlay-ids)]
-        [capacity : i64 (lower_i64_i64_map.capacity (& before))]
-        [storage : i64
-          (cast
-            (unsafe
-              (ptr->int (ptr-cast (__tl_array-data before.slots) : (Ptr i64))))
-            : i64)]
-        (begin
-          (lower.lower-alias-overlay-reset! state)
-          (lower.lower-alias-overlay-seed-from-env! state Nil)
-          (let
-            [after : lower_i64_i64_map.Map
-              (lower.compiler-lower-state-read
-                state
-                lower_i64_i64_map.Map
-                lower.alias-overlay-ids)]
-            [empty : bool
-              (and
-                (= (lower_i64_i64_map.capacity (& after)) capacity)
-                (=
-                  (cast
-                    (unsafe
-                      (ptr->int
-                        (ptr-cast (__tl_array-data after.slots) : (Ptr i64))))
-                    : i64)
-                  storage)
-                (= (lower_i64_i64_map.len (& after)) 0)
-                (= (lower.lower-alias-overlay-logical-id-or state 31 -1) -1))]
-            (begin
-              (lower.lower-alias-overlay-record! state 31 2031)
-              (and
-                empty
-                (= (lower.lower-alias-overlay-logical-id-or state 31 -1) 2031)))))))))
+        [empty : bool
+          (and
+            (= (lower_i64_i64_map.capacity (& after)) capacity)
+            (=
+              (cast
+                (unsafe
+                  (ptr->int
+                    (ptr-cast (__tl_array-data after.slots) : (Ptr i64))))
+                : i64)
+              storage)
+            (= (lower_i64_i64_map.len (& after)) 0)
+            (= (lower.lower-alias-overlay-logical-id-or state 31 -1) -1))]
+        (lower.lower-alias-overlay-record! state 31 2031)
+        (and
+          empty
+          (= (lower.lower-alias-overlay-logical-id-or state 31 -1) 2031))))))
 
 (test
   compiler-lower-alias-overlay-map-reuse
@@ -11844,44 +11762,40 @@
         source-id
         symbol-id
         (lower.lower-name-env-bind-logical-symbol-id -1 -1 symbol-id Nil))]
-    (begin
-      (lower.lower-alias-overlay-seed-from-env!
-        state
-        (lower.lower-global-shared-view names))
-      (let
-        [degraded : bool
-          (not
-            (lower.compiler-lower-state-read
-              state
-              bool
-              lower.alias-overlay-valid))]
-        [positive : lower.LowerNameEnv
-          (lower.lower-name-env-add-import-alias-binding-symbol-id
-            state
-            (lower.lower-global-shared-view names)
-            ""
-            ""
-            source-id
-            ""
-            source-id
-            symbol-id)]
-        [negative : lower.LowerNameEnv
-          (lower.lower-name-env-add-import-alias-binding-symbol-id
-            state
-            names
-            ""
-            ""
-            -1
-            ""
-            -1
-            symbol-id)]
-        (and
-          degraded
-          (= (lower.lower-name-env-count positive) 2)
-          (= (lower.lower-name-env-count negative) 3)
-          (=
-            (lower.lower-alias-overlay-logical-id-or state source-id -1)
-            source-id))))))
+    (lower.lower-alias-overlay-seed-from-env!
+      state
+      (lower.lower-global-shared-view names))
+    (let
+      [degraded : bool
+        (not
+          (lower.compiler-lower-state-read state bool lower.alias-overlay-valid))]
+      [positive : lower.LowerNameEnv
+        (lower.lower-name-env-add-import-alias-binding-symbol-id
+          state
+          (lower.lower-global-shared-view names)
+          ""
+          ""
+          source-id
+          ""
+          source-id
+          symbol-id)]
+      [negative : lower.LowerNameEnv
+        (lower.lower-name-env-add-import-alias-binding-symbol-id
+          state
+          names
+          ""
+          ""
+          -1
+          ""
+          -1
+          symbol-id)]
+      (and
+        degraded
+        (= (lower.lower-name-env-count positive) 2)
+        (= (lower.lower-name-env-count negative) 3)
+        (=
+          (lower.lower-alias-overlay-logical-id-or state source-id -1)
+          source-id)))))
 
 (test
   compiler-lower-alias-overlay-negative-id-scan
@@ -11892,24 +11806,21 @@
 (define (compiler-lower-name-cache-capacity-ok?) : bool
   (let
     [count : i64 0]
-    (begin
-      (while (<= count 256)
-        (let
-          [ids : lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity
-              (lower.lower-name-cache-capacity count))]
-          [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
-          [key : i64 0]
-          (begin
-            (while (< key count)
-              (begin
-                (lower_i64_i64_map.insert-ref! (&mut ids) key key)
-                (set! key (+ key 1))))
-            (when
-              (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
-              (return false))
-            (set! count (+ count 1)))))
-      true)))
+    (while (<= count 256)
+      (let
+        [ids : lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity
+            (lower.lower-name-cache-capacity count))]
+        [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
+        [key : i64 0]
+        (while (< key count)
+          (lower_i64_i64_map.insert-ref! (&mut ids) key key)
+          (set! key (+ key 1)))
+        (when
+          (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
+          (return false))
+        (set! count (+ count 1))))
+    true))
 
 (test
   compiler-lower-name-cache-capacity
@@ -11950,12 +11861,11 @@
   (let
     [bindings : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity 1)]
-    (begin
-      (set!
-        (array-ref bindings.slots 0)
-        (ast.AstLetBinding.Binding binder-id (No) init-id))
-      (set! bindings.len 1)
-      (Let (box (ast.AstLet.Let bindings body-id))))))
+    (set!
+      (array-ref bindings.slots 0)
+      (ast.AstLetBinding.Binding binder-id (No) init-id))
+    (set! bindings.len 1)
+    (Let (box (ast.AstLet.Let bindings body-id)))))
 
 (test
   compiler-lower-compat-prescan-id-parity
@@ -12091,29 +12001,27 @@
         (cis.intern-structural-session-macro-definition-identity session 1 2)]
       [index : i64 0]
       [last : i64 -1]
-      (begin
-        (while (< index 600)
-          (begin
-            (set!
-              last
-              (cis.intern-macro-local-identity-raw
-                (cis.intern-structural-session-macro-local-identity
-                  session
-                  definition
-                  index
-                  3)))
-            (set! index (+ index 1))))
+      (while (< index 600)
         (set!
           last
           (cis.intern-macro-local-identity-raw
             (cis.intern-structural-session-macro-local-identity
               session
               definition
-              7
+              index
               3)))
-        (and
-          (> last 0)
-          (= (ci.intern-compat-state-structural-count intern-state) 601))))
+        (set! index (+ index 1)))
+      (set!
+        last
+        (cis.intern-macro-local-identity-raw
+          (cis.intern-structural-session-macro-local-identity
+            session
+            definition
+            7
+            3)))
+      (and
+        (> last 0)
+        (= (ci.intern-compat-state-structural-count intern-state) 601)))
     "macro structural records grow beyond the first record slab"))
 
 (define (compiler-lower-private-record-missing?
@@ -12142,222 +12050,210 @@
           (ci.intern-source-name-session-handle-from-state intern-b))]
       [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
       [ok : bool true]
-      (begin
-        (set!
-          (array-ref identities 0)
-          (compiler-lower-private-identity-raw session-a SretParameter))
-        (set!
-          (array-ref identities 1)
-          (compiler-lower-private-identity-raw session-a CleanupStack))
-        (set!
-          (array-ref identities 2)
-          (compiler-lower-private-identity-raw session-a RegionReset))
-        (set!
-          (array-ref identities 3)
-          (compiler-lower-private-identity-raw session-a (CleanupHidden 1)))
-        (set!
-          (array-ref identities 4)
-          (compiler-lower-private-identity-raw session-a (CleanupLiveness 1)))
-        (set!
-          (array-ref identities 5)
-          (compiler-lower-private-identity-raw session-a (RegionHidden 1)))
-        (set!
-          (array-ref identities 6)
-          (compiler-lower-private-identity-raw session-a (ArenaRestoreHidden 1)))
-        (set!
-          (array-ref identities 7)
-          (compiler-lower-private-identity-raw session-a SpmdReduceAccumulator))
-        (set!
-          (array-ref identities 8)
-          (compiler-lower-private-identity-raw session-a SpmdReduceEnd))
-        (set!
-          (array-ref identities 9)
-          (compiler-lower-private-identity-raw session-a SpmdReduceValue))
-        (set!
-          (array-ref identities 10)
-          (compiler-lower-private-identity-raw session-a SpmdReduceCurrent))
-        (set!
-          (array-ref identities 11)
-          (compiler-lower-private-identity-raw session-a SpmdReduceStart))
-        (set!
-          (array-ref identities 12)
-          (compiler-lower-private-identity-raw session-a SpmdReduceUniform))
-        (set!
-          (array-ref identities 13)
-          (compiler-lower-private-identity-raw session-a SpmdScanAccumulator))
-        (set!
-          (array-ref identities 14)
-          (compiler-lower-private-identity-raw session-a SpmdScanEnd))
-        (set!
-          (array-ref identities 15)
-          (compiler-lower-private-identity-raw session-a SpmdScanValue))
-        (set!
-          (array-ref identities 16)
-          (compiler-lower-private-identity-raw session-a (WhileExit 1)))
-        (set!
-          (array-ref identities 17)
-          (compiler-lower-private-identity-raw session-a (WhileHeader 1)))
-        (let
-          [left : i64 0]
-          (while (< left 18)
-            (let
-              [right : i64 (+ left 1)]
-              (begin
-                (while (< right 18)
-                  (begin
-                    (when
-                      (=
-                        (array-ref identities left)
-                        (array-ref identities right))
-                      (set! ok false))
-                    (set! right (+ right 1))))
-                (set! left (+ left 1))))))
-        (let
-          [high-owner : i64 (+ (ci.intern-capacity) 100)]
-          [high-owner-a : i64
-            (compiler-lower-private-identity-raw
+      (set!
+        (array-ref identities 0)
+        (compiler-lower-private-identity-raw session-a SretParameter))
+      (set!
+        (array-ref identities 1)
+        (compiler-lower-private-identity-raw session-a CleanupStack))
+      (set!
+        (array-ref identities 2)
+        (compiler-lower-private-identity-raw session-a RegionReset))
+      (set!
+        (array-ref identities 3)
+        (compiler-lower-private-identity-raw session-a (CleanupHidden 1)))
+      (set!
+        (array-ref identities 4)
+        (compiler-lower-private-identity-raw session-a (CleanupLiveness 1)))
+      (set!
+        (array-ref identities 5)
+        (compiler-lower-private-identity-raw session-a (RegionHidden 1)))
+      (set!
+        (array-ref identities 6)
+        (compiler-lower-private-identity-raw session-a (ArenaRestoreHidden 1)))
+      (set!
+        (array-ref identities 7)
+        (compiler-lower-private-identity-raw session-a SpmdReduceAccumulator))
+      (set!
+        (array-ref identities 8)
+        (compiler-lower-private-identity-raw session-a SpmdReduceEnd))
+      (set!
+        (array-ref identities 9)
+        (compiler-lower-private-identity-raw session-a SpmdReduceValue))
+      (set!
+        (array-ref identities 10)
+        (compiler-lower-private-identity-raw session-a SpmdReduceCurrent))
+      (set!
+        (array-ref identities 11)
+        (compiler-lower-private-identity-raw session-a SpmdReduceStart))
+      (set!
+        (array-ref identities 12)
+        (compiler-lower-private-identity-raw session-a SpmdReduceUniform))
+      (set!
+        (array-ref identities 13)
+        (compiler-lower-private-identity-raw session-a SpmdScanAccumulator))
+      (set!
+        (array-ref identities 14)
+        (compiler-lower-private-identity-raw session-a SpmdScanEnd))
+      (set!
+        (array-ref identities 15)
+        (compiler-lower-private-identity-raw session-a SpmdScanValue))
+      (set!
+        (array-ref identities 16)
+        (compiler-lower-private-identity-raw session-a (WhileExit 1)))
+      (set!
+        (array-ref identities 17)
+        (compiler-lower-private-identity-raw session-a (WhileHeader 1)))
+      (let
+        [left : i64 0]
+        (while (< left 18)
+          (let
+            [right : i64 (+ left 1)]
+            (while (< right 18)
+              (when
+                (= (array-ref identities left) (array-ref identities right))
+                (set! ok false))
+              (set! right (+ right 1)))
+            (set! left (+ left 1)))))
+      (let
+        [high-owner : i64 (+ (ci.intern-capacity) 100)]
+        [high-owner-a : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (CleanupHidden high-owner))]
+        [high-owner-a-again : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (CleanupHidden high-owner))]
+        [high-owner-b : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (CleanupHidden (+ high-owner 1)))]
+        [collision-a : i64
+          (compiler-lower-private-identity-raw session-a (CleanupHidden 2048))]
+        [collision-b : i64
+          (compiler-lower-private-identity-raw session-a (CleanupHidden 2560))]
+        [other-session-uniform : i64
+          (compiler-lower-private-identity-raw session-b SpmdReduceUniform)]
+        [former-collision-key : cis.InternStructuralKey
+          (cis.intern-structural-session-key
+            session-a
+            (ci.intern-structural-kind-lower-private)
+            0
+            1
+            0)]
+        [former-collision-raw : i64
+          (cis.intern-structural-key-raw former-collision-key)]
+        [unknown-kind-key : cis.InternStructuralKey
+          (cis.intern-structural-session-key session-a 255 0 0 0)]
+        [unknown-kind-raw : i64
+          (cis.intern-structural-key-raw unknown-kind-key)]
+        [index : i64 0]
+        (unless (= high-owner-a high-owner-a-again) (set! ok false))
+        (when (= high-owner-a high-owner-b) (set! ok false))
+        (when (= collision-a collision-b) (set! ok false))
+        (when
+          (= other-session-uniform (array-ref identities 12))
+          (set! ok false))
+        ;; This is the structural counterpart of the old kind-16/value-0
+        ;; versus kind-0/value-1 collision. The malformed marker recipe is a
+        ;; separate record and fails typed decoding.
+        (when
+          (= former-collision-raw (array-ref identities 12))
+          (set! ok false))
+        (unless
+          (compiler-lower-private-record-missing?
+            (cis.intern-structural-session-lower-private-record-for-raw
               session-a
-              (CleanupHidden high-owner))]
-          [high-owner-a-again : i64
-            (compiler-lower-private-identity-raw
+              former-collision-raw))
+          (set! ok false))
+        (unless
+          (compiler-lower-private-record-missing?
+            (cis.intern-structural-session-lower-private-record-for-raw
               session-a
-              (CleanupHidden high-owner))]
-          [high-owner-b : i64
-            (compiler-lower-private-identity-raw
-              session-a
-              (CleanupHidden (+ high-owner 1)))]
-          [collision-a : i64
-            (compiler-lower-private-identity-raw session-a (CleanupHidden 2048))]
-          [collision-b : i64
-            (compiler-lower-private-identity-raw session-a (CleanupHidden 2560))]
-          [other-session-uniform : i64
-            (compiler-lower-private-identity-raw session-b SpmdReduceUniform)]
-          [former-collision-key : cis.InternStructuralKey
-            (cis.intern-structural-session-key
-              session-a
-              (ci.intern-structural-kind-lower-private)
-              0
-              1
-              0)]
-          [former-collision-raw : i64
-            (cis.intern-structural-key-raw former-collision-key)]
-          [unknown-kind-key : cis.InternStructuralKey
-            (cis.intern-structural-session-key session-a 255 0 0 0)]
-          [unknown-kind-raw : i64
-            (cis.intern-structural-key-raw unknown-kind-key)]
-          [index : i64 0]
-          (begin
-            (unless (= high-owner-a high-owner-a-again) (set! ok false))
-            (when (= high-owner-a high-owner-b) (set! ok false))
-            (when (= collision-a collision-b) (set! ok false))
-            (when
-              (= other-session-uniform (array-ref identities 12))
-              (set! ok false))
-            ;; This is the structural counterpart of the old kind-16/value-0
-            ;; versus kind-0/value-1 collision. The malformed marker recipe is a
-            ;; separate record and fails typed decoding.
-            (when
-              (= former-collision-raw (array-ref identities 12))
-              (set! ok false))
-            (unless
-              (compiler-lower-private-record-missing?
-                (cis.intern-structural-session-lower-private-record-for-raw
-                  session-a
-                  former-collision-raw))
-              (set! ok false))
-            (unless
-              (compiler-lower-private-record-missing?
-                (cis.intern-structural-session-lower-private-record-for-raw
-                  session-a
-                  unknown-kind-raw))
-              (set! ok false))
-            (unless
-              (compiler-lower-private-record-missing?
-                (cis.intern-structural-session-lower-private-record-for-raw
-                  session-b
-                  (array-ref identities 12)))
-              (set! ok false))
-            (match (cis.intern-structural-session-lower-private-record-for-raw
-              session-a
-              (array-ref identities 12))
-              [(Some (SpmdReduceUniform)) unit]
-              [_ (set! ok false)])
-            (match (cis.intern-structural-session-lower-private-record-for-raw
-              session-a
-              high-owner-a)
-              [(Some (CleanupHidden owner-id))
-                (unless (= owner-id high-owner) (set! ok false))]
-              [_ (set! ok false)])
-            (match (cis.intern-structural-session-lower-private-record-for-raw
-              session-a
-              (array-ref identities 16))
-              [(Some (WhileExit ordinal))
-                (unless (= ordinal 1) (set! ok false))]
-              [_ (set! ok false)])
-            (while (< index 700)
-              (begin
-                (compiler-lower-private-identity-raw
-                  session-a
-                  (CleanupHidden (+ 100000 index)))
-                (set! index (+ index 1))))
-            (unless
-              (=
-                (compiler-lower-private-identity-raw
-                  session-a
-                  (CleanupHidden 100000))
-                (compiler-lower-private-identity-raw
-                  session-a
-                  (CleanupHidden 100000)))
-              (set! ok false))
-            (unless
-              (=
-                (cis.intern-structural-session-kind-count
-                  session-a
-                  (ci.intern-structural-kind-lower-private))
-                723)
-              (set! ok false))
-            (unless
-              (= (ci.intern-compat-state-structural-count intern-a) 724)
-              (set! ok false))
-            (unless
-              (= (ci.intern-structural-record-slot-bytes) 37)
-              (set! ok false))))
-        (let
-          [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
-          [reset-to-session : cis.InternStructuralSessionHandle
-            (cis.intern-structural-session-handle-from-source-names
-              (ci.intern-source-name-session-handle-from-state reset-to-state))]
-          [reset-to-identity : i64
-            (compiler-lower-private-identity-raw reset-to-session CleanupStack)]
-          [mark : i64 (ci.intern-compat-state-pool-len reset-to-state)]
-          (begin
-            (ci.intern-compat-state-reset-to! (&mut reset-to-state) mark)
-            (unless
-              (compiler-lower-private-record-missing?
-                (cis.intern-structural-session-lower-private-record-for-raw
-                  reset-to-session
-                  reset-to-identity))
-              (set! ok false))))
-        (let
-          [reset-state : ci.InternCompatState (ci.intern-compat-state-new)]
-          [reset-session : cis.InternStructuralSessionHandle
-            (cis.intern-structural-session-handle-from-source-names
-              (ci.intern-source-name-session-handle-from-state reset-state))]
-          [reset-identity : i64
-            (compiler-lower-private-identity-raw reset-session RegionReset)]
-          (begin
-            (ci.intern-compat-state-reset! (&mut reset-state))
-            (unless
-              (compiler-lower-private-record-missing?
-                (cis.intern-structural-session-lower-private-record-for-raw
-                  reset-session
-                  reset-identity))
-              (set! ok false))))
-        (and
-          ok
+              unknown-kind-raw))
+          (set! ok false))
+        (unless
+          (compiler-lower-private-record-missing?
+            (cis.intern-structural-session-lower-private-record-for-raw
+              session-b
+              (array-ref identities 12)))
+          (set! ok false))
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 12))
+          [(Some (SpmdReduceUniform)) unit]
+          [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          high-owner-a)
+          [(Some (CleanupHidden owner-id))
+            (unless (= owner-id high-owner) (set! ok false))]
+          [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 16))
+          [(Some (WhileExit ordinal)) (unless (= ordinal 1) (set! ok false))]
+          [_ (set! ok false)])
+        (while (< index 700)
+          (compiler-lower-private-identity-raw
+            session-a
+            (CleanupHidden (+ 100000 index)))
+          (set! index (+ index 1)))
+        (unless
           (=
-            (cis.intern-lower-private-identity-size)
-            (comptime (size-of (type i64)))))))
+            (compiler-lower-private-identity-raw
+              session-a
+              (CleanupHidden 100000))
+            (compiler-lower-private-identity-raw
+              session-a
+              (CleanupHidden 100000)))
+          (set! ok false))
+        (unless
+          (=
+            (cis.intern-structural-session-kind-count
+              session-a
+              (ci.intern-structural-kind-lower-private))
+            723)
+          (set! ok false))
+        (unless
+          (= (ci.intern-compat-state-structural-count intern-a) 724)
+          (set! ok false))
+        (unless (= (ci.intern-structural-record-slot-bytes) 37) (set! ok false)))
+      (let
+        [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
+        [reset-to-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state reset-to-state))]
+        [reset-to-identity : i64
+          (compiler-lower-private-identity-raw reset-to-session CleanupStack)]
+        [mark : i64 (ci.intern-compat-state-pool-len reset-to-state)]
+        (ci.intern-compat-state-reset-to! (&mut reset-to-state) mark)
+        (unless
+          (compiler-lower-private-record-missing?
+            (cis.intern-structural-session-lower-private-record-for-raw
+              reset-to-session
+              reset-to-identity))
+          (set! ok false)))
+      (let
+        [reset-state : ci.InternCompatState (ci.intern-compat-state-new)]
+        [reset-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state reset-state))]
+        [reset-identity : i64
+          (compiler-lower-private-identity-raw reset-session RegionReset)]
+        (ci.intern-compat-state-reset! (&mut reset-state))
+        (unless
+          (compiler-lower-private-record-missing?
+            (cis.intern-structural-session-lower-private-record-for-raw
+              reset-session
+              reset-identity))
+          (set! ok false)))
+      (and
+        ok
+        (=
+          (cis.intern-lower-private-identity-size)
+          (comptime (size-of (type i64))))))
     "lower-private records are typed, canonical, session-owned, and collision-free"))
 
 (test
@@ -12408,78 +12304,74 @@
         (ci.intern-compat-state-generated-count intern-b)]
       [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
       [ok : bool false]
-      (begin
-        (ci.intern-compat-state-install! intern-b)
-        (ast.ast-node-pool-context-install! pools-b)
-        (let
-          [_active-generated-b : i64
-            (ci.intern-compat-state-generated-name
-              (&mut intern-b)
-              "decoy-generated-b")]
-          [generated-b-after : i64
-            (ci.intern-compat-state-generated-count intern-b)]
-          [param-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
-          [param-again-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
-          [payload-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
-          [payload-again-a : i64
-            (lower.lower-enum-cleanup-payload-id lower-a 0)]
-          [qualified-a : i64
-            (ci.intern-compat-state-generated-canonical-qualified-name
-              (&mut intern-a)
-              "owner-a/cleanup-a"
-              module-a
-              cleanup-a)]
-          [_enum-call-a : i64
-            (lower.lower-enum-cleanup-call-expr pools-a cleanup-a payload-a)]
-          [_struct-call-a : i64
-            (lower.lower-struct-cleanup-call-expr
-              pools-a
-              cleanup-a
-              param-a
-              cleanup-a)]
-          [lower-a-interns : ci.InternCompatState
-            (lower.compiler-lower-state-interns lower-a)]
-          (set!
-            ok
-            (and
-              (=
-                (ci.intern-compat-state-table-id (& lower-a-interns))
-                (ci.intern-compat-state-table-id intern-a))
-              (= param-a param-again-a)
-              (= payload-a payload-again-a)
-              (= (ci.intern-compat-state-generated-count intern-a) 3)
-              (=
-                (ci.intern-compat-state-generated-count intern-b)
-                generated-b-after)
-              (= generated-b-after (+ generated-b-before 1))
-              (= (ci.intern-generated-count) generated-b-after)
-              (string.eq
-                (ci.intern-compat-state-str intern-a param-a)
-                "__tl_cleanup_value")
-              (string.eq
-                (ci.intern-compat-state-str intern-a payload-a)
-                "__tl_cleanup_payload_0")
-              (ci.intern-compat-state-qualified? intern-a qualified-a)
-              (=
-                (ci.intern-compat-state-qualified-module-id
-                  intern-a
-                  qualified-a)
-                module-a)
-              (=
-                (ci.intern-compat-state-qualified-base-id intern-a qualified-a)
-                cleanup-a)
-              (= (ast.ast-node-pool-context-expr-len pools-a) 7)
-              (= (ast.ast-node-pool-context-expr-len pools-b) expr-b-before))))
-        (ci.intern-compat-state-install! active-intern-before)
-        (ast.ast-node-pool-context-install! active-pools-before)
-        (ast.ast-node-pool-context-destroy-storage! pools-a)
-        (ast.ast-node-pool-context-destroy-storage! pools-b)
-        (unsafe
-          (arena.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena intern-a))
-          (arena.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena intern-b)))
-        ok))
+      (ci.intern-compat-state-install! intern-b)
+      (ast.ast-node-pool-context-install! pools-b)
+      (let
+        [_active-generated-b : i64
+          (ci.intern-compat-state-generated-name
+            (&mut intern-b)
+            "decoy-generated-b")]
+        [generated-b-after : i64
+          (ci.intern-compat-state-generated-count intern-b)]
+        [param-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
+        [param-again-a : i64 (lower.lower-struct-cleanup-param-id lower-a)]
+        [payload-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
+        [payload-again-a : i64 (lower.lower-enum-cleanup-payload-id lower-a 0)]
+        [qualified-a : i64
+          (ci.intern-compat-state-generated-canonical-qualified-name
+            (&mut intern-a)
+            "owner-a/cleanup-a"
+            module-a
+            cleanup-a)]
+        [_enum-call-a : i64
+          (lower.lower-enum-cleanup-call-expr pools-a cleanup-a payload-a)]
+        [_struct-call-a : i64
+          (lower.lower-struct-cleanup-call-expr
+            pools-a
+            cleanup-a
+            param-a
+            cleanup-a)]
+        [lower-a-interns : ci.InternCompatState
+          (lower.compiler-lower-state-interns lower-a)]
+        (set!
+          ok
+          (and
+            (=
+              (ci.intern-compat-state-table-id (& lower-a-interns))
+              (ci.intern-compat-state-table-id intern-a))
+            (= param-a param-again-a)
+            (= payload-a payload-again-a)
+            (= (ci.intern-compat-state-generated-count intern-a) 3)
+            (=
+              (ci.intern-compat-state-generated-count intern-b)
+              generated-b-after)
+            (= generated-b-after (+ generated-b-before 1))
+            (= (ci.intern-generated-count) generated-b-after)
+            (string.eq
+              (ci.intern-compat-state-str intern-a param-a)
+              "__tl_cleanup_value")
+            (string.eq
+              (ci.intern-compat-state-str intern-a payload-a)
+              "__tl_cleanup_payload_0")
+            (ci.intern-compat-state-qualified? intern-a qualified-a)
+            (=
+              (ci.intern-compat-state-qualified-module-id intern-a qualified-a)
+              module-a)
+            (=
+              (ci.intern-compat-state-qualified-base-id intern-a qualified-a)
+              cleanup-a)
+            (= (ast.ast-node-pool-context-expr-len pools-a) 7)
+            (= (ast.ast-node-pool-context-expr-len pools-b) expr-b-before))))
+      (ci.intern-compat-state-install! active-intern-before)
+      (ast.ast-node-pool-context-install! active-pools-before)
+      (ast.ast-node-pool-context-destroy-storage! pools-a)
+      (ast.ast-node-pool-context-destroy-storage! pools-b)
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-a))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-b)))
+      ok)
     "cleanup synthesis mutates only its explicit intern and AST-pool owners"))
 
 (define (compiler-lower-comptime-error-test-builtins
@@ -12491,21 +12383,20 @@
   [stdlib-error-id : i64]) : cbi.CompilerBuiltinIdsState
   (let
     [state : cbi.CompilerBuiltinIdsState (cbi.state-new)]
-    (begin
-      (cbi.state-set-generation!
-        (&mut state)
-        (ci.intern-compat-state-generation intern-state))
-      (cbi.state-set-metadata!
-        (&mut state)
-        (ci.intern-compat-state-table-id intern-state)
-        (ci.intern-compat-state-pool-len intern-state)
-        true)
-      (cbi.state-set! (&mut state) 90 comptime-id)
-      (cbi.state-set! (&mut state) 91 comptime-error-id)
-      (cbi.state-set! (&mut state) 94 bare-id)
-      (cbi.state-set! (&mut state) 149 stdlib-comptime-id)
-      (cbi.state-set! (&mut state) 150 stdlib-error-id)
-      state)))
+    (cbi.state-set-generation!
+      (&mut state)
+      (ci.intern-compat-state-generation intern-state))
+    (cbi.state-set-metadata!
+      (&mut state)
+      (ci.intern-compat-state-table-id intern-state)
+      (ci.intern-compat-state-pool-len intern-state)
+      true)
+    (cbi.state-set! (&mut state) 90 comptime-id)
+    (cbi.state-set! (&mut state) 91 comptime-error-id)
+    (cbi.state-set! (&mut state) 94 bare-id)
+    (cbi.state-set! (&mut state) 149 stdlib-comptime-id)
+    (cbi.state-set! (&mut state) 150 stdlib-error-id)
+    state))
 
 (test
   compiler-lower-comptime-error-cache-owner-isolation
@@ -12590,121 +12481,109 @@
       [initial-a : lower.CompilerLowerStateObservation
         (lower.compiler-lower-state-observe lower-a)]
       [ok : bool false]
-      (begin
-        (ci.intern-compat-state-install! intern-decoy)
-        (cbi.state-install! builtins-decoy)
-        (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
-        (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+      (ci.intern-compat-state-install! intern-decoy)
+      (cbi.state-install! builtins-decoy)
+      (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
+      (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+      (let
+        [b-before-reuse : lower.CompilerLowerStateObservation
+          (lower.compiler-lower-state-observe lower-b)]
+        [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
+        (lower.compiler-lower-state-reset! lower-a)
         (let
-          [b-before-reuse : lower.CompilerLowerStateObservation
-            (lower.compiler-lower-state-observe lower-b)]
-          [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
-          (begin
-            (lower.compiler-lower-state-reset! lower-a)
-            (let
-              [reset-ok? : bool (compiler-lower-state-reset? lower-a)]
-              (begin
-                (ci.intern-compat-state-reset! (&mut intern-a))
-                (let
-                  [_a-new-decoy-1 : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "owner-a-new-decoy-1")]
-                  [_a-new-decoy-2 : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "owner-a-new-decoy-2")]
-                  [_a-new-decoy-3 : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "owner-a-new-decoy-3")]
-                  [_a-new-decoy-4 : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "owner-a-new-decoy-4")]
-                  [_a-new-decoy-5 : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "owner-a-new-decoy-5")]
-                  [a-new-bare : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "comptime-error")]
-                  [a-new-comptime : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "comptime.comptime-error")]
-                  [a-new-error : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "comptime.error")]
-                  [a-new-stdlib-comptime : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "stdlib.comptime.comptime-error")]
-                  [a-new-stdlib-error : i64
-                    (ci.intern-compat-state-intern
-                      (&mut intern-a)
-                      "stdlib.comptime.error")]
-                  [builtins-a-reused : cbi.CompilerBuiltinIdsState
-                    (compiler-lower-comptime-error-test-builtins
-                      intern-a
-                      a-new-comptime
-                      a-new-error
-                      a-new-bare
-                      a-new-stdlib-comptime
-                      a-new-stdlib-error)]
-                  (begin
-                    (lower.lower-comptime-error-ids-ensure!
-                      lower-a
-                      builtins-a-reused)
-                    (set!
-                      ok
-                      (and
-                        (= a-bare b-decoy)
-                        (string.eq
-                          (ci.intern-compat-state-str intern-a a-new-bare)
-                          "comptime-error")
-                        (string.eq
-                          (ci.intern-compat-state-str intern-b b-decoy)
-                          "owner-b-decoy")
-                        (not
-                          (lower.compiler-lower-state-observation-eq?
-                            initial-a
-                            (lower.compiler-lower-state-observe lower-a)))
-                        (lower.lower-comptime-error-call-id? lower-a a-new-bare)
-                        (not
-                          (lower.lower-comptime-error-call-id? lower-a a-bare))
-                        (lower.lower-comptime-error-call-id? lower-b b-bare)
-                        (not
-                          (lower.lower-comptime-error-call-id? lower-b b-decoy))
-                        reset-ok?
-                        (not
-                          (=
-                            old-generation
-                            (ci.intern-compat-state-generation intern-a)))
-                        (lower.compiler-lower-state-observation-eq?
-                          b-before-reuse
-                          (lower.compiler-lower-state-observe lower-b))
-                        (=
-                          (ci.intern-active-table-id)
-                          (ci.intern-compat-state-table-id intern-decoy))
-                        (=
-                          (ci.intern-generation)
-                          (ci.intern-compat-state-generation intern-decoy))
-                        (= (ci.intern-pool-len) 1)
-                        (cbi.compiler-builtin-table-current?)
-                        (= cbi.compiler-builtin-id-fix-comptime_error decoy-id)))))))))
-        (ci.intern-compat-state-install! active-intern-before)
-        (cbi.state-install! active-builtins-before)
-        (unsafe
-          (arena.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena intern-a))
-          (arena.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena intern-b))
-          (arena.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena intern-decoy)))
-        ok))
+          [reset-ok? : bool (compiler-lower-state-reset? lower-a)]
+          (ci.intern-compat-state-reset! (&mut intern-a))
+          (let
+            [_a-new-decoy-1 : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "owner-a-new-decoy-1")]
+            [_a-new-decoy-2 : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "owner-a-new-decoy-2")]
+            [_a-new-decoy-3 : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "owner-a-new-decoy-3")]
+            [_a-new-decoy-4 : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "owner-a-new-decoy-4")]
+            [_a-new-decoy-5 : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "owner-a-new-decoy-5")]
+            [a-new-bare : i64
+              (ci.intern-compat-state-intern (&mut intern-a) "comptime-error")]
+            [a-new-comptime : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "comptime.comptime-error")]
+            [a-new-error : i64
+              (ci.intern-compat-state-intern (&mut intern-a) "comptime.error")]
+            [a-new-stdlib-comptime : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "stdlib.comptime.comptime-error")]
+            [a-new-stdlib-error : i64
+              (ci.intern-compat-state-intern
+                (&mut intern-a)
+                "stdlib.comptime.error")]
+            [builtins-a-reused : cbi.CompilerBuiltinIdsState
+              (compiler-lower-comptime-error-test-builtins
+                intern-a
+                a-new-comptime
+                a-new-error
+                a-new-bare
+                a-new-stdlib-comptime
+                a-new-stdlib-error)]
+            (lower.lower-comptime-error-ids-ensure! lower-a builtins-a-reused)
+            (set!
+              ok
+              (and
+                (= a-bare b-decoy)
+                (string.eq
+                  (ci.intern-compat-state-str intern-a a-new-bare)
+                  "comptime-error")
+                (string.eq
+                  (ci.intern-compat-state-str intern-b b-decoy)
+                  "owner-b-decoy")
+                (not
+                  (lower.compiler-lower-state-observation-eq?
+                    initial-a
+                    (lower.compiler-lower-state-observe lower-a)))
+                (lower.lower-comptime-error-call-id? lower-a a-new-bare)
+                (not (lower.lower-comptime-error-call-id? lower-a a-bare))
+                (lower.lower-comptime-error-call-id? lower-b b-bare)
+                (not (lower.lower-comptime-error-call-id? lower-b b-decoy))
+                reset-ok?
+                (not
+                  (=
+                    old-generation
+                    (ci.intern-compat-state-generation intern-a)))
+                (lower.compiler-lower-state-observation-eq?
+                  b-before-reuse
+                  (lower.compiler-lower-state-observe lower-b))
+                (=
+                  (ci.intern-active-table-id)
+                  (ci.intern-compat-state-table-id intern-decoy))
+                (=
+                  (ci.intern-generation)
+                  (ci.intern-compat-state-generation intern-decoy))
+                (= (ci.intern-pool-len) 1)
+                (cbi.compiler-builtin-table-current?)
+                (= cbi.compiler-builtin-id-fix-comptime_error decoy-id))))))
+      (ci.intern-compat-state-install! active-intern-before)
+      (cbi.state-install! active-builtins-before)
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-a))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-b))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-decoy)))
+      ok)
     "comptime-error caches use explicit intern/builtin owners and reset stamps"))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
@@ -12816,18 +12695,17 @@
     [storage : lower.CompilerLowerFunctionMemoStorage
       (lower.compiler-lower-function-memo-storage
         (lower.compiler-lower-function-state-owner function-state))]
-    (begin
-      (set!
-        (array-ref storage.rtf-generations slot)
-        (lower.compiler-lower-function-state-rtf-generation function-state))
-      (set! (array-ref storage.rtf-ids slot) key)
-      (set! (array-ref storage.rtf-types slot) ty)
-      (set!
-        (array-ref storage.variant-stamps slot)
-        (lower.compiler-lower-function-state-variant-generation function-state))
-      (set! (array-ref storage.variant-keys slot) key)
-      (set! (array-ref storage.variant-scrutinee-types slot) ty)
-      (set! (array-ref storage.variant-outcomes slot) outcome))))
+    (set!
+      (array-ref storage.rtf-generations slot)
+      (lower.compiler-lower-function-state-rtf-generation function-state))
+    (set! (array-ref storage.rtf-ids slot) key)
+    (set! (array-ref storage.rtf-types slot) ty)
+    (set!
+      (array-ref storage.variant-stamps slot)
+      (lower.compiler-lower-function-state-variant-generation function-state))
+    (set! (array-ref storage.variant-keys slot) key)
+    (set! (array-ref storage.variant-scrutinee-types slot) ty)
+    (set! (array-ref storage.variant-outcomes slot) outcome)))
 
 (define (compiler-lower-function-memo-test-hit?
   [function-state : lower.CompilerLowerFunctionState]
@@ -12874,222 +12752,214 @@
     [owner-b : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [idle-a : i64 (compiler-lower-state-function-memo-retained-bytes owner-a)]
     [idle-b : i64 (compiler-lower-state-function-memo-retained-bytes owner-b)]
-    (begin
-      (lower.compiler-lower-state-set-spmd-package! owner-a "package-a")
-      (lower.compiler-lower-state-set-spmd-package! owner-b "package-b")
+    (lower.compiler-lower-state-set-spmd-package! owner-a "package-a")
+    (lower.compiler-lower-state-set-spmd-package! owner-b "package-b")
+    (let
+      [function-a : lower.CompilerLowerFunctionState
+        (lower.compiler-lower-function-state-new owner-a)]
+      [retained-a : i64
+        (compiler-lower-state-function-memo-retained-bytes owner-a)]
+      [still-idle-b : i64
+        (compiler-lower-state-function-memo-retained-bytes owner-b)]
+      [function-a-nested : lower.CompilerLowerFunctionState
+        (lower.compiler-lower-function-state-new owner-a)]
+      [function-b : lower.CompilerLowerFunctionState
+        (lower.compiler-lower-function-state-new owner-b)]
+      [retained-b : i64
+        (compiler-lower-state-function-memo-retained-bytes owner-b)]
+      [source-id : i64
+        (ci.intern-generated-name "lower-function-state-isolation-temp")]
+      [symbol : i64 81173]
+      [interns-a : ci.InternCompatState
+        (lower.compiler-lower-state-interns owner-a)]
+      [interns-b : ci.InternCompatState
+        (lower.compiler-lower-state-interns owner-b)]
+      [identity-a : i64
+        (ci.intern-compat-state-intern (&mut interns-a) "identity-a")]
+      [identity-b : i64
+        (ci.intern-compat-state-intern (&mut interns-b) "identity-b")]
+      [registered-a : lower.LowerSpmdPackageSymbolRegistration
+        (lower.lower-spmd-package-symbol-register
+          owner-a
+          symbol
+          symbol
+          identity-a)]
+      [registered-b : lower.LowerSpmdPackageSymbolRegistration
+        (lower.lower-spmd-package-symbol-register
+          owner-b
+          symbol
+          symbol
+          identity-b)]
+      [repeated-b : lower.LowerSpmdPackageSymbolRegistration
+        (lower.lower-spmd-package-symbol-register
+          owner-b
+          symbol
+          symbol
+          identity-b)]
+      (lower.compiler-lower-function-state-inline-helper-stack-set!
+        function-a
+        (lower.lower-id-set-insert (lower.lower-id-set-empty) 4242))
+      (lower.compiler-lower-function-state-recursion-detected-set!
+        function-a
+        true)
+      (lower.compiler-lower-function-state-scalar-call-context-set!
+        function-a
+        (Some "lane-a"))
       (let
-        [function-a : lower.CompilerLowerFunctionState
-          (lower.compiler-lower-function-state-new owner-a)]
-        [retained-a : i64
-          (compiler-lower-state-function-memo-retained-bytes owner-a)]
-        [still-idle-b : i64
-          (compiler-lower-state-function-memo-retained-bytes owner-b)]
-        [function-a-nested : lower.CompilerLowerFunctionState
-          (lower.compiler-lower-function-state-new owner-a)]
-        [function-b : lower.CompilerLowerFunctionState
-          (lower.compiler-lower-function-state-new owner-b)]
-        [retained-b : i64
-          (compiler-lower-state-function-memo-retained-bytes owner-b)]
-        [source-id : i64
-          (ci.intern-generated-name "lower-function-state-isolation-temp")]
-        [symbol : i64 81173]
-        [interns-a : ci.InternCompatState
-          (lower.compiler-lower-state-interns owner-a)]
-        [interns-b : ci.InternCompatState
-          (lower.compiler-lower-state-interns owner-b)]
-        [identity-a : i64
-          (ci.intern-compat-state-intern (&mut interns-a) "identity-a")]
-        [identity-b : i64
-          (ci.intern-compat-state-intern (&mut interns-b) "identity-b")]
-        [registered-a : lower.LowerSpmdPackageSymbolRegistration
-          (lower.lower-spmd-package-symbol-register
-            owner-a
-            symbol
-            symbol
-            identity-a)]
-        [registered-b : lower.LowerSpmdPackageSymbolRegistration
-          (lower.lower-spmd-package-symbol-register
-            owner-b
-            symbol
-            symbol
-            identity-b)]
-        [repeated-b : lower.LowerSpmdPackageSymbolRegistration
-          (lower.lower-spmd-package-symbol-register
-            owner-b
-            symbol
-            symbol
-            identity-b)]
-        (begin
-          (lower.compiler-lower-function-state-inline-helper-stack-set!
+        [temp-a-0 : i64
+          (lower.compiler-lower-function-state-fresh-local-id!
             function-a
-            (lower.lower-id-set-insert (lower.lower-id-set-empty) 4242))
-          (lower.compiler-lower-function-state-recursion-detected-set!
+            source-id)]
+        [temp-a-1 : i64
+          (lower.compiler-lower-function-state-fresh-local-id!
             function-a
-            true)
-          (lower.compiler-lower-function-state-scalar-call-context-set!
-            function-a
-            (Some "lane-a"))
-          (let
-            [temp-a-0 : i64
-              (lower.compiler-lower-function-state-fresh-local-id!
-                function-a
-                source-id)]
-            [temp-a-1 : i64
-              (lower.compiler-lower-function-state-fresh-local-id!
-                function-a
-                source-id)]
-            [temp-a-nested-0 : i64
-              (lower.compiler-lower-function-state-fresh-local-id!
-                function-a-nested
-                source-id)]
-            [temp-b-0 : i64
-              (lower.compiler-lower-function-state-fresh-local-id!
-                function-b
-                source-id)]
-            [slot : i64 17]
-            [key : i64 17017]
-            (begin
-              (compiler-lower-function-memo-test-write!
+            source-id)]
+        [temp-a-nested-0 : i64
+          (lower.compiler-lower-function-state-fresh-local-id!
+            function-a-nested
+            source-id)]
+        [temp-b-0 : i64
+          (lower.compiler-lower-function-state-fresh-local-id!
+            function-b
+            source-id)]
+        [slot : i64 17]
+        [key : i64 17017]
+        (compiler-lower-function-memo-test-write!
+          function-a
+          slot
+          key
+          (I64)
+          (Missing "memo-a"))
+        (compiler-lower-function-memo-test-write!
+          function-b
+          slot
+          key
+          (Bool)
+          (Missing "memo-b"))
+        (let
+          [owners-hit : bool
+            (and
+              (compiler-lower-function-memo-test-hit?
                 function-a
                 slot
                 key
                 (I64)
-                (Missing "memo-a"))
-              (compiler-lower-function-memo-test-write!
+                "memo-a")
+              (compiler-lower-function-memo-test-hit?
                 function-b
                 slot
                 key
                 (Bool)
-                (Missing "memo-b"))
-              (let
-                [owners-hit : bool
-                  (and
-                    (compiler-lower-function-memo-test-hit?
-                      function-a
-                      slot
-                      key
-                      (I64)
-                      "memo-a")
-                    (compiler-lower-function-memo-test-hit?
-                      function-b
-                      slot
-                      key
-                      (Bool)
-                      "memo-b"))]
-                (begin
-                  (compiler-lower-function-memo-test-write!
-                    function-a-nested
-                    slot
-                    key
-                    (Bool)
-                    (Missing "memo-a-nested"))
-                  (let
-                    [nested-hit : bool
-                      (compiler-lower-function-memo-test-hit?
-                        function-a-nested
-                        slot
-                        key
-                        (Bool)
-                        "memo-a-nested")]
-                    [outer-evicted : bool
-                      (not
-                        (compiler-lower-function-memo-test-hit?
-                          function-a
-                          slot
-                          key
-                          (I64)
-                          "memo-a"))]
-                    [b-still-hit : bool
-                      (compiler-lower-function-memo-test-hit?
-                        function-b
-                        slot
-                        key
-                        (Bool)
-                        "memo-b")]
-                    (begin
-                      (lower.compiler-lower-state-reset! owner-a)
-                      (let
-                        [stack-a : lower.LowerIdSet
-                          (lower.compiler-lower-function-state-inline-helper-stack
-                            function-a)]
-                        [stack-b : lower.LowerIdSet
-                          (lower.compiler-lower-function-state-inline-helper-stack
-                            function-b)]
-                        [stack-a-nested : lower.LowerIdSet
-                          (lower.compiler-lower-function-state-inline-helper-stack
-                            function-a-nested)]
-                        (and
-                          (= idle-a 0)
-                          (= idle-b 0)
-                          (> retained-a 0)
-                          (= still-idle-b 0)
-                          (> retained-b 0)
-                          (not (= owner-a.address owner-b.address))
-                          (not (= function-a.address function-a-nested.address))
-                          (not (= function-a.address function-b.address))
-                          (=
-                            (lower.compiler-lower-function-state-rtf-generation
-                              function-a)
-                            (lower.compiler-lower-function-state-rtf-generation
-                              function-b))
-                          (not
-                            (=
-                              (lower.compiler-lower-function-state-rtf-generation
-                                function-a)
-                              (lower.compiler-lower-function-state-rtf-generation
-                                function-a-nested)))
-                          (lower.lower-id-set-contains? stack-a 4242)
-                          (not
-                            (lower.lower-id-set-contains? stack-a-nested 4242))
-                          (not (lower.lower-id-set-contains? stack-b 4242))
-                          (lower.compiler-lower-function-state-recursion-detected?
-                            function-a)
-                          (not
-                            (lower.compiler-lower-function-state-recursion-detected?
-                              function-a-nested))
-                          (not
-                            (lower.compiler-lower-function-state-recursion-detected?
-                              function-b))
-                          (match (lower.compiler-lower-function-state-scalar-call-context
-                            function-a)
-                            [(Some lane) (string.eq lane "lane-a")]
-                            [_ false])
-                          (match (lower.compiler-lower-function-state-scalar-call-context
-                            function-b)
-                            [(No) true]
-                            [_ false])
-                          (= temp-a-0 temp-a-nested-0)
-                          (= temp-a-0 temp-b-0)
-                          (not (= temp-a-0 temp-a-1))
-                          owners-hit
-                          nested-hit
-                          outer-evicted
-                          b-still-hit
-                          (match registered-a
-                            [(New) true]
-                            [_ false])
-                          (match registered-b
-                            [(New) true]
-                            [_ false])
-                          (match repeated-b
-                            [(Existing) true]
-                            [_ false])
-                          (string.eq
-                            (lower.compiler-lower-state-spmd-package-name
-                              owner-a)
-                            "")
-                          (string.eq
-                            (lower.compiler-lower-state-spmd-package-name
-                              owner-b)
-                            "package-b")
-                          (match (lower.lower-spmd-package-symbol-register
-                            owner-b
-                            symbol
-                            symbol
-                            identity-b)
-                            [(Existing) true]
-                            [_ false])
-                          (compiler-lower-state-reset? owner-a))))))))))))))
+                "memo-b"))]
+          (compiler-lower-function-memo-test-write!
+            function-a-nested
+            slot
+            key
+            (Bool)
+            (Missing "memo-a-nested"))
+          (let
+            [nested-hit : bool
+              (compiler-lower-function-memo-test-hit?
+                function-a-nested
+                slot
+                key
+                (Bool)
+                "memo-a-nested")]
+            [outer-evicted : bool
+              (not
+                (compiler-lower-function-memo-test-hit?
+                  function-a
+                  slot
+                  key
+                  (I64)
+                  "memo-a"))]
+            [b-still-hit : bool
+              (compiler-lower-function-memo-test-hit?
+                function-b
+                slot
+                key
+                (Bool)
+                "memo-b")]
+            (lower.compiler-lower-state-reset! owner-a)
+            (let
+              [stack-a : lower.LowerIdSet
+                (lower.compiler-lower-function-state-inline-helper-stack
+                  function-a)]
+              [stack-b : lower.LowerIdSet
+                (lower.compiler-lower-function-state-inline-helper-stack
+                  function-b)]
+              [stack-a-nested : lower.LowerIdSet
+                (lower.compiler-lower-function-state-inline-helper-stack
+                  function-a-nested)]
+              (and
+                (= idle-a 0)
+                (= idle-b 0)
+                (> retained-a 0)
+                (= still-idle-b 0)
+                (> retained-b 0)
+                (not (= owner-a.address owner-b.address))
+                (not (= function-a.address function-a-nested.address))
+                (not (= function-a.address function-b.address))
+                (=
+                  (lower.compiler-lower-function-state-rtf-generation
+                    function-a)
+                  (lower.compiler-lower-function-state-rtf-generation
+                    function-b))
+                (not
+                  (=
+                    (lower.compiler-lower-function-state-rtf-generation
+                      function-a)
+                    (lower.compiler-lower-function-state-rtf-generation
+                      function-a-nested)))
+                (lower.lower-id-set-contains? stack-a 4242)
+                (not (lower.lower-id-set-contains? stack-a-nested 4242))
+                (not (lower.lower-id-set-contains? stack-b 4242))
+                (lower.compiler-lower-function-state-recursion-detected?
+                  function-a)
+                (not
+                  (lower.compiler-lower-function-state-recursion-detected?
+                    function-a-nested))
+                (not
+                  (lower.compiler-lower-function-state-recursion-detected?
+                    function-b))
+                (match (lower.compiler-lower-function-state-scalar-call-context
+                  function-a)
+                  [(Some lane) (string.eq lane "lane-a")]
+                  [_ false])
+                (match (lower.compiler-lower-function-state-scalar-call-context
+                  function-b)
+                  [(No) true]
+                  [_ false])
+                (= temp-a-0 temp-a-nested-0)
+                (= temp-a-0 temp-b-0)
+                (not (= temp-a-0 temp-a-1))
+                owners-hit
+                nested-hit
+                outer-evicted
+                b-still-hit
+                (match registered-a
+                  [(New) true]
+                  [_ false])
+                (match registered-b
+                  [(New) true]
+                  [_ false])
+                (match repeated-b
+                  [(Existing) true]
+                  [_ false])
+                (string.eq
+                  (lower.compiler-lower-state-spmd-package-name owner-a)
+                  "")
+                (string.eq
+                  (lower.compiler-lower-state-spmd-package-name owner-b)
+                  "package-b")
+                (match (lower.lower-spmd-package-symbol-register
+                  owner-b
+                  symbol
+                  symbol
+                  identity-b)
+                  [(Existing) true]
+                  [_ false])
+                (compiler-lower-state-reset? owner-a)))))))))
 
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let
@@ -13256,100 +13126,98 @@
         pools)]
     [layouts : ctfe.CtfeLayoutInfoList (ctfe.ctfe-layout-info-list-empty)]
     [ok : bool false]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      (set!
-        ok
-        (and
-          (= (lower.lower-type-size ctx ref) 16)
-          (= (lower.lower-type-align ctx ref) 8)
-          (lower.lower-type-register-resident?
+    (ast.ast-node-pool-context-install! pools)
+    (set!
+      ok
+      (and
+        (= (lower.lower-type-size ctx ref) 16)
+        (= (lower.lower-type-align ctx ref) 8)
+        (lower.lower-type-register-resident?
+          ctx
+          (owned_view.compiler-owned-shared-view ref))
+        (=
+          (lower.lower-type-register-words
             ctx
             (owned_view.compiler-owned-shared-view ref))
-          (=
-            (lower.lower-type-register-words
-              ctx
-              (owned_view.compiler-owned-shared-view ref))
-            2)
-          (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 0) (U64))
-          (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 1) (I64))
-          (= (lower.lower-type-size ctx mut-ref) 16)
-          (= (lower.lower-type-align ctx mut-ref) 8)
+          2)
+        (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 0) (U64))
+        (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 1) (I64))
+        (= (lower.lower-type-size ctx mut-ref) 16)
+        (= (lower.lower-type-align ctx mut-ref) 8)
+        (lower.lower-type-register-resident?
+          ctx
+          (owned_view.compiler-owned-shared-view mut-ref))
+        (=
+          (lower.lower-type-register-words
+            ctx
+            (owned_view.compiler-owned-shared-view mut-ref))
+          2)
+        (= (lower.lower-type-size ctx ordinary-ref) 8)
+        (not
           (lower.lower-type-register-resident?
             ctx
-            (owned_view.compiler-owned-shared-view mut-ref))
-          (=
-            (lower.lower-type-register-words
-              ctx
-              (owned_view.compiler-owned-shared-view mut-ref))
-            2)
-          (= (lower.lower-type-size ctx ordinary-ref) 8)
-          (not
-            (lower.lower-type-register-resident?
-              ctx
-              (owned_view.compiler-owned-shared-view ordinary-ref)))
-          (=
-            (lower.lower-type-register-words
-              ctx
-              (owned_view.compiler-owned-shared-view ordinary-ref))
-            0)
-          (= (lower.lower-type-size ctx pointer-ref) 8)
-          (not
-            (lower.lower-type-register-resident?
-              ctx
-              (owned_view.compiler-owned-shared-view pointer-ref)))
-          (lower.lower-supported-reference-type? ctx pointer-ref)
-          (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
-          (= (lower.lower-type-size ctx bare-slice) 0)
-          (not
-            (lower.lower-type-register-resident?
-              ctx
-              (owned_view.compiler-owned-shared-view bare-slice)))
+            (owned_view.compiler-owned-shared-view ordinary-ref)))
+        (=
+          (lower.lower-type-register-words
+            ctx
+            (owned_view.compiler-owned-shared-view ordinary-ref))
+          0)
+        (= (lower.lower-type-size ctx pointer-ref) 8)
+        (not
+          (lower.lower-type-register-resident?
+            ctx
+            (owned_view.compiler-owned-shared-view pointer-ref)))
+        (lower.lower-supported-reference-type? ctx pointer-ref)
+        (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
+        (= (lower.lower-type-size ctx bare-slice) 0)
+        (not
+          (lower.lower-type-register-resident?
+            ctx
+            (owned_view.compiler-owned-shared-view bare-slice)))
+        (lower.lower-supported-reference-type?
+          ctx
+          (owned_view.compiler-owned-shared-view ref))
+        (lower.lower-supported-reference-type?
+          ctx
+          (owned_view.compiler-owned-shared-view mut-ref))
+        (not
           (lower.lower-supported-reference-type?
             ctx
+            (owned_view.compiler-owned-shared-view bare-slice)))
+        ;; A borrowed Slice of shared references views an array's inline
+        ;; one-word pointer elements (#8111).
+        (lower.lower-supported-reference-type? ctx nested-ref)
+        (lower.lower-supported-reference-type? ctx ref-dyn-array)
+        ;; Its elements are two-word shared Slice views, like `(& str)`.
+        (lower.lower-supported-reference-type? ctx nested-ref-dyn-array)
+        (not (lower.lower-supported-reference-type? ctx borrowed-ref-dyn-array))
+        (=
+          (ctfe.ctfe-type-size-with-pools
+            pools
+            (owned_view.compiler-owned-shared-view layouts)
             (owned_view.compiler-owned-shared-view ref))
-          (lower.lower-supported-reference-type?
-            ctx
-            (owned_view.compiler-owned-shared-view mut-ref))
-          (not
-            (lower.lower-supported-reference-type?
-              ctx
-              (owned_view.compiler-owned-shared-view bare-slice)))
-          ;; A borrowed Slice of shared references views an array's inline
-          ;; one-word pointer elements (#8111).
-          (lower.lower-supported-reference-type? ctx nested-ref)
-          (lower.lower-supported-reference-type? ctx ref-dyn-array)
-          ;; Its elements are two-word shared Slice views, like `(& str)`.
-          (lower.lower-supported-reference-type? ctx nested-ref-dyn-array)
-          (not
-            (lower.lower-supported-reference-type? ctx borrowed-ref-dyn-array))
-          (=
-            (ctfe.ctfe-type-size-with-pools
-              pools
-              (owned_view.compiler-owned-shared-view layouts)
-              (owned_view.compiler-owned-shared-view ref))
-            16)
-          (=
-            (ctfe.ctfe-type-align-with-pools
-              pools
-              (owned_view.compiler-owned-shared-view layouts)
-              mut-ref)
-            8)
-          (=
-            (ctfe.ctfe-type-size-with-pools
-              pools
-              (owned_view.compiler-owned-shared-view layouts)
-              ordinary-ref)
-            8)
-          (= (ctfe.ctfe-type-size-with-pools pools layouts bare-slice) -1)
-          (match (tc_core.tc-inline-aggregate-type-layout ctx ref)
-            [(Ok info)
-              (and
-                (= (tc_core.tc-layout-info-size info) 16)
-                (= (tc_core.tc-layout-info-align info) 8))]
-            [(Err _) false])))
-      (ast.ast-node-pool-context-install! active-before)
-      ok)))
+          16)
+        (=
+          (ctfe.ctfe-type-align-with-pools
+            pools
+            (owned_view.compiler-owned-shared-view layouts)
+            mut-ref)
+          8)
+        (=
+          (ctfe.ctfe-type-size-with-pools
+            pools
+            (owned_view.compiler-owned-shared-view layouts)
+            ordinary-ref)
+          8)
+        (= (ctfe.ctfe-type-size-with-pools pools layouts bare-slice) -1)
+        (match (tc_core.tc-inline-aggregate-type-layout ctx ref)
+          [(Ok info)
+            (and
+              (= (tc_core.tc-layout-info-size info) 16)
+              (= (tc_core.tc-layout-info-align info) 8))]
+          [(Err _) false])))
+    (ast.ast-node-pool-context-install! active-before)
+    ok))
 
 ;; A BoundsCheck lowers to one unsigned `cmpq length, index`, so an operand that
 ;; is already a width-64 integer is handed to the check directly instead of
@@ -13394,29 +13262,28 @@
 (define (compiler-lower-bounds-operand-width-predicate-ok?) : bool
   (let
     [ok : bool true]
-    (begin
-      (if (lower.lower-bounds-operand-width-64? (I64))
-        unit
-        (set! ok false))
-      (if (lower.lower-bounds-operand-width-64? (U64))
-        unit
-        (set! ok false))
-      (if (lower.lower-bounds-operand-width-64? (I32))
-        (set! ok false)
-        unit)
-      (if (lower.lower-bounds-operand-width-64? (U32))
-        (set! ok false)
-        unit)
-      (if (lower.lower-bounds-operand-width-64? (U8))
-        (set! ok false)
-        unit)
-      (if (lower.lower-bounds-operand-width-64? (F64))
-        (set! ok false)
-        unit)
-      (if (lower.lower-bounds-operand-width-64? (Bool))
-        (set! ok false)
-        unit)
-      ok)))
+    (if (lower.lower-bounds-operand-width-64? (I64))
+      unit
+      (set! ok false))
+    (if (lower.lower-bounds-operand-width-64? (U64))
+      unit
+      (set! ok false))
+    (if (lower.lower-bounds-operand-width-64? (I32))
+      (set! ok false)
+      unit)
+    (if (lower.lower-bounds-operand-width-64? (U32))
+      (set! ok false)
+      unit)
+    (if (lower.lower-bounds-operand-width-64? (U8))
+      (set! ok false)
+      unit)
+    (if (lower.lower-bounds-operand-width-64? (F64))
+      (set! ok false)
+      unit)
+    (if (lower.lower-bounds-operand-width-64? (Bool))
+      (set! ok false)
+      unit)
+    ok))
 
 ;; Anonymous tuples use the same aligned, recursive layout walk as nominal
 ;; aggregates.  Exercise the layout and the packet-1 internal ABI classifier
@@ -13488,170 +13355,169 @@
     [array-u8 : ast.AstType (Array u8-id 3)]
     [array-nested : ast.AstType (Array nested-id 2)]
     [ok : bool false]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      (set!
-        ok
-        (and
-          (= (lower.lower-type-size ctx empty) 0)
-          (= (lower.lower-type-align ctx empty) 1)
-          (= (lower.lower-type-size ctx u8-tuple) 1)
-          (= (lower.lower-type-align ctx u8-tuple) 1)
-          (= (lower.lower-type-size ctx u8-u64) 16)
-          (= (lower.lower-type-align ctx u8-u64) 8)
-          (= (lower.lower-type-size ctx f32-f32) 8)
-          (= (lower.lower-type-align ctx f32-f32) 4)
-          (= (lower.lower-type-size ctx nested) 24)
-          (= (lower.lower-type-align ctx nested) 8)
-          (= (lower.lower-type-size ctx array-u8) 3)
-          (= (lower.lower-type-align ctx array-u8) 1)
-          (= (lower.lower-type-size ctx array-nested) 32)
-          (= (lower.lower-type-align ctx array-nested) 8)
-          (= (lower.lower-type-size ctx tuple-array) 16)
-          (= (lower.lower-type-align ctx tuple-array) 8)
-          (= (lower.lower-type-size ctx tuple-string) 8)
-          (= (lower.lower-type-size ctx array-string) 16)
-          (= (lower.lower-type-size ctx slice-ref-tuple) 16)
-          (lower.lower-type-inline-storage? ctx u8-u64)
-          (not
-            (lower.lower-type-register-resident?
-              ctx
-              (ast.ast-global-shared-view u8-u64)))
-          (match (lower.lower-internal-aggregate-class
+    (ast.ast-node-pool-context-install! pools)
+    (set!
+      ok
+      (and
+        (= (lower.lower-type-size ctx empty) 0)
+        (= (lower.lower-type-align ctx empty) 1)
+        (= (lower.lower-type-size ctx u8-tuple) 1)
+        (= (lower.lower-type-align ctx u8-tuple) 1)
+        (= (lower.lower-type-size ctx u8-u64) 16)
+        (= (lower.lower-type-align ctx u8-u64) 8)
+        (= (lower.lower-type-size ctx f32-f32) 8)
+        (= (lower.lower-type-align ctx f32-f32) 4)
+        (= (lower.lower-type-size ctx nested) 24)
+        (= (lower.lower-type-align ctx nested) 8)
+        (= (lower.lower-type-size ctx array-u8) 3)
+        (= (lower.lower-type-align ctx array-u8) 1)
+        (= (lower.lower-type-size ctx array-nested) 32)
+        (= (lower.lower-type-align ctx array-nested) 8)
+        (= (lower.lower-type-size ctx tuple-array) 16)
+        (= (lower.lower-type-align ctx tuple-array) 8)
+        (= (lower.lower-type-size ctx tuple-string) 8)
+        (= (lower.lower-type-size ctx array-string) 16)
+        (= (lower.lower-type-size ctx slice-ref-tuple) 16)
+        (lower.lower-type-inline-storage? ctx u8-u64)
+        (not
+          (lower.lower-type-register-resident?
             ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            u8-tuple)
-            [(Register slots size)
-              (and
-                (= size 1)
-                (= (lower.lower-c-abi-slot-list-count slots) 1)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U8))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            f32-f32)
-            [(Register slots size)
-              (and
-                (= size 8)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty offset)
-                    (and (= offset 0) (tc_core.tc-type-eq ty (F64)))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            u8-f64)
-            [(Register slots size)
-              (and
-                (= size 16)
-                (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
-                (match (lower.lower-c-abi-slot-list-ref slots 1)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (F64))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            (ast.ast-global-shared-view tuple-string))
-            [(Register slots size)
-              (and
-                (= size 8)
-                (= (lower.lower-c-abi-slot-list-count slots) 1)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            array-string)
-            [(Register slots size)
-              (and
-                (= size 16)
-                (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
-                (match (lower.lower-c-abi-slot-list-ref slots 1)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            (ast.ast-global-shared-view array-nested))
-            [(Memory size) (= size 32)]
-            [_ false])
-          (match (lower.lower-internal-return-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            array-nested)
-            [(Sret size) (= size 32)]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.WindowsScalar)
-            (ast.ast-global-shared-view array-u8))
-            [(ByRef size) (= size 3)]
-            [_ false])
-          (match (lower.lower-internal-return-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.WindowsScalar)
-            (ast.ast-global-shared-view array-u8))
-            [(Sret size) (= size 3)]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.WindowsScalar)
-            tuple-string)
-            [(Integer ty size) (and (= size 8) (tc_core.tc-type-eq ty (U64)))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            slice-ref-tuple)
-            [(Register slots size)
-              (and
-                (= size 16)
-                (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref slots 0)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
-                (match (lower.lower-c-abi-slot-list-ref slots 1)
-                  [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.WindowsScalar)
-            (ast.ast-global-shared-view u8-u64))
-            [(ByRef size) (= size 16)]
-            [_ false])
-          (match (lower.lower-internal-return-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.WindowsScalar)
-            (ast.ast-global-shared-view u8-u64))
-            [(Sret size) (= size 16)]
-            [_ false])
-          (match (lower.lower-internal-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            empty)
-            [(Unsupported _) true]
-            [_ false])
-          ;; Extern C aggregate selection remains nominal-only.
-          (match (lower.lower-c-abi-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            u8-u64)
-            [(No) true]
-            [_ false])
-          (match (lower.lower-c-abi-return-aggregate-class
-            ctx
-            (lower.CompilerLowerMode.LinuxScalar)
-            array-u8)
-            [(No) true]
-            [_ false])))
-      (ast.ast-node-pool-context-install! active-before)
-      ok)))
+            (ast.ast-global-shared-view u8-u64)))
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          u8-tuple)
+          [(Register slots size)
+            (and
+              (= size 1)
+              (= (lower.lower-c-abi-slot-list-count slots) 1)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U8))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          f32-f32)
+          [(Register slots size)
+            (and
+              (= size 8)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty offset)
+                  (and (= offset 0) (tc_core.tc-type-eq ty (F64)))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          u8-f64)
+          [(Register slots size)
+            (and
+              (= size 16)
+              (= (lower.lower-c-abi-slot-list-count slots) 2)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+              (match (lower.lower-c-abi-slot-list-ref slots 1)
+                [(Slot ty _) (tc_core.tc-type-eq ty (F64))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          (ast.ast-global-shared-view tuple-string))
+          [(Register slots size)
+            (and
+              (= size 8)
+              (= (lower.lower-c-abi-slot-list-count slots) 1)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          array-string)
+          [(Register slots size)
+            (and
+              (= size 16)
+              (= (lower.lower-c-abi-slot-list-count slots) 2)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+              (match (lower.lower-c-abi-slot-list-ref slots 1)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          (ast.ast-global-shared-view array-nested))
+          [(Memory size) (= size 32)]
+          [_ false])
+        (match (lower.lower-internal-return-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          array-nested)
+          [(Sret size) (= size 32)]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.WindowsScalar)
+          (ast.ast-global-shared-view array-u8))
+          [(ByRef size) (= size 3)]
+          [_ false])
+        (match (lower.lower-internal-return-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.WindowsScalar)
+          (ast.ast-global-shared-view array-u8))
+          [(Sret size) (= size 3)]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.WindowsScalar)
+          tuple-string)
+          [(Integer ty size) (and (= size 8) (tc_core.tc-type-eq ty (U64)))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          slice-ref-tuple)
+          [(Register slots size)
+            (and
+              (= size 16)
+              (= (lower.lower-c-abi-slot-list-count slots) 2)
+              (match (lower.lower-c-abi-slot-list-ref slots 0)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))])
+              (match (lower.lower-c-abi-slot-list-ref slots 1)
+                [(Slot ty _) (tc_core.tc-type-eq ty (U64))]))]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.WindowsScalar)
+          (ast.ast-global-shared-view u8-u64))
+          [(ByRef size) (= size 16)]
+          [_ false])
+        (match (lower.lower-internal-return-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.WindowsScalar)
+          (ast.ast-global-shared-view u8-u64))
+          [(Sret size) (= size 16)]
+          [_ false])
+        (match (lower.lower-internal-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          empty)
+          [(Unsupported _) true]
+          [_ false])
+        ;; Extern C aggregate selection remains nominal-only.
+        (match (lower.lower-c-abi-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          u8-u64)
+          [(No) true]
+          [_ false])
+        (match (lower.lower-c-abi-return-aggregate-class
+          ctx
+          (lower.CompilerLowerMode.LinuxScalar)
+          array-u8)
+          [(No) true]
+          [_ false])))
+    (ast.ast-node-pool-context-install! active-before)
+    ok))
 
 (test
   compiler-lower-internal-tuple-array-layout
@@ -14253,46 +14119,39 @@
                   intern-state
                   first)))
             0))]
-      (begin
-        (lower.lower-materialize-generated-role-symbols! state)
-        (and
-          lazy-before
-          (=
-            (lower.lower-spmd-package-structural-identity
-              (owned_view.compiler-owned-shared-view intern-state)
-              first)
-            (lower.lower-spmd-package-structural-identity
-              (owned_view.compiler-owned-shared-view intern-state)
-              repeat))
-          (=
+      (lower.lower-materialize-generated-role-symbols! state)
+      (and
+        lazy-before
+        (=
+          (lower.lower-spmd-package-structural-identity
+            (owned_view.compiler-owned-shared-view intern-state)
+            first)
+          (lower.lower-spmd-package-structural-identity
+            (owned_view.compiler-owned-shared-view intern-state)
+            repeat))
+        (=
+          (lower.lower-spmd-package-structural-linker-symbol intern-state first)
+          (lower.lower-spmd-package-structural-linker-symbol
+            intern-state
+            repeat))
+        (=
+          (lower.lower-spmd-package-structural-registration-key
+            intern-state
+            first)
+          (lower.lower-spmd-package-structural-registration-key
+            intern-state
+            repeat))
+        (string.eq
+          (ci.intern-compat-state-str
+            intern-state
             (lower.lower-spmd-package-structural-linker-symbol
               intern-state
-              first)
-            (lower.lower-spmd-package-structural-linker-symbol
-              intern-state
-              repeat))
-          (=
-            (lower.lower-spmd-package-structural-registration-key
-              intern-state
-              first)
-            (lower.lower-spmd-package-structural-registration-key
-              intern-state
-              repeat))
-          (string.eq
-            (ci.intern-compat-state-str
-              intern-state
-              (lower.lower-spmd-package-structural-linker-symbol
-                intern-state
-                first))
-            expected)
-          (=
-            (compiler-lower-profile-spmd-identity-serializations-value state)
-            1)
-          (=
-            (compiler-lower-profile-spmd-stable-hash-computations-value state)
-            1)
-          (= (compiler-lower-profile-spmd-render-cache-misses-value state) 1)
-          (>= (compiler-lower-profile-spmd-render-cache-hits-value state) 2))))
+              first))
+          expected)
+        (= (compiler-lower-profile-spmd-identity-serializations-value state) 1)
+        (= (compiler-lower-profile-spmd-stable-hash-computations-value state) 1)
+        (= (compiler-lower-profile-spmd-render-cache-misses-value state) 1)
+        (>= (compiler-lower-profile-spmd-render-cache-hits-value state) 2)))
     "SPMD identity serialization and stable hashing are cached per structural recipe"))
 
 (define (compiler-lower-state-advisory-sink [state : lower.CompilerLowerState]) : cdiag.CompilerAdvisorySink
@@ -14338,85 +14197,74 @@
     [initial-b : lower.CompilerLowerStateObservation
       (lower.compiler-lower-state-observe state-b)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    (begin
-      (lower.compiler-lower-checked-dest-pools-use!
-        state-a
-        pools
-        101
-        102
-        103
-        104)
-      (let
-        [armed : lower.CompilerLowerCheckedPoolsState
-          (lower.compiler-lower-state-checked-pools state-a)]
-        [_defer-second-destination : unit
-          (begin
-            (set! armed.frontend-released true)
-            (set! armed.rolled-over true)
-            (set! armed.deferred true)
-            (set! armed.deferred-expr-capacity 105)
-            (set! armed.deferred-type-capacity 106)
-            (lower.compiler-lower-state-checked-pools-set! state-a armed))]
-        [armed-a : lower.CompilerLowerStateObservation
-          (lower.compiler-lower-state-observe state-a)]
-        [untouched-b : lower.CompilerLowerStateObservation
-          (lower.compiler-lower-state-observe state-b)]
-        [armed-ok? : bool
-          (and
-            armed.active
-            (not armed.committed)
-            (match armed.context
-              [(Context observed)
-                (=
-                  (ast.ast-node-pool-context-base-arena observed)
-                  (ast.ast-node-pool-context-base-arena pools))]
-              [(NoContext) false])
-            (= armed.source-release-arena 101)
-            (= armed.source-release-expr-storage-arena 102)
-            (= armed.source-release-type-storage-arena 103)
-            (= armed.frontend-release-arena 104)
-            armed.frontend-released
-            armed.rolled-over
-            armed.deferred
-            (= armed.deferred-expr-capacity 105)
-            (= armed.deferred-type-capacity 106))]
+    (lower.compiler-lower-checked-dest-pools-use! state-a pools 101 102 103 104)
+    (let
+      [armed : lower.CompilerLowerCheckedPoolsState
+        (lower.compiler-lower-state-checked-pools state-a)]
+      [_defer-second-destination : unit
         (begin
-          (lower.compiler-lower-checked-dest-pools-clear! state-a)
-          (and
-            armed-ok?
-            (not (lower.compiler-lower-state-observation-eq? initial-a armed-a))
-            (lower.compiler-lower-state-observation-eq? initial-b untouched-b)
-            (lower.compiler-lower-state-observation-eq?
-              initial-a
-              (lower.compiler-lower-state-observe state-a))
-            (compiler-lower-checked-pools-state-inert? state-a)
-            (compiler-lower-checked-pools-state-inert? state-b)))))))
+          (set! armed.frontend-released true)
+          (set! armed.rolled-over true)
+          (set! armed.deferred true)
+          (set! armed.deferred-expr-capacity 105)
+          (set! armed.deferred-type-capacity 106)
+          (lower.compiler-lower-state-checked-pools-set! state-a armed))]
+      [armed-a : lower.CompilerLowerStateObservation
+        (lower.compiler-lower-state-observe state-a)]
+      [untouched-b : lower.CompilerLowerStateObservation
+        (lower.compiler-lower-state-observe state-b)]
+      [armed-ok? : bool
+        (and
+          armed.active
+          (not armed.committed)
+          (match armed.context
+            [(Context observed)
+              (=
+                (ast.ast-node-pool-context-base-arena observed)
+                (ast.ast-node-pool-context-base-arena pools))]
+            [(NoContext) false])
+          (= armed.source-release-arena 101)
+          (= armed.source-release-expr-storage-arena 102)
+          (= armed.source-release-type-storage-arena 103)
+          (= armed.frontend-release-arena 104)
+          armed.frontend-released
+          armed.rolled-over
+          armed.deferred
+          (= armed.deferred-expr-capacity 105)
+          (= armed.deferred-type-capacity 106))]
+      (lower.compiler-lower-checked-dest-pools-clear! state-a)
+      (and
+        armed-ok?
+        (not (lower.compiler-lower-state-observation-eq? initial-a armed-a))
+        (lower.compiler-lower-state-observation-eq? initial-b untouched-b)
+        (lower.compiler-lower-state-observation-eq?
+          initial-a
+          (lower.compiler-lower-state-observe state-a))
+        (compiler-lower-checked-pools-state-inert? state-a)
+        (compiler-lower-checked-pools-state-inert? state-b)))))
 
 (define (compiler-lower-checked-pools-test-arm-committed!
   [state : lower.CompilerLowerState]
   [pools : ast.AstNodePoolContext]) : unit
-  (begin
-    (lower.compiler-lower-checked-dest-pools-use! state pools 0 0 0 0)
-    (let
-      [handoff : lower.CompilerLowerCheckedPoolsState
-        (lower.compiler-lower-state-checked-pools state)]
-      (begin
-        (set! handoff.committed true)
-        (lower.compiler-lower-state-checked-pools-set! state handoff)))))
+  (lower.compiler-lower-checked-dest-pools-use! state pools 0 0 0 0)
+  (let
+    [handoff : lower.CompilerLowerCheckedPoolsState
+      (lower.compiler-lower-state-checked-pools state)]
+    (set! handoff.committed true)
+    (lower.compiler-lower-state-checked-pools-set! state handoff)))
 
 (define (compiler-lower-checked-pools-test-context-destroy!
   [pools : ast.AstNodePoolContext]
   [return-arena : i64]) : unit
   (let
     [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set return-arena))
-      (ast.ast-node-pool-context-destroy-storage! pools)
-      (unsafe
-        (arena.tl_arena_set return-arena)
-        (arena.tl_arena_destroy base-arena)
-        (arena.tl_arena_set return-arena)))))
+    (unsafe
+      (arena.tl_arena_set return-arena))
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    (unsafe
+      (arena.tl_arena_set return-arena)
+      (arena.tl_arena_destroy base-arena)
+      (arena.tl_arena_set return-arena))))
 
 ;; Abort both sides of deferred materialization with real owned arenas. The
 ;; driver-owned first destination is deliberately released by the test after
@@ -14445,103 +14293,101 @@
     [retained-source : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities-in-arena 8 2 retained-base)]
     [ok : bool true]
-    (begin
-      (compiler-lower-checked-pools-test-arm-committed!
-        deferred-state
-        deferred-source)
-      (lower.lower-checked-dest-pools-rollover-for-macro! deferred-state)
-      (let
-        [deferred : lower.CompilerLowerCheckedPoolsState
-          (lower.compiler-lower-state-checked-pools deferred-state)]
-        (unless
-          (and
-            deferred.active
-            (not deferred.committed)
-            deferred.rolled-over
-            deferred.deferred
-            (> deferred.frontend-release-arena 0)
-            (=
-              deferred.deferred-expr-capacity
-              (ast.ast-node-pool-context-expr-capacity deferred-source))
-            (=
-              deferred.deferred-type-capacity
-              (ast.ast-node-pool-context-type-capacity deferred-source)))
-          (set! ok false)))
-      (lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-        deferred-state)
+    (compiler-lower-checked-pools-test-arm-committed!
+      deferred-state
+      deferred-source)
+    (lower.lower-checked-dest-pools-rollover-for-macro! deferred-state)
+    (let
+      [deferred : lower.CompilerLowerCheckedPoolsState
+        (lower.compiler-lower-state-checked-pools deferred-state)]
       (unless
         (and
-          (compiler-lower-checked-pools-state-inert? deferred-state)
-          (= (arena.tl_arena_current) deferred-base))
-        (set! ok false))
-      (compiler-lower-checked-pools-test-context-destroy!
-        deferred-source
-        return-arena)
-      (compiler-lower-checked-pools-test-arm-committed!
-        materialized-state
-        materialized-source)
-      (lower.lower-checked-dest-pools-rollover-for-macro! materialized-state)
-      (let
-        [second-destination : ast.AstNodePoolContext
-          (lower.compiler-lower-checked-dest-pools-current materialized-state)]
-        [materialized : lower.CompilerLowerCheckedPoolsState
-          (lower.compiler-lower-state-checked-pools materialized-state)]
-        (unless
-          (and
-            materialized.active
-            (not materialized.committed)
-            materialized.rolled-over
-            (not materialized.deferred)
-            (> materialized.frontend-release-arena 0)
-            (not
-              (=
-                (ast.ast-node-pool-context-base-arena second-destination)
-                materialized-base)))
-          (set! ok false)))
-      (lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-        materialized-state)
+          deferred.active
+          (not deferred.committed)
+          deferred.rolled-over
+          deferred.deferred
+          (> deferred.frontend-release-arena 0)
+          (=
+            deferred.deferred-expr-capacity
+            (ast.ast-node-pool-context-expr-capacity deferred-source))
+          (=
+            deferred.deferred-type-capacity
+            (ast.ast-node-pool-context-type-capacity deferred-source)))
+        (set! ok false)))
+    (lower.compiler-lower-checked-dest-pools-abort-uncommitted! deferred-state)
+    (unless
+      (and
+        (compiler-lower-checked-pools-state-inert? deferred-state)
+        (= (arena.tl_arena_current) deferred-base))
+      (set! ok false))
+    (compiler-lower-checked-pools-test-context-destroy!
+      deferred-source
+      return-arena)
+    (compiler-lower-checked-pools-test-arm-committed!
+      materialized-state
+      materialized-source)
+    (lower.lower-checked-dest-pools-rollover-for-macro! materialized-state)
+    (let
+      [second-destination : ast.AstNodePoolContext
+        (lower.compiler-lower-checked-dest-pools-current materialized-state)]
+      [materialized : lower.CompilerLowerCheckedPoolsState
+        (lower.compiler-lower-state-checked-pools materialized-state)]
       (unless
         (and
-          (compiler-lower-checked-pools-state-inert? materialized-state)
-          (= (arena.tl_arena_current) materialized-base))
-        (set! ok false))
-      (compiler-lower-checked-pools-test-context-destroy!
-        materialized-source
-        return-arena)
-      (compiler-lower-checked-pools-test-arm-committed!
-        retained-state
-        retained-source)
-      (lower.lower-checked-dest-pools-rollover-for-macro! retained-state)
-      (lower.lower-checked-dest-pools-retain-macro-source!
-        retained-state
-        retained-source)
-      (let
-        [retained : lower.CompilerLowerCheckedPoolsState
-          (lower.compiler-lower-state-checked-pools retained-state)]
-        (unless
-          (and
-            (not retained.active)
-            retained.committed
-            retained.frontend-released
-            (not retained.rolled-over)
-            (not retained.deferred)
-            (= retained.frontend-release-arena 0)
-            (= retained.deferred-expr-capacity 0)
-            (= retained.deferred-type-capacity 0)
+          materialized.active
+          (not materialized.committed)
+          materialized.rolled-over
+          (not materialized.deferred)
+          (> materialized.frontend-release-arena 0)
+          (not
             (=
-              (ast.ast-node-pool-context-base-arena
-                (lower.compiler-lower-checked-pools-context retained))
-              retained-base))
-          (set! ok false)))
-      (lower.compiler-lower-checked-dest-pools-clear! retained-state)
+              (ast.ast-node-pool-context-base-arena second-destination)
+              materialized-base)))
+        (set! ok false)))
+    (lower.compiler-lower-checked-dest-pools-abort-uncommitted!
+      materialized-state)
+    (unless
+      (and
+        (compiler-lower-checked-pools-state-inert? materialized-state)
+        (= (arena.tl_arena_current) materialized-base))
+      (set! ok false))
+    (compiler-lower-checked-pools-test-context-destroy!
+      materialized-source
+      return-arena)
+    (compiler-lower-checked-pools-test-arm-committed!
+      retained-state
+      retained-source)
+    (lower.lower-checked-dest-pools-rollover-for-macro! retained-state)
+    (lower.lower-checked-dest-pools-retain-macro-source!
+      retained-state
+      retained-source)
+    (let
+      [retained : lower.CompilerLowerCheckedPoolsState
+        (lower.compiler-lower-state-checked-pools retained-state)]
       (unless
-        (compiler-lower-checked-pools-state-inert? retained-state)
-        (set! ok false))
-      (ast.ast-node-pool-context-install! active-pools-before)
-      (compiler-lower-checked-pools-test-context-destroy!
-        retained-source
-        return-arena)
-      ok)))
+        (and
+          (not retained.active)
+          retained.committed
+          retained.frontend-released
+          (not retained.rolled-over)
+          (not retained.deferred)
+          (= retained.frontend-release-arena 0)
+          (= retained.deferred-expr-capacity 0)
+          (= retained.deferred-type-capacity 0)
+          (=
+            (ast.ast-node-pool-context-base-arena
+              (lower.compiler-lower-checked-pools-context retained))
+            retained-base))
+        (set! ok false)))
+    (lower.compiler-lower-checked-dest-pools-clear! retained-state)
+    (unless
+      (compiler-lower-checked-pools-state-inert? retained-state)
+      (set! ok false))
+    (ast.ast-node-pool-context-install! active-pools-before)
+    (compiler-lower-checked-pools-test-context-destroy!
+      retained-source
+      return-arena)
+    ok))
 
 (define (compiler-lower-profile-spmd-identity-serializations-value
   [_state : lower.CompilerLowerState]) : i64
@@ -14595,57 +14441,56 @@
         (lower.compiler-lower-state-new-with-intern-state-and-profile-state
           (ci.intern-compat-state-new)
           right-profile)]
-      (begin
-        (lower.compiler-lower-profile-reset! left)
-        (lower.compiler-lower-profile-reset! right)
-        (lower.compiler-lower-profile-set!
-          left
-          lower.compiler-lower-profile-start-ms-metric
+      (lower.compiler-lower-profile-reset! left)
+      (lower.compiler-lower-profile-reset! right)
+      (lower.compiler-lower-profile-set!
+        left
+        lower.compiler-lower-profile-start-ms-metric
+        11)
+      (lower.compiler-lower-profile-set!
+        right
+        lower.compiler-lower-profile-start-ms-metric
+        29)
+      (lower.compiler-lower-profile-string-concat-note-tree! left 7)
+      (lower.compiler-lower-profile-string-concat-note-runtime-call! right)
+      (lower.compiler-lower-profile-string-concat-note-runtime-call! left)
+      (lower.compiler-lower-profile-reset! right)
+      (and
+        (=
+          (lower.compiler-lower-profile-value
+            left
+            lower.compiler-lower-profile-start-ms-metric)
           11)
-        (lower.compiler-lower-profile-set!
-          right
-          lower.compiler-lower-profile-start-ms-metric
-          29)
-        (lower.compiler-lower-profile-string-concat-note-tree! left 7)
-        (lower.compiler-lower-profile-string-concat-note-runtime-call! right)
-        (lower.compiler-lower-profile-string-concat-note-runtime-call! left)
-        (lower.compiler-lower-profile-reset! right)
-        (and
-          (=
-            (lower.compiler-lower-profile-value
-              left
-              lower.compiler-lower-profile-start-ms-metric)
-            11)
-          (=
-            (lower.compiler-lower-profile-value
-              left
-              lower.compiler-lower-profile-string-concat-trees-metric)
-            1)
-          (=
-            (lower.compiler-lower-profile-value
-              left
-              lower.compiler-lower-profile-string-concat-leaves-metric)
-            7)
-          (=
-            (lower.compiler-lower-profile-value
-              left
-              lower.compiler-lower-profile-string-concat-runtime-calls-metric)
-            1)
-          (=
-            (lower.compiler-lower-profile-value
-              right
-              lower.compiler-lower-profile-start-ms-metric)
-            0)
-          (=
-            (lower.compiler-lower-profile-value
-              right
-              lower.compiler-lower-profile-string-concat-trees-metric)
-            0)
-          (=
-            (lower.compiler-lower-profile-value
-              right
-              lower.compiler-lower-profile-string-concat-runtime-calls-metric)
-            0))))))
+        (=
+          (lower.compiler-lower-profile-value
+            left
+            lower.compiler-lower-profile-string-concat-trees-metric)
+          1)
+        (=
+          (lower.compiler-lower-profile-value
+            left
+            lower.compiler-lower-profile-string-concat-leaves-metric)
+          7)
+        (=
+          (lower.compiler-lower-profile-value
+            left
+            lower.compiler-lower-profile-string-concat-runtime-calls-metric)
+          1)
+        (=
+          (lower.compiler-lower-profile-value
+            right
+            lower.compiler-lower-profile-start-ms-metric)
+          0)
+        (=
+          (lower.compiler-lower-profile-value
+            right
+            lower.compiler-lower-profile-string-concat-trees-metric)
+          0)
+        (=
+          (lower.compiler-lower-profile-value
+            right
+            lower.compiler-lower-profile-string-concat-runtime-calls-metric)
+          0)))))
 
 (cfg
   test
@@ -14665,199 +14510,193 @@
           right-profile)]
       [left-names : lower.LowerNameEnv Nil]
       [bind-id : i64 0]
-      (begin
-        (lower.compiler-lower-profile-name-reset left)
+      (lower.compiler-lower-profile-name-reset left)
+      (lower.compiler-lower-profile-name-reset right)
+      ;; Equal IDs deliberately flow through two owners. A reset is allowed to
+      ;; affect only the exact profile state passed to it.
+      (while (< bind-id 17)
+        (set!
+          left-names
+          (lower.lower-name-env-bind-ids-profile
+            left
+            bind-id
+            bind-id
+            bind-id
+            left-names))
+        (set! bind-id (+ bind-id 1)))
+      (let
+        [_left-env-hit : i64
+          (lower.lower-name-env-lookup-symbol-id-profile
+            left
+            (lower.lower-global-shared-view left-names)
+            0
+            -1)]
+        [_copy : lower.LowerNameEnv
+          (lower.lower-name-env-materialize-two-profile
+            left
+            (lower.lower-global-shared-view left-names)
+            Nil)]
+        [left-cache : lower.LowerNameCache
+          (lower.lower-name-cache-from-env left left-names)]
+        [_left-name-hit : i64
+          (lower.lower-name-cache-lookup-symbol-id (& left-cache) 0 -1)]
+        [_left-module-miss : lower.LowerMaybeModuleNameCache
+          (lower.lower-active-module-name-cache-lookup left 7)]
+        [_left-module-insert : unit
+          (lower.lower-active-module-name-cache-insert!
+            left
+            7
+            (lower.lower-global-shared-view left-cache))]
+        [_left-module-hit : lower.LowerMaybeModuleNameCache
+          (lower.lower-active-module-name-cache-lookup left 7)]
+        [left-view : lower.LowerModuleLocalView
+          (lower.LowerModuleLocalView (tc_core.tc-empty-env) left-cache (No))]
+        [_left-view-miss : lower.LowerMaybeModuleLocalView
+          (lower.lower-active-module-local-view-lookup left 7)]
+        [_left-view-insert : unit
+          (lower.lower-active-module-local-view-insert! left 7 left-view)]
+        [_left-view-hit : lower.LowerMaybeModuleLocalView
+          (lower.lower-active-module-local-view-lookup left 7)]
+        [right-names : lower.LowerNameEnv
+          (lower.lower-name-env-bind-ids-profile right 0 0 0 Nil)]
+        [_right-env-hit : i64
+          (lower.lower-name-env-lookup-symbol-id-profile
+            right
+            (lower.lower-global-shared-view right-names)
+            0
+            -1)]
+        [right-cache : lower.LowerNameCache
+          (lower.lower-name-cache-from-env right right-names)]
+        [_right-name-miss : i64
+          (lower.lower-name-cache-lookup-symbol-id (& right-cache) 1 -1)]
+        [_right-module-insert : unit
+          (lower.lower-active-module-name-cache-insert!
+            right
+            7
+            (lower.lower-global-shared-view right-cache))]
+        [right-view : lower.LowerModuleLocalView
+          (lower.LowerModuleLocalView (tc_core.tc-empty-env) right-cache (No))]
+        [_right-view-insert : unit
+          (lower.lower-active-module-local-view-insert! right 7 right-view)]
+        [right-recorded : bool
+          (and
+            (=
+              (lower.compiler-lower-profile-value
+                right
+                lower.compiler-lower-profile-name-env-binds-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                right
+                lower.compiler-lower-profile-module-name-cache-entries-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                right
+                lower.compiler-lower-profile-module-local-view-entries-metric)
+              1))]
         (lower.compiler-lower-profile-name-reset right)
-        ;; Equal IDs deliberately flow through two owners. A reset is allowed to
-        ;; affect only the exact profile state passed to it.
-        (while (< bind-id 17)
-          (begin
-            (set!
-              left-names
-              (lower.lower-name-env-bind-ids-profile
-                left
-                bind-id
-                bind-id
-                bind-id
-                left-names))
-            (set! bind-id (+ bind-id 1))))
         (let
-          [_left-env-hit : i64
-            (lower.lower-name-env-lookup-symbol-id-profile
-              left
-              (lower.lower-global-shared-view left-names)
-              0
-              -1)]
-          [_copy : lower.LowerNameEnv
-            (lower.lower-name-env-materialize-two-profile
-              left
-              (lower.lower-global-shared-view left-names)
-              Nil)]
-          [left-cache : lower.LowerNameCache
-            (lower.lower-name-cache-from-env left left-names)]
-          [_left-name-hit : i64
-            (lower.lower-name-cache-lookup-symbol-id (& left-cache) 0 -1)]
-          [_left-module-miss : lower.LowerMaybeModuleNameCache
-            (lower.lower-active-module-name-cache-lookup left 7)]
-          [_left-module-insert : unit
-            (lower.lower-active-module-name-cache-insert!
-              left
-              7
-              (lower.lower-global-shared-view left-cache))]
-          [_left-module-hit : lower.LowerMaybeModuleNameCache
-            (lower.lower-active-module-name-cache-lookup left 7)]
-          [left-view : lower.LowerModuleLocalView
-            (lower.LowerModuleLocalView (tc_core.tc-empty-env) left-cache (No))]
-          [_left-view-miss : lower.LowerMaybeModuleLocalView
-            (lower.lower-active-module-local-view-lookup left 7)]
-          [_left-view-insert : unit
-            (lower.lower-active-module-local-view-insert! left 7 left-view)]
-          [_left-view-hit : lower.LowerMaybeModuleLocalView
-            (lower.lower-active-module-local-view-lookup left 7)]
-          [right-names : lower.LowerNameEnv
-            (lower.lower-name-env-bind-ids-profile right 0 0 0 Nil)]
-          [_right-env-hit : i64
-            (lower.lower-name-env-lookup-symbol-id-profile
-              right
-              (lower.lower-global-shared-view right-names)
-              0
-              -1)]
-          [right-cache : lower.LowerNameCache
-            (lower.lower-name-cache-from-env right right-names)]
-          [_right-name-miss : i64
-            (lower.lower-name-cache-lookup-symbol-id (& right-cache) 1 -1)]
-          [_right-module-insert : unit
-            (lower.lower-active-module-name-cache-insert!
-              right
-              7
-              (lower.lower-global-shared-view right-cache))]
-          [right-view : lower.LowerModuleLocalView
-            (lower.LowerModuleLocalView (tc_core.tc-empty-env) right-cache (No))]
-          [_right-view-insert : unit
-            (lower.lower-active-module-local-view-insert! right 7 right-view)]
-          [right-recorded : bool
-            (and
-              (=
-                (lower.compiler-lower-profile-value
-                  right
-                  lower.compiler-lower-profile-name-env-binds-metric)
-                1)
-              (=
-                (lower.compiler-lower-profile-value
-                  right
-                  lower.compiler-lower-profile-module-name-cache-entries-metric)
-                1)
-              (=
-                (lower.compiler-lower-profile-value
-                  right
-                  lower.compiler-lower-profile-module-local-view-entries-metric)
-                1))]
-          (begin
-            (lower.compiler-lower-profile-name-reset right)
-            (let
-              [metric : i64 lower.compiler-lower-profile-name-env-binds-metric]
-              [right-reset : bool true]
-              (begin
-                (while (< metric lower.compiler-lower-name-cache-profile-end)
-                  (begin
-                    (when
-                      (not
-                        (= (lower.compiler-lower-profile-value right metric) 0))
-                      (set! right-reset false))
-                    (set! metric (+ metric 1))))
-                (and
-                  right-recorded
-                  right-reset
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-binds-metric)
-                    17)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-lookups-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-lookup-steps-metric)
-                    17)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-stores-metric)
-                    2)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-store-grows-metric)
-                    2)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-materializations-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-env-materialized-entries-metric)
-                    17)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-cache-builds-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-cache-entries-metric)
-                    17)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-cache-lookups-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-cache-local-hits-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-name-cache-local-misses-metric)
-                    0)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-name-cache-lookups-metric)
-                    2)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-name-cache-hits-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-name-cache-entries-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-local-view-lookups-metric)
-                    2)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-local-view-hits-metric)
-                    1)
-                  (=
-                    (lower.compiler-lower-profile-value
-                      left
-                      lower.compiler-lower-profile-module-local-view-entries-metric)
-                    1))))))))))
+          [metric : i64 lower.compiler-lower-profile-name-env-binds-metric]
+          [right-reset : bool true]
+          (while (< metric lower.compiler-lower-name-cache-profile-end)
+            (when
+              (not (= (lower.compiler-lower-profile-value right metric) 0))
+              (set! right-reset false))
+            (set! metric (+ metric 1)))
+          (and
+            right-recorded
+            right-reset
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-binds-metric)
+              17)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-lookups-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-lookup-steps-metric)
+              17)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-stores-metric)
+              2)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-store-grows-metric)
+              2)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-materializations-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-env-materialized-entries-metric)
+              17)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-cache-builds-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-cache-entries-metric)
+              17)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-cache-lookups-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-cache-local-hits-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-name-cache-local-misses-metric)
+              0)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-name-cache-lookups-metric)
+              2)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-name-cache-hits-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-name-cache-entries-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-local-view-lookups-metric)
+              2)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-local-view-hits-metric)
+              1)
+            (=
+              (lower.compiler-lower-profile-value
+                left
+                lower.compiler-lower-profile-module-local-view-entries-metric)
+              1)))))))
 
 (define (lower-name-env-bind-logical-id
   [source-id : i64]
@@ -14915,88 +14754,74 @@
     [empty-env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
     [index : i64 0]
     [sparse-id : i64 9000001]
-    (begin
-      (while (< index 12)
-        (begin
-          (let
-            [module-id : i64 (+ 1000 index)]
-            [cache : lower.LowerNameCache
-              (lower.lower-name-cache-with-module-id
-                (lower.lower-global-shared-view base-cache)
-                module-id)]
-            [view : lower.LowerModuleLocalView
-              (lower.LowerModuleLocalView
-                empty-env
-                (lower.lower-global-shared-view cache)
-                (No))]
-            (begin
-              (lower.lower-active-module-name-cache-insert!
-                state
-                module-id
-                cache)
-              (lower.lower-active-module-local-view-insert!
-                state
-                module-id
-                view)))
-          (set! index (+ index 1))))
+    (while (< index 12)
       (let
-        [sparse-cache : lower.LowerNameCache
-          (lower.lower-name-cache-with-module-id base-cache sparse-id)]
-        [sparse-view : lower.LowerModuleLocalView
+        [module-id : i64 (+ 1000 index)]
+        [cache : lower.LowerNameCache
+          (lower.lower-name-cache-with-module-id
+            (lower.lower-global-shared-view base-cache)
+            module-id)]
+        [view : lower.LowerModuleLocalView
           (lower.LowerModuleLocalView
             empty-env
-            (lower.lower-global-shared-view sparse-cache)
+            (lower.lower-global-shared-view cache)
             (No))]
-        (begin
-          (lower.lower-active-module-name-cache-insert!
-            state
-            sparse-id
-            (lower.lower-global-shared-view sparse-cache))
-          (lower.lower-active-module-local-view-insert!
-            state
-            sparse-id
-            (lower.lower-global-shared-view sparse-view))
-          ;; A duplicate publication updates the existing dense slot instead
-          ;; of growing either store.
-          (lower.lower-active-module-name-cache-insert!
-            state
-            sparse-id
-            sparse-cache)
-          (lower.lower-active-module-local-view-insert!
-            state
-            sparse-id
-            sparse-view)))
-      (let
-        [before-reset : bool
-          (and
-            (= (lower-active-module-name-cache-count state) 13)
-            (= (lower-active-module-local-view-count state) 13)
-            (= (lower-active-module-name-cache-count independent) 0)
-            (= (lower-active-module-local-view-count independent) 0)
-            (match (lower.lower-active-module-name-cache-lookup state sparse-id)
-              [(Some cache) (= cache.module-id sparse-id)]
-              [(No) false])
-            (match (lower.lower-active-module-local-view-lookup state sparse-id)
-              [(Some view) (= view.name-cache.module-id sparse-id)]
-              [(No) false])
-            (match (lower.lower-active-module-name-cache-lookup state 7777777)
-              [(No) true]
-              [_ false])
-            (match (lower.lower-active-module-local-view-lookup state 7777777)
-              [(No) true]
-              [_ false]))]
-        (begin
-          (lower.lower-module-phase-caches-reset! state)
-          (and
-            before-reset
-            (= (lower-active-module-name-cache-count state) 0)
-            (= (lower-active-module-local-view-count state) 0)
-            (match (lower.lower-active-module-name-cache-lookup state sparse-id)
-              [(No) true]
-              [_ false])
-            (match (lower.lower-active-module-local-view-lookup state sparse-id)
-              [(No) true]
-              [_ false])))))))
+        (lower.lower-active-module-name-cache-insert! state module-id cache)
+        (lower.lower-active-module-local-view-insert! state module-id view))
+      (set! index (+ index 1)))
+    (let
+      [sparse-cache : lower.LowerNameCache
+        (lower.lower-name-cache-with-module-id base-cache sparse-id)]
+      [sparse-view : lower.LowerModuleLocalView
+        (lower.LowerModuleLocalView
+          empty-env
+          (lower.lower-global-shared-view sparse-cache)
+          (No))]
+      (lower.lower-active-module-name-cache-insert!
+        state
+        sparse-id
+        (lower.lower-global-shared-view sparse-cache))
+      (lower.lower-active-module-local-view-insert!
+        state
+        sparse-id
+        (lower.lower-global-shared-view sparse-view))
+      ;; A duplicate publication updates the existing dense slot instead
+      ;; of growing either store.
+      (lower.lower-active-module-name-cache-insert!
+        state
+        sparse-id
+        sparse-cache)
+      (lower.lower-active-module-local-view-insert! state sparse-id sparse-view))
+    (let
+      [before-reset : bool
+        (and
+          (= (lower-active-module-name-cache-count state) 13)
+          (= (lower-active-module-local-view-count state) 13)
+          (= (lower-active-module-name-cache-count independent) 0)
+          (= (lower-active-module-local-view-count independent) 0)
+          (match (lower.lower-active-module-name-cache-lookup state sparse-id)
+            [(Some cache) (= cache.module-id sparse-id)]
+            [(No) false])
+          (match (lower.lower-active-module-local-view-lookup state sparse-id)
+            [(Some view) (= view.name-cache.module-id sparse-id)]
+            [(No) false])
+          (match (lower.lower-active-module-name-cache-lookup state 7777777)
+            [(No) true]
+            [_ false])
+          (match (lower.lower-active-module-local-view-lookup state 7777777)
+            [(No) true]
+            [_ false]))]
+      (lower.lower-module-phase-caches-reset! state)
+      (and
+        before-reset
+        (= (lower-active-module-name-cache-count state) 0)
+        (= (lower-active-module-local-view-count state) 0)
+        (match (lower.lower-active-module-name-cache-lookup state sparse-id)
+          [(No) true]
+          [_ false])
+        (match (lower.lower-active-module-local-view-lookup state sparse-id)
+          [(No) true]
+          [_ false])))))
 
 (define (compiler-lower-state-function-memo-retained-bytes
   [state : lower.CompilerLowerState]) : i64
@@ -15293,19 +15118,18 @@
           "<source>"
           src
           (lower.CompilerLowerMode.Scalar)))]
-    (begin
-      (ir.compiler-debug-info-set-enabled! false)
-      (ir.compiler-debug-type-graph-verify-set! false)
-      (match result
-        [(lower.ResultCompilerLower.Ok _ _)
-          (let
-            [graph : ir.CompilerDebugTypeGraph
-              (lower.compiler-lower-state-debug-type-graph state)]
-            (ir.compiler-debug-type-graph-render (& graph)))]
-        [(lower.ResultCompilerLower.Err diag)
-          (str_cat.str-cat
-            "error: "
-            (cdiag.compiler-diagnostic-render (deref diag)))]))))
+    (ir.compiler-debug-info-set-enabled! false)
+    (ir.compiler-debug-type-graph-verify-set! false)
+    (match result
+      [(lower.ResultCompilerLower.Ok _ _)
+        (let
+          [graph : ir.CompilerDebugTypeGraph
+            (lower.compiler-lower-state-debug-type-graph state)]
+          (ir.compiler-debug-type-graph-render (& graph)))]
+      [(lower.ResultCompilerLower.Err diag)
+        (str_cat.str-cat
+          "error: "
+          (cdiag.compiler-diagnostic-render (deref diag)))])))
 
 ;; Every scalar width, nested and register-pair structs, a tuple, an enum with
 ;; unit, scalar and aggregate payloads, a fixed array of structs, a recursive
@@ -15356,18 +15180,16 @@
     (let
       [types : lower.LowerDebugTypes (lower.lower-debug-types-empty)]
       [name : String "Point"]
-      (begin
-        (lower.lower-debug-check! (&mut types) (& name) "size" 16 16)
-        (let
-          [agreed : bool (= (string.string-length (& types.error)) 0)]
-          (begin
-            (ir.compiler-debug-type-graph-verify-set! true)
-            (lower.lower-debug-check! (&mut types) (& name) "size" 8 16)
-            (lower.lower-debug-check! (&mut types) (& name) "align" 4 8)
-            (ir.compiler-debug-type-graph-verify-set! false)
-            (and
-              agreed
-              (string.eq
-                (& types.error)
-                "debug type graph: Point size is 8, the typechecker says 16"))))))
+      (lower.lower-debug-check! (&mut types) (& name) "size" 16 16)
+      (let
+        [agreed : bool (= (string.string-length (& types.error)) 0)]
+        (ir.compiler-debug-type-graph-verify-set! true)
+        (lower.lower-debug-check! (&mut types) (& name) "size" 8 16)
+        (lower.lower-debug-check! (&mut types) (& name) "align" 4 8)
+        (ir.compiler-debug-type-graph-verify-set! false)
+        (and
+          agreed
+          (string.eq
+            (& types.error)
+            "debug type graph: Point size is 8, the typechecker says 16"))))
     "a layout disagreement is kept, first one only, and only under --verify-ir"))

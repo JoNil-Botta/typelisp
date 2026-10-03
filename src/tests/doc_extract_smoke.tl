@@ -15,7 +15,7 @@
   [doc-text : String]
   [signature-fragment : String]) : bool
   (match item
-    [(doc_extract.DocItem.Item kind item-name item-doc signature _)
+    [(Item kind item-name item-doc signature _)
       (begin
         (unless (= (doc_extract.doc-kind-tag kind) kind-tag) (return false))
         (unless (string.eq item-name name) (return false))
@@ -81,7 +81,7 @@
 ;: helper doc
 (define (box-string-value [value : Box_String]) : String
   value.value)")
-    [(doc_extract.DocExtraction.Extraction _ items)
+    [(Extraction _ items)
       (and
         (= (doc_extract.doc-item-list-count items) 2)
         (doc-item-ok?
@@ -99,7 +99,7 @@
 
 (define (doc-extract-source-line-smoke-ok?) : bool
   (match (doc_extract.doc-extract-source ";: docs\n(define answer : i64 42)\n")
-    [(doc_extract.DocExtraction.Extraction _ items)
+    [(Extraction _ items)
       (and
         (= (doc_extract.doc-item-list-count items) 1)
         (=
@@ -138,7 +138,7 @@
 (defmacro (guard [condition : bool] [body : unit]) : unit
   `(if ,condition ,body unit))
 ;: EOF unattached")
-    [(doc_extract.DocExtraction.Extraction module-doc items)
+    [(Extraction module-doc items)
       (begin
         (unless
           (string.eq
@@ -161,7 +161,7 @@
           ";# Legacy module
 ;: legacy item
 (define legacy : i64 1)")
-          [(doc_extract.DocExtraction.Extraction legacy-module legacy-items)
+          [(Extraction legacy-module legacy-items)
             (begin
               (unless
                 (string.eq legacy-module "Legacy module")

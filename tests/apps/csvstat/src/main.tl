@@ -173,8 +173,8 @@
 
 (define (run [path : String] [text : String]) : i64
   (match (csv.parse (& text))
-    [(csv.ParseResult.Ok table) (summarize path table)]
-    [(csv.ParseResult.Err error) (report-error (& path) (& error))]))
+    [(Ok table) (summarize path table)]
+    [(Err error) (report-error (& path) (& error))]))
 
 (define (main) : i64
   (if (not (= (io.arg-count) 2))
@@ -184,8 +184,8 @@
       (if (string.eq (& path) "-")
         (run "<stdin>" (read-stdin-all))
         (match (io.try-read-file (& path))
-          [(io.OkIoBytes contents) (run path (byte_buf.to-string contents))]
-          [(io.ErrIoBytes error)
+          [(OkIoBytes contents) (run path (byte_buf.to-string contents))]
+          [(ErrIoBytes error)
             (begin
               (io.print-error
                 (str-cat.str-cat

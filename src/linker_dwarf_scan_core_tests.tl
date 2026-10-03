@@ -1691,8 +1691,8 @@
   [views : (__tl_dyn-array dwarf.LinkerDwarfView)]
   [message : String]) : dwarf.LinkerDwarfInventory
   (match (dwarf.linker-dwarf-scan views (dwarf.linker-dwarf-default-limits))
-    [(dwarf.ResultLinkerDwarfInventory.Ok inventory) inventory]
-    [(dwarf.ResultLinkerDwarfInventory.Err error)
+    [(Ok inventory) inventory]
+    [(Err error)
       (begin
         (test.assert-i64-eq error.code 0 message)
         (dwarf.LinkerDwarfInventory
@@ -2277,8 +2277,8 @@
   [offset : i64]
   [message : String]) : unit
   (match (dwarf.linker-dwarf-scan views limits)
-    [(dwarf.ResultLinkerDwarfInventory.Ok _) (test.assert-true false message)]
-    [(dwarf.ResultLinkerDwarfInventory.Err error)
+    [(Ok _) (test.assert-true false message)]
+    [(Err error)
       (begin
         (test.assert-i64-eq error.code code (string.copy (& message)))
         (if (= detail -99)
@@ -2731,8 +2731,8 @@
   (match (dwarf.linker-dwarf-scan
     (dwarf-test-views (& dwarf-test-info) (& dwarf-test-abbrev))
     limits)
-    [(dwarf.ResultLinkerDwarfInventory.Ok _) true]
-    [(dwarf.ResultLinkerDwarfInventory.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (test
   dwarf-limits-admit-exactly-their-value
@@ -2778,8 +2778,8 @@
           (match (dwarf.linker-dwarf-scan
             (dwarf-test-views (& info) (& abbrev))
             (dwarf-limit 8 4))
-            [(dwarf.ResultLinkerDwarfInventory.Ok _) unit]
-            [(dwarf.ResultLinkerDwarfInventory.Err _)
+            [(Ok _) unit]
+            [(Err _)
               (test.assert-true
                 false
                 "a four-byte block within a limit of four")])

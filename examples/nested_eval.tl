@@ -33,8 +33,8 @@
 
 (define (eval-atom [a : (& a SexprAtom)]) : i64
   (match a
-    [(SexprAtom.Int n) (deref n)]
-    [(SexprAtom.List nested) (eval-sexpr (& (deref (deref nested))))]
+    [(Int n) (deref n)]
+    [(List nested) (eval-sexpr (& (deref (deref nested))))]
     [_ (io.panic "eval: not an evaluable atom")]))
 
 ;; eval-sexpr: the tree-walking interpreter. The `Call` arm uses the nested
@@ -43,7 +43,7 @@
   (match s
     ;; Nested pattern: the operator must itself be `(SexprAtom.Sym name)`.
     ;; Binds the borrowed `name` and dense argument sequence together.
-    [(Sexpr.Call (SexprAtom.Sym name) args)
+    [(Call (Sym name) args)
       (let
         [arg1 : (& s SexprAtom) (& (array-ref args 0))]
         [arg2 : (& s SexprAtom) (& (array-ref args 1))]
@@ -64,14 +64,8 @@
 ;; are fixed two-element arrays.
 (define (main) : i64
   (let
-    [inner : Sexpr
-      (Sexpr.Call
-        (SexprAtom.Sym "*")
-        (array (SexprAtom.Int 2) (SexprAtom.Int 3)))]
-    [prog : Sexpr
-      (Sexpr.Call
-        (SexprAtom.Sym "+")
-        (array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
+    [inner : Sexpr (Call (Sym "*") (array (Int 2) (Int 3)))]
+    [prog : Sexpr (Call (Sym "+") (array (Int 1) (List (box inner))))]
     [result : i64 (eval-sexpr (& prog))]
     (begin
       (io.print-format "{}" "nested evaluator result: ")

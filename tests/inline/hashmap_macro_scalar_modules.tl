@@ -59,14 +59,14 @@
         (map_string_string.contains? (& m) "beta")
         "StringString removed key absent")
       (match (map_string_string.entry-or-insert! m "beta" "gold")
-        [(map_string_string.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (assert-owned-string-eq value "gold" "StringString inserted value")]
-        [(map_string_string.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "StringString entry-or-insert should insert")])
       (match (map_string_string.entry-or-insert! m "alpha" "purple")
-        [(map_string_string.EntryOrInsertFound value)
+        [(EntryOrInsertFound value)
           (assert-owned-string-eq value "red" "StringString found value")]
-        [(map_string_string.EntryOrInsertInserted _)
+        [(EntryOrInsertInserted _)
           (test.assert-true false "StringString entry-or-insert should find")])
       (let
         [entry : (map_string_string.MutEntry m)
@@ -162,14 +162,14 @@
         (map_i64_i64.contains? (& m) 2)
         "I64I64 removed absent")
       (match (map_i64_i64.entry-or-insert! m 2 22)
-        [(map_i64_i64.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq value 22 "I64I64 inserted value")]
-        [(map_i64_i64.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "I64I64 entry-or-insert should insert")])
       (match (map_i64_i64.entry-or-insert! m 1 99)
-        [(map_i64_i64.EntryOrInsertFound value)
+        [(EntryOrInsertFound value)
           (test.assert-i64-eq value 10 "I64I64 found value")]
-        [(map_i64_i64.EntryOrInsertInserted _)
+        [(EntryOrInsertInserted _)
           (test.assert-true false "I64I64 entry-or-insert should find")])
       (let
         [entry : (map_i64_i64.MutEntry m)
@@ -304,14 +304,14 @@
         (map_i64_string.contains? (& m) 2)
         "I64String removed absent")
       (match (map_i64_string.entry-or-insert! m 2 "deux")
-        [(map_i64_string.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (assert-owned-string-eq value "deux" "I64String inserted value")]
-        [(map_i64_string.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "I64String entry-or-insert should insert")])
       (match (map_i64_string.entry-or-insert! m 1 "uno")
-        [(map_i64_string.EntryOrInsertFound value)
+        [(EntryOrInsertFound value)
           (assert-owned-string-eq value "one" "I64String found value")]
-        [(map_i64_string.EntryOrInsertInserted _)
+        [(EntryOrInsertInserted _)
           (test.assert-true false "I64String entry-or-insert should find")])
       (let
         [entry : (map_i64_string.MutEntry m)

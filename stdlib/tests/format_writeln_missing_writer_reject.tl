@@ -4,5 +4,5 @@
 
 (define (main) : i64
   (match (format.writeln!)
-    [(format.FormatOk) 42]
-    [(format.FormatErr _) 1]))
+    [(FormatOk) 42]
+    [(FormatErr _) 1]))

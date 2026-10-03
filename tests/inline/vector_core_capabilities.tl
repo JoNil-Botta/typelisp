@@ -55,9 +55,8 @@
         "core get checks negative bounds")
       (full_i64.push-ref! (&mut full) 42)
       (match (full_i64.pop-ref! (&mut full))
-        [(full_i64.Pop.Empty)
-          (test.assert-true false "full vector pop remains available")]
-        [(full_i64.Pop.Ok value)
+        [(Empty) (test.assert-true false "full vector pop remains available")]
+        [(Ok value)
           (test.assert-i64-eq value 42 "full vector mode coexists with core")]))))
 
 (test

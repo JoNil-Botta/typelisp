@@ -143,7 +143,7 @@
           (set! bytes (+ bytes (array-length (array-ref views argument).bytes)))
           (set! argument (+ argument 1))))
       (match (dwarf.linker-dwarf-scan views (dwarf.linker-dwarf-default-limits))
-        [(dwarf.ResultLinkerDwarfInventory.Err error)
+        [(Err error)
           (begin
             (io.println
               "error code={} detail={} input={} section={} unit={} offset={}"
@@ -155,7 +155,7 @@
               error.offset)
             (io.print-error error.message)
             1)]
-        [(dwarf.ResultLinkerDwarfInventory.Ok inventory)
+        [(Ok inventory)
           (let
             [units : i64 (array-length inventory.units)]
             [dies : i64 inventory.dies]

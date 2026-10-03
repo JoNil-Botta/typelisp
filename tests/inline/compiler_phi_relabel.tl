@@ -5,18 +5,18 @@
 
 (define (fixture-value [index : i64]) : ir.CompilerIrValue
   (match index
-    [0 (ir.CompilerIrValue.Var 100)]
-    [1 (ir.CompilerIrValue.Global 101)]
-    [2 (ir.CompilerIrValue.GlobalAddr 102)]
-    [3 (ir.CompilerIrValue.Function 103)]
-    [4 (ir.CompilerIrValue.I64 -104)]
-    [5 (ir.CompilerIrValue.F64 9223372036854775808)]
-    [6 (ir.CompilerIrValue.Bool true)]
-    [7 (ir.CompilerIrValue.Char 'x')]
-    [8 (ir.CompilerIrValue.String "preserved string")]
-    [9 (ir.CompilerIrValue.Bytes "preserved bytes")]
-    [10 (ir.CompilerIrValue.RuntimeGlobal 110)]
-    [_ (ir.CompilerIrValue.Unit)]))
+    [0 (Var 100)]
+    [1 (Global 101)]
+    [2 (GlobalAddr 102)]
+    [3 (Function 103)]
+    [4 (I64 -104)]
+    [5 (F64 9223372036854775808)]
+    [6 (Bool true)]
+    [7 (Char 'x')]
+    [8 (String "preserved string")]
+    [9 (Bytes "preserved bytes")]
+    [10 (RuntimeGlobal 110)]
+    [_ (Unit)]))
 
 (define (check-slice [start : i64] [count : i64] [from : i64] [to : i64]) : unit
   (let
@@ -102,9 +102,7 @@
     (begin
       (while (< index count)
         (begin
-          (set!
-            (array-ref slots index)
-            (ir.CompilerIrPhiInput (ir.CompilerIrValue.Var index) 7))
+          (set! (array-ref slots index) (ir.CompilerIrPhiInput (Var index) 7))
           (set! index (+ index 1))))
       (let
         [before : i64 (profile.alloc-total)]
@@ -123,5 +121,5 @@
             "one linear allocation, no recursive prepend")
           (test.assert-i64-eq last.label 99 "last edge relabeled")
           (test.assert-true
-            (opt.opt-value-eq last.value (ir.CompilerIrValue.Var (- count 1)))
+            (opt.opt-value-eq last.value (Var (- count 1)))
             "last value preserved"))))))

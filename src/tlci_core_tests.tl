@@ -200,8 +200,8 @@
   [result : tlci.ResultTlciHostAbi]
   [expected : String]) : bool
   (match result
-    [(tlci.ResultTlciHostAbi.Err message) (string.eq message expected)]
-    [(tlci.ResultTlciHostAbi.Ok) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok) false]))
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
@@ -242,8 +242,8 @@
 
 (define (tlci-test-host-abi-accepts? [result : tlci.ResultTlciHostAbi]) : bool
   (match result
-    [(tlci.ResultTlciHostAbi.Ok) true]
-    [(tlci.ResultTlciHostAbi.Err _) false]))
+    [(Ok) true]
+    [(Err _) false]))
 
 ;; A callback table with no host context and an empty registry; the rejection
 ;; cases vary its header.
@@ -435,21 +435,21 @@
 
 (define (tlci-test-parse-round-trip? [image : tlci.TlciImage]) : bool
   (match (tlci.tlci-emit-image image)
-    [(tlci.ResultTlciBytes.Err _) false]
-    [(tlci.ResultTlciBytes.Ok bytes)
+    [(Err _) false]
+    [(Ok bytes)
       (match (tlci.tlci-parse-image (clone bytes))
-        [(tlci.ResultTlciImage.Err _) false]
-        [(tlci.ResultTlciImage.Ok parsed)
+        [(Err _) false]
+        [(Ok parsed)
           (match (tlci.tlci-emit-image parsed)
-            [(tlci.ResultTlciBytes.Err _) false]
-            [(tlci.ResultTlciBytes.Ok again) (tlci.tlci-bytes-eq? bytes again)])])]))
+            [(Err _) false]
+            [(Ok again) (tlci.tlci-bytes-eq? bytes again)])])]))
 
 (define (tlci-test-metadata-emit-parse?) : bool
   (let
     [source : String (tlci.tlci-metadata-emit (tlci-test-metadata))]
     (match (tlci.tlci-metadata-parse (string.copy source))
-      [(tlci.ResultTlciMetadata.Err _) false]
-      [(tlci.ResultTlciMetadata.Ok parsed)
+      [(Err _) false]
+      [(Ok parsed)
         (and
           (string.eq parsed.version "v1")
           (string.eq parsed.package-name "demo")
@@ -499,8 +499,8 @@
   (let
     [source : String (tlci.tlci-metadata-emit (tlci-test-v2-metadata))]
     (match (tlci.tlci-metadata-parse (string.copy source))
-      [(tlci.ResultTlciMetadata.Err _) false]
-      [(tlci.ResultTlciMetadata.Ok parsed)
+      [(Err _) false]
+      [(Ok parsed)
         (and
           (tlci-test-v2-parsed-shape? (clone parsed))
           (string.eq source (tlci.tlci-metadata-emit parsed)))])))
@@ -615,20 +615,20 @@
 
 (define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
   (match (tlci.tlci-metadata-parse source)
-    [(tlci.ResultTlciMetadata.Err message) (string.eq message expected)]
-    [(tlci.ResultTlciMetadata.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (tlci-test-parse-rejects?
   [bytes : (__tl_dyn-array u8)]
   [expected : String]) : bool
   (match (tlci.tlci-parse-image bytes)
-    [(tlci.ResultTlciImage.Err message) (string.eq message expected)]
-    [(tlci.ResultTlciImage.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (tlci-test-emit-rejects? [image : tlci.TlciImage] [expected : String]) : bool
   (match (tlci.tlci-emit-image image)
-    [(tlci.ResultTlciBytes.Err message) (string.eq message expected)]
-    [(tlci.ResultTlciBytes.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (tlci-test-corrupt-byte
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -642,8 +642,8 @@
 
 (define (tlci-test-rejections-ok?) : bool
   (match (tlci.tlci-emit-image (tlci-test-metadata-only-image))
-    [(tlci.ResultTlciBytes.Err _) false]
-    [(tlci.ResultTlciBytes.Ok bytes)
+    [(Err _) false]
+    [(Ok bytes)
       (and
         (tlci-test-parse-rejects?
           (tlci-test-corrupt-byte bytes 0 0)
@@ -689,9 +689,8 @@
         host-platform
         platform)
       code-bearing))
-    [(tlci.ResultTlciBytes.Err message)
-      (tlci.TlciImageHostAdmission.Rejected message)]
-    [(tlci.ResultTlciBytes.Ok bytes)
+    [(Err message) (Rejected message)]
+    [(Ok bytes)
       (begin
         (tlci.tlci-set-u64! (&mut bytes) 16 platform)
         (tlci.tlci-set-u64!
@@ -699,10 +698,8 @@
           tlci.tlci-hash-field-offset
           (tlci.tlci-content-hash bytes))
         (match (tlci.tlci-parse-image bytes)
-          [(tlci.ResultTlciImage.Err message)
-            (tlci.TlciImageHostAdmission.Rejected message)]
-          [(tlci.ResultTlciImage.Ok image)
-            (tlci.tlci-image-admit-host image host-platform)]))]))
+          [(Err message) (Rejected message)]
+          [(Ok image) (tlci.tlci-image-admit-host image host-platform)]))]))
 
 (define (tlci-test-host-platform-admission-ok?) : bool
   (let
@@ -716,19 +713,19 @@
         other-platform
         false
         host-platform)
-        [(tlci.TlciImageHostAdmission.MetadataOnly) true]
+        [(MetadataOnly) true]
         [_ false])
       (match (tlci-test-platform-image-admission
         host-platform
         true
         host-platform)
-        [(tlci.TlciImageHostAdmission.CodeBearing) true]
+        [(CodeBearing) true]
         [_ false])
       (match (tlci-test-platform-image-admission
         tlci.tlci-host-platform-x86-64-legacy
         true
         host-platform)
-        [(tlci.TlciImageHostAdmission.Rejected message)
+        [(Rejected message)
           (string.eq
             message
             "tlci: package `demo` code-bearing image uses legacy/ambiguous host platform")]
@@ -737,7 +734,7 @@
         other-platform
         true
         host-platform)
-        [(tlci.TlciImageHostAdmission.Rejected message)
+        [(Rejected message)
           (string.eq
             message
             (str_cat.str-cat
@@ -749,7 +746,7 @@
       (match (tlci.tlci-image-admit-host
         (tlci-test-platform-image 99 true)
         host-platform)
-        [(tlci.TlciImageHostAdmission.Rejected message)
+        [(Rejected message)
           (string.eq
             message
             "tlci: package `demo` image uses unsupported host platform 99")]
@@ -757,7 +754,7 @@
       (match (tlci.tlci-image-admit-host
         (tlci-test-platform-image 99 false)
         host-platform)
-        [(tlci.TlciImageHostAdmission.Rejected message)
+        [(Rejected message)
           (string.eq
             message
             "tlci: package `demo` image uses unsupported host platform 99")]
@@ -925,30 +922,28 @@
         (array-ref sections 1)
         (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
       (match (tlci.tlci-aux-pack-rodata (clone base) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (and
             (match (tlci.tlci-aux-directory packed)
-              [(tlci.ResultTlciAuxDirectory.Ok directory)
-                (= directory.base-len (array-length base))]
+              [(Ok directory) (= directory.base-len (array-length base))]
               [_ false])
             (match (tlci.tlci-aux-find
               packed
               tlci.tlci-aux-kind-package-identity)
-              [(tlci.ResultTlciAuxLookup.Ok version payload)
+              [(Ok version payload)
                 (and (= version 1) (tlci.tlci-bytes-eq? payload identity))]
               [_ false])
             (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-ast)
-              [(tlci.ResultTlciAuxLookup.Ok version payload)
+              [(Ok version payload)
                 (and (= version 3) (tlci.tlci-bytes-eq? payload ast))]
               [_ false])
             (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-facts)
-              [(tlci.ResultTlciAuxLookup.Missing) true]
+              [(Missing) true]
               [_ false])
             (match (tlci.tlci-aux-pack-rodata base sections)
-              [(tlci.ResultTlciAuxBytes.Ok again)
-                (tlci.tlci-bytes-eq? packed again)]
-              [(tlci.ResultTlciAuxBytes.Err _) false]))]))))
+              [(Ok again) (tlci.tlci-bytes-eq? packed again)]
+              [(Err _) false]))]))))
 
 (define (tlci-test-aux-corruption-rejected?) : bool
   (let
@@ -962,10 +957,10 @@
           1
           (tlci.tlci-string->bytes "identity")))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (match (tlci.tlci-aux-directory packed)
-            [(tlci.ResultTlciAuxDirectory.Ok directory)
+            [(Ok directory)
               (let
                 [corrupt : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
                 [record : i64 directory.directory-offset]
@@ -976,7 +971,7 @@
                   (match (tlci.tlci-aux-find
                     corrupt
                     tlci.tlci-aux-kind-package-identity)
-                    [(tlci.ResultTlciAuxLookup.Err _) true]
+                    [(Err _) true]
                     [_ false])))]
             [_ false])]))))
 
@@ -1006,13 +1001,13 @@
         (owned_view.compiler-owned-array-element-shared-view sections 0))
       (and
         (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) duplicates)
-          [(tlci.ResultTlciAuxBytes.Err _) true]
+          [(Err _) true]
           [_ false])
         (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-          [(tlci.ResultTlciAuxBytes.Err _) false]
-          [(tlci.ResultTlciAuxBytes.Ok packed)
+          [(Err _) false]
+          [(Ok packed)
             (match (tlci.tlci-aux-directory packed)
-              [(tlci.ResultTlciAuxDirectory.Ok directory)
+              [(Ok directory)
                 (let
                   [duplicate-kind : (__tl_dyn-array u8)
                     (tlci.tlci-copy-bytes packed)]
@@ -1041,7 +1036,7 @@
                       (+ directory.directory-offset 1))
                     (and
                       (match (tlci.tlci-aux-find packed 99)
-                        [(tlci.ResultTlciAuxLookup.Ok schema payload)
+                        [(Ok schema payload)
                           (and
                             (= schema 7)
                             (tlci.tlci-bytes-eq? payload unknown))]
@@ -1049,20 +1044,20 @@
                       (match (tlci.tlci-aux-find
                         duplicate-kind
                         tlci.tlci-aux-kind-package-identity)
-                        [(tlci.ResultTlciAuxLookup.Err _) true]
+                        [(Err _) true]
                         [_ false])
                       (match (tlci.tlci-aux-find
                         overlap
                         tlci.tlci-aux-kind-package-identity)
-                        [(tlci.ResultTlciAuxLookup.Err _) true]
+                        [(Err _) true]
                         [_ false])
                       (match (tlci.tlci-aux-find
                         oversized
                         tlci.tlci-aux-kind-package-identity)
-                        [(tlci.ResultTlciAuxLookup.Err _) true]
+                        [(Err _) true]
                         [_ false])
                       (match (tlci.tlci-aux-directory truncated)
-                        [(tlci.ResultTlciAuxDirectory.Missing) true]
+                        [(Missing) true]
                         [_ false]))))]
               [_ false])])))))
 
@@ -1076,28 +1071,28 @@
         (tlci.tlci-producer-identity-valid?
           "0123456789ABCDEF0123456789ABCDEF01234567"))
       (match (tlci.tlci-producer-identity-admit current current)
-        [(tlci.TlciProducerIdentityAdmission.ExactMatch) true]
+        [(ExactMatch) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit stale current)
-        [(tlci.TlciProducerIdentityAdmission.Mismatch) true]
+        [(Mismatch) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit "" current)
-        [(tlci.TlciProducerIdentityAdmission.Missing) true]
+        [(Missing) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit current "")
-        [(tlci.TlciProducerIdentityAdmission.Missing) true]
+        [(Missing) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit "typelisp-selfhost-v1" current)
-        [(tlci.TlciProducerIdentityAdmission.Legacy) true]
+        [(Legacy) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit current "unknown")
-        [(tlci.TlciProducerIdentityAdmission.Legacy) true]
+        [(Legacy) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit "not-a-build-identity" current)
-        [(tlci.TlciProducerIdentityAdmission.Malformed) true]
+        [(Malformed) true]
         [_ false])
       (match (tlci.tlci-producer-identity-admit current "not-a-build-identity")
-        [(tlci.TlciProducerIdentityAdmission.Malformed) true]
+        [(Malformed) true]
         [_ false]))))
 
 (define (tlci-test-package-source-binding-admission-ok?) : bool
@@ -1115,26 +1110,24 @@
         (array-ref sections 0)
         (tlci.tlci-package-source-binding-section 12345))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (and
             (match (tlci.tlci-package-source-binding-read packed)
-              [(tlci.TlciPackageSourceBindingRead.Bound digest)
-                (= digest 12345)]
+              [(Bound digest) (= digest 12345)]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed 12345)
-              [(tlci.TlciPackageSourceBindingAdmission.Match digest)
-                (= digest 12345)]
+              [(Match digest) (= digest 12345)]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed 54321)
-              [(tlci.TlciPackageSourceBindingAdmission.Mismatch expected actual)
+              [(Mismatch expected actual)
                 (and (= expected 54321) (= actual 12345))]
               [_ false])
             (match (tlci.tlci-package-source-binding-read empty)
-              [(tlci.TlciPackageSourceBindingRead.MissingOrLegacy) true]
+              [(MissingOrLegacy) true]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit empty 12345)
-              [(tlci.TlciPackageSourceBindingAdmission.MissingOrLegacy) true]
+              [(MissingOrLegacy) true]
               [_ false]))])
       (set!
         (array-ref sections 0)
@@ -1143,16 +1136,14 @@
           2
           unsupported))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (and
             (match (tlci.tlci-package-source-binding-read packed)
-              [(tlci.TlciPackageSourceBindingRead.UnsupportedSchema schema)
-                (= schema 2)]
+              [(UnsupportedSchema schema) (= schema 2)]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed 12345)
-              [(tlci.TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
-                (= schema 2)]
+              [(UnsupportedSchema schema) (= schema 2)]
               [_ false]))])
       (set!
         (array-ref sections 0)
@@ -1161,10 +1152,10 @@
           tlci.tlci-package-source-binding-schema-version
           short))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (match (tlci.tlci-package-source-binding-read packed)
-            [(tlci.TlciPackageSourceBindingRead.Malformed _) true]
+            [(Malformed _) true]
             [_ false])])
       (tlci.tlci-set-u64! (&mut zero) 0 0)
       (set!
@@ -1174,21 +1165,20 @@
           tlci.tlci-package-source-binding-schema-version
           zero))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (and
             (match (tlci.tlci-package-source-binding-read packed)
-              [(tlci.TlciPackageSourceBindingRead.Bound digest) (= digest 0)]
+              [(Bound digest) (= digest 0)]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed 0)
-              [(tlci.TlciPackageSourceBindingAdmission.Match digest)
-                (= digest 0)]
+              [(Match digest) (= digest 0)]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed -1)
-              [(tlci.TlciPackageSourceBindingAdmission.Malformed _) true]
+              [(Malformed _) true]
               [_ false])
             (match (tlci.tlci-package-source-binding-admit packed 2147483647)
-              [(tlci.TlciPackageSourceBindingAdmission.Malformed _) true]
+              [(Malformed _) true]
               [_ false]))])
       (tlci.tlci-set-u64! (&mut negative) 0 -1)
       (set!
@@ -1198,10 +1188,10 @@
           tlci.tlci-package-source-binding-schema-version
           negative))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (match (tlci.tlci-package-source-binding-read packed)
-            [(tlci.TlciPackageSourceBindingRead.Malformed _) true]
+            [(Malformed _) true]
             [_ false])])
       (tlci.tlci-set-u64! (&mut limit) 0 2147483647)
       (set!
@@ -1211,10 +1201,10 @@
           tlci.tlci-package-source-binding-schema-version
           limit))
       (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err _) false]
-        [(tlci.ResultTlciAuxBytes.Ok packed)
+        [(Err _) false]
+        [(Ok packed)
           (match (tlci.tlci-package-source-binding-read packed)
-            [(tlci.TlciPackageSourceBindingRead.Malformed _) true]
+            [(Malformed _) true]
             [_ false])]))))
 
 ;; The block form of the digest against the byte-at-a-time definition, at

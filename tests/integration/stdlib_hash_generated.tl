@@ -57,24 +57,18 @@
 
 (define (main) : i64
   (let
-    [equal-left : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.Number 9))]
+    [equal-left : HashStructuralSample (sample 4 "same" (Number 9))]
     [equal-right : HashStructuralSample
-      (sample 4 (string_mod.append "sa" "me") (HashStructuralChoice.Number 9))]
-    [hash-left : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.Number 9))]
+      (sample 4 (string_mod.append "sa" "me") (Number 9))]
+    [hash-left : HashStructuralSample (sample 4 "same" (Number 9))]
     [hash-right : HashStructuralSample
-      (sample 4 (string_mod.append "s" "ame") (HashStructuralChoice.Number 9))]
-    [evaluated-once : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.Number 9))]
-    [field-different : HashStructuralSample
-      (sample 5 "same" (HashStructuralChoice.Number 9))]
-    [variant-different : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.OtherNumber 9))]
-    [empty-variant : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.None))]
+      (sample 4 (string_mod.append "s" "ame") (Number 9))]
+    [evaluated-once : HashStructuralSample (sample 4 "same" (Number 9))]
+    [field-different : HashStructuralSample (sample 5 "same" (Number 9))]
+    [variant-different : HashStructuralSample (sample 4 "same" (OtherNumber 9))]
+    [empty-variant : HashStructuralSample (sample 4 "same" (None))]
     [text-choice : HashStructuralSample
-      (sample 4 "same" (HashStructuralChoice.Text true "payload" 'Z'))]
+      (sample 4 "same" (Text true "payload" 'Z'))]
     [ordered-tuple : HashStructuralTuple (HashStructuralTuple (tuple 1 2))]
     [reversed-tuple : HashStructuralTuple (HashStructuralTuple (tuple 2 1))]
     [ordered-array : HashStructuralArray (HashStructuralArray (array 1 2 3))]

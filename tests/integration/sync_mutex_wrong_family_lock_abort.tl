@@ -17,8 +17,8 @@
       0
       0
       0))
-    [(registry.ConcurrencyShareErr) 9]
-    [(registry.ConcurrencyShared authority)
+    [(ConcurrencyShareErr) 9]
+    [(ConcurrencyShared authority)
       (with
         ([mutex (mutex_i64.Mutex authority) mutex_i64.release])
         (with

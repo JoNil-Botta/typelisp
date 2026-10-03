@@ -12,9 +12,8 @@
 ;; The batch tokens of `line`, or "none" when it is not batchable.
 (define (batch-tokens [line : String]) : String
   (match (producer.embedded-native-batch-op (& line))
-    [(producer.EmbeddedNativeBatchOpSome name tokens)
-      (str_cat.str-cat name tokens)]
-    [(producer.EmbeddedNativeBatchOpNone) "none"]))
+    [(EmbeddedNativeBatchOpSome name tokens) (str_cat.str-cat name tokens)]
+    [(EmbeddedNativeBatchOpNone) "none"]))
 
 (define (name-arg [escaped : String]) : String
   (str_cat.str-cat

@@ -34,25 +34,25 @@
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
-          lvf.LspWorkspaceRootLookup.Missing
+          Missing
           shared-path
           shared-text
           true)
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
-          lvf.LspWorkspaceRootLookup.Missing
+          Missing
           open-path
           open-text
           true)
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
-          lvf.LspWorkspaceRootLookup.Missing
+          Missing
           closed-path
           closed-text
           false)
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
-          lvf.LspWorkspaceRootLookup.Missing
+          Missing
           noise-path
           noise-text
           false)
@@ -93,7 +93,7 @@
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
-          lvf.LspWorkspaceRootLookup.Missing
+          Missing
           path
           text
           overlay)
@@ -179,8 +179,8 @@
   (define (lsp-workspace-semantic-test-role-tag
     [role : (& role sem.CompilerSemanticRecordRole)]) : i64
     (match (deref role)
-      [(sem.CompilerSemanticRecordRole.Definition) 0]
-      [(sem.CompilerSemanticRecordRole.Use) 1])))
+      [(Definition) 0]
+      [(Use) 1])))
 
 (cfg
   test
@@ -260,8 +260,8 @@
           empty-state
           (lsp.LspDocumentHandleResult.Continue docs)
           false)
-          [(lsp.LspHandleResult.Continue next) next]
-          [(lsp.LspHandleResult.Exit next) next])]
+          [(Continue next) next]
+          [(Exit next) next])]
       [workspace-state : lvf.LspServerState
         (lsp-workspace-semantic-smoke-workspace-state
           document-state
@@ -337,20 +337,14 @@
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
             shared-path
-            sem.CompilerSemanticRecordRole.Definition)
-          (lsp-workspace-semantic-smoke-fact-at?
-            (& cold-query)
-            open-path
-            sem.CompilerSemanticRecordRole.Use)
-          (lsp-workspace-semantic-smoke-fact-at?
-            (& cold-query)
-            closed-path
-            sem.CompilerSemanticRecordRole.Use)
+            Definition)
+          (lsp-workspace-semantic-smoke-fact-at? (& cold-query) open-path Use)
+          (lsp-workspace-semantic-smoke-fact-at? (& cold-query) closed-path Use)
           (not
             (lsp-workspace-semantic-smoke-fact-at?
               (& cold-query)
               noise-path
-              sem.CompilerSemanticRecordRole.Definition))
+              Definition))
           (= warm-source-checks 0)
           (= warm-owners 4)
           (= warm-records cold-records)
@@ -387,13 +381,13 @@
         (lsp.lsp-global-shared-view shared-text)
         (lsp_svec.new)
         (lsp.lsp-language-cfgs))
-        [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ shared-index)
+        [(Ok _ shared-index)
           (match (sem.compiler-check-source-index-with-roots-and-cfg
             (lsp.lsp-global-shared-view open-path)
             (lsp.lsp-global-shared-view open-text)
             (lsp_svec.new)
             (lsp.lsp-language-cfgs))
-            [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ open-index)
+            [(Ok _ open-index)
               (lsp-workspace-semantic-cache-smoke-with-open
                 owners-before
                 shared-path
@@ -406,22 +400,22 @@
                 noise-text
                 shared-index
                 open-index)]
-            [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+            [(Partial _ partial)
               (begin
                 (sem.compiler-semantic-source-index-release! (&mut partial))
                 (sem.compiler-semantic-source-index-release!
                   (&mut shared-index))
                 false)]
-            [(sem.ResultCompilerCheckWithSemanticIndex.Err _)
+            [(Err _)
               (begin
                 (sem.compiler-semantic-source-index-release!
                   (&mut shared-index))
                 false)])]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        [(Partial _ partial)
           (begin
             (sem.compiler-semantic-source-index-release! (&mut partial))
             false)]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false]))))
+        [(Err _) false]))))
 
 (cfg
   test
@@ -503,8 +497,8 @@
           empty-state
           (lsp.LspDocumentHandleResult.Continue docs)
           false)
-          [(lsp.LspHandleResult.Continue next) next]
-          [(lsp.LspHandleResult.Exit next) next])]
+          [(Continue next) next]
+          [(Exit next) next])]
       [overlay-state : lvf.LspServerState
         (lsp-workspace-semantic-smoke-add-source-state
           document-state
@@ -567,12 +561,9 @@
           (lsp-workspace-semantic-smoke-fact-at?
             (& query)
             shared-path
-            sem.CompilerSemanticRecordRole.Definition)
+            Definition)
           (not
-            (lsp-workspace-semantic-smoke-fact-at?
-              (& query)
-              closed-path
-              sem.CompilerSemanticRecordRole.Use))
+            (lsp-workspace-semantic-smoke-fact-at? (& query) closed-path Use))
           (= final-state.semantic-cache.source-checks 0)
           (= final-state.semantic-cache.len 1)
           (= (lsp-workspace-semantic-test-retained-owners (& final-state)) 1))]
@@ -600,7 +591,7 @@
         (lsp.lsp-global-shared-view shared-text)
         (lsp_svec.new)
         (lsp.lsp-language-cfgs))
-        [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ shared-index)
+        [(Ok _ shared-index)
           (lsp-workspace-semantic-cache-overlay-smoke-with-index
             owners-before
             shared-path
@@ -608,11 +599,11 @@
             closed-path
             closed-text
             shared-index)]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        [(Partial _ partial)
           (begin
             (sem.compiler-semantic-source-index-release! (&mut partial))
             false)]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false]))))
+        [(Err _) false]))))
 
 (test
   lsp-workspace-semantic-cache

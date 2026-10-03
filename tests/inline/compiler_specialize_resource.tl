@@ -4,7 +4,6 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_parse_core as parser)
-(import compiler_ctfe as ctfe)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)
 (import stdlib.test)
@@ -12,15 +11,10 @@
 (define (resource-with-owner [owner : (& owner spec.SpecOwnerContext)]) : ast.AstExpr
   (let
     [value : i64
-      (spec.spec-owner-expr-push
-        owner
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-x))]
+      (spec.spec-owner-expr-push owner (Var cbi.compiler-builtin-id-fix-x))]
     [ty : i64
-      (spec.spec-owner-type-push
-        owner
-        (ast.AstType.Var cbi.compiler-builtin-id-fix-T))]
-    [init : i64
-      (spec.spec-owner-expr-push owner (ast.AstExpr.MakeArray ty value))]
+      (spec.spec-owner-type-push owner (Var cbi.compiler-builtin-id-fix-T))]
+    [init : i64 (spec.spec-owner-expr-push owner (MakeArray ty value))]
     [bindings : ast.AstResourceBindingList (ast.ast-resource-binding-list-new)]
     [body : ast.AstExprList (ast.ast-expr-list-new)]
     (begin
@@ -32,14 +26,13 @@
           value
           true))
       (ast.ast-expr-list-push (&mut body) value)
-      (ast.AstExpr.WithResource
-        (box (ast.AstWithResource.WithResource bindings body))))))
+      (WithResource (box (ast.AstWithResource.WithResource bindings body))))))
 
 (define (literal-five? [owner : (& owner spec.SpecOwnerContext)] [id : i64]) : bool
   (match (spec.spec-owner-expr-get owner id)
-    [(ast.AstExpr.Literal literal)
+    [(Literal literal)
       (match literal
-        [(ast.AstLiteral.Int n _) (= n 5)]
+        [(Int n _) (= n 5)]
         [_ false])]
     [_ false]))
 
@@ -47,31 +40,30 @@
   [owner : (& owner spec.SpecOwnerContext)]
   [id : i64]) : bool
   (match (spec.spec-owner-expr-get owner id)
-    [(ast.AstExpr.WithResource resource)
+    [(WithResource resource)
       (match (ast.ast-with-resource-box-shared-view resource)
-        [(ast.AstWithResource.WithResource bindings body)
+        [(WithResource bindings body)
           (match (ast.ast-resource-binding-list-get
             (& bindings)
             0
             (ast.ast-resource-binding-fallback))
-            [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
+            [(Binding name init cleanup move-aware?)
               (and
                 (= name cbi.compiler-builtin-id-fix-x)
                 move-aware?
                 (literal-five? owner cleanup)
                 (match (spec.spec-owner-expr-get owner init)
-                  [(ast.AstExpr.MakeArray ty length)
+                  [(MakeArray ty length)
                     (and
                       (literal-five? owner length)
                       (match (spec.spec-owner-type-get owner ty)
-                        [(ast.AstType.I64) true]
+                        [(I64) true]
                         [_ false]))]
                   [_ false])
                 (match (spec.spec-owner-expr-get
                   owner
                   (ast.ast-expr-list-get (& body) 0 0))
-                  [(ast.AstExpr.Var name)
-                    (= name cbi.compiler-builtin-id-fix-x)]
+                  [(Var name) (= name cbi.compiler-builtin-id-fix-x)]
                   [_ false]))])])]
     [_ false]))
 
@@ -89,12 +81,12 @@
     [types : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
-        (ast.AstType.I64)
+        (I64)
         (spec.spec-type-subst-new))]
     [values : spec.SpecValueSubst
       (spec.spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
-        (ctfe.CompilerCtfeValue.I64 5)
+        (I64 5)
         (spec.spec-value-subst-new))]
     [ambient-count : i64 (ast.ast-node-pool-len)]
     (begin
@@ -102,12 +94,12 @@
         (& owner)
         expr
         (& types))
-        [(spec.ResultSpecSubExpr.Ok typed)
+        [(Ok typed)
           (match (spec.spec-substitute-values-expr-with-owner
             (& owner)
             (spec.spec-owner-expr-get (& owner) typed)
             (& values))
-            [(spec.ResultSpecSubExpr.Ok result)
+            [(Ok result)
               (test.assert-true
                 (rewritten-resource-ok? (& owner) result)
                 "type and value substitution route every resource child through its owner")]
@@ -134,7 +126,7 @@
       source
       (parser.compiler-cfg-empty)
       pools)
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (let
           [ambient-count : i64 (ast.ast-node-pool-len)]
           (begin
@@ -142,9 +134,9 @@
               program
               pools
               (ci.intern-compat-state-capture-active))
-              [(spec.ResultSpecProgram.Ok specialized)
+              [(Ok specialized)
                 (match specialized
-                  [(ast.AstProgram.Program boxed-decls)
+                  [(Program boxed-decls)
                     (let
                       [decls : ast.AstDeclList
                         (ast.ast-decl-list-box-shared-view boxed-decls)]
@@ -189,9 +181,9 @@
     "(define (bad [comptime T : type] [comptime U : type]) : i64
        (with ([r T U]) 0))
      (define (main) : i64 (bad (type i64) (type bool)))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Err boxed-diag)
+        [(Err boxed-diag)
           (let
             [diag : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-box-shared-view boxed-diag)]

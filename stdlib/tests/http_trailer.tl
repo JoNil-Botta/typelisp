@@ -21,11 +21,11 @@
     (name spelling)
     sensitivity
     multiplicity)
-    [(trailer_policy.HttpTrailerPolicyAddErr _)
+    [(HttpTrailerPolicyAddErr _)
       (begin
         (fail "trailer test policy construction")
         (trailer_policy.trailer-policy-empty))]
-    [(trailer_policy.HttpTrailerPolicyAddOk next) next]))
+    [(HttpTrailerPolicyAddOk next) next]))
 
 (define (sample-policy) : trailer_policy.HttpTrailerPolicy
   (let
@@ -33,23 +33,23 @@
       (policy-add-ok
         (trailer_policy.trailer-policy-empty)
         "X-One"
-        (http_types.HttpHeaderPublic)
-        (trailer_policy.HttpTrailerAtMostOnce))]
+        (HttpHeaderPublic)
+        (HttpTrailerAtMostOnce))]
     (begin
       (set!
         policy
         (policy-add-ok
           policy
           "X-List"
-          (http_types.HttpHeaderPublic)
-          (trailer_policy.HttpTrailerRepeatableList)))
+          (HttpHeaderPublic)
+          (HttpTrailerRepeatableList)))
       (set!
         policy
         (policy-add-ok
           policy
           "X-Secret"
-          (http_types.HttpHeaderSensitive)
-          (trailer_policy.HttpTrailerRepeatableSeparate)))
+          (HttpHeaderSensitive)
+          (HttpTrailerRepeatableSeparate)))
       policy)))
 
 (define (declared-add
@@ -70,17 +70,17 @@
     (http_types.header-name-set-empty)
     (trailer_policy.trailer-policy-empty)
     (trailer.default-response-trailer-limits)
-    (trailer.HttpResponseTrailerOpen)))
+    (HttpResponseTrailerOpen)))
 
 (define (new-parser-with
   [limits : trailer.HttpResponseTrailerLimits]
   [declared : http_types.HttpHeaderNameSet]) : trailer.HttpResponseTrailerParser
   (match (trailer.response-trailer-parser-new limits (sample-policy) declared)
-    [(trailer.HttpResponseTrailerParserNewErr _)
+    [(HttpResponseTrailerParserNewErr _)
       (begin
         (fail "valid trailer parser construction")
         (fallback-parser))]
-    [(trailer.HttpResponseTrailerParserNewOk parser) parser]))
+    [(HttpResponseTrailerParserNewOk parser) parser]))
 
 (define (new-parser) : trailer.HttpResponseTrailerParser
   (new-parser-with
@@ -111,10 +111,10 @@
         "trailer field value")
       (if sensitive
         (match (http_types.header-debug-disposition field)
-          [(http_types.HttpHeaderDebugRedacted) unit]
+          [(HttpHeaderDebugRedacted) unit]
           [_ (fail "sensitive trailer was visible")])
         (match (http_types.header-debug-disposition field)
-          [(http_types.HttpHeaderDebugVisible) unit]
+          [(HttpHeaderDebugVisible) unit]
           [_ (fail "public trailer was redacted")])))))
 
 (define (assert-valid-and-suffix) : unit
@@ -126,7 +126,7 @@
     [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
     [expected-consumed : i64 (string.string-length (& prefix))]
     (match (trailer.response-trailer-parser-feed (new-parser) view)
-      [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
+      [(HttpResponseTrailerFeedComplete terminal consumed)
         (begin
           (test.assert-i64-eq
             consumed
@@ -141,16 +141,16 @@
             56
             "trailer retained bytes")
           (match (trailer.response-trailer-parser-feed terminal view)
-            [(trailer.HttpResponseTrailerFeedComplete stable consumed-again)
+            [(HttpResponseTrailerFeedComplete stable consumed-again)
               (begin
                 (test.assert-i64-eq
                   consumed-again
                   0
                   "complete parser is stable")
                 (match (trailer.response-trailer-parser-into-fields stable)
-                  [(trailer.HttpResponseTrailerFieldsErr _)
+                  [(HttpResponseTrailerFieldsErr _)
                     (fail "complete parser lost trailers")]
-                  [(trailer.HttpResponseTrailerFieldsOk fields)
+                  [(HttpResponseTrailerFieldsOk fields)
                     (begin
                       (test.assert-i64-eq fields.len 5 "retained trailer count")
                       (assert-field (& fields) 0 "X-One" "first" false)
@@ -174,16 +174,14 @@
           (byte_buf.bytes-slice-view view split (- wire-len split))]
         (begin
           (match (trailer.response-trailer-parser-feed (new-parser) left)
-            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+            [(HttpResponseTrailerFeedNeedInput next first-consumed)
               (begin
                 (test.assert-i64-eq
                   first-consumed
                   split
                   "empty trailer split prefix")
                 (match (trailer.response-trailer-parser-feed next right)
-                  [(trailer.HttpResponseTrailerFeedComplete
-                      terminal
-                      second-consumed)
+                  [(HttpResponseTrailerFeedComplete terminal second-consumed)
                     (begin
                       (test.assert-i64-eq
                         second-consumed
@@ -191,19 +189,19 @@
                         "empty trailer split suffix")
                       (match (trailer.response-trailer-parser-into-fields
                         terminal)
-                        [(trailer.HttpResponseTrailerFieldsOk fields)
+                        [(HttpResponseTrailerFieldsOk fields)
                           (test.assert-i64-eq
                             fields.len
                             0
                             "empty trailer fields")]
                         [_ (fail "empty trailer extraction")]))]
                   [_ (fail "empty response trailer did not complete")]))]
-            [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
+            [(HttpResponseTrailerFeedComplete terminal consumed)
               (begin
                 (test.assert-i64-eq split 2 "empty trailer early completion")
                 (test.assert-i64-eq consumed 2 "empty trailer terminator")
                 (match (trailer.response-trailer-parser-into-fields terminal)
-                  [(trailer.HttpResponseTrailerFieldsOk fields)
+                  [(HttpResponseTrailerFieldsOk fields)
                     (test.assert-i64-eq fields.len 0 "empty trailer fields")]
                   [_ (fail "empty trailer extraction")]))]
             [_ (fail "empty response trailers rejected")])
@@ -225,16 +223,14 @@
           (byte_buf.bytes-slice-view view split (- wire-len split))]
         (begin
           (match (trailer.response-trailer-parser-feed (new-parser) left)
-            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+            [(HttpResponseTrailerFeedNeedInput next first-consumed)
               (begin
                 (test.assert-i64-eq
                   first-consumed
                   split
                   "trailer split first consumed")
                 (match (trailer.response-trailer-parser-feed next right)
-                  [(trailer.HttpResponseTrailerFeedComplete
-                      terminal
-                      second-consumed)
+                  [(HttpResponseTrailerFeedComplete terminal second-consumed)
                     (begin
                       (test.assert-i64-eq
                         second-consumed
@@ -242,19 +238,19 @@
                         "trailer split second consumed")
                       (match (trailer.response-trailer-parser-into-fields
                         terminal)
-                        [(trailer.HttpResponseTrailerFieldsOk fields)
+                        [(HttpResponseTrailerFieldsOk fields)
                           (test.assert-i64-eq
                             fields.len
                             2
                             "trailer split fields")]
                         [_ (fail "split trailer extraction")]))]
                   [_ (fail "split trailer did not complete")]))]
-            [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
+            [(HttpResponseTrailerFeedComplete terminal consumed)
               (begin
                 (test.assert-i64-eq split prefix-len "early split completion")
                 (test.assert-i64-eq consumed prefix-len "full split consumed")
                 (match (trailer.response-trailer-parser-into-fields terminal)
-                  [(trailer.HttpResponseTrailerFieldsOk fields)
+                  [(HttpResponseTrailerFieldsOk fields)
                     (test.assert-i64-eq fields.len 2 "full split fields")]
                   [_ (fail "full split extraction")]))]
             [_ (fail "split trailer rejected")])
@@ -264,21 +260,21 @@
 (define (trailer-error-code
   [error : (& error trailer.HttpResponseTrailerError)]) : i64
   (match (clone error.kind)
-    [(trailer.HttpResponseTrailerFieldError field-kind)
+    [(HttpResponseTrailerFieldError field-kind)
       (match field-kind
-        [(http_types.HttpInvalidFieldName) 1]
-        [(http_types.HttpLineTooLong) 5]
-        [(http_types.HttpNameTooLong) 8]
-        [(http_types.HttpValueTooLong) 9]
+        [(HttpInvalidFieldName) 1]
+        [(HttpLineTooLong) 5]
+        [(HttpNameTooLong) 8]
+        [(HttpValueTooLong) 9]
         [_ 90])]
-    [(trailer.HttpResponseTrailerPolicyError policy-kind)
+    [(HttpResponseTrailerPolicyError policy-kind)
       (match policy-kind
-        [(trailer_policy.HttpTrailerDuplicateField) 2]
-        [(trailer_policy.HttpTrailerForbiddenName) 3]
-        [(trailer_policy.HttpTrailerUnapprovedName) 4]
+        [(HttpTrailerDuplicateField) 2]
+        [(HttpTrailerForbiddenName) 3]
+        [(HttpTrailerUnapprovedName) 4]
         [_ 91])]
-    [(trailer.HttpResponseTrailerRetainedBytesExceeded) 6]
-    [(trailer.HttpResponseTrailerSectionTooLarge) 7]
+    [(HttpResponseTrailerRetainedBytesExceeded) 6]
+    [(HttpResponseTrailerSectionTooLarge) 7]
     [_ 99]))
 
 (define (assert-error-every-split
@@ -300,11 +296,11 @@
           (match (trailer.response-trailer-parser-feed
             (new-parser-with (clone limits) (http_types.header-name-set-empty))
             left)
-            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+            [(HttpResponseTrailerFeedNeedInput next first-consumed)
               (begin
                 (test.assert-i64-eq first-consumed split "error split prefix")
                 (match (trailer.response-trailer-parser-feed next right)
-                  [(trailer.HttpResponseTrailerFeedErr _ error second-consumed)
+                  [(HttpResponseTrailerFeedErr _ error second-consumed)
                     (begin
                       (test.assert-i64-eq
                         (+ first-consumed second-consumed)
@@ -319,7 +315,7 @@
                         expected-offset
                         "partitioned error offset"))]
                   [_ (fail "partitioned invalid trailer did not fail")]))]
-            [(trailer.HttpResponseTrailerFeedErr _ error consumed)
+            [(HttpResponseTrailerFeedErr _ error consumed)
               (begin
                 (test.assert-i64-eq
                   consumed
@@ -404,13 +400,13 @@
       (match (trailer.response-trailer-parser-feed
         (new-parser-with (trailer.default-response-trailer-limits) declared)
         view)
-        [(trailer.HttpResponseTrailerFeedComplete _ _) unit]
+        [(HttpResponseTrailerFeedComplete _ _) unit]
         [_ (fail "approved declared response trailer")]))
     (let
       [wire : String "X-One: yes\r\n\r\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedComplete _ _) unit]
+        [(HttpResponseTrailerFeedComplete _ _) unit]
         [_ (fail "approved undeclared response trailer")]))
     (let
       [declared : http_types.HttpHeaderNameSet
@@ -420,11 +416,11 @@
       (match (trailer.response-trailer-parser-feed
         (new-parser-with (trailer.default-response-trailer-limits) declared)
         view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (match error.kind
-            [(trailer.HttpResponseTrailerPolicyError policy-kind)
+            [(HttpResponseTrailerPolicyError policy-kind)
               (match policy-kind
-                [(trailer_policy.HttpTrailerUnapprovedName) unit]
+                [(HttpTrailerUnapprovedName) unit]
                 [_ (fail "declared unapproved policy kind")])]
             [_ (fail "declared unapproved wrapper kind")])]
         [_ (fail "declared unapproved trailer accepted")]))
@@ -432,11 +428,11 @@
       [wire : String "X-Other: no\r\n\r\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (match error.kind
-            [(trailer.HttpResponseTrailerPolicyError policy-kind)
+            [(HttpResponseTrailerPolicyError policy-kind)
               (match policy-kind
-                [(trailer_policy.HttpTrailerUnapprovedName) unit]
+                [(HttpTrailerUnapprovedName) unit]
                 [_ (fail "undeclared unapproved policy kind")])]
             [_ (fail "undeclared unapproved wrapper kind")])]
         [_ (fail "undeclared unapproved trailer accepted")]))
@@ -448,11 +444,11 @@
       (match (trailer.response-trailer-parser-feed
         (new-parser-with (trailer.default-response-trailer-limits) declared)
         view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (match error.kind
-            [(trailer.HttpResponseTrailerPolicyError policy-kind)
+            [(HttpResponseTrailerPolicyError policy-kind)
               (match policy-kind
-                [(trailer_policy.HttpTrailerForbiddenName) unit]
+                [(HttpTrailerForbiddenName) unit]
                 [_ (fail "forbidden declared policy kind")])]
             [_ (fail "forbidden declared wrapper kind")])]
         [_ (fail "declaration granted forbidden trailer authority")]))))
@@ -463,13 +459,13 @@
       [wire : String "X-One:a\r\nx-one:b\r\n\r\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (begin
             (test.assert-i64-eq error.field-index 1 "duplicate trailer index")
             (match error.kind
-              [(trailer.HttpResponseTrailerPolicyError policy-kind)
+              [(HttpResponseTrailerPolicyError policy-kind)
                 (match policy-kind
-                  [(trailer_policy.HttpTrailerDuplicateField) unit]
+                  [(HttpTrailerDuplicateField) unit]
                   [_ (fail "duplicate trailer policy kind")])]
               [_ (fail "duplicate trailer wrapper kind")]))]
         [_ (fail "at-most-once trailer repeated")]))
@@ -477,26 +473,23 @@
       [wire : String " X-One:a\r\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedErr terminal error consumed)
+        [(HttpResponseTrailerFeedErr terminal error consumed)
           (begin
             (test.assert-i64-eq
               consumed
               (string.string-length (& wire))
               "malformed trailer line consumed")
             (match error.kind
-              [(trailer.HttpResponseTrailerFieldError field-kind)
+              [(HttpResponseTrailerFieldError field-kind)
                 (match field-kind
-                  [(http_types.HttpObsoleteLineFold) unit]
+                  [(HttpObsoleteLineFold) unit]
                   [_ (fail "obsolete trailer fold kind")])]
               [_ (fail "obsolete trailer fold wrapper")])
             (let
               [empty : String ""]
               [empty-view : (& empty bytes) (byte_buf.str-as-bytes (& empty))]
               (match (trailer.response-trailer-parser-feed terminal empty-view)
-                [(trailer.HttpResponseTrailerFeedErr
-                    _
-                    repeated
-                    repeated-consumed)
+                [(HttpResponseTrailerFeedErr _ repeated repeated-consumed)
                   (begin
                     (test.assert-i64-eq
                       repeated-consumed
@@ -512,11 +505,11 @@
       [wire : String "X-One :a\r\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (match error.kind
-            [(trailer.HttpResponseTrailerFieldError field-kind)
+            [(HttpResponseTrailerFieldError field-kind)
               (match field-kind
-                [(http_types.HttpInvalidFieldName) unit]
+                [(HttpInvalidFieldName) unit]
                 [_ (fail "whitespace-before-colon field kind")])]
             [_ (fail "whitespace-before-colon wrapper")])]
         [_ (fail "whitespace before trailer colon accepted")]))
@@ -524,13 +517,13 @@
       [wire : String "\n"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedErr _ error consumed)
+        [(HttpResponseTrailerFeedErr _ error consumed)
           (begin
             (test.assert-i64-eq consumed 1 "bare LF consumed")
             (match error.kind
-              [(trailer.HttpResponseTrailerFieldError field-kind)
+              [(HttpResponseTrailerFieldError field-kind)
                 (match field-kind
-                  [(http_types.HttpBareLineFeed) unit]
+                  [(HttpBareLineFeed) unit]
                   [_ (fail "bare LF field kind")])]
               [_ (fail "bare LF wrapper")]))]
         [_ (fail "bare LF trailer accepted")]))))
@@ -541,11 +534,11 @@
       (trailer.HttpResponseTrailerLimits 1 1 1 1 1 1)
       (sample-policy)
       (http_types.header-name-set-empty))
-      [(trailer.HttpResponseTrailerParserNewErr error)
+      [(HttpResponseTrailerParserNewErr error)
         (begin
           (test.assert-false error.poison-connection "invalid limits are local")
           (match error.kind
-            [(trailer.HttpResponseTrailerInvalidLimits) unit]
+            [(HttpResponseTrailerInvalidLimits) unit]
             [_ (fail "invalid trailer limit kind")]))]
       [_ (fail "invalid trailer limits accepted")])
     (let
@@ -556,12 +549,12 @@
       (match (trailer.response-trailer-parser-feed
         (new-parser-with limits (http_types.header-name-set-empty))
         view)
-        [(trailer.HttpResponseTrailerFeedErr _ error consumed)
+        [(HttpResponseTrailerFeedErr _ error consumed)
           (begin
             (test.assert-i64-eq consumed 9 "section cap failing byte consumed")
             (test.assert-i64-eq error.offset 8 "section cap offset")
             (match error.kind
-              [(trailer.HttpResponseTrailerSectionTooLarge) unit]
+              [(HttpResponseTrailerSectionTooLarge) unit]
               [_ (fail "section cap kind")]))]
         [_ (fail "trailer section cap exceeded")]))
     (let
@@ -575,14 +568,14 @@
         (match (trailer.response-trailer-parser-feed
           (new-parser-with (clone limits) (http_types.header-name-set-empty))
           exact-view)
-          [(trailer.HttpResponseTrailerFeedComplete _ _) unit]
+          [(HttpResponseTrailerFeedComplete _ _) unit]
           [_ (fail "exact retained trailer cap rejected")])
         (match (trailer.response-trailer-parser-feed
           (new-parser-with limits (http_types.header-name-set-empty))
           over-view)
-          [(trailer.HttpResponseTrailerFeedErr _ error _)
+          [(HttpResponseTrailerFeedErr _ error _)
             (match error.kind
-              [(trailer.HttpResponseTrailerRetainedBytesExceeded) unit]
+              [(HttpResponseTrailerRetainedBytesExceeded) unit]
               [_ (fail "retained trailer cap kind")])]
           [_ (fail "retained trailer cap exceeded")])))
     (let
@@ -593,11 +586,11 @@
       (match (trailer.response-trailer-parser-feed
         (new-parser-with limits (http_types.header-name-set-empty))
         view)
-        [(trailer.HttpResponseTrailerFeedErr _ error _)
+        [(HttpResponseTrailerFeedErr _ error _)
           (match error.kind
-            [(trailer.HttpResponseTrailerPolicyError policy-kind)
+            [(HttpResponseTrailerPolicyError policy-kind)
               (match policy-kind
-                [(trailer_policy.HttpTrailerTooManyFields) unit]
+                [(HttpTrailerTooManyFields) unit]
                 [_ (fail "trailer count policy kind")])]
             [_ (fail "trailer count wrapper kind")])]
         [_ (fail "trailer field-count cap exceeded")]))))
@@ -610,7 +603,7 @@
       [parser : trailer.HttpResponseTrailerParser (new-parser)]
       [capacity : i64 (byte_buf.capacity (& parser.line))]
       (match (trailer.response-trailer-parser-feed parser view)
-        [(trailer.HttpResponseTrailerFeedNeedInput next consumed)
+        [(HttpResponseTrailerFeedNeedInput next consumed)
           (begin
             (test.assert-i64-eq consumed 0 "empty trailer feed consumed")
             (test.assert-i64-eq
@@ -618,11 +611,11 @@
               capacity
               "empty trailer feed allocation-free")
             (match (trailer.response-trailer-parser-finish next)
-              [(trailer.HttpResponseTrailerFinishErr _ error)
+              [(HttpResponseTrailerFinishErr _ error)
                 (begin
                   (test.assert-i64-eq error.offset 0 "empty EOF offset")
                   (match error.kind
-                    [(trailer.HttpResponseTrailerTruncatedTerminator) unit]
+                    [(HttpResponseTrailerTruncatedTerminator) unit]
                     [_ (fail "empty EOF phase")]))]
               [_ (fail "empty open parser finished complete")]))]
         [_ (fail "empty feed changed parser state")]))
@@ -630,13 +623,13 @@
       [wire : String "X-One"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedNeedInput next _)
+        [(HttpResponseTrailerFeedNeedInput next _)
           (match (trailer.response-trailer-parser-finish next)
-            [(trailer.HttpResponseTrailerFinishErr _ error)
+            [(HttpResponseTrailerFinishErr _ error)
               (begin
                 (test.assert-i64-eq error.offset 5 "truncated field offset")
                 (match error.kind
-                  [(trailer.HttpResponseTrailerTruncatedField) unit]
+                  [(HttpResponseTrailerTruncatedField) unit]
                   [_ (fail "truncated field phase")]))]
             [_ (fail "truncated field completed")])]
         [_ (fail "partial field feed result")]))
@@ -644,15 +637,15 @@
       [wire : String "X-One\r"]
       [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
       (match (trailer.response-trailer-parser-feed (new-parser) view)
-        [(trailer.HttpResponseTrailerFeedNeedInput next _)
+        [(HttpResponseTrailerFeedNeedInput next _)
           (match (trailer.response-trailer-parser-finish next)
-            [(trailer.HttpResponseTrailerFinishErr _ error)
+            [(HttpResponseTrailerFinishErr _ error)
               (begin
                 (test.assert-i64-eq error.offset 5 "dangling CR offset")
                 (match error.kind
-                  [(trailer.HttpResponseTrailerFieldError field-kind)
+                  [(HttpResponseTrailerFieldError field-kind)
                     (match field-kind
-                      [(http_types.HttpBareCarriageReturn) unit]
+                      [(HttpBareCarriageReturn) unit]
                       [_ (fail "dangling CR field kind")])]
                   [_ (fail "dangling CR wrapper")]))]
             [_ (fail "dangling CR completed")])]
@@ -668,9 +661,9 @@
         (trailer.default-response-trailer-limits)
         corrupt-policy
         (http_types.header-name-set-empty))
-        [(trailer.HttpResponseTrailerParserNewErr error)
+        [(HttpResponseTrailerParserNewErr error)
           (match error.kind
-            [(trailer.HttpResponseTrailerCorruptPolicy) unit]
+            [(HttpResponseTrailerCorruptPolicy) unit]
             [_ (fail "corrupt trailer policy construction kind")])]
         [_ (fail "corrupt trailer policy accepted")]))
     (let
@@ -680,9 +673,9 @@
         (trailer.default-response-trailer-limits)
         (sample-policy)
         corrupt-declared)
-        [(trailer.HttpResponseTrailerParserNewErr error)
+        [(HttpResponseTrailerParserNewErr error)
           (match error.kind
-            [(trailer.HttpResponseTrailerInvalidDeclaredNames) unit]
+            [(HttpResponseTrailerInvalidDeclaredNames) unit]
             [_ (fail "corrupt declared names construction kind")])]
         [_ (fail "corrupt declared names accepted")]))))
 

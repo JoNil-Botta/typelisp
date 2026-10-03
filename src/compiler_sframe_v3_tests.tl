@@ -171,20 +171,20 @@
   [limits : (& limits sframe.CompilerSframeV3Limits)]
   [code : i64]) : bool
   (match (sframe.compiler-sframe-v3-decode bytes 0 limits)
-    [(sframe.ResultCompilerSframeV3Image.Err error) (= error.code code)]
-    [(sframe.ResultCompilerSframeV3Image.Ok _) false]))
+    [(Err error) (= error.code code)]
+    [(Ok _) false]))
 
 (define (sframe-v3-test-rule-fixed?
   [rule : (& rule sframe.CompilerSframeV3Rule)]
   [expected : i64]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(sframe.CompilerSframeV3Rule.Fixed value) (= value expected)]
+    [(Fixed value) (= value expected)]
     [_ false]))
 
 (define (sframe-v3-test-rule-unavailable?
   [rule : (& rule sframe.CompilerSframeV3Rule)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(sframe.CompilerSframeV3Rule.Unavailable) true]
+    [(Unavailable) true]
     [_ false]))
 
 (define (sframe-v3-test-rule-implicit?
@@ -192,7 +192,7 @@
   [deref? : bool]
   [expected : i64]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(sframe.CompilerSframeV3Rule.Implicit actual-deref? value)
+    [(Implicit actual-deref? value)
       (and (= actual-deref? deref?) (= value expected))]
     [_ false]))
 
@@ -204,8 +204,8 @@
     (and
       (sframe-v3-test-independent-binutils-oracle? (& golden))
       (match (sframe.compiler-sframe-v3-decode (& golden) 0 (& limits))
-        [(sframe.ResultCompilerSframeV3Image.Err _) false]
-        [(sframe.ResultCompilerSframeV3Image.Ok image)
+        [(Err _) false]
+        [(Ok image)
           (let
             [first : sframe.CompilerSframeV3Function
               (owned_view.compiler-owned-array-element-shared-view
@@ -243,9 +243,8 @@
               (= second-row.cfa-offset 16)
               (sframe-v3-test-rule-implicit? (& second-row.fp-rule) true -16)
               (match (sframe.compiler-sframe-v3-encode (& image) 0 (& limits))
-                [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-                [(sframe.ResultCompilerSframeV3Bytes.Ok encoded)
-                  (sframe-v3-test-bytes-eq? (& golden) (& encoded))])))]))))
+                [(Err _) false]
+                [(Ok encoded) (sframe-v3-test-bytes-eq? (& golden) (& encoded))])))]))))
 
 (define (sframe-v3-test-linked-golden-round-trip?) : bool
   (let
@@ -260,8 +259,8 @@
       (sframe-v3-test-write-i64! (&mut linked) 28 -4124)
       (sframe-v3-test-write-i64! (&mut linked) 44 -4138)
       (match (sframe.compiler-sframe-v3-decode (& linked) 0x402000 (& limits))
-        [(sframe.ResultCompilerSframeV3Image.Err _) false]
-        [(sframe.ResultCompilerSframeV3Image.Ok image)
+        [(Err _) false]
+        [(Ok image)
           (let
             [first : sframe.CompilerSframeV3Function
               (owned_view.compiler-owned-array-element-shared-view
@@ -283,9 +282,8 @@
                 (& image)
                 0x402000
                 (& limits))
-                [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-                [(sframe.ResultCompilerSframeV3Bytes.Ok encoded)
-                  (sframe-v3-test-bytes-eq? (& linked) (& encoded))])))]))))
+                [(Err _) false]
+                [(Ok encoded) (sframe-v3-test-bytes-eq? (& linked) (& encoded))])))]))))
 
 (define (sframe-v3-test-section-relative-normalization?) : bool
   (let
@@ -297,8 +295,8 @@
       (sframe-v3-test-write-i64! (&mut bytes) 28 72)
       (sframe-v3-test-write-i64! (&mut bytes) 44 172)
       (match (sframe.compiler-sframe-v3-decode (& bytes) 1000 (& limits))
-        [(sframe.ResultCompilerSframeV3Image.Err _) false]
-        [(sframe.ResultCompilerSframeV3Image.Ok image)
+        [(Err _) false]
+        [(Ok image)
           (let
             [first : sframe.CompilerSframeV3Function
               (owned_view.compiler-owned-array-element-shared-view
@@ -316,16 +314,16 @@
                 (& image)
                 1000
                 (& limits))
-                [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-                [(sframe.ResultCompilerSframeV3Bytes.Ok canonical)
+                [(Err _) false]
+                [(Ok canonical)
                   (and
                     (= (array-ref canonical 3) (cast 4 : u8))
                     (match (sframe.compiler-sframe-v3-decode
                       (& canonical)
                       1000
                       (& limits))
-                      [(sframe.ResultCompilerSframeV3Image.Err _) false]
-                      [(sframe.ResultCompilerSframeV3Image.Ok normalized)
+                      [(Err _) false]
+                      [(Ok normalized)
                         (let
                           [normalized-second : sframe.CompilerSframeV3Function
                             (owned_view.compiler-owned-array-element-shared-view
@@ -346,24 +344,24 @@
           sframe.compiler-sframe-v3-dwarf-rsp
           false
           8
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Unavailable))
+          (Fixed -8)
+          (Unavailable))
         (sframe.CompilerSframeV3Row
           2
           false
           sframe.compiler-sframe-v3-dwarf-rsp
           false
           16
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Unavailable))
+          (Fixed -8)
+          (Unavailable))
         (sframe.CompilerSframeV3Row
           5
           false
           sframe.compiler-sframe-v3-dwarf-rbp
           false
           16
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Implicit true -16)))]
+          (Fixed -8)
+          (Implicit true -16)))]
     [functions : (__tl_dyn-array sframe.CompilerSframeV3Function)
       (__tl_make-array
         (sframe.CompilerSframeV3Function 101 18 true 6 false false 0 0 0 3))]
@@ -381,20 +379,20 @@
         (& function)
         (& image.rows)
         109)
-        [(sframe.ResultCompilerSframeV3RowIndex.Ok index) (= index 1)]
-        [(sframe.ResultCompilerSframeV3RowIndex.Err _) false])
+        [(Ok index) (= index 1)]
+        [(Err _) false])
       (match (sframe.compiler-sframe-v3-row-index-for-pc
         (& function)
         (& image.rows)
         112)
-        [(sframe.ResultCompilerSframeV3RowIndex.Ok index) (= index 2)]
-        [(sframe.ResultCompilerSframeV3RowIndex.Err _) false])
+        [(Ok index) (= index 2)]
+        [(Err _) false])
       (match (sframe.compiler-sframe-v3-encode (& image) 40 (& limits))
-        [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-        [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+        [(Err _) false]
+        [(Ok bytes)
           (match (sframe.compiler-sframe-v3-decode (& bytes) 40 (& limits))
-            [(sframe.ResultCompilerSframeV3Image.Err _) false]
-            [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+            [(Err _) false]
+            [(Ok decoded)
               (let
                 [decoded-function : sframe.CompilerSframeV3Function
                   (owned_view.compiler-owned-array-element-shared-view
@@ -407,9 +405,8 @@
                     (& decoded-function)
                     (& decoded.rows)
                     109)
-                    [(sframe.ResultCompilerSframeV3RowIndex.Ok index)
-                      (= index 1)]
-                    [(sframe.ResultCompilerSframeV3RowIndex.Err _) false])))])]))))
+                    [(Ok index) (= index 1)]
+                    [(Err _) false])))])]))))
 
 (define (sframe-v3-test-flex-image) : sframe.CompilerSframeV3Image
   (let
@@ -421,16 +418,16 @@
           12
           false
           300
-          (sframe.CompilerSframeV3Rule.Register 16 false 0)
-          (sframe.CompilerSframeV3Rule.Implicit true -40000))
+          (Register 16 false 0)
+          (Implicit true -40000))
         (sframe.CompilerSframeV3Row
           65000
           false
           7
           false
           8
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Implicit true -16)))]
+          (Fixed -8)
+          (Implicit true -16)))]
     [functions : (__tl_dyn-array sframe.CompilerSframeV3Function)
       (__tl_make-array
         (sframe.CompilerSframeV3Function 900000 70000 false 0 true true 0 0 0 2))]
@@ -442,11 +439,11 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-plan (& image) (& limits))
-      [(sframe.ResultCompilerSframeV3Plan.Err _) false]
-      [(sframe.ResultCompilerSframeV3Plan.Ok plan)
+      [(Err _) false]
+      [(Ok plan)
         (match (sframe.compiler-sframe-v3-encode (& image) 500000 (& limits))
-          [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-          [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+          [(Err _) false]
+          [(Ok bytes)
             ;; 28-byte header + 16-byte index; attr info selects 4-byte starts
             ;; and signal, first row info selects six 4-byte data words.
             (if (and
@@ -458,8 +455,8 @@
                 (& bytes)
                 500000
                 (& limits))
-                [(sframe.ResultCompilerSframeV3Image.Err _) false]
-                [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+                [(Err _) false]
+                [(Ok decoded)
                   (let
                     [function : sframe.CompilerSframeV3Function
                       (owned_view.compiler-owned-array-element-shared-view
@@ -475,10 +472,7 @@
                       (= first.cfa-register 12))
                       (match (owned_view.compiler-owned-reference-shared-view
                         (& first.ra-rule))
-                        [(sframe.CompilerSframeV3Rule.Register
-                            register
-                            deref?
-                            offset)
+                        [(Register register deref? offset)
                           (and (= register 16) (not deref?) (= offset 0))]
                         [_ false])
                       false))])
@@ -494,16 +488,16 @@
           sframe.compiler-sframe-v3-dwarf-rsp
           false
           8
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Unavailable))
+          (Fixed -8)
+          (Unavailable))
         (sframe.CompilerSframeV3Row
           5
           true
           0
           false
           0
-          (sframe.CompilerSframeV3Rule.Unavailable)
-          (sframe.CompilerSframeV3Rule.Unavailable)))]
+          (Unavailable)
+          (Unavailable)))]
     [functions : (__tl_dyn-array sframe.CompilerSframeV3Function)
       (__tl_make-array
         (sframe.CompilerSframeV3Function 100 10 false 0 false false 0 0 0 2))]
@@ -512,11 +506,11 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-encode (& image) 0 (& limits))
-      [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-      [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         (match (sframe.compiler-sframe-v3-decode (& bytes) 0 (& limits))
-          [(sframe.ResultCompilerSframeV3Image.Err _) false]
-          [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+          [(Err _) false]
+          [(Ok decoded)
             (let
               [function : sframe.CompilerSframeV3Function
                 (owned_view.compiler-owned-array-element-shared-view
@@ -540,11 +534,11 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-encode (& image) 100 (& limits))
-      [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-      [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         (match (sframe.compiler-sframe-v3-decode (& bytes) 100 (& limits))
-          [(sframe.ResultCompilerSframeV3Image.Err _) false]
-          [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+          [(Err _) false]
+          [(Ok decoded)
             (let
               [function : sframe.CompilerSframeV3Function
                 (owned_view.compiler-owned-array-element-shared-view
@@ -566,16 +560,16 @@
           sframe.compiler-sframe-v3-dwarf-rsp
           false
           8
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Unavailable))
+          (Fixed -8)
+          (Unavailable))
         (sframe.CompilerSframeV3Row
           256
           false
           sframe.compiler-sframe-v3-dwarf-rsp
           false
           200
-          (sframe.CompilerSframeV3Rule.Fixed -8)
-          (sframe.CompilerSframeV3Rule.Unavailable)))]
+          (Fixed -8)
+          (Unavailable)))]
     [functions : (__tl_dyn-array sframe.CompilerSframeV3Function)
       (__tl_make-array
         (sframe.CompilerSframeV3Function 1000 300 false 0 false false 0 0 0 2))]
@@ -584,8 +578,8 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-encode (& image) 0 (& limits))
-      [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-      [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         ;; FRE type one selects 2-byte row starts.  The second row independently
         ;; selects 2-byte signed data while the first stays at one byte.
         (and
@@ -594,8 +588,8 @@
           (= (array-ref bytes 54) (cast 1 : u8))
           (= (array-ref bytes 55) (cast 35 : u8))
           (match (sframe.compiler-sframe-v3-decode (& bytes) 0 (& limits))
-            [(sframe.ResultCompilerSframeV3Image.Err _) false]
-            [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+            [(Err _) false]
+            [(Ok decoded)
               (let
                 [function : sframe.CompilerSframeV3Function
                   (owned_view.compiler-owned-array-element-shared-view
@@ -689,8 +683,8 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-encode (& image) 500000 (& limits))
-      [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-      [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         (begin
           ;; First FLEX control begins at 54; set reserved bit two.
           (set!
@@ -707,8 +701,8 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-encode (& image) 500000 (& limits))
-      [(sframe.ResultCompilerSframeV3Bytes.Err _) false]
-      [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+      [(Err _) false]
+      [(Ok bytes)
         (begin
           ;; A zero control is an omitted/padding word, never a CFA rule.
           (set! (array-ref bytes 54) (cast 0 : u8))
@@ -733,29 +727,28 @@
         0
         (& supported)
         (& limits))
-        [(sframe.ResultCompilerSframeV3Image.Ok _) true]
-        [(sframe.ResultCompilerSframeV3Image.Err _) false])
+        [(Ok _) true]
+        [(Err _) false])
       (match (sframe.compiler-sframe-v3-decode-with-policy
         (& golden)
         0
         (& unsupported)
         (& limits))
-        [(sframe.ResultCompilerSframeV3Image.Err error)
-          (= error.code sframe.compiler-sframe-v3-error-dialect)]
-        [(sframe.ResultCompilerSframeV3Image.Ok _) false])
+        [(Err error) (= error.code sframe.compiler-sframe-v3-error-dialect)]
+        [(Ok _) false])
       (match (sframe.compiler-sframe-v3-plan-with-policy
         (& image)
         (& supported)
         (& limits))
-        [(sframe.ResultCompilerSframeV3Plan.Ok _) true]
-        [(sframe.ResultCompilerSframeV3Plan.Err _) false])
+        [(Ok _) true]
+        [(Err _) false])
       (match (sframe.compiler-sframe-v3-encode-with-policy
         (& image)
         40
         (& supported)
         (& limits))
-        [(sframe.ResultCompilerSframeV3Bytes.Ok _) true]
-        [(sframe.ResultCompilerSframeV3Bytes.Err _) false]))))
+        [(Ok _) true]
+        [(Err _) false]))))
 
 (test
   compiler-sframe-v3-dialect-pin
@@ -780,8 +773,8 @@
     [limits : sframe.CompilerSframeV3Limits
       (sframe.compiler-sframe-v3-default-limits)]
     (match (sframe.compiler-sframe-v3-decode (& golden) 0 (& limits))
-      [(sframe.ResultCompilerSframeV3Image.Ok _) unit]
-      [(sframe.ResultCompilerSframeV3Image.Err _) (string.tl_oob_abort)])))
+      [(Ok _) unit]
+      [(Err _) (string.tl_oob_abort)])))
 
 (test
   compiler-sframe-v3-binutils-golden-round-trip

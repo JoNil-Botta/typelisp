@@ -21,11 +21,11 @@
     [done : Done (Done 2)]
     [qualified : i64
       (match (dep.Outcome.Ok 1)
-        [(dep.Outcome.Ok v) v]
-        [(dep.Outcome.Fail _) 0])]
+        [(Ok v) v]
+        [(Fail _) 0])]
     [ended : bool
       (match (iterator.IntoNext.Done)
-        [(iterator.IntoNext.Done) true]
+        [(Done) true]
         [_ false])]
     (if ended
       (+ ok.v done.v (dep.unwrap (dep.wrap 4)) (Fail 4) qualified)

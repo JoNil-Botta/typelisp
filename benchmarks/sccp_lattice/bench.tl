@@ -403,7 +403,7 @@
   (if (>= i n)
     unit
     (begin
-      (set! (array-ref env.slots i) (SccpValue.Unknown))
+      (set! (array-ref env.slots i) (Unknown))
       (sccp-env-fill-unknown! env n (+ i 1)))))
 
 ;; opt-sccp-env-lookup: an out-of-range var reads Unknown, the same default the
@@ -411,15 +411,15 @@
 (define (sccp-env-lookup-in [env : (& e SccpEnv)] [var : i64]) : SccpValue
   (if (and (>= var 0) (< var env.cap))
     (clone (array-ref env.slots var))
-    (SccpValue.Unknown)))
+    (Unknown)))
 
 ;; The lattice tag alone, read in place: 0 Unknown, 1 Const, 2 Overdefined.
 (define (sccp-env-tag-in [env : (& e SccpEnv)] [var : i64]) : i64
   (if (and (>= var 0) (< var env.cap))
     (match (array-ref env.slots var)
-      [(SccpValue.Unknown) 0]
-      [(SccpValue.Const _ _ _) 1]
-      [(SccpValue.Overdefined) 2])
+      [(Unknown) 0]
+      [(Const _ _ _) 1]
+      [(Overdefined) 2])
     0))
 
 ;; The Const payload field `field` (0 kind, 1 value, 2 type), read in place.
@@ -428,7 +428,7 @@
   [var : i64]
   [field : i64]) : i64
   (match (array-ref env.slots var)
-    [(SccpValue.Const kind value ty)
+    [(Const kind value ty)
       (cond [(= field 0) kind] [(= field 1) value] [else ty])]
     [_ 0]))
 
@@ -488,17 +488,17 @@
 ;; --- opt-sccp-value-eq / opt-sccp-join ---------------------------------------
 (define (sccp-value-eq [a : (& a SccpValue)] [b : (& b SccpValue)]) : bool
   (match a
-    [(SccpValue.Unknown)
+    [(Unknown)
       (match b
-        [(SccpValue.Unknown) true]
+        [(Unknown) true]
         [_ false])]
-    [(SccpValue.Overdefined)
+    [(Overdefined)
       (match b
-        [(SccpValue.Overdefined) true]
+        [(Overdefined) true]
         [_ false])]
-    [(SccpValue.Const ak av aty)
+    [(Const ak av aty)
       (match b
-        [(SccpValue.Const bk bv bty)
+        [(Const bk bv bty)
           (and
             (= (deref ak) (deref bk))
             (= (deref av) (deref bv))
@@ -507,25 +507,23 @@
 
 (define (sccp-join [old : (& o SccpValue)] [new : (& n SccpValue)]) : SccpValue
   (match old
-    [(SccpValue.Unknown)
+    [(Unknown)
       (match new
-        [(SccpValue.Unknown) (SccpValue.Unknown)]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-        [(SccpValue.Const nk nv nty)
-          (SccpValue.Const (deref nk) (deref nv) (deref nty))])]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-    [(SccpValue.Const ok ov oty)
+        [(Unknown) (Unknown)]
+        [(Overdefined) (Overdefined)]
+        [(Const nk nv nty) (Const (deref nk) (deref nv) (deref nty))])]
+    [(Overdefined) (Overdefined)]
+    [(Const ok ov oty)
       (match new
-        [(SccpValue.Unknown)
-          (SccpValue.Const (deref ok) (deref ov) (deref oty))]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-        [(SccpValue.Const nk nv nty)
+        [(Unknown) (Const (deref ok) (deref ov) (deref oty))]
+        [(Overdefined) (Overdefined)]
+        [(Const nk nv nty)
           (if (and
             (= (deref ok) (deref nk))
             (= (deref ov) (deref nv))
             (= (deref oty) (deref nty)))
-            (SccpValue.Const (deref ok) (deref ov) (deref oty))
-            (SccpValue.Overdefined))])]))
+            (Const (deref ok) (deref ov) (deref oty))
+            (Overdefined))])]))
 
 ;; opt-sccp-state-bind: join the incoming value onto the slot; when the join
 ;; moves the slot, record it and raise the changed flag.
@@ -633,17 +631,17 @@
     (cond
       [(or (= klass sccp-class-sint) (= klass sccp-class-uint))
         (if (= kind sccp-vk-int)
-          (SccpValue.Const sccp-vk-int (sccp-normalize-int-to-i64 value ty) ty)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (sccp-normalize-int-to-i64 value ty) ty)
+          (Overdefined))]
       [(= klass sccp-class-char)
         (if (= kind sccp-vk-int)
-          (SccpValue.Const sccp-vk-int (bit-and value 255) sccp-ty-char)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (bit-and value 255) sccp-ty-char)
+          (Overdefined))]
       [(= klass sccp-class-bool)
         (if (= kind sccp-vk-bool)
-          (SccpValue.Const sccp-vk-bool value sccp-ty-bool)
-          (SccpValue.Overdefined))]
-      [else (SccpValue.Overdefined)])))
+          (Const sccp-vk-bool value sccp-ty-bool)
+          (Overdefined))]
+      [else (Overdefined)])))
 
 ;; opt-sccp-immediate over opt-default-immediate-type.
 (define (sccp-immediate [kind : i64] [value : i64] [ty : i64]) : SccpValue
@@ -662,7 +660,7 @@
 (define (sccp-value [kind : i64] [payload : i64] [ty : i64]) : SccpValue
   (cond
     [(= kind sccp-vk-var) (sccp-env-lookup payload)]
-    [(= kind sccp-vk-none) (SccpValue.Unknown)]
+    [(= kind sccp-vk-none) (Unknown)]
     [else (sccp-immediate kind payload ty)]))
 
 ;; opt-binop-operand-type.
@@ -762,13 +760,13 @@
   [operand-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? rhs-ty) (= rhs-kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [count : i64 (sccp-normalize-int-to-i64 rhs-value rhs-ty)]
       (if (not
         (sccp-shift-count-valid? count rhs-ty (sccp-int-width operand-ty)))
-        (SccpValue.Overdefined)
-        (SccpValue.Const
+        (Overdefined)
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (if (= op sccp-op-shl)
@@ -786,40 +784,40 @@
   [rhs-value : i64]
   [ty : i64]) : SccpValue
   (if (not (and (= lhs-kind sccp-vk-bool) (= rhs-kind sccp-vk-bool)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [a : bool (not (= lhs-value 0))]
       [b : bool (not (= rhs-value 0))]
       (cond
         [(= op sccp-op-and)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (and a b)
               1
               0)
             ty)]
         [(= op sccp-op-or)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (or a b)
               1
               0)
             ty)]
         [(= op sccp-op-eq)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (= lhs-value rhs-value)
               1
               0)
             ty)]
         [(= op sccp-op-ne)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (= lhs-value rhs-value)
               0
               1)
             ty)]
-        [else (SccpValue.Overdefined)]))))
+        [else (Overdefined)]))))
 
 ;; opt-fold-int-char-binop's arithmetic arms: every one of these is gated on
 ;; `opt-integer-type?`, so `char` operands fall through to Overdefined.
@@ -830,47 +828,38 @@
   [operand-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (sccp-integer-type? operand-ty))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (cond
       [(= op sccp-op-add)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (+ a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (+ a b) operand-ty) ty)]
       [(= op sccp-op-sub)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (- a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (- a b) operand-ty) ty)]
       [(= op sccp-op-mul)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (* a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (* a b) operand-ty) ty)]
       [(= op sccp-op-bit-and)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-and a b) operand-ty)
           ty)]
       [(= op sccp-op-bit-or)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-or a b) operand-ty)
           ty)]
       [(= op sccp-op-bit-xor)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-xor a b) operand-ty)
           ty)]
       [(or (= op sccp-op-div) (= op sccp-op-safe-div))
         (if (sccp-divmod-valid? a b operand-ty)
-          (SccpValue.Const sccp-vk-int (sccp-fold-div-value a b operand-ty) ty)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (sccp-fold-div-value a b operand-ty) ty)
+          (Overdefined))]
       [(or (= op sccp-op-mod) (= op sccp-op-safe-mod))
         (if (sccp-divmod-valid? a b operand-ty)
-          (SccpValue.Const sccp-vk-int (sccp-fold-mod-value a b operand-ty) ty)
-          (SccpValue.Overdefined))]
-      [else (SccpValue.Overdefined)])))
+          (Const sccp-vk-int (sccp-fold-mod-value a b operand-ty) ty)
+          (Overdefined))]
+      [else (Overdefined)])))
 
 ;; opt-fold-int-char-binop.
 (define (sccp-fold-int-char-binop
@@ -883,13 +872,13 @@
   [rhs-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? operand-ty) (= lhs-kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [a : i64 (sccp-normalize-int-to-i64 lhs-value operand-ty)]
       (if (or (= op sccp-op-shl) (= op sccp-op-shr))
         (sccp-fold-shift op a rhs-kind rhs-value rhs-ty operand-ty ty)
         (if (not (= rhs-kind sccp-vk-int))
-          (SccpValue.Overdefined)
+          (Overdefined)
           (let
             [b : i64 (sccp-normalize-int-to-i64 rhs-value operand-ty)]
             (cond
@@ -900,21 +889,21 @@
                   (= op sccp-op-le)
                   (= op sccp-op-gt)
                   (= op sccp-op-ge))
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (sccp-fold-compare op a b operand-ty)
                     1
                     0)
                   ty)]
               [(= op sccp-op-bit-test-eq)
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (= (bit-and a b) 0)
                     1
                     0)
                   ty)]
               [(= op sccp-op-bit-test-ne)
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (= (bit-and a b) 0)
                     0
@@ -948,7 +937,7 @@
           operand-ty
           rhs-ty-field
           ty)]
-      [else (SccpValue.Overdefined)])))
+      [else (Overdefined)])))
 
 ;; opt-sccp-fold-binop-value.
 (define (sccp-fold-binop-value
@@ -958,9 +947,9 @@
   [ty : i64]
   [rhs-ty-field : i64]) : SccpValue
   (match lhs
-    [(SccpValue.Const lk lv lty)
+    [(Const lk lv lty)
       (match rhs
-        [(SccpValue.Const rk rv rty)
+        [(Const rk rv rty)
           (sccp-fold-binop
             op
             (deref lk)
@@ -971,50 +960,49 @@
             (deref rty)
             ty
             rhs-ty-field)]
-        [(SccpValue.Unknown) (SccpValue.Unknown)]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)])]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+        [(Unknown) (Unknown)]
+        [(Overdefined) (Overdefined)])]
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; opt-fold-unop.
 (define (sccp-fold-unop [op : i64] [kind : i64] [value : i64] [ty : i64]) : SccpValue
   (cond
     [(= op sccp-op-neg)
       (if (and (sccp-integer-type? ty) (= kind sccp-vk-int))
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (- 0 (sccp-normalize-int-to-i64 value ty))
             ty)
           ty)
-        (SccpValue.Overdefined))]
+        (Overdefined))]
     [(= op sccp-op-not)
       (if (and (sccp-bool-type? ty) (= kind sccp-vk-bool))
-        (SccpValue.Const
+        (Const
           sccp-vk-bool
           (if (= value 0)
             1
             0)
           ty)
-        (SccpValue.Overdefined))]
+        (Overdefined))]
     [(= op sccp-op-bitnot)
       (if (and (sccp-integer-type? ty) (= kind sccp-vk-int))
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (bit-not (sccp-normalize-int-to-i64 value ty))
             ty)
           ty)
-        (SccpValue.Overdefined))]
-    [else (SccpValue.Overdefined)]))
+        (Overdefined))]
+    [else (Overdefined)]))
 
 ;; opt-sccp-fold-unop-value.
 (define (sccp-fold-unop-value [op : i64] [src : (& s SccpValue)] [ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
-      (sccp-fold-unop op (deref kind) (deref value) ty)]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+    [(Const kind value _) (sccp-fold-unop op (deref kind) (deref value) ty)]
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; opt-fold-cast over compiler-finite-cast-fold's integer arms.
 (define (sccp-fold-cast
@@ -1023,10 +1011,10 @@
   [from-ty : i64]
   [to-ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? from-ty) (= kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (if (not (sccp-int-or-char-type? to-ty))
-      (SccpValue.Overdefined)
-      (SccpValue.Const
+      (Overdefined)
+      (Const
         sccp-vk-int
         (sccp-normalize-int-to-i64
           (sccp-normalize-int-to-i64 value from-ty)
@@ -1039,10 +1027,10 @@
   [from-ty : i64]
   [to-ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
+    [(Const kind value _)
       (sccp-fold-cast (deref kind) (deref value) from-ty to-ty)]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; --- phis --------------------------------------------------------------------
 ;; opt-sccp-phi-input-value: an input from a predecessor that is not executable
@@ -1056,12 +1044,12 @@
     [id : i64 (sccp-cfg-index-id pred)]
     (if (and (>= id 0) (< id sccp-nblocks) (sccp-exec-ref id))
       (sccp-value kind value ty)
-      (SccpValue.Unknown))))
+      (Unknown))))
 
 ;; opt-sccp-phi-value: join(first, phi-value(rest)), Unknown at the end.
 (define (sccp-phi-value [base : i64] [count : i64] [ty : i64]) : SccpValue
   (if (<= count 0)
-    (SccpValue.Unknown)
+    (Unknown)
     (let
       [at : i64 (+ sccp-phi-base (* base 3))]
       [head : SccpValue
@@ -1082,7 +1070,7 @@
   [true-label : i64]
   [false-label : i64]) : unit
   (match (sccp-value kind payload sccp-ty-bool)
-    [(SccpValue.Const value-kind value _)
+    [(Const value-kind value _)
       (if (= value-kind sccp-vk-bool)
         (if (= value 0)
           (sccp-state-mark-executable false-label)
@@ -1090,11 +1078,11 @@
         (begin
           (sccp-state-mark-executable true-label)
           (sccp-state-mark-executable false-label)))]
-    [(SccpValue.Overdefined)
+    [(Overdefined)
       (begin
         (sccp-state-mark-executable true-label)
         (sccp-state-mark-executable false-label))]
-    [(SccpValue.Unknown) unit]))
+    [(Unknown) unit]))
 
 ;; opt-sccp-mark-switch-targets, over the block's successor row (index 0 is the
 ;; default label, which opt-sccp-process-instr marks first).
@@ -1121,7 +1109,7 @@
     [bkind : i64 (sccp-ref sccp-tokens (+ at 7))]
     (cond
       [(= op sccp-op-mov) (sccp-state-bind dst (sccp-value akind a ty))]
-      [(= op sccp-op-overdef) (sccp-state-bind dst (SccpValue.Overdefined))]
+      [(= op sccp-op-overdef) (sccp-state-bind dst (Overdefined))]
       [(= op sccp-op-cast)
         (let
           [src : SccpValue (sccp-value akind a ty2)]

@@ -5,8 +5,8 @@
 
 (define (lock-after-close [mutex : (& mutex mutex_i64.Mutex)]) : i64
   (match (mutex_i64.share mutex)
-    [(mutex_i64.ShareErr) 1]
-    [(mutex_i64.Shared alias)
+    [(ShareErr) 1]
+    [(Shared alias)
       (if (mutex_i64.close mutex)
         (with
           ([guard (mutex_i64.lock (& alias)) mutex_i64.unlock])
@@ -15,5 +15,5 @@
 
 (define (main) : i64
   (match (mutex_i64.create 7)
-    [(mutex_i64.CreateErr _) 1]
-    [(mutex_i64.CreateOk mutex) (lock-after-close (& mutex))]))
+    [(CreateErr _) 1]
+    [(CreateOk mutex) (lock-after-close (& mutex))]))

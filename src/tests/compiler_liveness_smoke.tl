@@ -8,25 +8,16 @@
   (let
     [args : ir.CompilerIrSpmdCallArgSeq
       (ir.compiler-ir-spmd-call-arg-seq2
-        (ir.CompilerIrSpmdCallArg.Arg
-          (ir.CompilerIrSpmdValueClass.Uniform)
-          (ir.CompilerIrValue.Var 21)
-          (live_tests.compiler-live-i64-ty))
-        (ir.CompilerIrSpmdCallArg.Arg
-          (ir.CompilerIrSpmdValueClass.Varying)
-          (ir.CompilerIrValue.Var 22)
-          (live_tests.compiler-live-i64-ty)))]
+        (Arg (Uniform) (Var 21) (live_tests.compiler-live-i64-ty))
+        (Arg (Varying) (Var 22) (live_tests.compiler-live-i64-ty)))]
     [instr : ir.CompilerIrInstr
       (ir.compiler-ir-test-spmd-private-call
         (ci.intern-generated-canonical-name "helper")
-        (ir.CompilerIrSpmdBackend.Avx512)
+        (Avx512)
         8
-        (ir.CompilerIrValue.Var 20)
+        (Var 20)
         args
-        (ir.CompilerIrSpmdCallResult.Value
-          6
-          (ir.CompilerIrSpmdValueClass.Varying)
-          (live_tests.compiler-live-i64-ty)))]
+        (Value 6 (Varying) (live_tests.compiler-live-i64-ty)))]
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses instr)
@@ -37,18 +28,11 @@
 
 (define (compiler-live-smoke-descriptor-pair-use-def-ok?) : bool
   (let
-    [kind : ir.CompilerIrDescriptorPairKind
-      (ir.CompilerIrDescriptorPairKind.OwnedString)]
+    [kind : ir.CompilerIrDescriptorPairKind (OwnedString)]
     [pack : ir.CompilerIrInstr
-      (ir.ir-instr-descriptor-pair-pack
-        3
-        (ir.CompilerIrValue.Var 1)
-        (ir.CompilerIrValue.Var 2)
-        kind)]
-    [data : ir.CompilerIrInstr
-      (ir.ir-instr-descriptor-pair-data 4 (ir.CompilerIrValue.Var 3))]
-    [length : ir.CompilerIrInstr
-      (ir.ir-instr-descriptor-pair-length 5 (ir.CompilerIrValue.Var 3))]
+      (ir.ir-instr-descriptor-pair-pack 3 (Var 1) (Var 2) kind)]
+    [data : ir.CompilerIrInstr (ir.ir-instr-descriptor-pair-data 4 (Var 3))]
+    [length : ir.CompilerIrInstr (ir.ir-instr-descriptor-pair-length 5 (Var 3))]
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses pack)

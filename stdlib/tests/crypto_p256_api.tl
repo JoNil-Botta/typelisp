@@ -48,19 +48,19 @@
 
 (define (kind-code [kind : p256.P256ErrorKind]) : i64
   (match kind
-    [(p256.P256InvalidLength) 1]
-    [(p256.P256NonCanonical) 2]
-    [(p256.P256Zero) 3]
-    [(p256.P256InvalidPrefix) 4]
-    [(p256.P256NotOnCurve) 5]
-    [(p256.P256Infinity) 6]))
+    [(P256InvalidLength) 1]
+    [(P256NonCanonical) 2]
+    [(P256Zero) 3]
+    [(P256InvalidPrefix) 4]
+    [(P256NotOnCurve) 5]
+    [(P256Infinity) 6]))
 
 (define (field [hex : String]) : p256.P256Field
   (let
     [buf : byte_buf.ByteBuf (hex-bytes hex)]
     (match (p256.field-from-bytes (byte_buf.as-bytes (& buf)))
-      [(p256.OkP256Field value) value]
-      [(p256.ErrP256Field _)
+      [(OkP256Field value) value]
+      [(ErrP256Field _)
         (begin
           (test.assert-true false "P-256 field fixture rejected")
           (p256.field-zero))])))
@@ -69,8 +69,8 @@
   (let
     [buf : byte_buf.ByteBuf (hex-bytes hex)]
     (match (p256.scalar-from-bytes (byte_buf.as-bytes (& buf)))
-      [(p256.OkP256Scalar value) value]
-      [(p256.ErrP256Scalar _)
+      [(OkP256Scalar value) value]
+      [(ErrP256Scalar _)
         (begin
           (test.assert-true false "P-256 scalar fixture rejected")
           (p256.scalar-zero))])))
@@ -79,8 +79,8 @@
   (let
     [buf : byte_buf.ByteBuf (hex-bytes hex)]
     (match (p256.public-point-parse (byte_buf.as-bytes (& buf)))
-      [(p256.OkP256PublicPoint value) (p256.public-point-to-point value)]
-      [(p256.ErrP256PublicPoint _)
+      [(OkP256PublicPoint value) (p256.public-point-to-point value)]
+      [(ErrP256PublicPoint _)
         (begin
           (test.assert-true false "P-256 point fixture rejected")
           (p256.point-identity))])))
@@ -107,18 +107,18 @@
   [hex : String]
   [message : String]) : unit
   (match (p256.point-to-public value)
-    [(p256.OkP256PublicPoint public)
+    [(OkP256PublicPoint public)
       (test.assert-true
         (string.eq (bytes-hex (p256.public-point-to-bytes public)) hex)
         message)]
-    [(p256.ErrP256PublicPoint _) (test.assert-true false message)]))
+    [(ErrP256PublicPoint _) (test.assert-true false message)]))
 
 (define (expect-field-error [hex : String] [kind : i64] [message : String]) : unit
   (let
     [buf : byte_buf.ByteBuf (hex-bytes hex)]
     (match (p256.field-from-bytes (byte_buf.as-bytes (& buf)))
-      [(p256.OkP256Field _) (test.assert-true false message)]
-      [(p256.ErrP256Field error)
+      [(OkP256Field _) (test.assert-true false message)]
+      [(ErrP256Field error)
         (test.assert-i64-eq (kind-code error.kind) kind message)])))
 
 (define (expect-scalar-error
@@ -126,8 +126,8 @@
   [kind : i64]
   [message : String]) : unit
   (match result
-    [(p256.OkP256Scalar _) (test.assert-true false message)]
-    [(p256.ErrP256Scalar error)
+    [(OkP256Scalar _) (test.assert-true false message)]
+    [(ErrP256Scalar error)
       (test.assert-i64-eq (kind-code error.kind) kind message)]))
 
 (define (expect-point-error
@@ -138,8 +138,8 @@
   (let
     [buf : byte_buf.ByteBuf (hex-bytes hex)]
     (match (p256.public-point-parse (byte_buf.as-bytes (& buf)))
-      [(p256.OkP256PublicPoint _) (test.assert-true false message)]
-      [(p256.ErrP256PublicPoint error)
+      [(OkP256PublicPoint _) (test.assert-true false message)]
+      [(ErrP256PublicPoint error)
         (begin
           (test.assert-i64-eq
             (kind-code error.kind)
@@ -181,12 +181,12 @@
         "b7bee4ece9320d42bfd66dc9e27d2a0676c19da086771233ed5815a07eb96e2d"
         "field negate")
       (match (p256.field-invert a)
-        [(p256.OkP256Field inverse)
+        [(OkP256Field inverse)
           (expect-field
             inverse
             "e735f7483530bbcdf9ca06782f2ca4e34b412c2b26b810ba8a0868e4da69b62b"
             "field invert")]
-        [(p256.ErrP256Field _) (test.assert-true false "field invert")])
+        [(ErrP256Field _) (test.assert-true false "field invert")])
       ;; Carry and reduction edges.
       (expect-field
         (p256.field-add p-minus-1 p-minus-1)
@@ -206,15 +206,15 @@
         "(p-1)+1")
       (test.assert-true (p256.field-zero? (p256.field-negate zero)) "-0")
       (match (p256.field-invert p-minus-1)
-        [(p256.OkP256Field inverse)
+        [(OkP256Field inverse)
           (expect-field
             inverse
             "ffffffff00000001000000000000000000000000fffffffffffffffffffffffe"
             "invert p-1")]
-        [(p256.ErrP256Field _) (test.assert-true false "invert p-1")])
+        [(ErrP256Field _) (test.assert-true false "invert p-1")])
       (match (p256.field-invert zero)
-        [(p256.OkP256Field _) (test.assert-true false "invert 0 must fail")]
-        [(p256.ErrP256Field error)
+        [(OkP256Field _) (test.assert-true false "invert 0 must fail")]
+        [(ErrP256Field error)
           (test.assert-i64-eq (kind-code error.kind) 3 "invert 0 is P256Zero")])
       ;; Canonical parsing: 0, 1 and p-1 are elements; p and above are not.
       (expect-field-error
@@ -261,12 +261,12 @@
         "1f8af9a3f10bc703506ade63b3e74e61f5cc64c1f96ec44a989d0f63239aab16"
         "scalar add")
       (match (p256.scalar-invert b)
-        [(p256.OkP256Scalar inverse)
+        [(OkP256Scalar inverse)
           (expect-scalar
             inverse
             "28eb6975e2c59d27f49d55d46b00036fd740d30d89024f95c0813beeb693616b"
             "scalar invert")]
-        [(p256.ErrP256Scalar _) (test.assert-true false "scalar invert")])
+        [(ErrP256Scalar _) (test.assert-true false "scalar invert")])
       (expect-scalar
         (p256.scalar-mul n-minus-1 n-minus-1)
         "0000000000000000000000000000000000000000000000000000000000000001"
@@ -285,20 +285,20 @@
         "zero is rejected where nonzero is required")
       (expect-scalar-error (p256.scalar-invert (p256.scalar-zero)) 3 "invert 0")
       (match (p256.scalar-from-bytes (byte_buf.as-bytes (& zero-buf)))
-        [(p256.OkP256Scalar zero)
+        [(OkP256Scalar zero)
           (test.assert-true (p256.scalar-zero? zero) "0 is a scalar")]
-        [(p256.ErrP256Scalar _) (test.assert-true false "0 is a scalar")])
+        [(ErrP256Scalar _) (test.assert-true false "0 is a scalar")])
       (match (p256.scalar-from-bytes-reduced (byte_buf.as-bytes (& max-buf)))
-        [(p256.OkP256Scalar reduced)
+        [(OkP256Scalar reduced)
           (expect-scalar
             reduced
             "00000000ffffffff00000000000000004319055258e8617b0c46353d039cdaae"
             "2^256-1 mod n")]
-        [(p256.ErrP256Scalar _) (test.assert-true false "reduced parse")])
+        [(ErrP256Scalar _) (test.assert-true false "reduced parse")])
       (match (p256.scalar-from-bytes-reduced (byte_buf.as-bytes (& n-buf)))
-        [(p256.OkP256Scalar reduced)
+        [(OkP256Scalar reduced)
           (test.assert-true (p256.scalar-zero? reduced) "n mod n")]
-        [(p256.ErrP256Scalar _) (test.assert-true false "reduced parse of n")])
+        [(ErrP256Scalar _) (test.assert-true false "reduced parse of n")])
       (expect-scalar
         (p256.scalar-from-field
           (field
@@ -370,9 +370,8 @@
         "associative")
       (test.assert-true (not (p256.point-eq? g identity)) "G is not O")
       (match (p256.point-to-public identity)
-        [(p256.OkP256PublicPoint _)
-          (test.assert-true false "O has no affine form")]
-        [(p256.ErrP256PublicPoint error)
+        [(OkP256PublicPoint _) (test.assert-true false "O has no affine form")]
+        [(ErrP256PublicPoint error)
           (test.assert-i64-eq (kind-code error.kind) 6 "O is P256Infinity")])
       ;; Public multiplication: 0, 1, 2, n-1, and the generator's order.
       (test.assert-true
@@ -446,18 +445,18 @@
       (point
         "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299")]
     (match (p256.scalar-from-bytes-reduced (byte_buf.as-bytes (& digest-buf)))
-      [(p256.ErrP256Scalar _) (test.assert-true false "digest scalar")]
-      [(p256.OkP256Scalar e)
+      [(ErrP256Scalar _) (test.assert-true false "digest scalar")]
+      [(OkP256Scalar e)
         (match (p256.scalar-invert s)
-          [(p256.ErrP256Scalar _) (test.assert-true false "s inverse")]
-          [(p256.OkP256Scalar w)
+          [(ErrP256Scalar _) (test.assert-true false "s inverse")]
+          [(OkP256Scalar w)
             (match (p256.point-to-public
               (p256.public-double-mul
                 (p256.scalar-mul e w)
                 (p256.scalar-mul r w)
                 public))
-              [(p256.ErrP256PublicPoint _) (test.assert-true false "R is O")]
-              [(p256.OkP256PublicPoint big-r)
+              [(ErrP256PublicPoint _) (test.assert-true false "R is O")]
+              [(OkP256PublicPoint big-r)
                 (test.assert-true
                   (p256.scalar-eq? (p256.scalar-from-field big-r.x) r)
                   "RFC 6979 A.2.5 signature verifies")])])])))
@@ -469,13 +468,13 @@
         (hex-bytes
           "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")]
       (match (p256.public-point-parse (byte_buf.as-bytes (& g-buf)))
-        [(p256.OkP256PublicPoint public)
+        [(OkP256PublicPoint public)
           (test.assert-true
             (string.eq
               (bytes-hex (p256.public-point-to-bytes public))
               "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5")
             "SEC1 round trip")]
-        [(p256.ErrP256PublicPoint _) (test.assert-true false "SEC1 generator")]))
+        [(ErrP256PublicPoint _) (test.assert-true false "SEC1 generator")]))
     (expect-point-error "04" 1 1 "short point")
     (expect-point-error "00" 1 1 "infinity encoding")
     (expect-point-error

@@ -127,14 +127,14 @@
   [alert : i64]
   [message : String]) : unit
   (match result
-    [(tls.TlsWireOk) (test.assert-true false (clone message))]
-    [(tls.TlsWireErr error)
+    [(TlsWireOk) (test.assert-true false (clone message))]
+    [(TlsWireErr error)
       (assert-error (& error) code offset alert (clone message))]))
 
 (define (expect-check-ok [result : tls.TlsWireCheck] [message : String]) : unit
   (match result
-    [(tls.TlsWireOk) unit]
-    [(tls.TlsWireErr error)
+    [(TlsWireOk) unit]
+    [(TlsWireErr error)
       (test.assert-owned-string-eq
         (tls.error-name error.code)
         "none"
@@ -329,7 +329,7 @@
                 (&mut reader)
                 (byte_buf.bytes-slice-view input cursor (- stop cursor))
                 protected)
-                [(tls.TlsRecordNeedMore consumed)
+                [(TlsRecordNeedMore consumed)
                   (begin
                     (test.assert-i64-eq
                       consumed
@@ -339,7 +339,7 @@
                       (tls.record-reader-mid-record? (& reader))
                       "a short piece leaves a partial record")
                     (set! cursor stop))]
-                [(tls.TlsRecordComplete consumed header)
+                [(TlsRecordComplete consumed header)
                   (begin
                     (test.assert-true
                       (> consumed 0)
@@ -355,7 +355,7 @@
                         header.legacy-version
                         (tls.record-reader-fragment (& reader))))
                     (set! cursor (+ cursor consumed)))]
-                [(tls.TlsRecordFailed error)
+                [(TlsRecordFailed error)
                   (test.assert-owned-string-eq
                     (tls.error-name error.code)
                     "none"
@@ -440,7 +440,7 @@
     [record : byte_buf.ByteBuf (hex-bytes (s3-ch-record))]
     [reader : tls.TlsRecordReader (tls.record-reader-new (limits))]
     (match (tls.record-reader-next! (&mut reader) (view (& record)) false)
-      [(tls.TlsRecordComplete consumed header)
+      [(TlsRecordComplete consumed header)
         (begin
           (test.assert-i64-eq consumed 201 "ClientHello record size")
           (test.assert-i64-eq header.content-type 22 "handshake record")
@@ -483,15 +483,15 @@
             cursor
             (- (byte_buf.len (& input)) cursor))
           protected)
-          [(tls.TlsRecordNeedMore consumed) (set! cursor (+ cursor consumed))]
-          [(tls.TlsRecordComplete consumed _) (set! cursor (+ cursor consumed))]
-          [(tls.TlsRecordFailed error)
+          [(TlsRecordNeedMore consumed) (set! cursor (+ cursor consumed))]
+          [(TlsRecordComplete consumed _) (set! cursor (+ cursor consumed))]
+          [(TlsRecordFailed error)
             (begin
               (assert-error (& error) code offset alert (clone message))
               (set! failed true))]))
       (test.assert-true failed (clone message))
       (match (tls.record-reader-next! (&mut reader) (view (& input)) protected)
-        [(tls.TlsRecordFailed error)
+        [(TlsRecordFailed error)
           (assert-error
             (& error)
             code
@@ -511,7 +511,7 @@
     [input : byte_buf.ByteBuf (hex-bytes hex)]
     [reader : tls.TlsRecordReader (tls.record-reader-new record-limits)]
     (match (tls.record-reader-next! (&mut reader) (view (& input)) protected)
-      [(tls.TlsRecordComplete consumed header)
+      [(TlsRecordComplete consumed header)
         (begin
           (test.assert-i64-eq
             consumed
@@ -769,18 +769,18 @@
         (&mut reader)
         (byte_buf.bytes-slice-view (view (& both)) 0 0)
         false)
-        [(tls.TlsRecordNeedMore consumed)
+        [(TlsRecordNeedMore consumed)
           (test.assert-i64-eq consumed 0 "empty input consumes nothing")]
         [_ (test.assert-true false "empty input needs more")])
       (match (tls.record-reader-next! (&mut reader) (view (& both)) false)
-        [(tls.TlsRecordComplete consumed _)
+        [(TlsRecordComplete consumed _)
           (test.assert-i64-eq consumed 95 "the reader stops at the record end")]
         [_ (test.assert-true false "first of two records")])
       (match (tls.record-reader-next!
         (&mut reader)
         (byte_buf.bytes-slice-view (view (& both)) 95 3)
         false)
-        [(tls.TlsRecordNeedMore consumed)
+        [(TlsRecordNeedMore consumed)
           (begin
             (test.assert-i64-eq consumed 3 "a partial header is buffered")
             (test.assert-i64-eq
@@ -795,7 +795,7 @@
         (&mut reader)
         (byte_buf.bytes-slice-view (view (& both)) 98 92)
         false)
-        [(tls.TlsRecordComplete consumed _)
+        [(TlsRecordComplete consumed _)
           (begin
             (test.assert-i64-eq consumed 92 "the rest completes the record")
             (assert-same
@@ -824,12 +824,10 @@
                   cursor
                   (smaller 50 (- (byte_buf.len (& stream)) cursor)))
                 true)
-                [(tls.TlsRecordNeedMore consumed)
+                [(TlsRecordNeedMore consumed) (set! cursor (+ cursor consumed))]
+                [(TlsRecordComplete consumed _)
                   (set! cursor (+ cursor consumed))]
-                [(tls.TlsRecordComplete consumed _)
-                  (set! cursor (+ cursor consumed))]
-                [(tls.TlsRecordFailed _)
-                  (test.assert-true false "stream decodes")]))
+                [(TlsRecordFailed _) (test.assert-true false "stream decodes")]))
             (set! round (+ round 1)))))
       (test.assert-i64-eq
         (- (profile.alloc-total) before)
@@ -849,7 +847,7 @@
         "01001500000000000000000000"
         "inner plaintext layout")
       (match (tls.decode-inner-plaintext (view (& padded)) (& big))
-        [(tls.TlsInnerPlaintextOk inner)
+        [(TlsInnerPlaintextOk inner)
           (begin
             (test.assert-i64-eq inner.content-type 21 "inner alert type")
             (test.assert-i64-eq inner.length 2 "inner alert length"))]
@@ -955,9 +953,9 @@
   (let
     [plaintext : byte_buf.ByteBuf (hex-bytes hex)]
     (match (tls.decode-inner-plaintext (view (& plaintext)) inner-limits)
-      [(tls.TlsInnerPlaintextErr error)
+      [(TlsInnerPlaintextErr error)
         (assert-error (& error) code offset alert (clone message))]
-      [(tls.TlsInnerPlaintextOk _) (test.assert-true false (clone message))])))
+      [(TlsInnerPlaintextOk _) (test.assert-true false (clone message))])))
 
 (define (expect-inner-ok
   [hex : String]
@@ -968,11 +966,11 @@
   (let
     [plaintext : byte_buf.ByteBuf (hex-bytes hex)]
     (match (tls.decode-inner-plaintext (view (& plaintext)) inner-limits)
-      [(tls.TlsInnerPlaintextOk inner)
+      [(TlsInnerPlaintextOk inner)
         (begin
           (test.assert-i64-eq inner.content-type content-type (clone message))
           (test.assert-i64-eq inner.length length (clone message)))]
-      [(tls.TlsInnerPlaintextErr error)
+      [(TlsInnerPlaintextErr error)
         (test.assert-owned-string-eq
           (tls.error-name error.code)
           "none"
@@ -1012,7 +1010,7 @@
               "fragments feed")
             (while draining
               (match (tls.handshake-reader-next! (&mut reader))
-                [(tls.TlsHandshakeReady msg-type body-length)
+                [(TlsHandshakeReady msg-type body-length)
                   (let
                     [message : (& reader bytes)
                       (tls.handshake-reader-message (& reader))]
@@ -1050,14 +1048,14 @@
                           (if ends-fragment
                             1
                             0)))))]
-                [(tls.TlsHandshakeNeedMore)
+                [(TlsHandshakeNeedMore)
                   (begin
                     (test.assert-bool-eq
                       (tls.handshake-reader-buffering? (& reader))
                       (!= (byte_buf.len (& result.frames)) stop)
                       "a partial message is buffered exactly when the fragment ends inside one")
                     (set! draining false))]
-                [(tls.TlsHandshakeFailed error)
+                [(TlsHandshakeFailed error)
                   (begin
                     (test.assert-owned-string-eq
                       (tls.error-name error.code)
@@ -1144,7 +1142,7 @@
             (tls.handshake-reader-at-record-boundary? (& reader))
             "an unread message is not on a boundary")
           (match (tls.handshake-reader-next! (&mut reader))
-            [(tls.TlsHandshakeReady msg-type body-length)
+            [(TlsHandshakeReady msg-type body-length)
               (begin
                 (test.assert-i64-eq msg-type 2 "ServerHello type")
                 (test.assert-i64-eq body-length 86 "ServerHello body"))]
@@ -1164,7 +1162,7 @@
             (tls.handshake-reader-feed! (&mut reader) (view (& sh-and-more)))
             "ServerHello with trailing bytes feeds")
           (match (tls.handshake-reader-next! (&mut reader))
-            [(tls.TlsHandshakeReady msg-type _)
+            [(TlsHandshakeReady msg-type _)
               (test.assert-i64-eq msg-type 2 "ServerHello first")]
             [_ (test.assert-true false "ServerHello reassembles")])
           (expect-check-error
@@ -1201,7 +1199,7 @@
             tls.alert-unexpected-message
             "another record inside a split message")
           (match (tls.handshake-reader-next! (&mut reader))
-            [(tls.TlsHandshakeFailed error)
+            [(TlsHandshakeFailed error)
               (assert-error
                 (& error)
                 tls.error-interleaved
@@ -1227,7 +1225,7 @@
             (tls.handshake-reader-feed! (&mut reader) (view (& one)))
             "a header alone feeds")
           (match (tls.handshake-reader-next! (&mut reader))
-            [(tls.TlsHandshakeNeedMore) unit]
+            [(TlsHandshakeNeedMore) unit]
             [_ (test.assert-true false "a header alone needs its body")])
           (test.assert-true
             (tls.handshake-reader-buffering? (& reader))
@@ -1321,7 +1319,7 @@
             (tls.handshake-reader-feed! (&mut reader) (view (& input)))
             "a body at the limit")
           (match (tls.handshake-reader-next! (&mut reader))
-            [(tls.TlsHandshakeReady msg-type body-length)
+            [(TlsHandshakeReady msg-type body-length)
               (begin
                 (test.assert-i64-eq msg-type 11 "limit message type")
                 (test.assert-i64-eq body-length 100 "limit message body"))]
@@ -1351,7 +1349,7 @@
                     "flight feeds")
                   (while draining
                     (match (tls.handshake-reader-next! (&mut reader))
-                      [(tls.TlsHandshakeReady _ _) unit]
+                      [(TlsHandshakeReady _ _) unit]
                       [_ (set! draining false)]))
                   (set! cursor (+ cursor count)))))
             (set! round (+ round 1)))))
@@ -1383,7 +1381,7 @@
             cursor
             (- (byte_buf.len (& records)) cursor))
           false)
-          [(tls.TlsRecordComplete consumed header)
+          [(TlsRecordComplete consumed header)
             (begin
               (set! cursor (+ cursor consumed))
               (set! count (+ count 1))
@@ -1398,7 +1396,7 @@
                 [draining : bool true]
                 (while draining
                   (match (tls.handshake-reader-next! (&mut messages))
-                    [(tls.TlsHandshakeReady _ _)
+                    [(TlsHandshakeReady _ _)
                       (set!
                         frames
                         (byte_buf.append-bytes
@@ -1457,8 +1455,8 @@
 
 (define (client-hello [message : (& message byte_buf.ByteBuf)]) : tls.TlsClientHello
   (match (tls.decode-client-hello (body-of message) (& wire-limits))
-    [(tls.TlsClientHelloOk hello) hello]
-    [(tls.TlsClientHelloErr error)
+    [(TlsClientHelloOk hello) hello]
+    [(TlsClientHelloErr error)
       (begin
         (test.assert-owned-string-eq
           (tls.error-name error.code)
@@ -1474,8 +1472,8 @@
 
 (define (server-hello [message : (& message byte_buf.ByteBuf)]) : tls.TlsServerHello
   (match (tls.decode-server-hello (body-of message) (& wire-limits))
-    [(tls.TlsServerHelloOk hello) hello]
-    [(tls.TlsServerHelloErr error)
+    [(TlsServerHelloOk hello) hello]
+    [(TlsServerHelloErr error)
       (begin
         (test.assert-owned-string-eq
           (tls.error-name error.code)
@@ -1490,18 +1488,18 @@
 
 (define (codes [result : tls.TlsCodesResult]) : String
   (match result
-    [(tls.TlsCodesOk values) (codes-hex (& values))]
-    [(tls.TlsCodesErr error) (tls.error-name error.code)]))
+    [(TlsCodesOk values) (codes-hex (& values))]
+    [(TlsCodesErr error) (tls.error-name error.code)]))
 
 (define (code [result : tls.TlsCodeResult]) : i64
   (match result
-    [(tls.TlsCodeOk value) value]
-    [(tls.TlsCodeErr error) (- 0 error.code)]))
+    [(TlsCodeOk value) value]
+    [(TlsCodeErr error) (- 0 error.code)]))
 
 (define (bytes-hex [result : tls.TlsBytesResult]) : String
   (match result
-    [(tls.TlsBytesOk value) (hex-string (view (& value)))]
-    [(tls.TlsBytesErr error) (tls.error-name error.code)]))
+    [(TlsBytesOk value) (hex-string (view (& value)))]
+    [(TlsBytesErr error) (tls.error-name error.code)]))
 
 (define (client-hello-vectors) : unit
   (let
@@ -1580,7 +1578,7 @@
       (match (tls.decode-key-share-client-hello
         (extension-of (& hello.extensions) tls.extension-key-share)
         (& wire-limits))
-        [(tls.TlsKeySharesOk shares)
+        [(TlsKeySharesOk shares)
           (begin
             (test.assert-i64-eq (array-length shares) 1 "one key share")
             (test.assert-i64-eq (array-ref shares 0).group 0x1d "x25519 share")
@@ -1625,7 +1623,7 @@
           (match (tls.decode-key-share-client-hello
             (extension-of (& retry.extensions) tls.extension-key-share)
             (& wire-limits))
-            [(tls.TlsKeySharesOk shares)
+            [(TlsKeySharesOk shares)
               (begin
                 (test.assert-i64-eq
                   (array-ref shares 0).group
@@ -1704,7 +1702,7 @@
         "empty session echo")
       (match (tls.decode-key-share-server-hello
         (extension-of (& hello.extensions) tls.extension-key-share))
-        [(tls.TlsKeyShareOk share)
+        [(TlsKeyShareOk share)
           (begin
             (test.assert-i64-eq share.group 0x1d "server x25519 share")
             (assert-hex
@@ -1777,8 +1775,8 @@
 (define (encrypted-extensions [message : (& message byte_buf.ByteBuf)]) : (__tl_dyn-array
     tls.TlsExtension)
   (match (tls.decode-encrypted-extensions (body-of message) (& wire-limits))
-    [(tls.TlsExtensionsOk extensions) extensions]
-    [(tls.TlsExtensionsErr error)
+    [(TlsExtensionsOk extensions) extensions]
+    [(TlsExtensionsErr error)
       (begin
         (test.assert-owned-string-eq
           (tls.error-name error.code)
@@ -1788,8 +1786,8 @@
 
 (define (certificate [message : (& message byte_buf.ByteBuf)]) : tls.TlsCertificate
   (match (tls.decode-certificate (body-of message) (& wire-limits))
-    [(tls.TlsCertificateOk value) value]
-    [(tls.TlsCertificateErr error)
+    [(TlsCertificateOk value) value]
+    [(TlsCertificateErr error)
       (begin
         (test.assert-owned-string-eq
           (tls.error-name error.code)
@@ -1801,8 +1799,8 @@
 
 (define (certificate-verify [message : (& message byte_buf.ByteBuf)]) : tls.TlsCertificateVerify
   (match (tls.decode-certificate-verify (body-of message))
-    [(tls.TlsCertificateVerifyOk value) value]
-    [(tls.TlsCertificateVerifyErr error)
+    [(TlsCertificateVerifyOk value) value]
+    [(TlsCertificateVerifyErr error)
       (begin
         (test.assert-owned-string-eq
           (tls.error-name error.code)
@@ -1859,12 +1857,12 @@
         (view (& verify-bytes))
         (clone message))
       (match (tls.decode-finished (body-of (& finished-bytes)) 32)
-        [(tls.TlsBytesOk verify-data)
+        [(TlsBytesOk verify-data)
           (assert-buf
             (tls.encode-finished (byte_buf.new) (view (& verify-data)))
             (view (& finished-bytes))
             (clone message))]
-        [(tls.TlsBytesErr _) (test.assert-true false (clone message))]))))
+        [(TlsBytesErr _) (test.assert-true false (clone message))]))))
 
 (define (server-flight-vectors) : unit
   (let
@@ -1967,7 +1965,7 @@
       (match (tls.decode-certificate-request
         (body-of (& cr-bytes))
         (& wire-limits))
-        [(tls.TlsCertificateRequestOk request)
+        [(TlsCertificateRequestOk request)
           (begin
             (test.assert-i64-eq
               (byte_buf.len (& request.context))
@@ -1998,7 +1996,7 @@
       (match (tls.decode-new-session-ticket
         (body-of (& nst-bytes))
         (& wire-limits))
-        [(tls.TlsNewSessionTicketOk ticket)
+        [(TlsNewSessionTicketOk ticket)
           (begin
             (test.assert-i64-eq ticket.lifetime 30 "ticket_lifetime")
             (test.assert-i64-eq ticket.age-add 0xfad6aac5 "ticket_age_add")
@@ -2057,9 +2055,9 @@
       (view (& block))
       context
       (& block-limits))
-      [(tls.TlsExtensionsErr error)
+      [(TlsExtensionsErr error)
         (assert-error (& error) code offset alert (clone message))]
-      [(tls.TlsExtensionsOk _) (test.assert-true false (clone message))])))
+      [(TlsExtensionsOk _) (test.assert-true false (clone message))])))
 
 (define (expect-block-types
   [hex : String]
@@ -2073,7 +2071,7 @@
       (view (& block))
       context
       (& block-limits))
-      [(tls.TlsExtensionsOk extensions)
+      [(TlsExtensionsOk extensions)
         (begin
           (assert-buf-hex
             (extension-types (& extensions))
@@ -2083,7 +2081,7 @@
             [encoded : byte_buf.ByteBuf
               (tls.encode-extensions (byte_buf.new) (& extensions))]
             (assert-same (view (& encoded)) (view (& block)) (clone message))))]
-      [(tls.TlsExtensionsErr error)
+      [(TlsExtensionsErr error)
         (test.assert-owned-string-eq
           (tls.error-name error.code)
           "none"
@@ -2335,14 +2333,14 @@
   [offset : i64]
   [message : String]) : unit
   (match result
-    [(tls.TlsCodesErr error)
+    [(TlsCodesErr error)
       (assert-error
         (& error)
         code
         offset
         tls.alert-decode-error
         (clone message))]
-    [(tls.TlsCodesOk _) (test.assert-true false (clone message))]))
+    [(TlsCodesOk _) (test.assert-true false (clone message))]))
 
 (define (expect-bytes-error
   [result : tls.TlsBytesResult]
@@ -2351,9 +2349,9 @@
   [alert : i64]
   [message : String]) : unit
   (match result
-    [(tls.TlsBytesErr error)
+    [(TlsBytesErr error)
       (assert-error (& error) code offset alert (clone message))]
-    [(tls.TlsBytesOk _) (test.assert-true false (clone message))]))
+    [(TlsBytesOk _) (test.assert-true false (clone message))]))
 
 (define (expect-list-error
   [result : tls.TlsBytesListResult]
@@ -2361,14 +2359,14 @@
   [offset : i64]
   [message : String]) : unit
   (match result
-    [(tls.TlsBytesListErr error)
+    [(TlsBytesListErr error)
       (assert-error
         (& error)
         code
         offset
         tls.alert-decode-error
         (clone message))]
-    [(tls.TlsBytesListOk _) (test.assert-true false (clone message))]))
+    [(TlsBytesListOk _) (test.assert-true false (clone message))]))
 
 (define (expect-shares-error
   [result : tls.TlsKeySharesResult]
@@ -2377,13 +2375,13 @@
   [alert : i64]
   [message : String]) : unit
   (match result
-    [(tls.TlsKeySharesErr error)
+    [(TlsKeySharesErr error)
       (assert-error (& error) code offset alert (clone message))]
-    [(tls.TlsKeySharesOk _) (test.assert-true false (clone message))]))
+    [(TlsKeySharesOk _) (test.assert-true false (clone message))]))
 
 (define (list-hex [result : tls.TlsBytesListResult]) : String
   (match result
-    [(tls.TlsBytesListOk items)
+    [(TlsBytesListOk items)
       (let
         [out : byte_buf.ByteBuf (byte_buf.new)]
         [index : i64 0]
@@ -2395,7 +2393,7 @@
                 (tls.encode-opaque out (view (& (array-ref items index))) 1))
               (set! index (+ index 1))))
           (hex-string (view (& out)))))]
-    [(tls.TlsBytesListErr error) (tls.error-name error.code)]))
+    [(TlsBytesListErr error) (tls.error-name error.code)]))
 
 (define (extension-bodies) : unit
   (let
@@ -2482,7 +2480,7 @@
         "a short max_early_data_size")
       (set! d (hex-bytes "0000"))
       (match (tls.decode-key-share-client-hello (view (& d)) (& wire-limits))
-        [(tls.TlsKeySharesOk shares)
+        [(TlsKeySharesOk shares)
           (test.assert-i64-eq
             (array-length shares)
             0
@@ -2518,7 +2516,7 @@
         "a key_exchange past its list")
       (set! d (hex-bytes "001700010000"))
       (match (tls.decode-key-share-server-hello (view (& d)))
-        [(tls.TlsKeyShareErr error)
+        [(TlsKeyShareErr error)
           (assert-error
             (& error)
             tls.error-trailing
@@ -2528,7 +2526,7 @@
         [_ (test.assert-true false "bytes after the server share")])
       (set! d (hex-bytes "00170000"))
       (match (tls.decode-key-share-server-hello (view (& d)))
-        [(tls.TlsKeyShareErr error)
+        [(TlsKeyShareErr error)
           (assert-error
             (& error)
             tls.error-length-range
@@ -2731,9 +2729,9 @@
                     (view (& block))
                     context
                     (& wire-limits))
-                    [(tls.TlsExtensionsOk _)
+                    [(TlsExtensionsOk _)
                       (test.assert-i64-eq 0 expected "table: allowed")]
-                    [(tls.TlsExtensionsErr error)
+                    [(TlsExtensionsErr error)
                       (begin
                         (test.assert-i64-eq
                           error.code
@@ -2770,39 +2768,39 @@
       (cond
         [(= msg-type tls.handshake-client-hello)
           (match (tls.decode-client-hello body decode-limits)
-            [(tls.TlsClientHelloErr found) (set! error found)]
+            [(TlsClientHelloErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-server-hello)
           (match (tls.decode-server-hello body decode-limits)
-            [(tls.TlsServerHelloErr found) (set! error found)]
+            [(TlsServerHelloErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-encrypted-extensions)
           (match (tls.decode-encrypted-extensions body decode-limits)
-            [(tls.TlsExtensionsErr found) (set! error found)]
+            [(TlsExtensionsErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-certificate-request)
           (match (tls.decode-certificate-request body decode-limits)
-            [(tls.TlsCertificateRequestErr found) (set! error found)]
+            [(TlsCertificateRequestErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-certificate)
           (match (tls.decode-certificate body decode-limits)
-            [(tls.TlsCertificateErr found) (set! error found)]
+            [(TlsCertificateErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-certificate-verify)
           (match (tls.decode-certificate-verify body)
-            [(tls.TlsCertificateVerifyErr found) (set! error found)]
+            [(TlsCertificateVerifyErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-finished)
           (match (tls.decode-finished body 32)
-            [(tls.TlsBytesErr found) (set! error found)]
+            [(TlsBytesErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-new-session-ticket)
           (match (tls.decode-new-session-ticket body decode-limits)
-            [(tls.TlsNewSessionTicketErr found) (set! error found)]
+            [(TlsNewSessionTicketErr found) (set! error found)]
             [_ unit])]
         [(= msg-type tls.handshake-key-update)
           (match (tls.decode-key-update body)
-            [(tls.TlsCodeErr found) (set! error found)]
+            [(TlsCodeErr found) (set! error found)]
             [_ unit])]
         [else (test.assert-true false "known message type")])
       (when
@@ -2945,7 +2943,7 @@
             (match (tls.decode-client-hello
               (view (& bad-compression))
               (& wire-limits))
-              [(tls.TlsClientHelloErr error) error.offset]
+              [(TlsClientHelloErr error) error.offset]
               [_ -1])
             43
             "the compression error offset")))
@@ -2965,7 +2963,7 @@
             (match (tls.decode-server-hello
               (view (& bad-compression))
               (& wire-limits))
-              [(tls.TlsServerHelloErr error) error.offset]
+              [(TlsServerHelloErr error) error.offset]
               [_ -1])
             37
             "the ServerHello compression offset")))
@@ -3092,7 +3090,7 @@
       "1703034100"
       "record header")
     (match (alert-of "0100")
-      [(tls.TlsAlertOk alert)
+      [(TlsAlertOk alert)
         (begin
           (test.assert-i64-eq alert.level 1 "close_notify level")
           (test.assert-i64-eq alert.description 0 "close_notify")
@@ -3101,19 +3099,19 @@
             "close_notify is not an error"))]
       [_ (test.assert-true false "close_notify decodes")])
     (match (alert-of "02ff")
-      [(tls.TlsAlertOk alert)
+      [(TlsAlertOk alert)
         (test.assert-true
           (tls.alert-fatal? alert.description)
           "an unknown alert is an error")]
       [_ (test.assert-true false "unknown alerts decode")])
     (match (alert-of "015a")
-      [(tls.TlsAlertOk alert)
+      [(TlsAlertOk alert)
         (test.assert-false
           (tls.alert-fatal? alert.description)
           "user_canceled is not an error")]
       [_ (test.assert-true false "user_canceled decodes")])
     (match (alert-of "01")
-      [(tls.TlsAlertErr error)
+      [(TlsAlertErr error)
         (assert-error
           (& error)
           tls.error-alert-length
@@ -3167,7 +3165,7 @@
         (match (tls.decode-key-share-client-hello
           (view (& encoded-shares))
           (& wire-limits))
-          [(tls.TlsKeySharesOk decoded)
+          [(TlsKeySharesOk decoded)
             (test.assert-i64-eq (array-length decoded) 2 "shares round trip")]
           [_ (test.assert-true false "shares round trip")])
         (assert-buf-hex

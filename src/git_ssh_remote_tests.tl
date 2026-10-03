@@ -22,38 +22,38 @@
 (define (git-ssh-test-syntax-code
   [syntax : (& syntax git_ssh.GitSshRemoteSyntax)]) : i64
   (match syntax
-    [(git_ssh.GitSshRemoteSyntax.Uri) 1]
-    [(git_ssh.GitSshRemoteSyntax.Scp) 2]
+    [(Uri) 1]
+    [(Scp) 2]
     [_ 0]))
 
 (define (git-ssh-test-host-kind-code [kind : (& kind git_ssh.GitSshHostKind)]) : i64
   (match kind
-    [(git_ssh.GitSshHostKind.Name) 1]
-    [(git_ssh.GitSshHostKind.Ipv6Literal) 2]
+    [(Name) 1]
+    [(Ipv6Literal) 2]
     [_ 0]))
 
 (define (git-ssh-test-path-kind-code [kind : (& kind git_ssh.GitSshPathKind)]) : i64
   (match kind
-    [(git_ssh.GitSshPathKind.Absolute) 1]
-    [(git_ssh.GitSshPathKind.Relative) 2]
-    [(git_ssh.GitSshPathKind.Tilde) 3]
+    [(Absolute) 1]
+    [(Relative) 2]
+    [(Tilde) 3]
     [_ 0]))
 
 (define (git-ssh-test-error-code [error : (& error git_ssh.GitSshRemoteError)]) : i64
   (match error
-    [(git_ssh.GitSshRemoteError.UnsupportedSyntax) 1]
-    [(git_ssh.GitSshRemoteError.AmbiguousSyntax) 2]
-    [(git_ssh.GitSshRemoteError.ControlByte) 3]
-    [(git_ssh.GitSshRemoteError.PasswordUserinfo) 4]
-    [(git_ssh.GitSshRemoteError.InvalidUser) 5]
-    [(git_ssh.GitSshRemoteError.EmptyHost) 6]
-    [(git_ssh.GitSshRemoteError.InvalidHost) 7]
-    [(git_ssh.GitSshRemoteError.InvalidIpv6Literal) 8]
-    [(git_ssh.GitSshRemoteError.InvalidPort) 9]
-    [(git_ssh.GitSshRemoteError.EmptyPath) 10]
-    [(git_ssh.GitSshRemoteError.UnsafePercentEncoding) 11]
-    [(git_ssh.GitSshRemoteError.LeadingDashPath) 12]
-    [(git_ssh.GitSshRemoteError.InvalidStructuredRemote) 13]
+    [(UnsupportedSyntax) 1]
+    [(AmbiguousSyntax) 2]
+    [(ControlByte) 3]
+    [(PasswordUserinfo) 4]
+    [(InvalidUser) 5]
+    [(EmptyHost) 6]
+    [(InvalidHost) 7]
+    [(InvalidIpv6Literal) 8]
+    [(InvalidPort) 9]
+    [(EmptyPath) 10]
+    [(UnsafePercentEncoding) 11]
+    [(LeadingDashPath) 12]
+    [(InvalidStructuredRemote) 13]
     [_ 0]))
 
 (define (git-ssh-test-command-prefix? [command : (& command str)]) : bool
@@ -128,8 +128,8 @@
   [path : (& path str)]
   [path-kind-code : i64]) : bool
   (match (git_ssh.git-ssh-remote-parse input)
-    [(git_ssh.ResultGitSshRemote.Err _) false]
-    [(git_ssh.ResultGitSshRemote.Ok remote)
+    [(Err _) false]
+    [(Ok remote)
       (and
         (= (git-ssh-test-syntax-code (& remote.syntax)) syntax-code)
         (= remote.endpoint.has-user (> (string.string-length user) 0))
@@ -142,22 +142,20 @@
         (git-ssh-test-string-eq? (& remote.path) path)
         (= (git-ssh-test-path-kind-code (& remote.path-kind)) path-kind-code)
         (match (git_ssh.git-ssh-upload-pack-command (& remote))
-          [(git_ssh.ResultGitSshCommand.Err _) false]
-          [(git_ssh.ResultGitSshCommand.Ok command)
-            (git-ssh-test-command-decodes-to? (& command) path)]))]))
+          [(Err _) false]
+          [(Ok command) (git-ssh-test-command-decodes-to? (& command) path)]))]))
 
 (define (git-ssh-test-parse-error? [input : (& input str)]) : bool
   (match (git_ssh.git-ssh-remote-parse input)
-    [(git_ssh.ResultGitSshRemote.Err _) true]
-    [(git_ssh.ResultGitSshRemote.Ok _) false]))
+    [(Err _) true]
+    [(Ok _) false]))
 
 (define (git-ssh-test-parse-error-is?
   [input : (& input str)]
   [expected-code : i64]) : bool
   (match (git_ssh.git-ssh-remote-parse input)
-    [(git_ssh.ResultGitSshRemote.Err error)
-      (= (git-ssh-test-error-code (& error)) expected-code)]
-    [(git_ssh.ResultGitSshRemote.Ok _) false]))
+    [(Err error) (= (git-ssh-test-error-code (& error)) expected-code)]
+    [(Ok _) false]))
 
 (define (git-ssh-test-valid-remotes?) : bool
   (and
@@ -318,15 +316,10 @@
 
 (define (git-ssh-test-structured-remote [path : String]) : git_ssh.GitSshRemote
   (git_ssh.GitSshRemote
-    (git_ssh.GitSshRemoteSyntax.Scp)
-    (git_ssh.GitSshEndpoint
-      false
-      ""
-      "example.com"
-      (git_ssh.GitSshHostKind.Name)
-      22)
+    (Scp)
+    (git_ssh.GitSshEndpoint false "" "example.com" (Name) 22)
     path
-    (git_ssh.GitSshPathKind.Relative)))
+    (Relative)))
 
 (define (git-ssh-test-command-roundtrip? [path : (& path str)]) : bool
   (let
@@ -334,9 +327,8 @@
     [remote : git_ssh.GitSshRemote
       (git-ssh-test-structured-remote (string.copy path))]
     (match (git_ssh.git-ssh-upload-pack-command (& remote))
-      [(git_ssh.ResultGitSshCommand.Err _) false]
-      [(git_ssh.ResultGitSshCommand.Ok command)
-        (git-ssh-test-command-decodes-to? (& command) (& expected))])))
+      [(Err _) false]
+      [(Ok command) (git-ssh-test-command-decodes-to? (& command) (& expected))])))
 
 (define (git-ssh-test-path-with-byte [code : i64]) : String
   (let
@@ -374,11 +366,11 @@
           [remote : git_ssh.GitSshRemote (git-ssh-test-structured-remote path)]
           (begin
             (match (git_ssh.git-ssh-upload-pack-command (& remote))
-              [(git_ssh.ResultGitSshCommand.Err error)
+              [(Err error)
                 (if (= (git-ssh-test-error-code (& error)) 3)
                   unit
                   (set! valid false))]
-              [(git_ssh.ResultGitSshCommand.Ok _) (set! valid false)])
+              [(Ok _) (set! valid false)])
             (set! code (+ code 1)))))
       (let
         [path : String (git-ssh-test-path-with-byte 127)]
@@ -386,9 +378,8 @@
         (and
           valid
           (match (git_ssh.git-ssh-upload-pack-command (& remote))
-            [(git_ssh.ResultGitSshCommand.Err error)
-              (= (git-ssh-test-error-code (& error)) 3)]
-            [(git_ssh.ResultGitSshCommand.Ok _) false]))))))
+            [(Err error) (= (git-ssh-test-error-code (& error)) 3)]
+            [(Ok _) false]))))))
 
 (define (git-ssh-test-injection-corpus?) : bool
   (and
@@ -414,45 +405,32 @@
     [leading : git_ssh.GitSshRemote (git-ssh-test-structured-remote "-strict")]
     [bad-port : git_ssh.GitSshRemote
       (git_ssh.GitSshRemote
-        (git_ssh.GitSshRemoteSyntax.Scp)
-        (git_ssh.GitSshEndpoint
-          false
-          ""
-          "example.com"
-          (git_ssh.GitSshHostKind.Name)
-          23)
+        (Scp)
+        (git_ssh.GitSshEndpoint false "" "example.com" (Name) 23)
         "repo"
-        (git_ssh.GitSshPathKind.Relative))]
+        (Relative))]
     [bad-host : git_ssh.GitSshRemote
       (git_ssh.GitSshRemote
-        (git_ssh.GitSshRemoteSyntax.Uri)
-        (git_ssh.GitSshEndpoint
-          false
-          ""
-          "EXAMPLE.com"
-          (git_ssh.GitSshHostKind.Name)
-          22)
+        (Uri)
+        (git_ssh.GitSshEndpoint false "" "EXAMPLE.com" (Name) 22)
         "/repo"
-        (git_ssh.GitSshPathKind.Absolute))]
+        (Absolute))]
     (and
       (match (git_ssh.git-ssh-upload-pack-command (& leading))
-        [(git_ssh.ResultGitSshCommand.Err error)
-          (= (git-ssh-test-error-code (& error)) 12)]
-        [(git_ssh.ResultGitSshCommand.Ok _) false])
+        [(Err error) (= (git-ssh-test-error-code (& error)) 12)]
+        [(Ok _) false])
       (match (git_ssh.git-ssh-upload-pack-command (& bad-port))
-        [(git_ssh.ResultGitSshCommand.Err error)
-          (= (git-ssh-test-error-code (& error)) 13)]
-        [(git_ssh.ResultGitSshCommand.Ok _) false])
+        [(Err error) (= (git-ssh-test-error-code (& error)) 13)]
+        [(Ok _) false])
       (match (git_ssh.git-ssh-upload-pack-command (& bad-host))
-        [(git_ssh.ResultGitSshCommand.Err error)
-          (= (git-ssh-test-error-code (& error)) 13)]
-        [(git_ssh.ResultGitSshCommand.Ok _) false]))))
+        [(Err error) (= (git-ssh-test-error-code (& error)) 13)]
+        [(Ok _) false]))))
 
 (define (git-ssh-test-request-and-diagnostics?) : bool
   (and
     (match (git_ssh.git-ssh-upload-pack-request "git@EXAMPLE.COM:team/repo.git")
-      [(git_ssh.ResultGitSshUploadPackRequest.Err _) false]
-      [(git_ssh.ResultGitSshUploadPackRequest.Ok request)
+      [(Err _) false]
+      [(Ok request)
         (let
           [summary : String (git_ssh.git-ssh-remote-summary (& request.remote))]
           (and
@@ -466,8 +444,8 @@
               (& summary)
               "ssh{syntax=scp,user=git,host=example.com,host-kind=name,port=22,path-kind=relative,path=team/repo.git}")))])
     (match (git_ssh.git-ssh-remote-parse "ssh://user:secret@host/repo")
-      [(git_ssh.ResultGitSshRemote.Ok _) false]
-      [(git_ssh.ResultGitSshRemote.Err error)
+      [(Ok _) false]
+      [(Err error)
         (let
           [message : String (git_ssh.git-ssh-remote-error-message error)]
           (git-ssh-test-string-eq?

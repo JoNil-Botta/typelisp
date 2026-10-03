@@ -32,15 +32,15 @@
 (define (main) : i64
   (match (unsafe
     (thread.spawn sample-clock 100000))
-    [(thread.ThreadSpawnErr _) 1]
-    [(thread.ThreadSpawnOk first)
+    [(ThreadSpawnErr _) 1]
+    [(ThreadSpawnOk first)
       (match (unsafe
         (thread.spawn sample-clock 100000))
-        [(thread.ThreadSpawnErr _)
+        [(ThreadSpawnErr _)
           (begin
             (joined-ok? first)
             2)]
-        [(thread.ThreadSpawnOk second)
+        [(ThreadSpawnOk second)
           (let
             [local-ok : bool (= (sample-clock 100000) 42)]
             [first-ok : bool (joined-ok? first)]

@@ -9,14 +9,14 @@
 
 (define (tc-string-list-len [items : tc_core.TcStringList]) : i64
   (match items
-    [(tc_core.TcStringList.Nil) 0]
-    [(tc_core.TcStringList.One _) 1]
-    [(tc_core.TcStringList.Dense _ _ len) len]))
+    [(Nil) 0]
+    [(One _) 1]
+    [(Dense _ _ len) len]))
 
 (define (compiler-typecheck-list-storage-unit-tests-ok?) : bool
   (let
     [string-root : tc_core.TcStringList
-      (tc_core.tc-string-list-cons tc_core.TcStringList.Nil "root")]
+      (tc_core.tc-string-list-cons Nil "root")]
     [string-base : tc_core.TcStringList
       (tc_core.tc-string-list-cons
         (tc_core.tc-global-shared-view string-root)
@@ -33,30 +33,24 @@
         "right")]
     [string-deep : tc_core.TcStringList
       (tc_core.tc-string-list-cons
-        (tc_core.tc-string-list-cons tc_core.TcStringList.Nil "deep-root")
+        (tc_core.tc-string-list-cons Nil "deep-root")
         "deep-base")]
     [name-base : tc_core.TcNameIdList
-      (tc_core.tc-name-id-list-cons
-        (tc_core.tc-name-id-list-cons tc_core.TcNameIdList.Nil 10)
-        20)]
+      (tc_core.tc-name-id-list-cons (tc_core.tc-name-id-list-cons Nil 10) 20)]
     [name-right : tc_core.TcNameIdList
       (tc_core.tc-name-id-list-cons name-base 30)]
     [name-sibling : tc_core.TcNameIdList
       (tc_core.tc-name-id-list-cons name-base 40)]
     [set-a : tc_core.TcNameIdList
-      (tc_core.tc-name-id-list-add
-        (tc_core.tc-name-id-list-add tc_core.TcNameIdList.Nil 1)
-        2)]
+      (tc_core.tc-name-id-list-add (tc_core.tc-name-id-list-add Nil 1) 2)]
     [set-b : tc_core.TcNameIdList
-      (tc_core.tc-name-id-list-add
-        (tc_core.tc-name-id-list-add tc_core.TcNameIdList.Nil 2)
-        1)]
+      (tc_core.tc-name-id-list-add (tc_core.tc-name-id-list-add Nil 2) 1)]
     [set-superset : tc_core.TcNameIdList (tc_core.tc-name-id-list-add set-b 3)]
     [home : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
-    [scratch-child : tc_core.TcStringList tc_core.TcStringList.Nil]
-    [growth-sibling : tc_core.TcStringList tc_core.TcStringList.Nil]
-    [deep : tc_core.TcNameIdList tc_core.TcNameIdList.Nil]
+    [scratch-child : tc_core.TcStringList Nil]
+    [growth-sibling : tc_core.TcStringList Nil]
+    [deep : tc_core.TcNameIdList Nil]
     [index : i64 0]
     (begin
       ;; Append a scratch-owned string to an outer store, discard the scratch,
@@ -123,7 +117,7 @@
         ;; Preserve the historical left-membership behavior of this predicate.
         (tc_core.tc-name-id-list-eq set-a set-superset)
         (not (tc_core.tc-name-id-list-eq set-superset set-a))
-        (not (tc_core.tc-name-id-list-eq tc_core.TcNameIdList.Nil set-a))
+        (not (tc_core.tc-name-id-list-eq Nil set-a))
         (=
           (tc_core.tc-name-id-list-len (tc_core.tc-name-id-list-add set-a 2))
           2)
@@ -137,17 +131,15 @@
           4094)
         (tc_core.tc-name-id-list-contains deep 0)
         (match string-left
-          [(tc_core.TcStringList.Dense left-address _ _)
+          [(Dense left-address _ _)
             (match string-right
-              [(tc_core.TcStringList.Dense right-address _ _)
-                (= left-address right-address)]
+              [(Dense right-address _ _) (= left-address right-address)]
               [_ false])]
           [_ false])
         (match name-right
-          [(tc_core.TcNameIdList.Dense right-address _ _)
+          [(Dense right-address _ _)
             (match name-sibling
-              [(tc_core.TcNameIdList.Dense sibling-address _ _)
-                (= right-address sibling-address)]
+              [(Dense sibling-address _ _) (= right-address sibling-address)]
               [_ false])]
           [_ false])))))
 
@@ -198,8 +190,8 @@
 (define (compiler-typecheck-wide-list-storage-ok?) : bool
   (match (tc_api.typecheck-compiler-source
     (compiler-typecheck-wide-list-storage-source 256))
-    [(tc_core.ResultCompilerTypecheck.Ok _) true]
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+    [(Ok _) true]
+    [(Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]

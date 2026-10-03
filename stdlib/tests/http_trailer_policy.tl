@@ -19,10 +19,10 @@
     sensitivity))
 
 (define (public-field [spelling : String] [value : String]) : http_types.HttpHeaderField
-  (field spelling value (http_types.HttpHeaderPublic)))
+  (field spelling value (HttpHeaderPublic)))
 
 (define (sensitive-field [spelling : String] [value : String]) : http_types.HttpHeaderField
-  (field spelling value (http_types.HttpHeaderSensitive)))
+  (field spelling value (HttpHeaderSensitive)))
 
 (define (field-with-final-byte
   [spelling : String]
@@ -33,7 +33,7 @@
     (http_types.HttpHeaderField
       (name spelling)
       (http_types.HttpHeaderValue (byte_buf.push value final-byte))
-      (http_types.HttpHeaderPublic))))
+      (HttpHeaderPublic))))
 
 (define (policy-add-ok
   [policy : trailer_policy.HttpTrailerPolicy]
@@ -45,11 +45,11 @@
     (name spelling)
     sensitivity
     multiplicity)
-    [(trailer_policy.HttpTrailerPolicyAddErr _)
+    [(HttpTrailerPolicyAddErr _)
       (begin
         (fail "expected trailer policy addition to succeed")
         (trailer_policy.trailer-policy-empty))]
-    [(trailer_policy.HttpTrailerPolicyAddOk next) next]))
+    [(HttpTrailerPolicyAddOk next) next]))
 
 (define (sample-policy) : trailer_policy.HttpTrailerPolicy
   (let
@@ -57,23 +57,23 @@
       (policy-add-ok
         (trailer_policy.trailer-policy-empty)
         "X-One"
-        (http_types.HttpHeaderPublic)
-        (trailer_policy.HttpTrailerAtMostOnce))]
+        (HttpHeaderPublic)
+        (HttpTrailerAtMostOnce))]
     (begin
       (set!
         policy
         (policy-add-ok
           policy
           "X-List"
-          (http_types.HttpHeaderPublic)
-          (trailer_policy.HttpTrailerRepeatableList)))
+          (HttpHeaderPublic)
+          (HttpTrailerRepeatableList)))
       (set!
         policy
         (policy-add-ok
           policy
           "X-Secret"
-          (http_types.HttpHeaderSensitive)
-          (trailer_policy.HttpTrailerRepeatableSeparate)))
+          (HttpHeaderSensitive)
+          (HttpTrailerRepeatableSeparate)))
       policy)))
 
 (define (headers-push
@@ -100,8 +100,8 @@
     declared
     require-declared
     limits)
-    [(trailer_policy.HttpTrailerValidationOk) true]
-    [(trailer_policy.HttpTrailerValidationErr _) false]))
+    [(HttpTrailerValidationOk) true]
+    [(HttpTrailerValidationErr _) false]))
 
 (define (mixed-case-name [source : String]) : http_types.HttpHeaderName
   (let
@@ -136,9 +136,9 @@
         "empty policy approves nothing"))
     (match (trailer_policy.trailer-policy-new
       (trailer_policy.HttpTrailerPolicyLimits -1 1 1))
-      [(trailer_policy.HttpTrailerPolicyNewErr error)
+      [(HttpTrailerPolicyNewErr error)
         (match error.kind
-          [(trailer_policy.HttpTrailerInvalidPolicyLimits) unit]
+          [(HttpTrailerInvalidPolicyLimits) unit]
           [_ (fail "invalid policy limits error kind")])]
       [_ (fail "negative policy limit accepted")])
     (let
@@ -169,11 +169,11 @@
         (match (trailer_policy.trailer-policy-add
           policy
           (name "x-OnE")
-          (http_types.HttpHeaderPublic)
-          (trailer_policy.HttpTrailerAtMostOnce))
-          [(trailer_policy.HttpTrailerPolicyAddErr error)
+          (HttpHeaderPublic)
+          (HttpTrailerAtMostOnce))
+          [(HttpTrailerPolicyAddErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerDuplicatePolicyName) unit]
+              [(HttpTrailerDuplicatePolicyName) unit]
               [_ (fail "duplicate policy error kind")])]
           [_ (fail "case-insensitive policy duplicate accepted")])))))
 
@@ -192,11 +192,11 @@
             (match (trailer_policy.trailer-policy-add
               (trailer_policy.trailer-policy-empty)
               mixed
-              (http_types.HttpHeaderSensitive)
-              (trailer_policy.HttpTrailerRepeatableSeparate))
-              [(trailer_policy.HttpTrailerPolicyAddErr error)
+              (HttpHeaderSensitive)
+              (HttpTrailerRepeatableSeparate))
+              [(HttpTrailerPolicyAddErr error)
                 (match error.kind
-                  [(trailer_policy.HttpTrailerForbiddenName) unit]
+                  [(HttpTrailerForbiddenName) unit]
                   [_ (fail "forbidden policy name error kind")])]
               [_ (fail "forbidden trailer name admitted")])
             (set! index (+ index 1)))))
@@ -207,70 +207,67 @@
     (match (trailer_policy.trailer-policy-add
       (trailer_policy.trailer-policy-empty)
       (name "bad name")
-      (http_types.HttpHeaderPublic)
-      (trailer_policy.HttpTrailerAtMostOnce))
-      [(trailer_policy.HttpTrailerPolicyAddErr error)
+      (HttpHeaderPublic)
+      (HttpTrailerAtMostOnce))
+      [(HttpTrailerPolicyAddErr error)
         (match error.kind
-          [(trailer_policy.HttpTrailerInvalidPolicyName) unit]
+          [(HttpTrailerInvalidPolicyName) unit]
           [_ (fail "invalid policy name error kind")])]
       [_ (fail "invalid policy name accepted")])
     (match (trailer_policy.trailer-policy-new
       (trailer_policy.HttpTrailerPolicyLimits 2 4 8))
-      [(trailer_policy.HttpTrailerPolicyNewErr _)
-        (fail "valid policy limits rejected")]
-      [(trailer_policy.HttpTrailerPolicyNewOk policy)
+      [(HttpTrailerPolicyNewErr _) (fail "valid policy limits rejected")]
+      [(HttpTrailerPolicyNewOk policy)
         (match (trailer_policy.trailer-policy-add
           policy
           (name "x-long")
-          (http_types.HttpHeaderPublic)
-          (trailer_policy.HttpTrailerAtMostOnce))
-          [(trailer_policy.HttpTrailerPolicyAddErr error)
+          (HttpHeaderPublic)
+          (HttpTrailerAtMostOnce))
+          [(HttpTrailerPolicyAddErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerPolicyNameTooLong) unit]
+              [(HttpTrailerPolicyNameTooLong) unit]
               [_ (fail "policy name length error kind")])]
           [_ (fail "overlong policy name accepted")])])
     (match (trailer_policy.trailer-policy-new
       (trailer_policy.HttpTrailerPolicyLimits 2 8 5))
-      [(trailer_policy.HttpTrailerPolicyNewErr _)
-        (fail "total-byte policy limits rejected")]
-      [(trailer_policy.HttpTrailerPolicyNewOk policy)
+      [(HttpTrailerPolicyNewErr _) (fail "total-byte policy limits rejected")]
+      [(HttpTrailerPolicyNewOk policy)
         (let
           [one : trailer_policy.HttpTrailerPolicy
             (policy-add-ok
               policy
               "x-a"
-              (http_types.HttpHeaderPublic)
-              (trailer_policy.HttpTrailerAtMostOnce))]
+              (HttpHeaderPublic)
+              (HttpTrailerAtMostOnce))]
           (match (trailer_policy.trailer-policy-add
             one
             (name "x-b")
-            (http_types.HttpHeaderPublic)
-            (trailer_policy.HttpTrailerAtMostOnce))
-            [(trailer_policy.HttpTrailerPolicyAddErr error)
+            (HttpHeaderPublic)
+            (HttpTrailerAtMostOnce))
+            [(HttpTrailerPolicyAddErr error)
               (match error.kind
-                [(trailer_policy.HttpTrailerPolicyNameBytesExceeded) unit]
+                [(HttpTrailerPolicyNameBytesExceeded) unit]
                 [_ (fail "policy total-name error kind")])]
             [_ (fail "policy total-name limit exceeded")]))])
     (match (trailer_policy.trailer-policy-new
       (trailer_policy.HttpTrailerPolicyLimits 1 8 8))
-      [(trailer_policy.HttpTrailerPolicyNewErr _)
-        (fail "entry-count policy limits rejected")]
-      [(trailer_policy.HttpTrailerPolicyNewOk policy)
+      [(HttpTrailerPolicyNewErr _) (fail "entry-count policy limits rejected")]
+      [(HttpTrailerPolicyNewOk policy)
         (let
           [one : trailer_policy.HttpTrailerPolicy
             (policy-add-ok
               policy
               "x-a"
-              (http_types.HttpHeaderPublic)
-              (trailer_policy.HttpTrailerAtMostOnce))]
+              (HttpHeaderPublic)
+              (HttpTrailerAtMostOnce))]
           (match (trailer_policy.trailer-policy-add
             one
             (name "x-b")
-            (http_types.HttpHeaderPublic)
-            (trailer_policy.HttpTrailerAtMostOnce))
-            [(trailer_policy.HttpTrailerPolicyAddErr error)
+            (HttpHeaderPublic)
+            (HttpTrailerAtMostOnce))
+            [(HttpTrailerPolicyAddErr error)
               (match error.kind
-                [(trailer_policy.HttpTrailerTooManyPolicyEntries) unit]
+                [(HttpTrailerTooManyPolicyEntries) unit]
                 [_ (fail "policy entry-count error kind")])]
             [_ (fail "policy entry-count limit exceeded")]))])
     (test.assert-i64-eq
@@ -320,9 +317,9 @@
             (& approved)
             (& declared)
             (& limits))
-            [(trailer_policy.HttpTrailerValidationErr error)
+            [(HttpTrailerValidationErr error)
               (match error.kind
-                [(trailer_policy.HttpTrailerUnapprovedName) unit]
+                [(HttpTrailerUnapprovedName) unit]
                 [_ (fail "empty policy rejection kind")])]
             [_ (fail "empty policy approved an extension")])))
       (test.assert-true
@@ -331,8 +328,8 @@
           (& approved)
           (& declared)
           (& limits))
-          [(trailer_policy.HttpTrailerValidationOk) true]
-          [(trailer_policy.HttpTrailerValidationErr _) false])
+          [(HttpTrailerValidationOk) true]
+          [(HttpTrailerValidationErr _) false])
         "approved declared trailer")
       (test.assert-false
         (validation-ok?
@@ -359,8 +356,8 @@
           (& approved)
           (& empty-declared)
           (& limits))
-          [(trailer_policy.HttpTrailerValidationOk) true]
-          [(trailer_policy.HttpTrailerValidationErr _) false])
+          [(HttpTrailerValidationOk) true]
+          [(HttpTrailerValidationErr _) false])
         "response validation does not require declaration"))))
 
 (define (assert-multiplicity-and-preservation) : unit
@@ -414,11 +411,11 @@
             (& declared)
             false
             (& limits))
-            [(trailer_policy.HttpTrailerValidationErr error)
+            [(HttpTrailerValidationErr error)
               (begin
                 (test.assert-i64-eq error.index 1 "duplicate field index")
                 (match error.kind
-                  [(trailer_policy.HttpTrailerDuplicateField) unit]
+                  [(HttpTrailerDuplicateField) unit]
                   [_ (fail "at-most-once error kind")]))]
             [_ (fail "at-most-once duplicate accepted")]))))))
 
@@ -438,20 +435,20 @@
         (& declared)
         false
         (& limits))
-        [(trailer_policy.HttpTrailerValidationErr error)
+        [(HttpTrailerValidationErr error)
           (match error.kind
-            [(trailer_policy.HttpTrailerSensitivityMismatch) unit]
+            [(HttpTrailerSensitivityMismatch) unit]
             [_ (fail "extension sensitivity mismatch kind")])]
         [_ (fail "secret extension sensitivity downgraded")])
       (let
         [authorization : http_types.HttpHeaderField
           (public-field "Authorization" "do-not-retain")]
         (match (http_types.validate-typed-field (& authorization) 12 (& limits))
-          [(http_types.HttpTypedFieldErr error)
+          [(HttpTypedFieldErr error)
             (begin
               (test.assert-false error.poison-connection "typed field is local")
               (match error.kind
-                [(http_types.HttpSensitiveHeaderMustBeMarked) unit]
+                [(HttpSensitiveHeaderMustBeMarked) unit]
                 [_ (fail "known sensitivity error kind")]))]
           [_ (fail "public Authorization typed field accepted")]))
       (let
@@ -465,11 +462,11 @@
           (& declared)
           false
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidField head-kind)
+              [(HttpTrailerInvalidField head-kind)
                 (match head-kind
-                  [(http_types.HttpInvalidFieldName) unit]
+                  [(HttpInvalidFieldName) unit]
                   [_ (fail "nested typed-field name kind")])]
               [_ (fail "typed-field wrapper error kind")])]
           [_ (fail "malformed typed field accepted")]))
@@ -484,11 +481,11 @@
           (& declared)
           false
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidField head-kind)
+              [(HttpTrailerInvalidField head-kind)
                 (match head-kind
-                  [(http_types.HttpNonCanonicalFieldValueWhitespace) unit]
+                  [(HttpNonCanonicalFieldValueWhitespace) unit]
                   [_ (fail "typed-field OWS kind")])]
               [_ (fail "typed-field OWS wrapper kind")])]
           [_ (fail "noncanonical typed field accepted")]))
@@ -496,18 +493,18 @@
         [bad-nul : http_types.HttpHeaderField
           (field-with-final-byte "X-One" "safe-prefix" (cast 0 : u8))]
         (match (http_types.validate-typed-field (& bad-nul) 7 (& limits))
-          [(http_types.HttpTypedFieldErr error)
+          [(HttpTypedFieldErr error)
             (match error.kind
-              [(http_types.HttpNulByte) unit]
+              [(HttpNulByte) unit]
               [_ (fail "typed-field NUL kind")])]
           [_ (fail "typed-field NUL accepted")]))
       (let
         [bad-control : http_types.HttpHeaderField
           (field-with-final-byte "X-One" "safe-prefix" (cast 1 : u8))]
         (match (http_types.validate-typed-field (& bad-control) 7 (& limits))
-          [(http_types.HttpTypedFieldErr error)
+          [(HttpTypedFieldErr error)
             (match error.kind
-              [(http_types.HttpInvalidControlByte) unit]
+              [(HttpInvalidControlByte) unit]
               [_ (fail "typed-field control kind")])]
           [_ (fail "typed-field control accepted")]))
       (let
@@ -521,9 +518,9 @@
           (& declared)
           false
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerForbiddenName) unit]
+              [(HttpTrailerForbiddenName) unit]
               [_ (fail "forbidden typed trailer kind")])]
           [_ (fail "forbidden typed trailer accepted")])))))
 
@@ -544,9 +541,9 @@
           (& declared)
           false
           (& count-limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerTooManyFields) unit]
+              [(HttpTrailerTooManyFields) unit]
               [_ (fail "trailer field-count kind")])]
           [_ (fail "trailer field-count limit exceeded")]))
       (let
@@ -558,11 +555,11 @@
           (& declared)
           false
           (& total-limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (begin
               (test.assert-i64-eq error.index 1 "total-byte failure index")
               (match error.kind
-                [(trailer_policy.HttpTrailerFieldBytesExceeded) unit]
+                [(HttpTrailerFieldBytesExceeded) unit]
                 [_ (fail "trailer total-byte kind")]))]
           [_ (fail "trailer total-byte limit exceeded")]))
       (let
@@ -576,11 +573,11 @@
           (& declared)
           false
           (& name-limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidField head-kind)
+              [(HttpTrailerInvalidField head-kind)
                 (match head-kind
-                  [(http_types.HttpNameTooLong) unit]
+                  [(HttpNameTooLong) unit]
                   [_ (fail "trailer name-limit head kind")])]
               [_ (fail "trailer name-limit wrapper kind")])]
           [_ (fail "trailer name limit exceeded")]))
@@ -595,11 +592,11 @@
           (& declared)
           false
           (& value-limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidField head-kind)
+              [(HttpTrailerInvalidField head-kind)
                 (match head-kind
-                  [(http_types.HttpValueTooLong) unit]
+                  [(HttpValueTooLong) unit]
                   [_ (fail "trailer value-limit head kind")])]
               [_ (fail "trailer value-limit wrapper kind")])]
           [_ (fail "trailer value limit exceeded")]))
@@ -614,11 +611,11 @@
           (& declared)
           false
           (& line-limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidField head-kind)
+              [(HttpTrailerInvalidField head-kind)
                 (match head-kind
-                  [(http_types.HttpLineTooLong) unit]
+                  [(HttpLineTooLong) unit]
                   [_ (fail "trailer line-limit head kind")])]
               [_ (fail "trailer line-limit wrapper kind")])]
           [_ (fail "trailer line limit exceeded")]))
@@ -634,9 +631,9 @@
           (& declared)
           false
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidFieldCollection) unit]
+              [(HttpTrailerInvalidFieldCollection) unit]
               [_ (fail "corrupt field collection kind")])]
           [_ (fail "corrupt field collection accepted")]))
       (let
@@ -650,9 +647,9 @@
           (& approved)
           (& corrupt-declared)
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerInvalidDeclaredNames) unit]
+              [(HttpTrailerInvalidDeclaredNames) unit]
               [_ (fail "corrupt declared-name set kind")])]
           [_ (fail "corrupt declared-name set accepted")]))
       (let
@@ -669,9 +666,9 @@
           (& declared)
           false
           (& limits))
-          [(trailer_policy.HttpTrailerValidationErr error)
+          [(HttpTrailerValidationErr error)
             (match error.kind
-              [(trailer_policy.HttpTrailerCorruptPolicy) unit]
+              [(HttpTrailerCorruptPolicy) unit]
               [_ (fail "corrupt policy kind")])]
           [_ (fail "corrupt policy accepted")])))))
 

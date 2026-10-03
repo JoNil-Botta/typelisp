@@ -421,14 +421,14 @@
   [left : http_types.HttpHeaderSensitivity]
   [right : http_types.HttpHeaderSensitivity]) : bool
   (match left
-    [(http_types.HttpHeaderPublic)
+    [(HttpHeaderPublic)
       (match right
-        [(http_types.HttpHeaderPublic) true]
-        [(http_types.HttpHeaderSensitive) false])]
-    [(http_types.HttpHeaderSensitive)
+        [(HttpHeaderPublic) true]
+        [(HttpHeaderSensitive) false])]
+    [(HttpHeaderSensitive)
       (match right
-        [(http_types.HttpHeaderPublic) false]
-        [(http_types.HttpHeaderSensitive) true])]))
+        [(HttpHeaderPublic) false]
+        [(HttpHeaderSensitive) true])]))
 
 ;: True when field name already appeared before `end` in wire order.
 (define (trailer-name-seen-before?
@@ -565,7 +565,7 @@
               [next-total : i64
                 (bounded-add total line-size-2 limits.max-total-bytes)]
               (match (http_types.validate-typed-field field total limits)
-                [(http_types.HttpTypedFieldErr error)
+                [(HttpTypedFieldErr error)
                   (begin
                     (set!
                       failure
@@ -574,7 +574,7 @@
                         index
                         error.offset))
                     (set! failed true))]
-                [(http_types.HttpTypedFieldOk)
+                [(HttpTypedFieldOk)
                   (if (< next-total 0)
                     (begin
                       (set!

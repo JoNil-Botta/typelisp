@@ -46,20 +46,14 @@
         (route-eq.eq
           (EqRoute (EqPoint 1 "a") (EqPoint 2 "b"))
           (EqRoute (EqPoint 1 "a") (EqPoint 9 "b"))))
-      (choice-eq.eq
-        (EqChoice.Point (EqPoint 7 "seven"))
-        (EqChoice.Point (EqPoint 7 "seven")))
-      (choice-eq.eq?
-        (EqChoice.Pair (tuple 8 "eight"))
-        (EqChoice.Pair (tuple 8 "eight")))
+      (choice-eq.eq (Point (EqPoint 7 "seven")) (Point (EqPoint 7 "seven")))
+      (choice-eq.eq? (Pair (tuple 8 "eight")) (Pair (tuple 8 "eight")))
       (not
-        (choice-eq.eq
-          (EqChoice.Point (EqPoint 7 "seven"))
-          (EqChoice.Point (EqPoint 7 "other"))))
-      (not (choice-eq.eq (EqChoice.Empty) (EqChoice.Point (EqPoint 0 "zero"))))
+        (choice-eq.eq (Point (EqPoint 7 "seven")) (Point (EqPoint 7 "other"))))
+      (not (choice-eq.eq (Empty) (Point (EqPoint 0 "zero"))))
       (choice-eq.eq
-        (EqChoice.Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b")))
-        (EqChoice.Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b"))))
+        (Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b")))
+        (Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b"))))
       (tuple-eq.eq
         (tuple (EqPoint 1 "one") (array 4 5))
         (tuple (EqPoint 1 "one") (array 4 5)))

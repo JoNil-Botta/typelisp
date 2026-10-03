@@ -182,8 +182,8 @@
 
 (define (child-or-panic [result : process.ResultProcessChild] [label : String]) : process.ProcessChild
   (match result
-    [(process.OkProcessChild child) child]
-    [(process.ErrProcessChild _) (io.panic label)]))
+    [(OkProcessChild child) child]
+    [(ErrProcessChild _) (io.panic label)]))
 
 (define (assert-no-resource-growth [baseline-fds : i64] [label : String]) : unit
   (begin
@@ -1004,7 +1004,7 @@
 
 (define (assert-registry-exhausted [result : process.ResultProcessChild]) : unit
   (match result
-    [(process.ErrProcessChild error)
+    [(ErrProcessChild error)
       (begin
         (test.assert-true
           (process.error-spawn-failed? (clone error))
@@ -1013,7 +1013,7 @@
           (process.error-message error)
           "process: child capability registry exhausted"
           "registry exhaustion diagnostic"))]
-    [(process.OkProcessChild child)
+    [(OkProcessChild child)
       (with
         ([unexpected child process.cleanup-process-child])
         (io.panic "full registry unexpectedly started child"))]))
@@ -1081,12 +1081,12 @@
 (define (reservation-worker) : i64
   (match (unsafe
     (process_runtime.process-runtime-child-reserve))
-    [(process_runtime.ProcessRuntimeChildRegistryExhausted)
+    [(ProcessRuntimeChildRegistryExhausted)
       (begin
         (unsafe
           (atomic-fetch-add! (ptr-addr-of reservation-ready) 1))
         1)]
-    [(process_runtime.ProcessRuntimeChildReserved child)
+    [(ProcessRuntimeChildReserved child)
       (with
         ([reserved child process_runtime.cleanup-process-runtime-child])
         (begin
@@ -1146,8 +1146,8 @@
           "all reservation workers reached barrier")
         (match (unsafe
           (process_runtime.process-runtime-child-reserve))
-          [(process_runtime.ProcessRuntimeChildRegistryExhausted) unit]
-          [(process_runtime.ProcessRuntimeChildReserved child)
+          [(ProcessRuntimeChildRegistryExhausted) unit]
+          [(ProcessRuntimeChildReserved child)
             (with
               ([unexpected child process_runtime.cleanup-process-runtime-child])
               (io.panic "concurrent reservations did not fill unique slots"))])
@@ -1216,11 +1216,11 @@
       (while (< iteration 32)
         (begin
           (match (process.start (missing-command))
-            [(process.ErrProcessChild error)
+            [(ErrProcessChild error)
               (test.assert-true
                 (process.error-spawn-failed? error)
                 "concurrent failed exec returns spawn error")]
-            [(process.OkProcessChild child)
+            [(OkProcessChild child)
               (with
                 ([unexpected child process.cleanup-process-child])
                 (io.panic "missing concurrent executable started"))])

@@ -207,19 +207,15 @@
       (cond
         [(< n 9)
           (HttpStatusLineErr
-            (http_types.peer-error
-              (http_types.HttpInvalidVersion)
-              (+ base-offset n)))]
+            (http_types.peer-error (HttpInvalidVersion) (+ base-offset n)))]
         [(>= bad-prefix 0)
           (HttpStatusLineErr
             (http_types.peer-error
-              (http_types.HttpInvalidVersion)
+              (HttpInvalidVersion)
               (+ base-offset bad-prefix)))]
         [(< n 13)
           (HttpStatusLineErr
-            (http_types.peer-error
-              (http_types.HttpInvalidStatus)
-              (+ base-offset n)))]
+            (http_types.peer-error (HttpInvalidStatus) (+ base-offset n)))]
         [else
           (let
             [d0 : i64 (cast (byte_buf.bytes-ref line 9) : i64)]
@@ -236,13 +232,11 @@
                         11))]
                   (HttpStatusLineErr
                     (http_types.peer-error
-                      (http_types.HttpInvalidStatus)
+                      (HttpInvalidStatus)
                       (+ base-offset bad))))]
               [(!= (cast (byte_buf.bytes-ref line 12) : i64) 32)
                 (HttpStatusLineErr
-                  (http_types.peer-error
-                    (http_types.HttpInvalidStatus)
-                    (+ base-offset 12)))]
+                  (http_types.peer-error (HttpInvalidStatus) (+ base-offset 12)))]
               [else
                 (let
                   [status : i64
@@ -267,7 +261,7 @@
                       [(or (< status 100) (> status 599))
                         (HttpStatusLineErr
                           (http_types.peer-error
-                            (http_types.HttpInvalidStatus)
+                            (HttpInvalidStatus)
                             (+ base-offset 9)))]
                       [(>= bad-reason 0)
                         (HttpStatusLineErr
@@ -275,8 +269,8 @@
                             (if (=
                               (cast (byte_buf.bytes-ref line bad-reason) : i64)
                               0)
-                              (http_types.HttpNulByte)
-                              (http_types.HttpInvalidReason))
+                              (HttpNulByte)
+                              (HttpInvalidReason))
                             (+ base-offset bad-reason)))]
                       [else
                         (HttpStatusLineOk
@@ -293,8 +287,7 @@
     [n : i64 (byte_buf.bytes-length value)]
     [cursor : i64 0]
     [failed : bool false]
-    [error-kind : http_types.HttpHeadErrorKind
-      (http_types.HttpMalformedContentLength)]
+    [error-kind : http_types.HttpHeadErrorKind (HttpMalformedContentLength)]
     [error-offset : i64 base-offset]
     [parsed-any : bool false]
     [canonical-set : bool state.saw-content-length]
@@ -320,7 +313,7 @@
                     (if (> number (/ (- 9223372036854775807 digit) 10))
                       (begin
                         (set! failed true)
-                        (set! error-kind (http_types.HttpContentLengthOverflow))
+                        (set! error-kind (HttpContentLengthOverflow))
                         (set! error-offset (+ base-offset cursor)))
                       (set! number (+ (* number 10) digit)))
                     (set! cursor (+ cursor 1)))))
@@ -336,9 +329,7 @@
                     (if (!= canonical number)
                       (begin
                         (set! failed true)
-                        (set!
-                          error-kind
-                          (http_types.HttpConflictingContentLength))
+                        (set! error-kind (HttpConflictingContentLength))
                         (set! error-offset (+ base-offset digit-start)))
                       unit)
                     (begin
@@ -424,8 +415,7 @@
     [n : i64 (byte_buf.bytes-length value)]
     [cursor : i64 0]
     [failed : bool false]
-    [error-kind : http_types.HttpHeadErrorKind
-      (http_types.HttpMalformedTransferEncoding)]
+    [error-kind : http_types.HttpHeadErrorKind (HttpMalformedTransferEncoding)]
     [error-offset : i64 base-offset]
     [count : i64 state.transfer-coding-count]
     [chunked : bool state.chunked-seen]
@@ -526,16 +516,12 @@
                       [(and is-chunked chunked)
                         (begin
                           (set! failed true)
-                          (set!
-                            error-kind
-                            (http_types.HttpDuplicateChunkedCoding))
+                          (set! error-kind (HttpDuplicateChunkedCoding))
                           (set! error-offset (+ base-offset coding-start)))]
                       [chunked
                         (begin
                           (set! failed true)
-                          (set!
-                            error-kind
-                            (http_types.HttpChunkedCodingNotFinal))
+                          (set! error-kind (HttpChunkedCodingNotFinal))
                           (set! error-offset (+ base-offset coding-start)))]
                       [else
                         (begin
@@ -633,9 +619,7 @@
                       unit))))))))
       (if (or failed (not parsed-any))
         (HttpConnectionFieldErr
-          (http_types.peer-error
-            (http_types.HttpForbiddenConnectionHeader)
-            error-offset))
+          (http_types.peer-error (HttpForbiddenConnectionHeader) error-offset))
         (HttpConnectionFieldOk)))))
 
 ;: Return the value's wire offset from a parsed field line and line base.
@@ -673,7 +657,7 @@
             (if next.saw-transfer-encoding
               (HttpResponseFieldErr
                 (http_types.peer-error
-                  (http_types.HttpTransferEncodingWithContentLength)
+                  (HttpTransferEncodingWithContentLength)
                   value-offset))
               (HttpResponseFieldOk next))])]
       [(name-eq-string (& field.name) "transfer-encoding")
@@ -683,7 +667,7 @@
             (if next.saw-content-length
               (HttpResponseFieldErr
                 (http_types.peer-error
-                  (http_types.HttpTransferEncodingWithContentLength)
+                  (HttpTransferEncodingWithContentLength)
                   value-offset))
               (HttpResponseFieldOk next))])]
       [(name-eq-string (& field.name) "connection")
@@ -692,9 +676,7 @@
           [(HttpConnectionFieldErr error) (HttpResponseFieldErr error)])]
       [(name-eq-string (& field.name) "proxy-connection")
         (HttpResponseFieldErr
-          (http_types.peer-error
-            (http_types.HttpForbiddenConnectionHeader)
-            value-offset))]
+          (http_types.peer-error (HttpForbiddenConnectionHeader) value-offset))]
       [else (HttpResponseFieldOk state)])))
 
 ;: Parse and normalize one Trailer declaration field.
@@ -763,10 +745,10 @@
         (HttpTrailerNamesErr
           (http_types.peer-error
             (if name-too-long
-              (http_types.HttpNameTooLong)
+              (HttpNameTooLong)
               (if forbidden
-                (http_types.HttpForbiddenTrailerName)
-                (http_types.HttpMalformedTrailerDeclaration)))
+                (HttpForbiddenTrailerName)
+                (HttpMalformedTrailerDeclaration)))
             error-offset))
         (HttpTrailerNamesOk set)))))
 
@@ -778,21 +760,19 @@
   [connect-capability : http_types.HttpConnectCapability]
   [offset : i64]) : HttpResponsePlanResult
   (match method
-    [(http_types.HttpResponseToHead)
+    [(HttpResponseToHead)
       (HttpResponsePlanOk (http_types.HttpResponsePlanNone))]
-    [(http_types.HttpResponseToConnect)
+    [(HttpResponseToConnect)
       ;; CONNECT first gates tunnel promotion, then applies ordinary response
       ;; framing to unsuccessful statuses.
       ;; lint-allow: nested-if-ladder
       (if (and (>= status 200) (< status 300))
         (match connect-capability
-          [(http_types.HttpConnectAuthorized)
+          [(HttpConnectAuthorized)
             (HttpResponsePlanOk (http_types.HttpResponsePlanTunnel))]
-          [(http_types.HttpConnectDenied)
+          [(HttpConnectDenied)
             (HttpResponsePlanErr
-              (http_types.peer-error
-                (http_types.HttpConnectCapabilityRequired)
-                offset))])
+              (http_types.peer-error (HttpConnectCapabilityRequired) offset))])
         (if (or
           (and (>= status 100) (< status 200))
           (= status 204)
@@ -803,16 +783,16 @@
               (if state.unsupported-coding-seen
                 (HttpResponsePlanOk
                   (http_types.HttpResponsePlanUnsupportedTransferCoding
-                    (http_types.HttpWireChunked)))
+                    (HttpWireChunked)))
                 (HttpResponsePlanOk (http_types.HttpResponsePlanChunked)))
               (HttpResponsePlanOk
                 (http_types.HttpResponsePlanUnsupportedTransferCoding
-                  (http_types.HttpWireCloseDelimited))))
+                  (HttpWireCloseDelimited))))
             (if state.saw-content-length
               (HttpResponsePlanOk
                 (http_types.HttpResponsePlanFixed state.content-length))
               (HttpResponsePlanOk (http_types.HttpResponsePlanCloseDelimited))))))]
-    [(http_types.HttpResponseToOther)
+    [(HttpResponseToOther)
       ;; Body semantics intentionally follow RFC precedence in this order.
       ;; lint-allow: nested-if-ladder
       (if (or
@@ -825,11 +805,11 @@
             (if state.unsupported-coding-seen
               (HttpResponsePlanOk
                 (http_types.HttpResponsePlanUnsupportedTransferCoding
-                  (http_types.HttpWireChunked)))
+                  (HttpWireChunked)))
               (HttpResponsePlanOk (http_types.HttpResponsePlanChunked)))
             (HttpResponsePlanOk
               (http_types.HttpResponsePlanUnsupportedTransferCoding
-                (http_types.HttpWireCloseDelimited))))
+                (HttpWireCloseDelimited))))
           (if state.saw-content-length
             (HttpResponsePlanOk
               (http_types.HttpResponsePlanFixed state.content-length))
@@ -869,7 +849,7 @@
                           (http_types.HttpHeaderValue
                             (byte_buf.from-string
                               (string.int->string state.content-length)))
-                          (http_types.HttpHeaderPublic))))))
+                          (HttpHeaderPublic))))))
                 (set!
                   out
                   (http_types.headers-append
@@ -884,8 +864,7 @@
   [request-method : http_types.HttpResponseRequestMethod]
   [connect-capability : http_types.HttpConnectCapability]) : HttpResponseParserNewResult
   (if (not (http_types.head-limits-valid? (& limits)))
-    (HttpResponseParserNewErr
-      (http_types.local-error (http_types.HttpInvalidLimits) 0))
+    (HttpResponseParserNewErr (http_types.local-error (HttpInvalidLimits) 0))
     (HttpResponseParserNewOk
       (HttpResponseParser
         (byte_buf.with-capacity
@@ -964,18 +943,16 @@
             [(HttpResponsePlanOk plan) (HttpParserLineComplete plan)]))
         (if (>= parser.headers.len parser.limits.max-fields)
           (HttpParserLineErr
-            (http_types.peer-error
-              (http_types.HttpTooManyFields)
-              parser.line-start))
+            (http_types.peer-error (HttpTooManyFields) parser.line-start))
           (let
             [value-offset : i64 (field-value-offset line parser.line-start)]
             (match (http_types.validate-field-line
               line
               parser.line-start
               (& parser.limits)
-              (http_types.HttpHeaderPublic))
-              [(http_types.HttpFieldLineErr error) (HttpParserLineErr error)]
-              [(http_types.HttpFieldLineOk field)
+              (HttpHeaderPublic))
+              [(HttpFieldLineErr error) (HttpParserLineErr error)]
+              [(HttpFieldLineOk field)
                 (begin
                   (if (http_types.header-name-known-sensitive? (& field.name))
                     (set! field.sensitivity (http_types.HttpHeaderSensitive))
@@ -1018,9 +995,7 @@
   [parser : HttpResponseParser]
   [input : (& input bytes)]) : HttpResponseFeedResult
   (if (not (http_types.head-limits-valid? (& parser.limits)))
-    (HttpResponseFeedErr
-      (http_types.local-error (http_types.HttpInvalidLimits) 0)
-      0)
+    (HttpResponseFeedErr (http_types.local-error (HttpInvalidLimits) 0) 0)
     (let
       [input-len : i64 (byte_buf.bytes-length input)]
       [consumed : i64 0]
@@ -1028,15 +1003,15 @@
       [result-kind : i64 0]
       [completed-head : http_types.HttpResponseHead
         (http_types.HttpResponseHead
-          (http_types.Http11)
+          (Http11)
           (http_types.HttpStatus 100)
           (http_types.HttpReason (byte_buf.new))
           (http_types.headers-empty)
           (http_types.header-name-set-empty)
-          (http_types.HttpResponsePlanNone)
+          (HttpResponsePlanNone)
           0)]
       [failure : http_types.HttpHeadError
-        (http_types.peer-error (http_types.HttpParserFinished) 0)]
+        (http_types.peer-error (HttpParserFinished) 0)]
       (begin
         (while (and (< consumed input-len) (not done))
           (let
@@ -1049,9 +1024,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error
-                        (http_types.HttpHeadTooLarge)
-                        absolute))
+                      (http_types.peer-error (HttpHeadTooLarge) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))
@@ -1076,7 +1049,7 @@
                             (set!
                               completed-head
                               (http_types.HttpResponseHead
-                                (http_types.Http11)
+                                (Http11)
                                 (http_types.HttpStatus parser.status-code)
                                 (clone parser.reason)
                                 headers
@@ -1090,7 +1063,7 @@
                   (set!
                     failure
                     (http_types.peer-error
-                      (http_types.HttpBareCarriageReturn)
+                      (HttpBareCarriageReturn)
                       (- absolute 1)))
                   (set! consumed (+ consumed 1))
                   (set! result-kind 2)
@@ -1100,9 +1073,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error
-                        (http_types.HttpBareLineFeed)
-                        absolute))
+                      (http_types.peer-error (HttpBareLineFeed) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))]
@@ -1110,7 +1081,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error (http_types.HttpNulByte) absolute))
+                      (http_types.peer-error (HttpNulByte) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))]
@@ -1118,9 +1089,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error
-                        (http_types.HttpInvalidControlByte)
-                        absolute))
+                      (http_types.peer-error (HttpInvalidControlByte) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))]
@@ -1128,9 +1097,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error
-                        (http_types.HttpHeadTooLarge)
-                        absolute))
+                      (http_types.peer-error (HttpHeadTooLarge) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))]
@@ -1145,9 +1112,7 @@
                   (begin
                     (set!
                       failure
-                      (http_types.peer-error
-                        (http_types.HttpLineTooLong)
-                        absolute))
+                      (http_types.peer-error (HttpLineTooLong) absolute))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
                     (set! done true))]
@@ -1167,9 +1132,8 @@
     [offset : i64 (byte_buf.len parser.buffer)]
     (if parser.saw-cr
       (HttpResponseFinishErr
-        (http_types.peer-error (http_types.HttpBareCarriageReturn) (- offset 1)))
-      (HttpResponseFinishErr
-        (http_types.peer-error (http_types.HttpTruncatedHead) offset)))))
+        (http_types.peer-error (HttpBareCarriageReturn) (- offset 1)))
+      (HttpResponseFinishErr (http_types.peer-error (HttpTruncatedHead) offset)))))
 
 ;: Generic local request-validation result.
 (defenum HttpRequestValidationResult
@@ -1258,27 +1222,25 @@
         (cond
           [(= method-len 0)
             (HttpRequestValidationErr
-              (http_types.local-error (http_types.HttpInvalidMethod) 0))]
+              (http_types.local-error (HttpInvalidMethod) 0))]
           [(>= bad-method 0)
             (HttpRequestValidationErr
-              (http_types.local-error (http_types.HttpInvalidMethod) bad-method))]
+              (http_types.local-error (HttpInvalidMethod) bad-method))]
           [(or
               (= target-len 0)
               (!= (cast (byte_buf.bytes-ref target-bytes 0) : i64) 47))
             (HttpRequestValidationErr
               (http_types.local-error
-                (http_types.HttpInvalidRequestTarget)
+                (HttpInvalidRequestTarget)
                 (+ method-len 1)))]
           [(>= bad-target 0)
             (HttpRequestValidationErr
               (http_types.local-error
-                (http_types.HttpInvalidRequestTarget)
+                (HttpInvalidRequestTarget)
                 (+ (+ method-len 1) bad-target)))]
           [(< line-size-2 0)
             (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpLineTooLong)
-                limits.max-line-bytes))]
+              (http_types.local-error (HttpLineTooLong) limits.max-line-bytes))]
           [else (HttpRequestValidationOk)])))))
 
 ;: Validate one already-typed request field's token/value shape and canonical
@@ -1288,8 +1250,8 @@
   [line-offset : i64]
   [limits : (& limits http_types.HttpHeadLimits)]) : HttpRequestValidationResult
   (match (http_types.validate-typed-field field line-offset limits)
-    [(http_types.HttpTypedFieldOk) (HttpRequestValidationOk)]
-    [(http_types.HttpTypedFieldErr error) (HttpRequestValidationErr error)]))
+    [(HttpTypedFieldOk) (HttpRequestValidationOk)]
+    [(HttpTypedFieldErr error) (HttpRequestValidationErr error)]))
 
 ;: Validate request fields, Host, framing, connection options, and normalized
 ;: Trailer declarations in caller order.
@@ -1299,15 +1261,13 @@
   [limits : (& limits http_types.HttpHeadLimits)]) : HttpRequestHeaderFactsResult
   (if (> headers.len limits.max-fields)
     (HttpRequestHeaderFactsErr
-      (http_types.local-error (http_types.HttpTooManyFields) first-field-offset))
+      (http_types.local-error (HttpTooManyFields) first-field-offset))
     (let
       [index : i64 0]
       [line-offset : i64 first-field-offset]
       [failed : bool false]
       [failure : http_types.HttpHeadError
-        (http_types.local-error
-          (http_types.HttpInvalidFieldName)
-          first-field-offset)]
+        (http_types.local-error (HttpInvalidFieldName) first-field-offset)]
       [framing : HttpFramingState (framing-empty)]
       [host-count : i64 0]
       [host-empty : bool false]
@@ -1345,7 +1305,7 @@
                         (set!
                           failure
                           (http_types.local-error
-                            (http_types.HttpForbiddenProxyAuthorization)
+                            (HttpForbiddenProxyAuthorization)
                             line-offset))
                         (set! failed true))]
                     [(name-eq-string (& field.name) "proxy-connection")
@@ -1353,7 +1313,7 @@
                         (set!
                           failure
                           (http_types.local-error
-                            (http_types.HttpForbiddenConnectionHeader)
+                            (HttpForbiddenConnectionHeader)
                             line-offset))
                         (set! failed true))]
                     [(name-eq-string (& field.name) "connection")
@@ -1412,9 +1372,7 @@
                     (begin
                       (set!
                         failure
-                        (http_types.local-error
-                          (http_types.HttpHeadTooLarge)
-                          line-offset))
+                        (http_types.local-error (HttpHeadTooLarge) line-offset))
                       (set! failed true))
                     (set! line-offset next-2)))
                 unit)
@@ -1424,23 +1382,17 @@
           [(and framing.saw-content-length framing.saw-transfer-encoding)
             (HttpRequestHeaderFactsErr
               (http_types.local-error
-                (http_types.HttpTransferEncodingWithContentLength)
+                (HttpTransferEncodingWithContentLength)
                 first-field-offset))]
           [(= host-count 0)
             (HttpRequestHeaderFactsErr
-              (http_types.local-error
-                (http_types.HttpMissingHost)
-                first-field-offset))]
+              (http_types.local-error (HttpMissingHost) first-field-offset))]
           [(> host-count 1)
             (HttpRequestHeaderFactsErr
-              (http_types.local-error
-                (http_types.HttpDuplicateHost)
-                first-field-offset))]
+              (http_types.local-error (HttpDuplicateHost) first-field-offset))]
           [host-empty
             (HttpRequestHeaderFactsErr
-              (http_types.local-error
-                (http_types.HttpEmptyHost)
-                first-field-offset))]
+              (http_types.local-error (HttpEmptyHost) first-field-offset))]
           [else
             (HttpRequestHeaderFactsOk
               (HttpRequestHeaderFacts
@@ -1457,71 +1409,59 @@
   [intent : http_types.HttpRequestBodyIntent]
   [offset : i64]) : HttpPreparedRequestResult
   (match intent
-    [(http_types.HttpRequestBodyNone)
+    [(HttpRequestBodyNone)
       (cond
         [facts.framing.saw-transfer-encoding
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpRequestBodyPlanMismatch)
-              offset))]
+            (http_types.local-error (HttpRequestBodyPlanMismatch) offset))]
         [(and
             facts.framing.saw-content-length
             (!= facts.framing.content-length 0))
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpRequestBodyPlanMismatch)
-              offset))]
+            (http_types.local-error (HttpRequestBodyPlanMismatch) offset))]
         [facts.saw-trailer
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpTrailerWithoutChunked)
-              offset))]
+            (http_types.local-error (HttpTrailerWithoutChunked) offset))]
         [else
           (HttpPreparedRequestOk
             (HttpPreparedRequest
-              (http_types.HttpRequestPlanNone)
+              (HttpRequestPlanNone)
               facts.framing.saw-content-length
               0
               false
               facts.trailer-names))])]
-    [(http_types.HttpRequestBodyFixed length)
+    [(HttpRequestBodyFixed length)
       (cond
         [(< length 0)
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpRequestBodyPlanMismatch)
-              offset))]
+            (http_types.local-error (HttpRequestBodyPlanMismatch) offset))]
         [facts.framing.saw-transfer-encoding
           (HttpPreparedRequestErr
             (http_types.local-error
-              (http_types.HttpTransferEncodingWithContentLength)
+              (HttpTransferEncodingWithContentLength)
               offset))]
         [(and
             facts.framing.saw-content-length
             (!= facts.framing.content-length length))
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpRequestBodyPlanMismatch)
-              offset))]
+            (http_types.local-error (HttpRequestBodyPlanMismatch) offset))]
         [facts.saw-trailer
           (HttpPreparedRequestErr
-            (http_types.local-error
-              (http_types.HttpTrailerWithoutChunked)
-              offset))]
+            (http_types.local-error (HttpTrailerWithoutChunked) offset))]
         [else
           (HttpPreparedRequestOk
             (HttpPreparedRequest
-              (http_types.HttpRequestPlanFixed length)
+              (HttpRequestPlanFixed length)
               true
               length
               false
               facts.trailer-names))])]
-    [(http_types.HttpRequestBodyChunked authorization)
+    [(HttpRequestBodyChunked authorization)
       (cond
         [facts.framing.saw-content-length
           (HttpPreparedRequestErr
             (http_types.local-error
-              (http_types.HttpTransferEncodingWithContentLength)
+              (HttpTransferEncodingWithContentLength)
               offset))]
         [(and
             facts.framing.saw-transfer-encoding
@@ -1531,14 +1471,12 @@
               facts.framing.unsupported-coding-seen))
           (HttpPreparedRequestErr
             (http_types.local-error
-              (http_types.HttpRequestTransferCodingUnsupported)
+              (HttpRequestTransferCodingUnsupported)
               offset))]
         [else
           (HttpPreparedRequestOk
             (HttpPreparedRequest
-              (http_types.HttpRequestPlanChunked
-                authorization
-                (clone facts.trailer-names))
+              (HttpRequestPlanChunked authorization (clone facts.trailer-names))
               false
               0
               true
@@ -1565,7 +1503,7 @@
     [target-bytes : (& target bytes) (http_types.request-target-bytes target)]
     [total : i64 0]
     [failed : bool false]
-    [failure-kind : http_types.HttpHeadErrorKind (http_types.HttpHeadTooLarge)]
+    [failure-kind : http_types.HttpHeadErrorKind (HttpHeadTooLarge)]
     [index : i64 0]
     (begin
       (set!
@@ -1626,7 +1564,7 @@
             [(< line-len 0)
               (begin
                 (set! failed true)
-                (set! failure-kind (http_types.HttpLineTooLong)))]
+                (set! failure-kind (HttpLineTooLong)))]
             [(or
                 (> 14 limits.max-name-bytes)
                 (> value-len limits.max-value-bytes))
@@ -1635,8 +1573,8 @@
                 (set!
                   failure-kind
                   (if (> 14 limits.max-name-bytes)
-                    (http_types.HttpNameTooLong)
-                    (http_types.HttpValueTooLong))))]
+                    (HttpNameTooLong)
+                    (HttpValueTooLong))))]
             [(< next 0) (set! failed true)]
             [else (set! total next)]))
         unit)
@@ -1650,7 +1588,7 @@
                 (< limits.max-value-bytes 7))
               (begin
                 (set! failed true)
-                (set! failure-kind (http_types.HttpLineTooLong)))]
+                (set! failure-kind (HttpLineTooLong)))]
             [(< next 0) (set! failed true)]
             [else (set! total next)]))
         unit)
@@ -1699,7 +1637,7 @@
                     (> names-len limits.max-value-bytes))
                   (begin
                     (set! failed true)
-                    (set! failure-kind (http_types.HttpLineTooLong)))]
+                    (set! failure-kind (HttpLineTooLong)))]
                 [(< next 0) (set! failed true)]
                 [else (set! total next)]))))
         unit)
@@ -1799,8 +1737,7 @@
   [intent : http_types.HttpRequestBodyIntent]
   [limits : http_types.HttpHeadLimits]) : HttpRequestSerializeResult
   (if (not (http_types.head-limits-valid? (& limits)))
-    (HttpRequestSerializeErr
-      (http_types.local-error (http_types.HttpInvalidLimits) 0))
+    (HttpRequestSerializeErr (http_types.local-error (HttpInvalidLimits) 0))
     (match (validate-request-line (& method) (& target) (& limits))
       [(HttpRequestValidationErr error) (HttpRequestSerializeErr error)]
       [(HttpRequestValidationOk)
@@ -1817,9 +1754,7 @@
             (bounded-length-add first-field-offset-0 12 limits.max-total-bytes)]
           (if (< first-field-offset 0)
             (HttpRequestSerializeErr
-              (http_types.local-error
-                (http_types.HttpHeadTooLarge)
-                limits.max-total-bytes))
+              (http_types.local-error (HttpHeadTooLarge) limits.max-total-bytes))
             (match (validate-request-headers
               (& headers)
               first-field-offset

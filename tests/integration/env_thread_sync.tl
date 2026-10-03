@@ -184,11 +184,11 @@
         (process.args-cons
           "printf '%s|%s' \"$TL_ENV_SYNC_GATED\" \"$TL_ENV_SYNC_SENTINEL\""
           (process.args-empty)))))
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (and
         (= (process.output-status output) 0)
         (string.eq (process.output-stdout output) "|steady"))]
-    [(process.ErrProcessOutput _) false]))
+    [(ErrProcessOutput _) false]))
 
 (define (env-sync-gate-cell [gate-addr : i64] [cell : i64]) : (MutPtr i64)
   (unsafe

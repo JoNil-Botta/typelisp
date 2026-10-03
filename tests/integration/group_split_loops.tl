@@ -16,13 +16,13 @@
 ;; The last index holding zero: a two-word enum reassigned in a loop.
 (define (last-zero [xs : (& xs (__tl_dyn-array i64))]) : MaybeIndex
   (let
-    [found : MaybeIndex MaybeIndex.None]
+    [found : MaybeIndex None]
     [i : i64 0]
     (begin
       (while (< i (array-length xs))
         (begin
           (if (= (array-ref xs i) 0)
-            (set! found (MaybeIndex.Some i))
+            (set! found (Some i))
             unit)
           (set! i (+ i 1))))
       found)))
@@ -67,19 +67,19 @@
     found
     (first-over
       (match found
-        [(MaybeIndex.None)
+        [(None)
           (if (> (array-ref xs i) limit)
-            (MaybeIndex.Some i)
+            (Some i)
             found)]
-        [(MaybeIndex.Some _) found])
+        [(Some _) found])
       (+ i 1)
       limit
       xs)))
 
 (define (index-or [m : MaybeIndex] [fallback : i64]) : i64
   (match m
-    [(MaybeIndex.Some k) k]
-    [(MaybeIndex.None) fallback]))
+    [(Some k) k]
+    [(None) fallback]))
 
 (define (main) : i64
   (let
@@ -99,8 +99,8 @@
         [acc : Acc (positive-sum (& floats))]
         (if (and
           (= (index-or (last-zero (& ints)) -1) 2)
-          (= (index-or (first-over MaybeIndex.None 0 5 (& ints)) -1) 1)
-          (= (index-or (first-over MaybeIndex.None 0 20 (& ints)) -1) -1)
+          (= (index-or (first-over None 0 5 (& ints)) -1) 1)
+          (= (index-or (first-over None 0 20 (& ints)) -1) -1)
           (= acc.n 3)
           (= acc.x 4.0)
           (= (swap-rounds 5) 341)

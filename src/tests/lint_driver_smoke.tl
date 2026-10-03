@@ -87,9 +87,8 @@
   [path : String]
   [source : String]) : bool
   (match (parse_core.parse-ast-source-diagnostic path source)
-    [(parse_core.ResultAstProgramDiagnostic.Ok program)
-      (lint_core.lint-program-has-unused-unsafe-candidate? program)]
-    [(parse_core.ResultAstProgramDiagnostic.Err _) true]))
+    [(Ok program) (lint_core.lint-program-has-unused-unsafe-candidate? program)]
+    [(Err _) true]))
 
 (define (lint-driver-smoke-unsafe-surface-safe-source) : String
   "(import dep)
@@ -240,7 +239,7 @@
   [index : i64]
   [depth : i64]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
@@ -249,20 +248,20 @@
           (string.eq
             finding.rule-id
             (lint_core.lint-rule-deprecated-string-concat-id))))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
 
 (define (lint-driver-smoke-finding-rule-ok?
   [findings : lint_core.LintFindings]
   [index : i64]
   [rule-id : String]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
           (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq finding.rule-id rule-id)))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
 
 (define (lint-driver-smoke-finding-rule-line-ok?
   [findings : lint_core.LintFindings]
@@ -270,13 +269,13 @@
   [rule-id : String]
   [line : i64]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
           (= (ast.ast-source-span-start-line fspan) line)
           (string.eq finding.rule-id rule-id)))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
 
 (define (lint-driver-smoke-redundant-begin-findings
   [source : String]
@@ -691,8 +690,8 @@
       (match (parse_core.parse-ast-source-diagnostic
         "lint_driver_unused_variable_clean.tl"
         (lint-driver-smoke-clean-unused-variable-source))
-        [(parse_core.ResultAstProgramDiagnostic.Ok _) 42]
-        [(parse_core.ResultAstProgramDiagnostic.Err _) 49])]
+        [(Ok _) 42]
+        [(Err _) 49])]
     (begin
       (if (not
         (=

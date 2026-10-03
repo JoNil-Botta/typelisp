@@ -6,8 +6,8 @@
 
 (define (read-through-stolen-token [mutex : (& mutex mutex_i64.Mutex)]) : i64
   (match (mutex_i64.share mutex)
-    [(mutex_i64.ShareErr) 1]
-    [(mutex_i64.Shared alias)
+    [(ShareErr) 1]
+    [(Shared alias)
       (let
         [token : (Box i64) alias.authority.token]
         (begin
@@ -18,5 +18,5 @@
 
 (define (main) : i64
   (match (mutex_i64.create 7)
-    [(mutex_i64.CreateErr _) 1]
-    [(mutex_i64.CreateOk mutex) (read-through-stolen-token (& mutex))]))
+    [(CreateErr _) 1]
+    [(CreateOk mutex) (read-through-stolen-token (& mutex))]))

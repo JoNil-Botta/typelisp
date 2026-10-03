@@ -2,13 +2,13 @@
 
 (define (unit-ok? [result : time.ResultTimeUnit]) : bool
   (match result
-    [(time.OkTimeUnit) true]
-    [(time.ErrTimeUnit _) false]))
+    [(OkTimeUnit) true]
+    [(ErrTimeUnit _) false]))
 
 (define (negative-error? [result : time.ResultTimeUnit]) : bool
   (match result
-    [(time.OkTimeUnit) false]
-    [(time.ErrTimeUnit err)
+    [(OkTimeUnit) false]
+    [(ErrTimeUnit err)
       (= (time.error-message err) "time: sleep duration must be nonnegative")]))
 
 (define (main) : i64

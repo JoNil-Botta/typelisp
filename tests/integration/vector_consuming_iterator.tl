@@ -25,19 +25,18 @@
 
 (define (i64-item-or [step : i64vec.IntoNext] [fallback : i64]) : i64
   (match step
-    [(i64vec.IntoNext.Done) fallback]
-    [(i64vec.IntoNext.Item value) value]))
+    [(Done) fallback]
+    [(Item value) value]))
 
 (define (i64-done? [step : i64vec.IntoNext]) : bool
   (match step
-    [(i64vec.IntoNext.Done) true]
-    [(i64vec.IntoNext.Item _) false]))
+    [(Done) true]
+    [(Item _) false]))
 
 (define (ball-score [step : ballvec.IntoNext]) : i64
   (match step
-    [(ballvec.IntoNext.Done) 0]
-    [(ballvec.IntoNext.Item ball)
-      (+ ball.center.x (+ ball.center.y ball.radius))]))
+    [(Done) 0]
+    [(Item ball) (+ ball.center.x (+ ball.center.y ball.radius))]))
 
 (define (main) : i64
   (let

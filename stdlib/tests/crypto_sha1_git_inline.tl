@@ -15,8 +15,8 @@
   test
   (define (test-require-update [result : sha.GitSha1UpdateResult]) : unit
     (match result
-      [(sha.GitSha1UpdateOk) unit]
-      [(sha.GitSha1UpdateErr _)
+      [(GitSha1UpdateOk) unit]
+      [(GitSha1UpdateErr _)
         (test.assert-true false "Git SHA-1 update should succeed")])))
 
 ;: Extract one successful public digest.
@@ -24,8 +24,8 @@
   test
   (define (test-require-finalize [result : sha.GitSha1FinalizeResult]) : sha.GitSha1Digest
     (match result
-      [(sha.GitSha1FinalizeOk value) value]
-      [(sha.GitSha1FinalizeErr _)
+      [(GitSha1FinalizeOk value) value]
+      [(GitSha1FinalizeErr _)
         (test-zero-digest "Git SHA-1 finalization should succeed")])))
 
 ;: Hash one exact borrowed compatibility preimage.
@@ -183,7 +183,7 @@
   test
   (define (test-assert-finalized-update [result : sha.GitSha1UpdateResult]) : unit
     (match result
-      [(sha.GitSha1UpdateErr (sha.GitSha1Finalized)) unit]
+      [(GitSha1UpdateErr (GitSha1Finalized)) unit]
       [_ (test.assert-true false "expected finalized Git SHA-1 update error")])))
 
 ;: Require the common finalized-state finalization error.
@@ -191,7 +191,7 @@
   test
   (define (test-assert-finalized-finalize [result : sha.GitSha1FinalizeResult]) : unit
     (match result
-      [(sha.GitSha1FinalizeErr (sha.GitSha1Finalized)) unit]
+      [(GitSha1FinalizeErr (GitSha1Finalized)) unit]
       [_
         (test.assert-true
           false
@@ -202,7 +202,7 @@
   test
   (define (test-assert-length-error [result : sha.GitSha1LengthResult]) : unit
     (match result
-      [(sha.GitSha1LengthErr (sha.GitSha1MessageTooLong _ _)) unit]
+      [(GitSha1LengthErr (GitSha1MessageTooLong _ _)) unit]
       [_ (test.assert-true false "expected Git SHA-1 length error")])))
 
 ;: Require a raw-source validation error.
@@ -210,8 +210,8 @@
   test
   (define (test-assert-source-error [result : sha.GitSha1UpdateResult]) : unit
     (match result
-      [(sha.GitSha1UpdateErr (sha.GitSha1InvalidSource)) unit]
-      [(sha.GitSha1UpdateErr (sha.GitSha1InvalidSourceLength _)) unit]
+      [(GitSha1UpdateErr (GitSha1InvalidSource)) unit]
+      [(GitSha1UpdateErr (GitSha1InvalidSourceLength _)) unit]
       [_ (test.assert-true false "expected Git SHA-1 source error")])))
 
 ;: Require an exact-output validation error.
@@ -219,8 +219,8 @@
   test
   (define (test-assert-output-error [result : sha.GitSha1FinalizeIntoResult]) : unit
     (match result
-      [(sha.GitSha1FinalizeIntoErr (sha.GitSha1InvalidOutput)) unit]
-      [(sha.GitSha1FinalizeIntoErr (sha.GitSha1InvalidOutputLength _)) unit]
+      [(GitSha1FinalizeIntoErr (GitSha1InvalidOutput)) unit]
+      [(GitSha1FinalizeIntoErr (GitSha1InvalidOutputLength _)) unit]
       [_ (test.assert-true false "expected Git SHA-1 output error")])))
 
 ;: Require a duplicate/closed raw finalization error.
@@ -229,7 +229,7 @@
   (define (test-assert-finalize-into-closed
     [result : sha.GitSha1FinalizeIntoResult]) : unit
     (match result
-      [(sha.GitSha1FinalizeIntoErr (sha.GitSha1Finalized)) unit]
+      [(GitSha1FinalizeIntoErr (GitSha1Finalized)) unit]
       [_ (test.assert-true false "expected closed Git SHA-1 sink error")])))
 
 ;: Require one successful exact-sink finalization.
@@ -237,8 +237,8 @@
   test
   (define (test-require-finalize-into [result : sha.GitSha1FinalizeIntoResult]) : unit
     (match result
-      [(sha.GitSha1FinalizeIntoOk) unit]
-      [(sha.GitSha1FinalizeIntoErr _)
+      [(GitSha1FinalizeIntoOk) unit]
+      [(GitSha1FinalizeIntoErr _)
         (test.assert-true false "Git SHA-1 sink finalization should succeed")])))
 
 (cfg
@@ -382,20 +382,20 @@
     crypto-sha1-git-length-and-lifecycle
     (begin
       (match (sha.length-add (cast 0xffffffff : u64) (cast 2 : u64))
-        [(sha.GitSha1LengthOk length)
+        [(GitSha1LengthOk length)
           (test.assert-true
             (= length (cast 0x100000001 : u64))
             "Git SHA-1 length crosses 32-bit range")]
-        [(sha.GitSha1LengthErr _)
+        [(GitSha1LengthErr _)
           (test.assert-true false "Git SHA-1 32-bit crossing should pass")])
       (match (sha.length-add
         (- (sha.max-byte-length) (cast 1 : u64))
         (cast 1 : u64))
-        [(sha.GitSha1LengthOk length)
+        [(GitSha1LengthOk length)
           (test.assert-true
             (= length (sha.max-byte-length))
             "Git SHA-1 maximum byte length admitted")]
-        [(sha.GitSha1LengthErr _)
+        [(GitSha1LengthErr _)
           (test.assert-true false "Git SHA-1 maximum should pass")])
       (test-assert-length-error
         (sha.length-add (sha.max-byte-length) (cast 1 : u64)))
@@ -423,7 +423,7 @@
           (set! state.byte-length (sha.max-byte-length))
           (set! state.block-length 63)
           (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
-            [(sha.GitSha1UpdateErr (sha.GitSha1MessageTooLong _ _)) unit]
+            [(GitSha1UpdateErr (GitSha1MessageTooLong _ _)) unit]
             [_
               (test.assert-true
                 false

@@ -4,8 +4,8 @@
 (define (borrowed-value-found?
   [lookup : (map_string_i64.BorrowedValueLookup map)]) : bool
   (match lookup
-    [(map_string_i64.BorrowedValueFound _) true]
-    [(map_string_i64.BorrowedValueMissing) false]))
+    [(BorrowedValueFound _) true]
+    [(BorrowedValueMissing) false]))
 
 ; Must fail: a mutable entry would permit overwriting a map value while an
 ; immutable value reference into that map is still live.

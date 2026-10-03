@@ -7,8 +7,8 @@
 (define (hashmap-borrowed-value-len
   [lookup : (map_string_string.BorrowedValueLookup map)]) : i64
   (match lookup
-    [(map_string_string.BorrowedValueFound value) (string-length value)]
-    [(map_string_string.BorrowedValueMissing) 0]))
+    [(BorrowedValueFound value) (string-length value)]
+    [(BorrowedValueMissing) 0]))
 
 ; Must fail: direct insertion mutates the bucket array while a value reference
 ; into the map is still live.

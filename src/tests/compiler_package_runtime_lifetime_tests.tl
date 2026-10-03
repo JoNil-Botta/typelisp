@@ -38,18 +38,17 @@
           (in-arena
             home
             (match program
-              [(parser.ResultAstProgram.Err message)
-                (in-arena home (string.copy message))]
-              [(parser.ResultAstProgram.Ok parsed)
+              [(Err message) (in-arena home (string.copy message))]
+              [(Ok parsed)
                 (match parsed
-                  [(ast.AstProgram.Program decls-box)
+                  [(Program decls-box)
                     (let
                       [lowered : driver.ResultCompilerDriverLowered
                         (driver.compiler-driver-package-runtime-lower
                           (owned_view.compiler-owned-shared-view scope)
                           "owner_smoke"
                           target
-                          (backend.CompilerBackendMode.Scalar)
+                          (Scalar)
                           (owned_view.compiler-owned-box-shared-view decls-box)
                           (ast.ast-decl-path-list-new)
                           (cfg_core.compiler-cfg-empty))]
@@ -58,37 +57,28 @@
                           ""
                           lowered
                           target
-                          (backend.CompilerBackendMode.Scalar)
+                          (Scalar)
                           level
                           emit-entry
                           false)
-                          [(driver.ResultCompilerDriverPackageRuntime.Object
-                              _
-                              asm
-                              advisories)
+                          [(Object _ asm advisories)
                             (driver.ResultCompilerDriver.Ok asm advisories)]
-                          [(driver.ResultCompilerDriverPackageRuntime.Assembly
-                              _
-                              _
-                              _)
+                          [(Assembly _ _ _)
                             (io.panic
                               "lifetime fixture requires direct object emission")]
-                          [(driver.ResultCompilerDriverPackageRuntime.Err
-                              diag
-                              advisories)
+                          [(Err diag advisories)
                             (driver.ResultCompilerDriver.Err diag advisories)])
                         (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
                           ""
                           lowered
                           target
                           true
-                          (backend.CompilerBackendMode.Scalar)
+                          (Scalar)
                           level
                           emit-entry
                           false))
-                        [(driver.ResultCompilerDriver.Ok asm _)
-                          (in-arena home (string.copy asm))]
-                        [(driver.ResultCompilerDriver.Err diag _)
+                        [(Ok asm _) (in-arena home (string.copy asm))]
+                        [(Err diag _)
                           (in-arena
                             home
                             (driver.compiler-driver-render-source-diagnostic
@@ -121,7 +111,7 @@
   (runtime-owner-smoke-for-route source target level false))
 
 (define (runtime-owner-smoke [source : String]) : String
-  (runtime-owner-smoke-for source (backend.CompilerBackendTarget.Linux) 0))
+  (runtime-owner-smoke-for source (Linux) 0))
 
 (test
   package-runtime-success-error-success-restores-parent
@@ -205,15 +195,12 @@
         (unless
           (and
             (string.contains
-              (runtime-owner-smoke-for
-                "(define (main) : i64 42)"
-                (backend.CompilerBackendTarget.Linux)
-                level)
+              (runtime-owner-smoke-for "(define (main) : i64 42)" (Linux) level)
               "main:")
             (string.contains
               (runtime-owner-smoke-for
                 "(define (main) : i64 42)"
-                (backend.CompilerBackendTarget.Windows)
+                (Windows)
                 level)
               "main:"))
           (io.panic "target or optimization route lost owned runtime output"))
@@ -251,8 +238,8 @@
               (load.compiler-pkg-deps-empty)
               false
               (cfg_core.compiler-cfg-empty))
-              [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _) "loaded"]
-              [(load.ResultCompilerLoadWithPaths.Err diag)
+              [(Ok _ _ _ _) "loaded"]
+              [(Err diag)
                 (driver.compiler-driver-render-source-diagnostic
                   (owned_view.compiler-owned-box-shared-view diag))]))]
         (begin
@@ -297,11 +284,7 @@
   (let
     [source : String "(define (main) : i64 42)"]
     [warm : String
-      (runtime-owner-smoke-for-route
-        (string.copy source)
-        backend.CompilerBackendTarget.Linux
-        0
-        true)]
+      (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)]
     [before : i64 (profile.alloc-live)]
     [index : i64 0]
     (begin
@@ -312,11 +295,7 @@
         (begin
           (unless
             (string.contains
-              (runtime-owner-smoke-for-route
-                (string.copy source)
-                backend.CompilerBackendTarget.Linux
-                0
-                true)
+              (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
               "main:")
             (io.panic "repeated direct object emission lost side assembly"))
           (set! index (+ index 1))))
@@ -337,14 +316,14 @@
         [linux : String
           (runtime-owner-smoke-for-route-and-entry
             (string.copy source)
-            backend.CompilerBackendTarget.Linux
+            Linux
             level
             false
             false)]
         [windows : String
           (runtime-owner-smoke-for-route-and-entry
             (string.copy source)
-            backend.CompilerBackendTarget.Windows
+            Windows
             level
             false
             false)]

@@ -740,7 +740,7 @@
         (unsafe
           (runtime-alloc i64-mutex-cell-byte-count))]
       (if (= cell 0)
-        (registry.ConcurrencyShareErr)
+        (ConcurrencyShareErr)
         (begin
           (unsafe
             (write-i64! cell i64-mutex-cell-value-slot initial))
@@ -757,7 +757,7 @@
                 [_freed : bool
                   (unsafe
                     (runtime-free cell i64-mutex-cell-byte-count))]
-                (registry.ConcurrencyShareErr))
+                (ConcurrencyShareErr))
               (match (unsafe
                 (registry.concurrency-register
                   registry.concurrency-family-mutex-i64
@@ -769,7 +769,7 @@
                   0
                   0
                   0))
-                [(registry.ConcurrencyShareErr)
+                [(ConcurrencyShareErr)
                   (let
                     [_closed : bool
                       (unsafe
@@ -777,24 +777,24 @@
                     [_freed : bool
                       (unsafe
                         (runtime-free cell i64-mutex-cell-byte-count))]
-                    (registry.ConcurrencyShareErr))]
-                [(registry.ConcurrencyShared authority)
+                    (ConcurrencyShareErr))]
+                [(ConcurrencyShared authority)
                   (match (unsafe
                     (registry.concurrency-share-token
                       (& authority)
                       registry.concurrency-family-mutex-i64))
-                    [(registry.ConcurrencyTokenErr)
+                    [(ConcurrencyTokenErr)
                       (let
                         [_closed : bool (i64-mutex-close (& authority))]
-                        (registry.ConcurrencyShareErr))]
-                    [(registry.ConcurrencyToken grant)
+                        (ConcurrencyShareErr))]
+                    [(ConcurrencyToken grant)
                       (begin
                         (unsafe
                           (write-i64!
                             cell
                             i64-mutex-cell-grant-slot
                             (registry.concurrency-token-address (& grant))))
-                        (registry.ConcurrencyShared authority))])]))))))))
+                        (ConcurrencyShared authority))])]))))))))
 
 ;: Lock the mutex `authority` names and return its grant for the guard. The
 ;: lease taken first lasts through the wait and the guard's lifetime, so close

@@ -16,21 +16,21 @@
 (define (lint-policy-test-kind-code
   [kind : (& kind policy.LintPolicyDiagnosticKind)]) : i64
   (match kind
-    [(policy.LintPolicyDiagnosticKind.UnknownRule) 1]
-    [(policy.LintPolicyDiagnosticKind.UnknownGroup) 2]
-    [(policy.LintPolicyDiagnosticKind.DuplicateGroup) 3]
-    [(policy.LintPolicyDiagnosticKind.InvalidGroupReference) 4]
-    [(policy.LintPolicyDiagnosticKind.ContradictoryAssignment) 5]
-    [(policy.LintPolicyDiagnosticKind.GroupCycle) 6]
-    [(policy.LintPolicyDiagnosticKind.ForbidLowering) 7]))
+    [(UnknownRule) 1]
+    [(UnknownGroup) 2]
+    [(DuplicateGroup) 3]
+    [(InvalidGroupReference) 4]
+    [(ContradictoryAssignment) 5]
+    [(GroupCycle) 6]
+    [(ForbidLowering) 7]))
 
 (define (lint-policy-test-outcome-code
   [outcome : (& outcome policy.LintPolicyTraceOutcome)]) : i64
   (match outcome
-    [(policy.LintPolicyTraceOutcome.Inactive) 1]
-    [(policy.LintPolicyTraceOutcome.Applied) 2]
-    [(policy.LintPolicyTraceOutcome.Shadowed) 3]
-    [(policy.LintPolicyTraceOutcome.Rejected) 4]))
+    [(Inactive) 1]
+    [(Applied) 2]
+    [(Shadowed) 3]
+    [(Rejected) 4]))
 
 (define (lint-policy-test-diagnostic-count
   [resolution : (& resolution policy.LintPolicyResolution)]
@@ -98,8 +98,8 @@
   [layer : policy.LintPolicyLayer]
   [source : (& source str)]) : bool
   (match (policy.lint-policy-decision-find resolution rule-id)
-    [(policy.LintMaybePolicyDecision.NotFound) false]
-    [(policy.LintMaybePolicyDecision.Found decision)
+    [(NotFound) false]
+    [(Found decision)
       (and
         (lint_core_tests.lint-level-eq? decision.level level)
         (=
@@ -120,7 +120,7 @@
     name
     level
     layer
-    (policy.LintPolicyAssignmentMode.Exact)
+    (Exact)
     selected
     (lint-policy-test-origin source)))
 
@@ -134,7 +134,7 @@
     name
     level
     layer
-    (policy.LintPolicyAssignmentMode.Exact)
+    (Exact)
     selected
     (lint-policy-test-origin source)))
 
@@ -145,7 +145,7 @@
   (policy.LintPolicyGroup
     name
     members
-    (policy.LintPolicyLayer.Project)
+    (Project)
     (lint-policy-test-origin source)))
 
 (define (lint-policy-test-registry-and-defaults) : unit
@@ -215,14 +215,14 @@
           (__tl_make-array
             (lint-policy-test-group-assignment
               "style"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "project-group")
             (lint-policy-test-rule-assignment
               (lint_core.lint-rule-nested-let-id)
-              (lint_core.LintLevel.Warn)
-              (policy.LintPolicyLayer.Project)
+              (Warn)
+              (Project)
               true
               "project-rule"))))]
     (begin
@@ -230,8 +230,8 @@
         (lint-policy-test-decision-is?
           resolution
           "nested-let"
-          (lint_core.LintLevel.Warn)
-          (policy.LintPolicyLayer.Project)
+          (Warn)
+          (Project)
           "project-rule")
         "lint policy: a rule assignment must override its group in one layer")
       (lint-policy-test-expect
@@ -247,32 +247,32 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Warn)
-              (policy.LintPolicyLayer.Project)
+              (Warn)
+              (Project)
               true
               "project")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.TargetProfile)
+              (Deny)
+              (TargetProfile)
               true
               "selected-target")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Forbid)
-              (policy.LintPolicyLayer.Cli)
+              (Forbid)
+              (Cli)
               false
               "cfg-disabled")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.ModuleItem)
+              (Deny)
+              (ModuleItem)
               true
               "module")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Allow)
-              (policy.LintPolicyLayer.Local)
+              (Allow)
+              (Local)
               true
               "local"))))]
     (begin
@@ -280,8 +280,8 @@
         (lint-policy-test-decision-is?
           resolution
           "nested-let"
-          (lint_core.LintLevel.Allow)
-          (policy.LintPolicyLayer.Local)
+          (Allow)
+          (Local)
           "local")
         "lint policy: local assignment must win the documented scope order")
       (lint-policy-test-expect
@@ -300,14 +300,14 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Forbid)
-              (policy.LintPolicyLayer.Project)
+              (Forbid)
+              (Project)
               true
               "project-forbid")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Allow)
-              (policy.LintPolicyLayer.Local)
+              (Allow)
+              (Local)
               true
               "local-allow"))))]
     (begin
@@ -315,8 +315,8 @@
         (lint-policy-test-decision-is?
           resolution
           "nested-let"
-          (lint_core.LintLevel.Forbid)
-          (policy.LintPolicyLayer.Project)
+          (Forbid)
+          (Project)
           "project-forbid")
         "lint policy: forbid must not be lowered")
       (lint-policy-test-expect
@@ -335,14 +335,14 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "not-a-rule"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "unknown-rule")
             (lint-policy-test-group-assignment
               "not-a-group"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "unknown-group"))))]
     [contradictory : policy.LintPolicyResolution
@@ -352,14 +352,14 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Warn)
-              (policy.LintPolicyLayer.Project)
+              (Warn)
+              (Project)
               true
               "duplicate-a")
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "duplicate-b"))))]
     [duplicate-group : policy.LintPolicyResolution
@@ -392,8 +392,8 @@
         (lint-policy-test-decision-is?
           contradictory
           "nested-let"
-          (lint_core.LintLevel.Deny)
-          (policy.LintPolicyLayer.Project)
+          (Deny)
+          (Project)
           "duplicate-b")
         "lint policy: contradictory input must still resolve deterministically"))))
 
@@ -421,8 +421,8 @@
           (__tl_make-array
             (lint-policy-test-group-assignment
               "project-strict"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "strict-assignment"))))]
     (begin
@@ -434,14 +434,14 @@
           (lint-policy-test-decision-is?
             resolution
             "nested-let"
-            (lint_core.LintLevel.Deny)
-            (policy.LintPolicyLayer.Project)
+            (Deny)
+            (Project)
             "strict-assignment")
           (lint-policy-test-decision-is?
             resolution
             "no-effect"
-            (lint_core.LintLevel.Deny)
-            (policy.LintPolicyLayer.Project)
+            (Deny)
+            (Project)
             "strict-assignment"))
         "lint policy: nested custom groups must expand built-in groups and rules")
       (lint-policy-test-expect
@@ -476,8 +476,8 @@
           (__tl_make-array
             (lint-policy-test-group-assignment
               "cycle-a"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "cycle-assignment"))))]
     (begin
@@ -525,8 +525,8 @@
           (__tl_make-array
             (lint-policy-test-group-assignment
               "chain-0"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "chain-assignment"))))]
     (begin
@@ -537,8 +537,8 @@
         (lint-policy-test-decision-is?
           resolution
           "nested-let"
-          (lint_core.LintLevel.Deny)
-          (policy.LintPolicyLayer.Project)
+          (Deny)
+          (Project)
           "chain-assignment")
         "lint policy: memoized deep group expansion should reach built-in rules")
       (lint-policy-test-expect
@@ -560,15 +560,15 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "project-deny")
             (policy.lint-policy-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Warn)
-              (policy.LintPolicyLayer.Cli)
-              (policy.LintPolicyAssignmentMode.Minimum)
+              (Warn)
+              (Cli)
+              (Minimum)
               true
               (lint-policy-test-origin "legacy-floor")))))]
     [legacy : policy.LintPolicyResolution
@@ -580,8 +580,8 @@
         (lint-policy-test-decision-is?
           floor-resolution
           "nested-let"
-          (lint_core.LintLevel.Deny)
-          (policy.LintPolicyLayer.Project)
+          (Deny)
+          (Project)
           "project-deny")
         "lint policy: a legacy warn floor must not lower project deny")
       (lint-policy-test-expect
@@ -600,20 +600,20 @@
           (lint-policy-test-decision-is?
             legacy
             "deprecated-string-concat"
-            (lint_core.LintLevel.Warn)
-            (policy.LintPolicyLayer.Cli)
+            (Warn)
+            (Cli)
             "legacy-cli")
           (lint-policy-test-decision-is?
             legacy
             "global-name-case"
-            (lint_core.LintLevel.Warn)
-            (policy.LintPolicyLayer.Cli)
+            (Warn)
+            (Cli)
             "legacy-cli")
           (lint-policy-test-decision-is?
             legacy
             "type-name-case"
-            (lint_core.LintLevel.Warn)
-            (policy.LintPolicyLayer.Cli)
+            (Warn)
+            (Cli)
             "legacy-cli"))
         "lint policy: legacy flags must expand to monotonic warn floors")
       (lint-policy-test-expect
@@ -631,8 +631,8 @@
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
-              (lint_core.LintLevel.Deny)
-              (policy.LintPolicyLayer.Project)
+              (Deny)
+              (Project)
               true
               "finding-policy"))))]
     [resolved : LintPolicyResolvedFinding
@@ -739,13 +739,7 @@
   [mode : policy.LintPolicyAssignmentMode]
   [selected : bool]
   [origin : policy.LintPolicyOrigin]) : policy.LintPolicyAssignment
-  (policy.LintPolicyAssignment
-    (policy.LintPolicySubject.Group name)
-    level
-    layer
-    mode
-    selected
-    origin))
+  (policy.LintPolicyAssignment (Group name) level layer mode selected origin))
 
 (defstruct LintPolicyResolvedFinding
   (finding lint_core.LintFinding)
@@ -760,15 +754,14 @@
   (let
     [rule-id : String (owned_view.compiler-owned-shared-view finding.rule-id)]
     (match (policy.lint-policy-decision-find resolution rule-id)
-      [(policy.LintMaybePolicyDecision.Found decision)
-        (LintPolicyResolvedFinding finding decision)]
-      [(policy.LintMaybePolicyDecision.NotFound)
+      [(Found decision) (LintPolicyResolvedFinding finding decision)]
+      [(NotFound)
         (LintPolicyResolvedFinding
           finding
           (policy.LintPolicyDecision
             rule-id
-            (lint_core.LintLevel.Allow)
-            policy.LintPolicyLayer.Builtin
+            (Allow)
+            Builtin
             -1
             (policy.lint-policy-origin
               "registry"

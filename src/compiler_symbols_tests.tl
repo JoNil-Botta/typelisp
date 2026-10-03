@@ -20,8 +20,8 @@
   [found : option_i64.Option]
   [fallback : i64]) : i64
   (match found
-    [(option_i64.Some handle) handle]
-    [option_i64.None fallback]))
+    [(Some handle) handle]
+    [None fallback]))
 
 (define (compiler-registries-lookup-field-in-module-id
   [registries : (& registries csym.CompilerRegistries)]
@@ -29,7 +29,7 @@
   [type-name-id : i64]
   [field-name-id : i64]) : option_i64.Option
   (match (csym.compiler-registries-reference-shared-view registries)
-    [(csym.CompilerRegistries _ fields _)
+    [(CompilerRegistries _ fields _)
       (csym.compiler-symbol-map-lookup-id
         (& fields)
         (csym.compiler-struct-field-key-id-in-module-by-id
@@ -39,9 +39,8 @@
 
 (define (build-compiler-symbols-from-source [src : String]) : csym.ResultCompilerSymbols
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program) (csym.build-compiler-symbols program)]
-    [(parser.ResultAstProgram.Err message)
-      (csym.ResultCompilerSymbols.Err message)]))
+    [(Ok program) (csym.build-compiler-symbols program)]
+    [(Err message) (Err message)]))
 
 ;; Registry handles encode the flattened declaration owner index. A generated
 ;; declaration splice before an existing owner therefore needs to move the
@@ -90,7 +89,7 @@
   [insertion-index : i64]
   [delta : i64]) : csym.CompilerRegistries
   (match (csym.compiler-registries-shared-view registries)
-    [(csym.CompilerRegistries variants fields identity)
+    [(CompilerRegistries variants fields identity)
       (begin
         (compiler-registry-shift-map-owner-indices!
           (&mut variants)
@@ -100,7 +99,7 @@
           (&mut fields)
           insertion-index
           delta)
-        (csym.CompilerRegistries variants fields identity))]))
+        (CompilerRegistries variants fields identity))]))
 
 ;; Extend an existing registry across an additive declaration splice. Callers
 ;; must conservatively reject imports and other surfaces that can alter alias
@@ -128,10 +127,8 @@
 
 (define (build-compiler-registries-from-source [src : String]) : csym.ResultCompilerRegistries
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok program)
-      (csym.build-compiler-registries program)]
-    [(parser.ResultAstProgram.Err message)
-      (csym.ResultCompilerRegistries.Err message)]))
+    [(Ok program) (csym.build-compiler-registries program)]
+    [(Err message) (Err message)]))
 
 (define (compiler-symbols-owner-module-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]
@@ -148,18 +145,18 @@
   [owner-index : i64]
   [variant-index : i64]) : i64
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
-    [(parser.ResultAstDecl.Ok decl)
+    [(Ok decl)
       (match decl
-        [(ast.AstDecl.DefEnum decl-meta _ _ variants)
+        [(DefEnum decl-meta _ _ variants)
           (compiler-symbols-option-or
             (csym.compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
-        [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+        [(DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-symbols-option-or
             (csym.compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
         [_ -1])]
-    [(parser.ResultAstDecl.Err _) -1]))
+    [(Err _) -1]))
 
 (define (compiler-field-name-id-at-index
   [fields : ast.AstFieldDefList]
@@ -170,60 +167,60 @@
       (& fields)
       target
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def name-id _ _) (ci.intern-syntax-id-value name-id)])))
+      [(Def name-id _ _) (ci.intern-syntax-id-value name-id)])))
 
 (define (compiler-symbols-field-name-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]
   [owner-index : i64]
   [field-index : i64]) : i64
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
-    [(parser.ResultAstDecl.Ok decl)
+    [(Ok decl)
       (match decl
-        [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
+        [(DefStruct decl-meta _ _ _ fields)
           (compiler-field-name-id-at-index fields field-index)]
-        [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
+        [(DefStructLifetimes decl-meta _ _ _ _ fields)
           (compiler-field-name-id-at-index fields field-index)]
         [_ -1])]
-    [(parser.ResultAstDecl.Err _) -1]))
+    [(Err _) -1]))
 
 (define (compiler-symbols-expr-source-id [expr : ast.AstExpr]) : i64
   (match expr
-    [(ast.AstExpr.Spanned inner _)
+    [(Spanned inner _)
       (compiler-symbols-expr-source-id (ast.ast-node-get inner))]
-    [(ast.AstExpr.Var name-id) name-id]
+    [(Var name-id) name-id]
     [_ -1]))
 
 (define (compiler-symbols-decl-value-source-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]
   [target : i64]) : i64
   (match (csym.compiler-symbols-decl-at-index symbols target)
-    [(parser.ResultAstDecl.Ok (ast.AstDecl.Def decl-meta _ _ value))
+    [(Ok (Def decl-meta _ _ value))
       (compiler-symbols-expr-source-id (ast.ast-node-get value))]
-    [(parser.ResultAstDecl.Ok _) -1]
-    [(parser.ResultAstDecl.Err _) -1]))
+    [(Ok _) -1]
+    [(Err _) -1]))
 
 (define (compiler-symbol-lookup-score
   [found : option_i64.Option]
   [want-kind : i64]
   [want-index : i64]) : i64
   (match found
-    [(option_i64.Some handle)
+    [(Some handle)
       (if (and
         (= (csym.compiler-symbol-handle-kind handle) want-kind)
         (= (csym.compiler-symbol-handle-index handle) want-index))
         1
         0)]
-    [(option_i64.None) 0]))
+    [(None) 0]))
 
 (define (compiler-symbols-miss-score [found : option_i64.Option]) : i64
   (match found
-    [(option_i64.None) 1]
-    [(option_i64.Some _) 0]))
+    [(None) 1]
+    [(Some _) 0]))
 
 (define (compiler-registry-miss-score [found : option_i64.Option]) : i64
   (match found
-    [(option_i64.None) 1]
-    [(option_i64.Some _) 0]))
+    [(None) 1]
+    [(Some _) 0]))
 
 (define (compiler-registry-lookup-score
   [found : option_i64.Option]
@@ -231,30 +228,30 @@
   [want-owner : i64]
   [want-child : i64]) : i64
   (match found
-    [(option_i64.Some handle)
+    [(Some handle)
       (if (and
         (= (compiler-registry-handle-kind handle) want-kind)
         (= (csym.compiler-registry-handle-owner-index handle) want-owner)
         (= (csym.compiler-registry-handle-child-index handle) want-child))
         1
         0)]
-    [(option_i64.None) 0]))
+    [(None) 0]))
 
 (define (compiler-type-result-tag-score
   [found : parser.ResultAstType]
   [want-tag : i64]) : i64
   (match found
-    [(parser.ResultAstType.Ok ty)
+    [(Ok ty)
       (if (= (ast.ast-type-tag ty) want-tag)
         1
         0)]
-    [(parser.ResultAstType.Err _) 0]))
+    [(Err _) 0]))
 
 (define (compiler-type-list-single-tag-score
   [found : parser.ResultAstTypeList]
   [want-tag : i64]) : i64
   (match found
-    [(parser.ResultAstTypeList.Ok types)
+    [(Ok types)
       (if (= (ast.ast-type-list-len (& types)) 1)
         (if (=
           (ast.ast-type-tag
@@ -264,7 +261,7 @@
           1
           0)
         0)]
-    [(parser.ResultAstTypeList.Err _) 0]))
+    [(Err _) 0]))
 
 (define (compiler-symbols-smoke-score
   [symbols : (& symbols csym.CompilerSymbols)]) : i64
@@ -367,22 +364,22 @@
               1)
             (+
               (match x-field
-                [(option_i64.Some handle)
+                [(Some handle)
                   (compiler-type-result-tag-score
                     (csym.compiler-registries-struct-field-type-indexed
                       symbols
                       handle)
-                    (ast.ast-type-tag (ast.AstType.I64)))]
-                [(option_i64.None) 0])
+                    (ast.ast-type-tag (I64)))]
+                [(None) 0])
               (+
                 (match some
-                  [(option_i64.Some handle)
+                  [(Some handle)
                     (compiler-type-list-single-tag-score
                       (csym.compiler-registries-variant-fields-indexed
                         symbols
                         handle)
-                      (ast.ast-type-tag (ast.AstType.I64)))]
-                  [(option_i64.None) 0])
+                      (ast.ast-type-tag (I64)))]
+                  [(None) 0])
                 (+
                   (compiler-symbols-miss-score
                     (csym.compiler-registries-lookup-variant-id registries -1))
@@ -401,27 +398,27 @@
   (match (build-compiler-symbols-from-source
     "(define answer : i64 1)
 (define (answer) : i64 2)")
-    [(csym.ResultCompilerSymbols.Err message)
+    [(Err message)
       (string.eq
         message
         (csym.compiler-symbols-duplicate-value-message "answer"))]
-    [(csym.ResultCompilerSymbols.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-symbols-duplicate-type-ok?) : bool
   (match (build-compiler-symbols-from-source
     "(defstruct Point (x i64))
 (defenum Point (PointVariant))")
-    [(csym.ResultCompilerSymbols.Err message)
+    [(Err message)
       (string.eq message (csym.compiler-symbols-duplicate-type-message "Point"))]
-    [(csym.ResultCompilerSymbols.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-symbols-duplicate-value-error-ok?
   [src : String]
   [name : String]) : bool
   (match (build-compiler-symbols-from-source src)
-    [(csym.ResultCompilerSymbols.Err message)
+    [(Err message)
       (string.eq message (csym.compiler-symbols-duplicate-value-message name))]
-    [(csym.ResultCompilerSymbols.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-symbols-module-duplicate-diagnostics-ok?) : bool
   (and
@@ -432,34 +429,34 @@
       "(module left)
 (defstruct Point (x i64))
 (defenum Point (PointVariant))")
-      [(csym.ResultCompilerSymbols.Err message)
+      [(Err message)
         (string.eq
           message
           (csym.compiler-symbols-duplicate-type-message "left/Point"))]
-      [(csym.ResultCompilerSymbols.Ok _) false])
+      [(Ok _) false])
     (match (build-compiler-symbols-from-source
       "(module left)
 (defmacro (same) : bool (expr-bool true))
 (defmacro (same) : bool (expr-bool false))")
-      [(csym.ResultCompilerSymbols.Err message)
+      [(Err message)
         (string.eq
           message
           (csym.compiler-symbols-duplicate-macro-message "left/same"))]
-      [(csym.ResultCompilerSymbols.Ok _) false])
+      [(Ok _) false])
     (match (build-compiler-symbols-from-source
       "(module left)
 (defenum Choice (Same) (Same))")
-      [(csym.ResultCompilerSymbols.Err message)
+      [(Err message)
         (string.eq
           message
           (csym.compiler-registries-duplicate-variant-message
             "left/Choice.Same"))]
-      [(csym.ResultCompilerSymbols.Ok _) false])))
+      [(Ok _) false])))
 
 (define (compiler-symbols-module-duplicate-with-paths-ok?) : bool
   (match (parser.parse-ast-source
     (compiler-symbols-module-duplicate-value-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (let
         [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
         (begin
@@ -476,12 +473,12 @@
             "duplicate.tl"
             cbi.compiler-builtin-id-fix-empty)
           (match (csym.build-compiler-symbols-with-paths program paths)
-            [(csym.ResultCompilerSymbols.Err message)
+            [(Err message)
               (string.eq
                 message
                 "symbols: duplicate value declaration left/same (first declared in first.tl; duplicate in duplicate.tl)")]
-            [(csym.ResultCompilerSymbols.Ok _) false])))]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Ok _) false])))]
+    [(Err _) false]))
 
 (define (compiler-symbols-variant-value-collisions-ok?) : bool
   (and
@@ -509,26 +506,25 @@
   (match (parser.parse-ast-source
     "(module lib)
 (defenum ResB (Err i64) (Ok i64))")
-    [(parser.ResultAstProgram.Ok base-program)
+    [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
-        [(csym.ResultCompilerSymbols.Ok base-symbols)
+        [(Ok base-symbols)
           (match (parser.parse-ast-source root-src)
-            [(parser.ResultAstProgram.Ok (ast.AstProgram.Program root-box))
+            [(Ok (Program root-box))
               (match (csym.compiler-symbols-insert-decls
                 base-symbols
                 (deref root-box)
                 (csym.compiler-symbol-root-module-id))
-                [(csym.ResultCompilerSymbols.Ok symbols)
+                [(Ok symbols)
                   (match (csym.compiler-symbols-lookup-value-id
                     (& symbols)
                     (csym.compiler-symbols-decl-name-id-at-index symbols 1))
-                    [(option_i64.Some handle)
-                      (csym.compiler-symbol-handle-kind handle)]
-                    [(option_i64.None) -2])]
-                [(csym.ResultCompilerSymbols.Err _) -1])]
+                    [(Some handle) (csym.compiler-symbol-handle-kind handle)]
+                    [(None) -2])]
+                [(Err _) -1])]
             [_ -3])]
-        [(csym.ResultCompilerSymbols.Err _) -4])]
-    [(parser.ResultAstProgram.Err _) -5]))
+        [(Err _) -4])]
+    [(Err _) -5]))
 
 ;; #8582: an imported enum's variants register bare-name aliases before the
 ;; entry module's declarations. A root struct, function or value named like one
@@ -566,21 +562,21 @@
 
 (define (compiler-registries-duplicate-variant-ok?) : bool
   (match (build-compiler-registries-from-source "(defenum Left (Same) (Same))")
-    [(csym.ResultCompilerRegistries.Err message)
+    [(Err message)
       (string.eq
         message
         (csym.compiler-registries-duplicate-variant-message "Left.Same"))]
-    [(csym.ResultCompilerRegistries.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-registries-cross-enum-variant-ok?) : bool
   (match (parser.parse-ast-source
     "(defenum Left (Same))
 (defenum Right (Same))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [left-id : i64
                   (csym.compiler-symbols-decl-name-id-at-index symbols 0)]
@@ -613,26 +609,26 @@
                       1
                       0)
                     1)))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-registries-duplicate-field-ok?) : bool
   (match (build-compiler-registries-from-source
     "(defstruct Pair (x i64) (x i64))")
-    [(csym.ResultCompilerRegistries.Err message)
+    [(Err message)
       (string.eq
         message
         (csym.compiler-registries-duplicate-field-message "Pair" "x"))]
-    [(csym.ResultCompilerRegistries.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-symbols-macro-namespace-ok?) : bool
   (match (parser.parse-ast-source
     "(defmacro (all [first : bool] [rest : bool ...]) : bool first)
 (define (main) : i64 0)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [all-id : i64
               (csym.compiler-symbols-decl-name-id-at-index symbols 0)]
@@ -655,24 +651,24 @@
                   (csym.compiler-symbol-kind-function-define)
                   1)
                 1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-duplicate-macro-ok?) : bool
   (match (build-compiler-symbols-from-source
     "(defmacro (same) : bool (expr-bool true))
 (defmacro (same) : bool (expr-bool false))")
-    [(csym.ResultCompilerSymbols.Err message)
+    [(Err message)
       (string.eq message (csym.compiler-symbols-duplicate-macro-message "same"))]
-    [(csym.ResultCompilerSymbols.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-symbols-value-then-macro-namespace-ok?) : bool
   (match (parser.parse-ast-source
     "(define same : i64 1)
 (defmacro (same) : bool (expr-bool true))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [same-id : i64
               (csym.compiler-symbols-decl-name-id-at-index symbols 0)]
@@ -689,17 +685,17 @@
                   (csym.compiler-symbol-kind-defmacro)
                   1)
                 1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-module-macro-then-value-namespace-ok?) : bool
   (match (parser.parse-ast-source
     "(module left)
 (defmacro (same) : bool (expr-bool true))
 (define same : i64 1)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [left-id : i64 cbi.compiler-builtin-id-fix-left]
             [same-id : i64 cbi.compiler-builtin-id-fix-same]
@@ -734,16 +730,16 @@
                   (csym.compiler-symbol-kind-defmacro)
                   0)
                 1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-macro-then-variant-namespace-ok?) : bool
   (match (parser.parse-ast-source
     "(defmacro (same) : bool (expr-bool true))
 (defenum Choice (same))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [same-id : i64
               (compiler-symbols-variant-name-id-at-index symbols 1 0)]
@@ -761,8 +757,8 @@
                   1
                   0)
                 1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-value-macro-namespace-ok?) : bool
   (and
@@ -836,11 +832,11 @@
       (csym.compiler-symbol-module-key-id-by-id
         module-id
         (csym.compiler-enum-qualified-variant-name-id enum-id variant-id)))
-      [(option_i64.Some handle)
+      [(Some handle)
         (and
           (=
             (compiler-registry-lookup-score
-              (option_i64.Some handle)
+              (Some handle)
               (csym.compiler-symbol-kind-enum-variant)
               1
               1)
@@ -848,15 +844,15 @@
           (match (csym.compiler-registries-variant-fields-indexed
             symbols
             handle)
-            [(parser.ResultAstTypeList.Ok types)
+            [(Ok types)
               (if (= (ast.ast-type-list-len (& types)) 1)
                 (match (ast.ty-node-get
                   (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback)))
-                  [(ast.AstType.I64) true]
+                  [(I64) true]
                   [_ false])
                 false)]
-            [(parser.ResultAstTypeList.Err _) false]))]
-      [(option_i64.None) false])))
+            [(Err _) false]))]
+      [(None) false])))
 
 (define (compiler-registries-incremental-later-field-ok?
   [symbols : (& symbols csym.CompilerSymbols)]
@@ -866,11 +862,11 @@
     (compiler-symbols-owner-module-id-at-index symbols 2)
     (csym.compiler-symbols-decl-name-id-at-index symbols 2)
     (compiler-symbols-field-name-id-at-index symbols 2 0))
-    [(option_i64.Some handle)
+    [(Some handle)
       (and
         (=
           (compiler-registry-lookup-score
-            (option_i64.Some handle)
+            (Some handle)
             (csym.compiler-symbol-kind-struct-field)
             2
             0)
@@ -878,20 +874,20 @@
         (match (csym.compiler-registries-struct-field-type-indexed
           symbols
           handle)
-          [(parser.ResultAstType.Ok (ast.AstType.I64)) true]
-          [(parser.ResultAstType.Ok _) false]
-          [(parser.ResultAstType.Err _) false]))]
-    [(option_i64.None) false]))
+          [(Ok (I64)) true]
+          [(Ok _) false]
+          [(Err _) false]))]
+    [(None) false]))
 
 (define (compiler-registries-lifetime-field-indexed-ok?) : bool
   (match (parser.parse-ast-source
     "(defenum NotStruct (None))
 (defstruct Borrowed (:lifetimes owner) (value (& owner i64)))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [struct-index : i64 1]
                 [struct-name-id : i64
@@ -912,7 +908,7 @@
                   module-id
                   struct-name-id
                   field-name-id)
-                  [(option_i64.Some handle)
+                  [(Some handle)
                     (and
                       (=
                         (compiler-registry-handle-kind handle)
@@ -924,12 +920,11 @@
                       (match (csym.compiler-registries-struct-field-type-indexed
                         symbols
                         handle)
-                        [(parser.ResultAstType.Ok
-                            (ast.AstType.Ref lifetime inner))
+                        [(Ok (Ref lifetime inner))
                           (and
                             (= lifetime (ci.intern "owner"))
                             (match (ast.ty-node-get inner)
-                              [(ast.AstType.I64) true]
+                              [(I64) true]
                               [_ false]))]
                         [_ false])
                       (match (csym.compiler-registries-struct-field-type-indexed
@@ -940,7 +935,7 @@
                           (csym.compiler-symbol-kind-struct-field)
                           (- (csym.compiler-registry-owner-limit) 1)
                           0))
-                        [(parser.ResultAstType.Err message)
+                        [(Err message)
                           (string.eq
                             message
                             "symbols: declaration index not found")]
@@ -951,29 +946,29 @@
                           (csym.compiler-symbol-kind-struct-field)
                           0
                           0))
-                        [(parser.ResultAstType.Err message)
+                        [(Err message)
                           (string.eq
                             message
                             "symbols: field owner is not struct")]
                         [_ false]))]
-                  [(option_i64.None) false]))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                  [(None) false]))]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;; A generated nominal splice at the start of a nested module must leave later
 ;; enum-variant and struct-field handles pointing at their shifted owners.
 (define (compiler-registries-incremental-splice-ok?) : bool
   (match (parser.parse-ast-source (compiler-registries-incremental-base-source))
-    [(parser.ResultAstProgram.Ok base-program)
+    [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
-        [(csym.ResultCompilerSymbols.Ok base-symbols)
+        [(Ok base-symbols)
           (match (csym.build-compiler-registries base-program)
-            [(csym.ResultCompilerRegistries.Ok base-registries)
+            [(Ok base-registries)
               (match (parser.parse-ast-source "(defstruct Inserted (id i64))")
-                [(parser.ResultAstProgram.Ok splice-program)
+                [(Ok splice-program)
                   (match splice-program
-                    [(ast.AstProgram.Program splice-box)
+                    [(Program splice-box)
                       (let
                         [splice-decls : ast.AstDeclList (deref splice-box)]
                         [splice-paths : ast.AstDeclPathList
@@ -989,17 +984,16 @@
                           (compiler-symbols-owner-module-id-at-index
                             base-symbols
                             0))
-                          [(csym.ResultCompilerRegistries.Ok rebased-registries)
+                          [(Ok rebased-registries)
                             (match (parser.parse-ast-source
                               "(module nested
   (defstruct Inserted (id i64))
   (defenum Later (Empty) (Value i64))
   (defstruct Record (value i64)))")
-                              [(parser.ResultAstProgram.Ok combined-program)
+                              [(Ok combined-program)
                                 (match (csym.build-compiler-symbols
                                   combined-program)
-                                  [(csym.ResultCompilerSymbols.Ok
-                                      combined-symbols)
+                                  [(Ok combined-symbols)
                                     (and
                                       (compiler-registries-incremental-later-variant-ok?
                                         combined-symbols
@@ -1007,34 +1001,34 @@
                                       (compiler-registries-incremental-later-field-ok?
                                         combined-symbols
                                         rebased-registries))]
-                                  [(csym.ResultCompilerSymbols.Err _) false])]
-                              [(parser.ResultAstProgram.Err _) false])]
-                          [(csym.ResultCompilerRegistries.Err _) false]))])]
-                [(parser.ResultAstProgram.Err _) false])]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                                  [(Err _) false])]
+                              [(Err _) false])]
+                          [(Err _) false]))])]
+                [(Err _) false])]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-append-external-macro-alias-ok?) : bool
   (match (parser.parse-ast-source
     "(module data)
 (defmacro (all [first : bool]) : bool first)")
-    [(parser.ResultAstProgram.Ok base-program)
+    [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
-        [(csym.ResultCompilerSymbols.Ok base-symbols)
+        [(Ok base-symbols)
           (match (parser.parse-ast-source
             "(module fresh)
 (define answer : i64 42)
 (module main)
 (import data as d)")
-            [(parser.ResultAstProgram.Ok splice-program)
+            [(Ok splice-program)
               (match splice-program
-                [(ast.AstProgram.Program splice-box)
+                [(Program splice-box)
                   (match (csym.compiler-symbols-insert-decls
                     base-symbols
                     (deref splice-box)
                     (csym.compiler-symbol-root-module-id))
-                    [(csym.ResultCompilerSymbols.Ok appended)
+                    [(Ok appended)
                       (let
                         [macro-id : i64
                           (csym.compiler-symbols-decl-name-id-at-index
@@ -1058,27 +1052,27 @@
                                 appended
                                 macro-id))
                             1)))]
-                    [(csym.ResultCompilerSymbols.Err _) false])])]
-            [(parser.ResultAstProgram.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                    [(Err _) false])])]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;; Append-only symbol and registry growth keeps old handles stable while the
 ;; new nominal owners share the symbol table's logical end.
 (define (compiler-symbols-append-splice-ok?) : bool
   (match (parser.parse-ast-source (compiler-registries-incremental-base-source))
-    [(parser.ResultAstProgram.Ok base-program)
+    [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
-        [(csym.ResultCompilerSymbols.Ok base-symbols)
+        [(Ok base-symbols)
           (match (csym.build-compiler-registries base-program)
-            [(csym.ResultCompilerRegistries.Ok base-registries)
+            [(Ok base-registries)
               (match (parser.parse-ast-source
                 "(module fresh
   (defenum Added (None) (Some i64))
   (defstruct Boxed (value i64)))")
-                [(parser.ResultAstProgram.Ok splice-program)
+                [(Ok splice-program)
                   (match splice-program
-                    [(ast.AstProgram.Program splice-box)
+                    [(Program splice-box)
                       (let
                         [splice-decls : ast.AstDeclList (deref splice-box)]
                         [splice-paths : ast.AstDeclPathList
@@ -1092,15 +1086,14 @@
                           base-symbols
                           (ast.ast-place-shared-view splice-decls)
                           (csym.compiler-symbol-root-module-id))
-                          [(csym.ResultCompilerSymbols.Ok appended-symbols)
+                          [(Ok appended-symbols)
                             (match (csym.compiler-registries-append-decls
                               base-registries
                               splice-decls
                               splice-paths
                               append-index
                               (csym.compiler-symbol-root-module-id))
-                              [(csym.ResultCompilerRegistries.Ok
-                                  appended-registries)
+                              [(Ok appended-registries)
                                 (let
                                   [old-module-id : i64
                                     (compiler-symbols-owner-module-id-at-index
@@ -1159,23 +1152,23 @@
                                         append-index
                                         1)
                                       1)))]
-                              [(csym.ResultCompilerRegistries.Err _) false])]
-                          [(csym.ResultCompilerSymbols.Err _) false]))])]
-                [(parser.ResultAstProgram.Err _) false])]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                              [(Err _) false])]
+                          [(Err _) false]))])]
+                [(Err _) false])]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-nominal-decl-ok?) : bool
   (match (parser.parse-ast-source
     "(defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
 (define (main) : i64 0)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (and
                 (=
                   (compiler-symbol-lookup-score
@@ -1194,9 +1187,9 @@
                     1)
                   1)
                 (= (compiler-registries-smoke-score symbols registries) 8))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;; The index of the first declaration named `name`, or -1.
 (define (compiler-symbols-index-named
@@ -1237,15 +1230,15 @@
       symbols
       target
       nominal-id)
-      [(csym.CompilerOwnerNameComparison.Equal)
+      [(Equal)
         (if rendered-equal?
           1
           -2)]
-      [(csym.CompilerOwnerNameComparison.Different)
+      [(Different)
         (if rendered-equal?
           -2
           0)]
-      [(csym.CompilerOwnerNameComparison.Unresolved) -1])))
+      [(Unresolved) -1])))
 
 (define (compiler-symbols-owner-compare-ok?) : bool
   (match (parser.parse-ast-source
@@ -1253,9 +1246,9 @@
 (module left)
 (defstruct Point (x i64))
 (define (helper) : i64 0)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [top : i64 (compiler-symbols-index-named (& symbols) "Top")]
             [point : i64 (compiler-symbols-index-named (& symbols) "Point")]
@@ -1378,8 +1371,8 @@
                   (csym.compiler-symbols-decl-count symbols)
                   (ci.intern "left/Point"))
                 -1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-module-scope-source) : String
   "(module left)
@@ -1393,11 +1386,11 @@
 
 (define (compiler-symbols-module-scope-ok?) : bool
   (match (parser.parse-ast-source (compiler-symbols-module-scope-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [left-module-id : i64
                   (compiler-symbols-owner-module-id-at-index symbols 0)]
@@ -1502,9 +1495,9 @@
                       5
                       0)
                     1)))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;; A declaration's fallback error span is the first source-span wrapper around
 ;; its body, found through unary, annotation, cast and borrow nodes. With two
@@ -1514,45 +1507,43 @@
   [found : csym.CompilerSymbolsMaybeSpan]
   [want : ast.AstSourceSpan]) : bool
   (match found
-    [(csym.CompilerSymbolsMaybeSpan.Some span)
-      (ast.ast-source-span-eq? span want)]
-    [(csym.CompilerSymbolsMaybeSpan.No) false]))
+    [(Some span) (ast.ast-source-span-eq? span want)]
+    [(No) false]))
 
 (define (compiler-symbols-decl-span-view-ok?) : bool
   (let
     [outer-span : ast.AstSourceSpan (ast.ast-source-span 3 1 3 30)]
     [inner-span : ast.AstSourceSpan (ast.ast-source-span 3 5 3 20)]
-    [value : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+    [value : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 7)))]
     [inner : i64 (ast.ast-expr-spanned value inner-span)]
     [outer : i64 (ast.ast-expr-spanned inner outer-span)]
-    [negated : i64 (ast.ast-expr-unary ast.AstUnOp.Neg inner)]
-    [bare : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 8)))]
+    [negated : i64 (ast.ast-expr-unary Neg inner)]
+    [bare : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 8)))]
     [name : i64 (ci.intern-generated-name "span_view")]
     (and
       (compiler-symbols-span-is?
         (csym.compiler-symbols-decl-maybe-span
-          (ast.ast-decl-def-id name ast.AstMaybeType.No outer))
+          (ast.ast-decl-def-id name No outer))
         outer-span)
       (compiler-symbols-span-is?
         (csym.compiler-symbols-decl-maybe-span
-          (ast.ast-decl-def-id name ast.AstMaybeType.No negated))
+          (ast.ast-decl-def-id name No negated))
         inner-span)
       (match (csym.compiler-symbols-decl-maybe-span
-        (ast.ast-decl-def-id name ast.AstMaybeType.No bare))
-        [(csym.CompilerSymbolsMaybeSpan.Some _) false]
-        [(csym.CompilerSymbolsMaybeSpan.No) true])
+        (ast.ast-decl-def-id name No bare))
+        [(Some _) false]
+        [(No) true])
       (match (ast.ast-expr-canonical-span outer)
-        [(ast.AstMaybeSourceSpan.Some span)
-          (ast.ast-source-span-eq? span inner-span)]
-        [(ast.AstMaybeSourceSpan.No) false]))))
+        [(Some span) (ast.ast-source-span-eq? span inner-span)]
+        [(No) false]))))
 
 (define (compiler-symbols-structural-id-api-ok?) : bool
   (match (parser.parse-ast-source (compiler-symbols-module-scope-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (and
                 (=
                   (compiler-symbol-lookup-score
@@ -1600,9 +1591,9 @@
                     2
                     0)
                   1))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbol-map-fast-path-ok?) : bool
   (let
@@ -1616,25 +1607,25 @@
       (csym.compiler-symbol-map-bind-id! (&mut map) structural-b 202)
       (and
         (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
-          [(option_i64.Some handle) (= handle 101)]
-          [(option_i64.None) false])
+          [(Some handle) (= handle 101)]
+          [(None) false])
         (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
-          [(option_i64.Some handle) (= handle 201)]
-          [(option_i64.None) false])
+          [(Some handle) (= handle 201)]
+          [(None) false])
         (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
-          [(option_i64.Some handle) (= handle 202)]
-          [(option_i64.None) false])
+          [(Some handle) (= handle 202)]
+          [(None) false])
         (csym.compiler-symbol-map-remove-id! (&mut map) structural-a)
         (match (csym.compiler-symbol-map-lookup-id (& map) structural-a)
-          [(option_i64.Some _) false]
-          [(option_i64.None) true])
+          [(Some _) false]
+          [(None) true])
         (match (csym.compiler-symbol-map-lookup-id (& map) structural-b)
-          [(option_i64.Some handle) (= handle 202)]
-          [(option_i64.None) false])
+          [(Some handle) (= handle 202)]
+          [(None) false])
         (csym.compiler-symbol-map-remove-id! (&mut map) direct-id)
         (match (csym.compiler-symbol-map-lookup-id (& map) direct-id)
-          [(option_i64.Some _) false]
-          [(option_i64.None) true])))))
+          [(Some _) false]
+          [(None) true])))))
 
 (define (compiler-symbols-direct-qualified-add-ok?) : bool
   (let
@@ -1651,7 +1642,7 @@
       key-id
       "left/same"
       handle)
-      [(csym.ResultCompilerSymbols.Ok symbols)
+      [(Ok symbols)
         (and
           (=
             (compiler-symbol-lookup-score
@@ -1668,11 +1659,11 @@
               (csym.compiler-symbol-kind-value-define)
               17)
             1))]
-      [(csym.ResultCompilerSymbols.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-program-first-import-alias-id [program : ast.AstProgram]) : i64
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
@@ -1683,14 +1674,7 @@
               (& decls)
               index
               (ast.ast-decl-fallback))
-              [(ast.AstDecl.Import
-                  decl-meta
-                  (ast.AstImportSpec.Spec
-                    _
-                    _
-                    _
-                    (ast.AstMaybeImportAlias.Some alias-id)
-                    _))
+              [(Import decl-meta (Spec _ _ _ (Some alias-id) _))
                 (return alias-id)]
               [_ (set! index (+ index 1))]))
           -1))]))
@@ -1719,11 +1703,11 @@
 (module main)
 (import data as d)
 (define (main) : i64 (d.get))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [alias-id : i64
                   (compiler-program-first-import-alias-id program)]
@@ -1803,9 +1787,9 @@
                         point-id
                         x-id))
                     1)))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-comptime-root-helper-alias-ok?) : bool
   (match (parser.parse-ast-source
@@ -1818,9 +1802,9 @@
 (module main)
 (defenum Expr (Bool i64))
 (define (expr-bool [value : i64]) : i64 value)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [comptime-module-id : i64
               (compiler-symbols-owner-module-id-at-index symbols 0)]
@@ -1927,8 +1911,8 @@
                   5
                   0)
                 1)))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbol-map-structure-ok?) : bool
   (let
@@ -1960,9 +1944,9 @@
   (match (parser.parse-ast-source
     "(define deep : i64 a.b.Enum.Variant)
 (define qualified : i64 q/a.b.Enum.Variant)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (let
             [deep-id : i64
               (compiler-symbols-decl-value-source-id-at-index symbols 0)]
@@ -1987,13 +1971,13 @@
                   qualified-variant-id))]
             (and
               (match (csym.compiler-symbol-dotted-variant-key-id deep-id)
-                [(option_i64.Some key-id) (= key-id deep-expected)]
-                [(option_i64.None) false])
+                [(Some key-id) (= key-id deep-expected)]
+                [(None) false])
               (match (csym.compiler-symbol-dotted-variant-key-id qualified-id)
-                [(option_i64.Some key-id) (= key-id qualified-expected)]
-                [(option_i64.None) false])))]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                [(Some key-id) (= key-id qualified-expected)]
+                [(None) false])))]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-symbols-dotted-suffix-owner-module-id-ok?) : bool
   (let
@@ -2134,7 +2118,7 @@
 
 (define (compiler-symbols-defining-provenance-survives-owner-rewrite-ok?) : bool
   (match (parser.parse-ast-source "(define chosen : i64 42)")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (let
         [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
         [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
@@ -2154,7 +2138,7 @@
             (match (csym.build-compiler-symbols-with-paths
               program
               (owned_view.compiler-owned-shared-view rewritten))
-              [(csym.ResultCompilerSymbols.Ok symbols)
+              [(Ok symbols)
                 (and
                   (=
                     (ast.ast-decl-path-list-owner-id (& rewritten) 0 -1)
@@ -2168,8 +2152,8 @@
                   (=
                     (ast.ast-decl-path-list-provenance-id (& rewritten) 0 -1)
                     provenance))]
-              [(csym.ResultCompilerSymbols.Err _) false]))))]
-    [(parser.ResultAstProgram.Err _) false]))
+              [(Err _) false]))))]
+    [(Err _) false]))
 
 ;; Registry handle bounds: members round-trip through the handle around index
 ;; 1000 and at the limits, distinct owners never share a handle, and a member
@@ -2229,7 +2213,7 @@
         (ci.intern "tail")
         5
         (csym.compiler-registry-child-stride))
-        [(csym.ResultCompilerRegistries.Err message)
+        [(Err message)
           (string.eq
             message
             (str_cat.str-cat
@@ -2238,7 +2222,7 @@
               " fields; a struct or enum declares at most "
               (string.int->string (csym.compiler-registry-child-stride))
               " members"))]
-        [(csym.ResultCompilerRegistries.Ok _) false])
+        [(Ok _) false])
       (match (csym.compiler-registries-add-field-in-module-id
         (csym.compiler-registries-empty)
         cbi.compiler-builtin-id-fix-empty
@@ -2246,14 +2230,14 @@
         (ci.intern "f0")
         (csym.compiler-registry-owner-limit)
         0)
-        [(csym.ResultCompilerRegistries.Err message)
+        [(Err message)
           (string.eq
             message
             (str_cat.str-cat
               "symbols: struct Wide is beyond the "
               (string.int->string (csym.compiler-registry-owner-limit))
               "-declaration limit for structs and enums"))]
-        [(csym.ResultCompilerRegistries.Ok _) false])
+        [(Ok _) false])
       (match (csym.compiler-registries-add-variant-in-module-id
         (csym.compiler-registries-empty)
         cbi.compiler-builtin-id-fix-empty
@@ -2261,9 +2245,9 @@
         (ci.intern "Last")
         5
         (csym.compiler-registry-child-stride))
-        [(csym.ResultCompilerRegistries.Err message)
+        [(Err message)
           (string.eq message (compiler-registry-variant-limit-message-for-test))]
-        [(csym.ResultCompilerRegistries.Ok _) false])
+        [(Ok _) false])
       (match (csym.compiler-symbols-add-variant-value-in-module-id
         (csym.compiler-symbols-empty)
         cbi.compiler-builtin-id-fix-empty
@@ -2271,9 +2255,9 @@
         (ci.intern "Last")
         5
         (csym.compiler-registry-child-stride))
-        [(csym.ResultCompilerSymbols.Err message)
+        [(Err message)
           (string.eq message (compiler-registry-variant-limit-message-for-test))]
-        [(csym.ResultCompilerSymbols.Ok _) false]))))
+        [(Ok _) false]))))
 
 (define (compiler-registry-variant-limit-message-for-test) : String
   (str_cat.str-cat
@@ -2301,11 +2285,11 @@
       (if (and (= x 42) true)
           (match (Some x) [(Some v) v] [_ 0])
           0))))")
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (csym.build-compiler-symbols program)
-          [(csym.ResultCompilerSymbols.Ok symbols)
+          [(Ok symbols)
             (match (csym.build-compiler-registries program)
-              [(csym.ResultCompilerRegistries.Ok registries)
+              [(Ok registries)
                 (let
                   [ok : bool true]
                   (begin
@@ -2354,6 +2338,6 @@
                     (if ok
                       42
                       (io.panic "symbols: smoke score mismatch"))))]
-              [(csym.ResultCompilerRegistries.Err message) (io.panic message)])]
-          [(csym.ResultCompilerSymbols.Err message) (io.panic message)])]
-      [(parser.ResultAstProgram.Err message) (io.panic message)])))
+              [(Err message) (io.panic message)])]
+          [(Err message) (io.panic message)])]
+      [(Err message) (io.panic message)])))

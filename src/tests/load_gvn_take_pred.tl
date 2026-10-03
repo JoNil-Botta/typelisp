@@ -48,30 +48,27 @@
               (cond
                 [(and join (= i 0))
                   (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var 0)
+                    (Var 0)
                     (array-ref labels 1)
                     (array-ref labels (+ headers 1)))]
                 [(< i headers)
                   (ir.CompilerIrInstr.Jump (array-ref labels (+ i 1)))]
                 [(= i headers)
                   (ir.CompilerIrInstr.Switch
-                    (ir.CompilerIrValue.Var 0)
+                    (Var 0)
                     (+ headers exits)
                     (ir.CompilerIrSwitchCaseSeq
                       (opt.compiler-opt-global-shared-view cases)
                       (+ headers exits))
                     (array-ref labels 0))]
-                [else
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 i)))]))
+                [else (ir.CompilerIrInstr.Return (Some (I64 i)))]))
             (set!
               (array-ref blocks i)
               (ir.CompilerIrBlock.Block
                 (array-ref labels i)
                 (ir.CompilerIrInstrSeq slots 1)))
             (set! i (+ i 1)))))
-      (opt.opt-cfg-index-build
-        (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq blocks count))))))
+      (opt.opt-cfg-index-build (Array (ir.CompilerIrBlockSeq blocks count))))))
 
 (define (check-rpo [headers : i64] [exits : i64]) : unit
   (let

@@ -69,14 +69,14 @@
         (map_nested_i64.contains? (& m) (clone beta))
         "aggregate-key removed absent")
       (match (map_nested_i64.entry-or-insert! m beta 22)
-        [(map_nested_i64.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq value 22 "aggregate-key entry inserted value")]
-        [(map_nested_i64.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "aggregate-key entry-or-insert should insert")])
       (match (map_nested_i64.entry-or-insert! m alpha-copy 99)
-        [(map_nested_i64.EntryOrInsertFound value)
+        [(EntryOrInsertFound value)
           (test.assert-i64-eq value 10 "aggregate-key entry found value")]
-        [(map_nested_i64.EntryOrInsertInserted _)
+        [(EntryOrInsertInserted _)
           (test.assert-true false "aggregate-key entry-or-insert should find")])
       (let
         [cursor : i64 (map_nested_i64.next-occupied (& m) 0)]
@@ -124,12 +124,12 @@
         m
         "beta"
         (hashmap.HashPayload 8 9))
-        [(map_string_payload.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq
             (hashmap.hash-payload-score value)
             17
             "aggregate struct value entry inserted")]
-        [(map_string_payload.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "aggregate struct value entry should insert")])
       (let
         [cursor : i64 (map_string_payload.next-occupied (& m) 0)]
@@ -172,12 +172,12 @@
         (map_i64_state.remove-ok? (map_i64_state.remove! m 2))
         "aggregate enum value remove")
       (match (map_i64_state.entry-or-insert! m 2 (hashmap.HashReady 22))
-        [(map_i64_state.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq
             (hashmap.hash-state-score value)
             22
             "aggregate enum value entry inserted")]
-        [(map_i64_state.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "aggregate enum value entry should insert")])
       (let
         [cursor : i64 (map_i64_state.next-occupied (& m) 0)]

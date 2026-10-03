@@ -32,28 +32,16 @@
     (begin
       (ir.compiler-ir-global-builder-push!
         (&mut builder)
-        (ir.CompilerIrGlobal.Global
-          pa
-          (ast.AstType.I64)
-          (ir.CompilerIrValue.I64 0)))
+        (ir.CompilerIrGlobal.Global pa (I64) (I64 0)))
       (ir.compiler-ir-global-builder-push!
         (&mut builder)
-        (ir.CompilerIrGlobal.Global
-          pb
-          (ast.AstType.I64)
-          (ir.CompilerIrValue.I64 0)))
+        (ir.CompilerIrGlobal.Global pb (I64) (I64 0)))
       (ir.compiler-ir-global-builder-push!
         (&mut builder)
-        (ir.CompilerIrGlobal.Global
-          pc
-          (ast.AstType.I64)
-          (ir.CompilerIrValue.I64 0)))
+        (ir.CompilerIrGlobal.Global pc (I64) (I64 0)))
       (ir.compiler-ir-global-builder-push!
         (&mut builder)
-        (ir.CompilerIrGlobal.Global
-          pd
-          (ast.AstType.I64)
-          (ir.CompilerIrValue.I64 0)))
+        (ir.CompilerIrGlobal.Global pd (I64) (I64 0)))
       (ir.compiler-ir-global-builder-to-seq builder))))
 
 (define (win-param-preassign-function
@@ -62,41 +50,29 @@
   [pb : i64]
   [pc : i64]
   [pd : i64]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
+  (Function
     function-name
     (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
+      (Param "a" (I64) 0)
       (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
+        (Param "b" (I64) 1)
         (ir.compiler-ir-param-seq-prepend
-          (ir.CompilerIrParam.Param "c" (ast.AstType.I64) 2)
+          (Param "c" (I64) 2)
           (ir.compiler-ir-param-seq-prepend
-            (ir.CompilerIrParam.Param "d" (ast.AstType.I64) 3)
+            (Param "d" (I64) 3)
             (ir.compiler-ir-param-seq-empty)))))
-    (ast.AstType.Unit)
+    (Unit)
     4
     (ir.compiler-ir-blocks
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
         (ir.compiler-ir-instr-seq5
-          (ir.CompilerIrInstr.Store
-            pa
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Store
-            pb
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Store
-            pc
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Store
-            pd
-            (ir.CompilerIrValue.Var 3)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No))))
-    ir.CompilerIrFunctionAbi.Ordinary))
+          (Store pa (Var 0) (I64))
+          (Store pb (Var 1) (I64))
+          (Store pc (Var 2) (I64))
+          (Store pd (Var 3) (I64))
+          (Return No))))
+    Ordinary))
 
 (define (win-param-preassign-program) : ir.CompilerIrProgram
   (let
@@ -106,7 +82,7 @@
     [pb : i64 (win-param-preassign-logical-name "win_pb")]
     [pc : i64 (win-param-preassign-logical-name "win_pc")]
     [pd : i64 (win-param-preassign-logical-name "win_pd")]
-    (ir.CompilerIrProgram.Program
+    (Program
       (win-param-preassign-globals pa pb pc pd)
       (ir.compiler-ir-function-seq-prepend
         (win-param-preassign-function function-name pa pb pc pd)
@@ -114,28 +90,22 @@
       (ir.compiler-ir-extern-seq-empty))))
 
 (define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
+  (Function
     (win-param-preassign-logical-name "win_param_safe_div")
     (ir.compiler-ir-param-seq-prepend
-      (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
+      (Param "a" (I64) 0)
       (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
+        (Param "b" (I64) 1)
         (ir.compiler-ir-param-seq-empty)))
-    (ast.AstType.I64)
+    (I64)
     3
     (ir.compiler-ir-blocks
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
         (ir.compiler-ir-instr-seq2
-          (ir.CompilerIrInstr.BinOp
-            2
-            ir.CompilerIrBinOp.SafeDiv
-            (ir.CompilerIrValue.I64 8)
-            (ir.CompilerIrValue.I64 2)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1))))))
-    ir.CompilerIrFunctionAbi.Ordinary))
+          (BinOp 2 SafeDiv (I64 8) (I64 2) (I64))
+          (Return (Some (Var 1))))))
+    Ordinary))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool
   ;; The incoming Win64 home of param b (var 1) is %rdx (arg1), which the safe
@@ -152,15 +122,15 @@
   ;; callee-saved-only here. The two negative clauses below stay as the
   ;; ABI-independent statement of the property the constraint encodes.
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
-    abi.CompilerRegTargetAbi.Windows
+    Windows
     (win-param-preassign-safe-div-function))
-    [(regalloc.CompilerRegPlan.Plan assignments ineligible _ _ _)
+    [(Plan assignments ineligible _ _ _)
       (and
         (not (liveness.compiler-live-set-contains? ineligible 1))
         (match (regalloc.compiler-reg-assignment-lookup assignments 1)
-          [(regalloc.CompilerRegMaybeLocation.Some location)
+          [(Some location)
             (match location
-              [(regalloc.CompilerRegLocation.Register r)
+              [(Register r)
                 (and
                   (not (= r abi.compiler-reg-id-rax))
                   (not (= r abi.compiler-reg-id-rdx))
@@ -168,7 +138,7 @@
                     (regalloc.compiler-reg-win64-callee-saved-integer-registers)
                     r))]
               [_ false])]
-          [(regalloc.CompilerRegMaybeLocation.No) false]))]))
+          [(No) false]))]))
 
 (define (win-param-preassign-backend-ok?) : bool
   (let
@@ -187,13 +157,13 @@
       backend-state
       pools
       program
-      (compiler_backend.CompilerBackendTarget.Windows)
-      (compiler_backend.CompilerBackendMode.Scalar)
+      (Windows)
+      (Scalar)
       (ir.compiler-source-spans-empty)
       false
       false
       profile-state)
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
+      [(Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
             (compiler_backend.compiler-backend-global-shared-view asm)
@@ -237,7 +207,7 @@
             (compiler_backend.compiler-backend-string-contains?
               (compiler_backend.compiler-backend-global-shared-view asm)
               "    movq %r8, %r9\n")))]
-      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+      [(Err _) false])))
 
 (test
   windows-param-preassign-backend

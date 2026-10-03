@@ -1,7 +1,6 @@
 ;; compiler_clone_tests.tl - White-box tests for the clone name sets and
 ;; root-entry tables.
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
@@ -9,12 +8,12 @@
 (import compiler_clone as clone_support)
 
 (define (clone-root-entries-empty) : clone_support.CloneRootEntries
-  clone_support.CloneRootEntries.Empty)
+  Empty)
 
 (define (clone-root-entries-capacity [roots : clone_support.CloneRootEntries]) : i64
   (match roots
-    [(clone_support.CloneRootEntries.Empty) 0]
-    [(clone_support.CloneRootEntries.Dense address _ _)
+    [(Empty) 0]
+    [(Dense address _ _)
       (let
         [store : clone_support.CloneRootEntryStore
           (clone_support.clone-root-entries-store-read address)]
@@ -23,8 +22,8 @@
 (define (clone-root-entries-physical-len
   [roots : clone_support.CloneRootEntries]) : i64
   (match roots
-    [(clone_support.CloneRootEntries.Empty) 0]
-    [(clone_support.CloneRootEntries.Dense address _ _)
+    [(Empty) 0]
+    [(Dense address _ _)
       (let
         [store : clone_support.CloneRootEntryStore
           (clone_support.clone-root-entries-store-read address)]
@@ -81,17 +80,11 @@
           base-id
           -1)
         -1)
-      (clone_support.clone-module-alias-import-kind? ast.AstImportKind.Module)
-      (clone_support.clone-module-alias-import-kind?
-        (ast.AstImportKind.Macro 0 ast.AstMaybeModuleName.No))
-      (clone_support.clone-module-alias-import-kind?
-        (ast.AstImportKind.MacroDecls 0 ast.AstMaybeModuleName.No))
-      (not
-        (clone_support.clone-module-alias-import-kind?
-          ast.AstImportKind.ModuleAll))
-      (not
-        (clone_support.clone-module-alias-import-kind?
-          (ast.AstImportKind.ModuleItem 0)))
+      (clone_support.clone-module-alias-import-kind? Module)
+      (clone_support.clone-module-alias-import-kind? (Macro 0 No))
+      (clone_support.clone-module-alias-import-kind? (MacroDecls 0 No))
+      (not (clone_support.clone-module-alias-import-kind? ModuleAll))
+      (not (clone_support.clone-module-alias-import-kind? (ModuleItem 0)))
       (> (clone_support.clone-name-set-capacity grown) seed-capacity))))
 
 (define (clone-root-entries-smoke-key-id [index : i64]) : i64

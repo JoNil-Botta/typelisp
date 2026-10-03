@@ -30,17 +30,16 @@
     [query : identity.CompilerIncrementalQuery
       (identity.CompilerIncrementalQuery
         (cond
-          [(= kind 0) (identity.CompilerIncrementalQueryKind.Parse)]
-          [(= kind 1) (identity.CompilerIncrementalQueryKind.IrDump "macro")]
-          [(= kind 2) (identity.CompilerIncrementalQueryKind.Typecheck)]
-          [else (identity.CompilerIncrementalQueryKind.Lower)])
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (graph-test-child "typelisp.compiler-build" length))
+          [(= kind 0) (Parse)]
+          [(= kind 1) (IrDump "macro")]
+          [(= kind 2) (Typecheck)]
+          [else (Lower)])
+        (Available (graph-test-child "typelisp.compiler-build" length))
         (__tl_make-array identity.CompilerIncrementalInput 0))]
     [limits : identity.CompilerIncrementalIdentityLimits
       (identity.compiler-incremental-identity-default-limits)]
     (match (identity.compiler-incremental-identity-encode query (& limits))
-      [(identity.ResultCompilerIncrementalIdentity.Ok value) value]
+      [(Ok value) value]
       [_ (string.tl_oob_abort)])))
 
 (define (graph-test-output [seed : i64]) : identity.CompilerIncrementalSemanticOutputIdentity
@@ -61,9 +60,9 @@
 
 (define (graph-test-source [path : String]) : trace.CompilerIncrementalTraceEdge
   (trace.CompilerIncrementalTraceEdge
-    (trace.CompilerIncrementalTraceKey.Source path)
-    (trace.CompilerIncrementalTraceObservation.Source
-      (trace.CompilerIncrementalTraceContent.Present
+    (Source path)
+    (Source
+      (Present
         (identity.CompilerIncrementalContentIdentity
           "typelisp.source-content"
           1
@@ -72,31 +71,28 @@
 
 (define (graph-test-macro-edge) : trace.CompilerIncrementalTraceEdge
   (trace.CompilerIncrementalTraceEdge
-    (trace.CompilerIncrementalTraceKey.MacroComptime
-      "expand"
-      (graph-test-child "typelisp.macro-request" 5))
-    (trace.CompilerIncrementalTraceObservation.MacroComptime
-      (trace.CompilerIncrementalTraceSemantic.Present (graph-test-output 77)))))
+    (MacroComptime "expand" (graph-test-child "typelisp.macro-request" 5))
+    (MacroComptime (Present (graph-test-output 77)))))
 
 (define (graph-test-child-edge
   [ordinal : i64]
   [child : identity.CompilerIncrementalIdentity]
   [output : identity.CompilerIncrementalSemanticOutputIdentity]) : trace.CompilerIncrementalTraceEdge
   (trace.CompilerIncrementalTraceEdge
-    (trace.CompilerIncrementalTraceKey.Child "deps" ordinal child)
-    (trace.CompilerIncrementalTraceObservation.Child output)))
+    (Child "deps" ordinal child)
+    (Child output)))
 
 (define (graph-test-trace-finish
   [builder : trace.CompilerIncrementalTraceBuilder]) : trace.CompilerIncrementalTrace
   (match (trace.compiler-trace-finalize builder)
-    [(trace.ResultCompilerIncrementalTrace.Ok value) value]
+    [(Ok value) value]
     [_ (string.tl_oob_abort)]))
 
 (define (graph-test-trace-begin [query : identity.CompilerIncrementalIdentity]) : trace.CompilerIncrementalTraceBuilder
   (match (trace.compiler-trace-begin
     query
     (trace.compiler-trace-default-limits))
-    [(trace.ResultCompilerIncrementalTraceBuilder.Ok builder) builder]
+    [(Ok builder) builder]
     [_ (string.tl_oob_abort)]))
 
 ;; Fixture notes and additions; a rejected note is a broken fixture.
@@ -252,24 +248,23 @@
 
 (define (graph-test-begin) : graph.CompilerIncrementalGraphBuilder
   (match (graph.compiler-graph-begin (graph.compiler-graph-default-limits))
-    [(graph.ResultCompilerIncrementalGraphBuilder.Ok builder) builder]
+    [(Ok builder) builder]
     [_ (string.tl_oob_abort)]))
 
 (define (graph-test-unwrap [result : graph.ResultCompilerIncrementalGraph]) : graph.CompilerIncrementalGraph
   (match result
-    [(graph.ResultCompilerIncrementalGraph.Ok value) value]
+    [(Ok value) value]
     [_ (string.tl_oob_abort)]))
 
 (define (graph-test-error-code [result : graph.ResultCompilerIncrementalGraph]) : i64
   (match result
-    [(graph.ResultCompilerIncrementalGraph.Ok _) 0]
-    [(graph.ResultCompilerIncrementalGraph.Err error) error.code]))
+    [(Ok _) 0]
+    [(Err error) error.code]))
 
 (define (graph-test-error [result : graph.ResultCompilerIncrementalGraph]) : graph.CompilerIncrementalGraphError
   (match result
-    [(graph.ResultCompilerIncrementalGraph.Ok _)
-      (graph.compiler-graph-error 0 -2 -2 "")]
-    [(graph.ResultCompilerIncrementalGraph.Err error) error]))
+    [(Ok _) (graph.compiler-graph-error 0 -2 -2 "")]
+    [(Err error) error]))
 
 ;; The representative graph, observed in one of two orders, optionally with
 ;; byte-identical repeats.
@@ -478,9 +473,9 @@
     [decl : i64 (graph-test-index (& base) 3 4)]
     (and
       (match rekeyed
-        [(graph.ResultCompilerIncrementalGraph.Ok value)
+        [(Ok value)
           (not (graph.compiler-graph-fingerprint-eq? (& value) (& base)))]
-        [(graph.ResultCompilerIncrementalGraph.Err _) false])
+        [(Err _) false])
       (= changed.code graph.compiler-graph-error-child-output)
       (= changed.node decl))))
 
@@ -707,7 +702,7 @@
     [_zero : unit (set! zero-roots.max-roots 0)]
     [limited : graph.CompilerIncrementalGraphBuilder
       (match (graph.compiler-graph-begin small)
-        [(graph.ResultCompilerIncrementalGraphBuilder.Ok builder) builder]
+        [(Ok builder) builder]
         [_ (string.tl_oob_abort)])]
     [_limited : unit
       (begin
@@ -770,9 +765,8 @@
         (graph-test-error-code (graph.compiler-graph-finalize aborted))
         graph.compiler-graph-error-state)
       (match (graph.compiler-graph-begin zero-roots)
-        [(graph.ResultCompilerIncrementalGraphBuilder.Ok _) false]
-        [(graph.ResultCompilerIncrementalGraphBuilder.Err error)
-          (= error.code graph.compiler-graph-error-limit-config)]))))
+        [(Ok _) false]
+        [(Err error) (= error.code graph.compiler-graph-error-limit-config)]))))
 
 ;; --- structural rejections -------------------------------------------------------
 (define (graph-test-structure
@@ -950,7 +944,7 @@
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 1024)]
     [key : trace.CompilerIncrementalTraceKey
-      (trace.CompilerIncrementalTraceKey.Child
+      (Child
         "deps"
         0
         (identity.CompilerIncrementalIdentity
@@ -960,7 +954,7 @@
           (binary.compiler-incremental-binary-copy (& query.transcript))
           query.fingerprint))]
     [observation : trace.CompilerIncrementalTraceObservation
-      (trace.CompilerIncrementalTraceObservation.Child (graph-test-output 11))]
+      (Child (graph-test-output 11))]
     [key-bytes : String (trace.compiler-trace-encode-key (& key))]
     [observation-bytes : String
       (trace.compiler-trace-encode-observation (& observation))]

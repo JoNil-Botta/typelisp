@@ -88,8 +88,8 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Slot.Empty) unit]
-            [(Slot.Filled _) (set! bad (+ bad 1))])
+            [(Empty) unit]
+            [(Filled _) (set! bad (+ bad 1))])
           (set! i (+ i 1))))
       bad)))
 
@@ -101,11 +101,11 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Cell.At at span)
+            [(At at span)
               (if (and (= at 0) (= span.start 0) (= span.end 0))
                 unit
                 (set! bad (+ bad 1)))]
-            [(Cell.Gone) (set! bad (+ bad 1))])
+            [(Gone) (set! bad (+ bad 1))])
           (set! i (+ i 1))))
       bad)))
 
@@ -117,11 +117,11 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Named.Label text)
+            [(Label text)
               (if (= (string-length text) 0)
                 unit
                 (set! bad (+ bad 1)))]
-            [(Named.Anon) (set! bad (+ bad 1))])
+            [(Anon) (set! bad (+ bad 1))])
           (set! i (+ i 1))))
       bad)))
 
@@ -133,11 +133,11 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Holder.Has value)
+            [(Has value)
               (if (= (deref value) 0)
                 unit
                 (set! bad (+ bad 1)))]
-            [(Holder.Empty) (set! bad (+ bad 1))])
+            [(Empty) (set! bad (+ bad 1))])
           (set! i (+ i 1))))
       bad)))
 
@@ -149,11 +149,11 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Mixed.Vals value code flag)
+            [(Vals value code flag)
               (if (and (= value 0.0) (= code '\0') (not flag))
                 unit
                 (set! bad (+ bad 1)))]
-            [(Mixed.NoVals) (set! bad (+ bad 1))])
+            [(NoVals) (set! bad (+ bad 1))])
           (set! i (+ i 1))))
       bad)))
 
@@ -165,7 +165,7 @@
       (while (< i n)
         (begin
           (match (array-ref items i)
-            [(Wrapped.Wrap (Named.Label text))
+            [(Wrap (Label text))
               (if (= (string-length text) 0)
                 unit
                 (set! bad (+ bad 1)))]

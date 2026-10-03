@@ -401,9 +401,9 @@
             (return (UrlAuthorityErr (url-error (UrlInvalidHost) (- end 1)))))
           (if (url-numeric-label? text last-label-start end)
             (match (ip.parse-ipv4-range text start end)
-              [(ip.Ipv4Ok address)
+              [(Ipv4Ok address)
                 (UrlAuthorityOk (UrlAuthority (UrlHostIpv4 address) -1))]
-              [(ip.Ipv4Err error)
+              [(Ipv4Err error)
                 (UrlAuthorityErr (url-error (UrlInvalidIpv4) error.offset))])
             (UrlAuthorityOk
               (UrlAuthority (UrlHostName (byte_buf.to-string out)) -1)))))]))
@@ -466,9 +466,9 @@
         (UrlAuthorityErr (url-error (UrlInvalidIpv6) inner-start))
         (match (ip.parse-ipv6
           (string.substring text inner-start (- end-bracket inner-start)))
-          [(ip.Ipv6Ok address)
+          [(Ipv6Ok address)
             (UrlAuthorityOk (UrlAuthority (UrlHostIpv6 address) -1))]
-          [(ip.Ipv6Err error)
+          [(Ipv6Err error)
             (UrlAuthorityErr
               (url-error (UrlInvalidIpv6) (+ inner-start error.offset)))])))))
 

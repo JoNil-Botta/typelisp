@@ -10,31 +10,31 @@
 
 (define (result-code [result : rooted.FsLinuxRootedResult]) : i64
   (match result
-    [(rooted.LinuxRootedOk) 0]
-    [(rooted.LinuxRootedInvalidComponent) 1]
-    [(rooted.LinuxRootedNotFound) 2]
-    [(rooted.LinuxRootedAlreadyExists) 3]
-    [(rooted.LinuxRootedUnsafeResolution) 4]
-    [(rooted.LinuxRootedWrongKind) 5]
-    [(rooted.LinuxRootedPermissionDenied) 6]
-    [(rooted.LinuxRootedUnsupported) 7]
-    [(rooted.LinuxRootedIoFailure) 8]
-    [(rooted.LinuxRootedCancelled) 9]
-    [(rooted.LinuxRootedWriteFailure) 10]
-    [(rooted.LinuxRootedModeFailure) 11]
-    [(rooted.LinuxRootedFlushFailure) 12]
-    [(rooted.LinuxRootedCloseFailure) 13]
-    [(rooted.LinuxRootedClosed) 14]
-    [(rooted.LinuxRootedCrossDevice) 15]
-    [(rooted.LinuxRootedDirectoryNotEmpty) 16]
-    [(rooted.LinuxRootedInvalidLength) 17]
-    [(rooted.LinuxRootedLengthMismatch) 18]
-    [(rooted.LinuxRootedReadFailure) 19]
-    [(rooted.LinuxRootedIdentityChanged) 20]
-    [(rooted.LinuxRootedSourceChanged) 21]
-    [(rooted.LinuxRootedInvalidPermissions) 22]
-    [(rooted.LinuxRootedModeMismatch) 23]
-    [(rooted.LinuxRootedLockConflict) 24]))
+    [(LinuxRootedOk) 0]
+    [(LinuxRootedInvalidComponent) 1]
+    [(LinuxRootedNotFound) 2]
+    [(LinuxRootedAlreadyExists) 3]
+    [(LinuxRootedUnsafeResolution) 4]
+    [(LinuxRootedWrongKind) 5]
+    [(LinuxRootedPermissionDenied) 6]
+    [(LinuxRootedUnsupported) 7]
+    [(LinuxRootedIoFailure) 8]
+    [(LinuxRootedCancelled) 9]
+    [(LinuxRootedWriteFailure) 10]
+    [(LinuxRootedModeFailure) 11]
+    [(LinuxRootedFlushFailure) 12]
+    [(LinuxRootedCloseFailure) 13]
+    [(LinuxRootedClosed) 14]
+    [(LinuxRootedCrossDevice) 15]
+    [(LinuxRootedDirectoryNotEmpty) 16]
+    [(LinuxRootedInvalidLength) 17]
+    [(LinuxRootedLengthMismatch) 18]
+    [(LinuxRootedReadFailure) 19]
+    [(LinuxRootedIdentityChanged) 20]
+    [(LinuxRootedSourceChanged) 21]
+    [(LinuxRootedInvalidPermissions) 22]
+    [(LinuxRootedModeMismatch) 23]
+    [(LinuxRootedLockConflict) 24]))
 
 (define (create-text
   [directory : (& directory rooted.FsLinuxRootedDirectory)]
@@ -55,7 +55,7 @@
             (&mut file)
             (byte_buf.str-as-bytes (& contents))
             (string-length (& contents))
-            rooted.LinuxRootedRegularFile
+            LinuxRootedRegularFile
             true
             rooted.linux-rooted-never-cancelled)]
         (if (rooted.linux-rooted-result-ok?
@@ -1066,7 +1066,7 @@
           reader.state
           (rooted.FsLinuxRootedHandleState
             saved.fd
-            rooted.LinuxRootedIoFailure
+            LinuxRootedIoFailure
             saved.close))
         (let
           [code : i64

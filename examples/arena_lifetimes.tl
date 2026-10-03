@@ -153,8 +153,8 @@
           [worker-score : i64
             (match (unsafe
               (thread.join worker))
-              [(thread.ThreadJoinOk value) value]
-              [(thread.ThreadJoinErr _) -1])]
+              [(ThreadJoinOk value) value]
+              [(ThreadJoinErr _) -1])]
           [name-score : i64 (string.string-length (& level-name))]
           (begin
             (arena.destroy-safe! level)

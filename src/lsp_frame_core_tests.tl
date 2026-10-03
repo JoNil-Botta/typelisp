@@ -22,20 +22,20 @@
 ;; encoder's output for a non-ASCII path decodes back to the same path.
 (define (lsp-percent-decode-is? [text : String] [want : String]) : bool
   (match (lsp.lsp-percent-decode text)
-    [(lsp.LspStringResult.Ok decoded) (string.eq decoded want)]
-    [(lsp.LspStringResult.Err _) false]))
+    [(Ok decoded) (string.eq decoded want)]
+    [(Err _) false]))
 
 (define (lsp-percent-decode-error-is? [text : String] [want : String]) : bool
   (match (lsp.lsp-percent-decode text)
-    [(lsp.LspStringResult.Ok _) false]
-    [(lsp.LspStringResult.Err message) (string.eq message want)]))
+    [(Ok _) false]
+    [(Err message) (string.eq message want)]))
 
 (define (lsp-file-uri-round-trips? [path : String]) : bool
   (let
     [uri : String (lsp.lsp-path-to-file-uri (string.copy (& path)))]
     (match (lsp.lsp-file-uri-to-path (& uri))
-      [(lsp.LspUriPath.Ok decoded) (string.eq decoded path)]
-      [(lsp.LspUriPath.Err _) false])))
+      [(Ok decoded) (string.eq decoded path)]
+      [(Err _) false])))
 
 (define (lsp-percent-decode-bytes-ok?) : bool
   (and
@@ -79,16 +79,16 @@
   [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]) : bool
   (match (lsp.lsp-documents-lookup docs uri)
-    [(lsp.LspDocumentLookup.Found _ _ _) false]
-    [(lsp.LspDocumentLookup.Missing) true]))
+    [(Found _ _ _) false]
+    [(Missing) true]))
 
 (define (lsp-documents-smoke-text-eq?
   [docs : (& docs lsp_document_vec.Vec)]
   [uri : String]
   [expected-text : String]) : bool
   (match (lsp.lsp-documents-lookup docs uri)
-    [(lsp.LspDocumentLookup.Found _ text _) (string.eq text expected-text)]
-    [(lsp.LspDocumentLookup.Missing) false]))
+    [(Found _ text _) (string.eq text expected-text)]
+    [(Missing) false]))
 
 (define (lsp-documents-smoke-check-cache-ok?
   [docs : (& docs lsp_document_vec.Vec)]
@@ -101,7 +101,7 @@
         [doc : lvf.LspDocument
           (lsp_document_vec.get (& docs) idx (lsp.lsp-document-fallback))]
         (match doc.check-cache
-          [(lvf.LspCheckCacheOk) true]
+          [(LspCheckCacheOk) true]
           [_ false])))))
 
 (define (lsp-documents-smoke-check-cache-invalid?
@@ -115,7 +115,7 @@
         [doc : lvf.LspDocument
           (lsp_document_vec.get (& docs) idx (lsp.lsp-document-fallback))]
         (match doc.check-cache
-          [(lvf.LspCheckCacheInvalid) true]
+          [(LspCheckCacheInvalid) true]
           [_ false])))))
 
 (define (lsp-documents-check-cache-smoke-ok?) : bool
@@ -129,7 +129,7 @@
         "same"
         (lsp.lsp-diagnostic-uris-empty))]
     (begin
-      (lsp.lsp-documents-set-check-cache! (&mut docs) uri lvf.LspCheckCacheOk)
+      (lsp.lsp-documents-set-check-cache! (&mut docs) uri LspCheckCacheOk)
       (let
         [preserved-docs : lsp_document_vec.Vec
           (lsp.lsp-documents-set
@@ -218,7 +218,7 @@
     [doc : (& doc lvf.LspDocument)]
     [version : i64]) : bool
     (match (lsp.lsp-document-semantic-snapshot-status doc)
-      [(lsp.LspSemanticSnapshotStatus.Current snapshot-version complete)
+      [(Current snapshot-version complete)
         (and (= snapshot-version version) complete)]
       [_ false])))
 
@@ -228,7 +228,7 @@
     [doc : (& doc lvf.LspDocument)]
     [version : i64]) : bool
     (match (lsp.lsp-document-semantic-snapshot-status doc)
-      [(lsp.LspSemanticSnapshotStatus.Stale snapshot-version complete)
+      [(Stale snapshot-version complete)
         (and (= snapshot-version version) complete)]
       [_ false])))
 
@@ -238,7 +238,7 @@
     [doc : (& doc lvf.LspDocument)]
     [version : i64]) : bool
     (match (lsp.lsp-document-semantic-snapshot-status doc)
-      [(lsp.LspSemanticSnapshotStatus.Current snapshot-version complete)
+      [(Current snapshot-version complete)
         (and (= snapshot-version version) (not complete))]
       [_ false])))
 
@@ -263,7 +263,7 @@
               (& index)
               path
               "imported-value"
-              sem.CompilerSemanticRecordRole.Use
+              Use
               -1)]
           [use-record : sem.CompilerSemanticRecord
             (sem.compiler-semantic-source-index-get (& index) use-index)]
@@ -277,7 +277,7 @@
             (while (and query-ok (< iteration 1000))
               (begin
                 (match (lsp.lsp-document-semantic-symbol-query (& doc) use-byte)
-                  [(lsp.LspSemanticSymbolQuery.Found cursor definition)
+                  [(Found cursor definition)
                     (unless
                       (and
                         (sem.compiler-semantic-symbol-id-eq?
@@ -287,7 +287,7 @@
                         (lsp.lsp-semantic-record-exact-editable? definition)
                         (not (string.eq definition.span.path path)))
                       (set! query-ok false))]
-                  [(lsp.LspSemanticSymbolQuery.Missing) (set! query-ok false)])
+                  [(Missing) (set! query-ok false)])
                 (let
                   [highlights : lsp.LspDocumentHighlightResults
                     (lsp.lsp-document-highlights-at (& doc) use-byte)]
@@ -327,7 +327,7 @@
           version
           (lsp.lsp-diagnostic-uris-empty))
         uri
-        lvf.LspCheckCacheOk)
+        LspCheckCacheOk)
       uri
       version
       index)))
@@ -346,11 +346,11 @@
         empty-state
         (lsp.LspDocumentHandleResult.Continue docs)
         false)
-        [(lsp.LspHandleResult.Exit unexpected)
+        [(Exit unexpected)
           (begin
             (lsp.lsp-server-state-destroy! unexpected)
             false)]
-        [(lsp.LspHandleResult.Continue first-state)
+        [(Continue first-state)
           (let
             [first-docs : lsp_document_vec.Vec
               (owned_view.compiler-owned-shared-view first-state.documents)]
@@ -369,11 +369,11 @@
               first-state
               (lsp.LspDocumentHandleResult.Continue first-docs)
               false)
-              [(lsp.LspHandleResult.Exit unexpected)
+              [(Exit unexpected)
                 (begin
                   (lsp.lsp-server-state-destroy! unexpected)
                   false)]
-              [(lsp.LspHandleResult.Continue second-state)
+              [(Continue second-state)
                 (let
                   [second-docs : lsp_document_vec.Vec
                     (owned_view.compiler-owned-shared-view
@@ -417,12 +417,12 @@
         (owned_view.compiler-owned-shared-view source1)
         (owned_view.compiler-owned-shared-view roots)
         (lsp.lsp-language-cfgs))
-        [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ unexpected)
+        [(Err _) false]
+        [(Partial _ unexpected)
           (begin
             (sem.compiler-semantic-source-index-release! (&mut unexpected))
             false)]
-        [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        [(Ok _ first)
           (begin
             (set!
               docs
@@ -482,10 +482,8 @@
                       invalid-source
                       (owned_view.compiler-owned-shared-view roots)
                       (lsp.lsp-language-cfgs))
-                      [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false]
-                      [(sem.ResultCompilerCheckWithSemanticIndex.Partial
-                          diagnostics
-                          current)
+                      [(Err _) false]
+                      [(Partial diagnostics current)
                         (let
                           [diagnostic-list : cdiag.CompilerDiagnosticList
                             (deref diagnostics)]
@@ -499,7 +497,7 @@
                                 (lsp.lsp-documents-set-check-cache
                                   docs
                                   uri
-                                  (lvf.LspCheckCacheErr
+                                  (LspCheckCacheErr
                                     (cdiag.compiler-diagnostic-message
                                       first-diagnostic)))
                                 uri
@@ -526,9 +524,7 @@
                                 (=
                                   (sem_tests.compiler-semantic-source-index-live-owner-count)
                                   (+ baseline 1))))))]
-                      [(sem.ResultCompilerCheckWithSemanticIndex.Ok
-                          _
-                          unexpected)
+                      [(Ok _ unexpected)
                         (begin
                           (sem.compiler-semantic-source-index-release!
                             (&mut unexpected))
@@ -538,19 +534,17 @@
                     (owned_view.compiler-owned-shared-view source2)
                     (owned_view.compiler-owned-shared-view roots)
                     (lsp.lsp-language-cfgs))
-                    [(sem.ResultCompilerCheckWithSemanticIndex.Err _)
+                    [(Err _)
                       (begin
                         (lsp.lsp-documents-release-all! (&mut docs))
                         false)]
-                    [(sem.ResultCompilerCheckWithSemanticIndex.Partial
-                        _
-                        unexpected)
+                    [(Partial _ unexpected)
                       (begin
                         (sem.compiler-semantic-source-index-release!
                           (&mut unexpected))
                         (lsp.lsp-documents-release-all! (&mut docs))
                         false)]
-                    [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ second)
+                    [(Ok _ second)
                       (begin
                         (set!
                           docs
@@ -593,19 +587,13 @@
                                 (owned_view.compiler-owned-shared-view source3)
                                 roots
                                 (lsp.lsp-language-cfgs))
-                                [(sem.ResultCompilerCheckWithSemanticIndex.Err
-                                    _)
-                                  false]
-                                [(sem.ResultCompilerCheckWithSemanticIndex.Partial
-                                    _
-                                    unexpected)
+                                [(Err _) false]
+                                [(Partial _ unexpected)
                                   (begin
                                     (sem.compiler-semantic-source-index-release!
                                       (&mut unexpected))
                                     false)]
-                                [(sem.ResultCompilerCheckWithSemanticIndex.Ok
-                                    _
-                                    third)
+                                [(Ok _ third)
                                   (begin
                                     (set!
                                       docs
@@ -673,15 +661,15 @@
   (match (let
     [value (lsp-compiler-diagnostic "" "" diag)]
     (lsp.lsp-json-string-field value "code"))
-    [(lsp.LspJsonText.Ok code) (string.eq code want)]
-    [(lsp.LspJsonText.Missing) false]))
+    [(Ok code) (string.eq code want)]
+    [(Missing) false]))
 
 (define (lsp-compiler-diagnostic-uncoded-ok? [diag : cdiag.CompilerDiagnostic]) : bool
   (match (let
     [value (lsp-compiler-diagnostic "" "" diag)]
     (lsp.lsp-json-string-field value "code"))
-    [(lsp.LspJsonText.Ok _) false]
-    [(lsp.LspJsonText.Missing) true]))
+    [(Ok _) false]
+    [(Missing) true]))
 
 (cfg
   test
@@ -734,8 +722,8 @@
 
 (define (lsp-validate-forms-line-context-ok?) : bool
   (match (lsp.lsp-validate-forms-result "(let [x : badtype] 1)")
-    [(lsp.LspValidationResult.Valid) false]
-    [(lsp.LspValidationResult.Invalid line col msg ctx)
+    [(Valid) false]
+    [(Invalid line col msg ctx)
       (and
         (= line 1)
         (= col 1)
@@ -787,7 +775,7 @@
   [line0 : i64]
   [char0 : i64]) : lsp.LspCallContextLookup
   (if (or (< line0 0) (< char0 0))
-    lsp.LspCallContextLookup.Missing
+    Missing
     (lsp.lsp-call-context-at-offset
       (owned_view.compiler-owned-shared-view text)
       (lsp.lsp-offset-at-position text line0 char0))))
@@ -799,29 +787,29 @@
   [head-end : i64]
   [active-argument : i64]) : bool
   (match lookup
-    [(lsp.LspCallContextLookup.Found context)
+    [(Found context)
       (and
         (= context.form-start form-start)
         (= context.head-start head-start)
         (= context.head-end head-end)
         (= context.active-argument active-argument))]
-    [(lsp.LspCallContextLookup.Missing) false]))
+    [(Missing) false]))
 
 (define (lsp-call-context-missing? [lookup : lsp.LspCallContextLookup]) : bool
   (match lookup
-    [(lsp.LspCallContextLookup.Found _) false]
-    [(lsp.LspCallContextLookup.Missing) true]))
+    [(Found _) false]
+    [(Missing) true]))
 
 (define (lsp-completion-context-kind-code [kind : lsp.LspCompletionContextKind]) : i64
   (match kind
-    [(lsp.LspCompletionContextKind.Value) 0]
-    [(lsp.LspCompletionContextKind.CallHead) 1]
-    [(lsp.LspCompletionContextKind.Type) 2]
-    [(lsp.LspCompletionContextKind.ImportPathOrItem) 3]
-    [(lsp.LspCompletionContextKind.ImportAlias) 4]
-    [(lsp.LspCompletionContextKind.DottedMember) 5]
-    [(lsp.LspCompletionContextKind.Field) 6]
-    [(lsp.LspCompletionContextKind.Suppressed) 7]))
+    [(Value) 0]
+    [(CallHead) 1]
+    [(Type) 2]
+    [(ImportPathOrItem) 3]
+    [(ImportAlias) 4]
+    [(DottedMember) 5]
+    [(Field) 6]
+    [(Suppressed) 7]))
 
 (define (lsp-completion-context-is?
   [lookup : lsp.LspCompletionContextLookup]
@@ -836,7 +824,7 @@
   [form-start : i64]
   [active-argument : i64]) : bool
   (match lookup
-    [(lsp.LspCompletionContextLookup.Found context)
+    [(Found context)
       (and
         (= (lsp-completion-context-kind-code context.kind) kind)
         (= context.cursor-byte cursor-byte)
@@ -849,7 +837,7 @@
         (string.eq context.head head)
         (= context.form-start form-start)
         (= context.active-argument active-argument))]
-    [(lsp.LspCompletionContextLookup.Missing) false]))
+    [(Missing) false]))
 
 (define (lsp-completion-context-at-end-is?
   [text : String]
@@ -880,8 +868,8 @@
 (define (lsp-completion-context-missing?
   [lookup : lsp.LspCompletionContextLookup]) : bool
   (match lookup
-    [(lsp.LspCompletionContextLookup.Found _) false]
-    [(lsp.LspCompletionContextLookup.Missing) true]))
+    [(Found _) false]
+    [(Missing) true]))
 
 (test
   lsp-completion-context-basic
@@ -1658,41 +1646,41 @@
         "/workspace/old.tl"
         "/outside/new.tl"
         false
-        (io.OkIoBool false))
-        [(lsp.LspRenameModuleMoveLookup.Err message)
+        (OkIoBool false))
+        [(Err message)
           (string.eq
             message
             "Renamed module path would leave the editable workspace")]
-        [(lsp.LspRenameModuleMoveLookup.Ok _) false])
+        [(Ok _) false])
       (match (lsp.lsp-rename-module-move-from-probe
         "/workspace/old.tl"
         "/workspace/new.tl"
         true
-        (io.ErrIoBool (io.IoInvalidPath "/workspace/new.tl")))
-        [(lsp.LspRenameModuleMoveLookup.Err message)
+        (ErrIoBool (IoInvalidPath "/workspace/new.tl")))
+        [(Err message)
           (string.eq message "Cannot validate the renamed module destination")]
-        [(lsp.LspRenameModuleMoveLookup.Ok _) false])
+        [(Ok _) false])
       (match (lsp.lsp-rename-module-move-from-probe
         "/workspace/old.tl"
         "/workspace/new.tl"
         true
-        (io.OkIoBool true))
-        [(lsp.LspRenameModuleMoveLookup.Err message)
+        (OkIoBool true))
+        [(Err message)
           (string.eq message "Renamed module source path already exists")]
-        [(lsp.LspRenameModuleMoveLookup.Ok _) false])
+        [(Ok _) false])
       (match (lsp.lsp-rename-module-move-from-probe
         "/workspace/old.tl"
         "/workspace/new.tl"
         true
-        (io.OkIoBool false))
-        [(lsp.LspRenameModuleMoveLookup.Ok move)
+        (OkIoBool false))
+        [(Ok move)
           (match move
-            [(lsp.LspRenameModuleMove.Found old-path new-path)
+            [(Found old-path new-path)
               (and
                 (string.eq old-path "/workspace/old.tl")
                 (string.eq new-path "/workspace/new.tl"))]
-            [(lsp.LspRenameModuleMove.Missing) false])]
-        [(lsp.LspRenameModuleMoveLookup.Err _) false]))
+            [(Missing) false])]
+        [(Err _) false]))
     (io.panic "lsp-rename-module-move-probe failed")))
 
 (test
@@ -1702,15 +1690,15 @@
       [missing-changes : json.JsonSeq
         (lsp.lsp-rename-append-module-move
           (lsp.lsp-json-list-cons
-            (lsp.lsp-json-object1 "kind" (json.JsonString "text"))
+            (lsp.lsp-json-object1 "kind" (JsonString "text"))
             (json.list-empty))
-          lsp.LspRenameModuleMove.Missing)]
+          Missing)]
       [found-changes : json.JsonSeq
         (lsp.lsp-rename-append-module-move
           (lsp.lsp-json-list-cons
-            (lsp.lsp-json-object1 "kind" (json.JsonString "text"))
+            (lsp.lsp-json-object1 "kind" (JsonString "text"))
             (json.list-empty))
-          (lsp.LspRenameModuleMove.Found "/old.tl" "/new.tl"))]
+          (Found "/old.tl" "/new.tl"))]
       [missing-count : i64
         (json.list-count (lsp.lsp-global-shared-view missing-changes))]
       [found-count : i64
@@ -1747,11 +1735,11 @@
   [index : (& index lvf.LspWorkspaceIndex)]
   [wanted : i64]) : lvf.LspWorkspaceDeclLookup
   (if (< wanted 0)
-    lvf.LspWorkspaceDeclLookup.Missing
+    Missing
     (let
       [source-index : i64 0]
       [offset : i64 wanted]
-      [result : lvf.LspWorkspaceDeclLookup lvf.LspWorkspaceDeclLookup.Missing]
+      [result : lvf.LspWorkspaceDeclLookup Missing]
       [done : bool false]
       (begin
         (while (and
@@ -1766,7 +1754,7 @@
               (begin
                 (set!
                   result
-                  (lvf.LspWorkspaceDeclLookup.Found
+                  (Found
                     (lvf.LspWorkspaceDeclRow
                       source.root-uri
                       source.root-path
@@ -1834,9 +1822,8 @@
     (let
       [text : String "(define (foo) : i64 1)"]
       (match (lsp.lsp-patch-text text "1" "2")
-        [(lsp.LspEditResult.Ok replaced)
-          (string.eq replaced "(define (foo) : i64 2)")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Ok replaced) (string.eq replaced "(define (foo) : i64 2)")]
+        [(Err _) false]))
     (io.panic "lsp-patch-text-smoke failed")))
 
 (test
@@ -1846,9 +1833,8 @@
       [text : String "(define (foo) : i64 1)\n(define (bar) : i64 1)"]
       [needle : String "more than once"]
       (match (lsp.lsp-patch-text text "1" "2")
-        [(lsp.LspEditResult.Ok _) false]
-        [(lsp.LspEditResult.Err message)
-          (string.contains (& message) (& needle))]))
+        [(Ok _) false]
+        [(Err message) (string.contains (& message) (& needle))]))
     (io.panic "lsp-patch-text-duplicate failed")))
 
 (test
@@ -1858,9 +1844,8 @@
       [text : String "(define (foo) : i64 1)"]
       [needle : String "invalid form"]
       (match (lsp.lsp-patch-text text "1)" "1")
-        [(lsp.LspEditResult.Ok _) false]
-        [(lsp.LspEditResult.Err message)
-          (string.contains (& message) (& needle))]))
+        [(Ok _) false]
+        [(Err message) (string.contains (& message) (& needle))]))
     (io.panic "lsp-patch-text-invalid failed")))
 
 (test
@@ -1870,8 +1855,8 @@
       [text : String "(define (aaaaa) : i64 1)\n(define (abc) : i64 2)"]
       [expected : String "(define (aaaaa) : i64 1)\n(define (renamed) : i64 2)"]
       (match (lsp.lsp-patch-text text "abc" "renamed")
-        [(lsp.LspEditResult.Ok replaced) (string.eq replaced expected)]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Ok replaced) (string.eq replaced expected)]
+        [(Err _) false]))
     (io.panic "lsp-patch-text-first-byte-collisions failed")))
 
 (test
@@ -2105,23 +2090,23 @@
     (lsp.lsp-scan-decls copy)))
 
 (define (lsp-test-path1 [a : String]) : json.JsonSeq
-  (lsp.lsp-json-list-cons (json.JsonString a) (json.list-empty)))
+  (lsp.lsp-json-list-cons (JsonString a) (json.list-empty)))
 
 (define (lsp-test-path3 [a : String] [b : String] [c : String]) : json.JsonSeq
   (lsp.lsp-json-list-cons
-    (json.JsonString a)
+    (JsonString a)
     (lsp.lsp-json-list-cons
-      (json.JsonString b)
-      (lsp.lsp-json-list-cons (json.JsonString c) (json.list-empty)))))
+      (JsonString b)
+      (lsp.lsp-json-list-cons (JsonString c) (json.list-empty)))))
 
 (define (lsp-test-path4 [a : String] [b : String] [c : String] [d : String]) : json.JsonSeq
   (lsp.lsp-json-list-cons
-    (json.JsonString a)
+    (JsonString a)
     (lsp.lsp-json-list-cons
-      (json.JsonString b)
+      (JsonString b)
       (lsp.lsp-json-list-cons
-        (json.JsonString c)
-        (lsp.lsp-json-list-cons (json.JsonString d) (json.list-empty))))))
+        (JsonString c)
+        (lsp.lsp-json-list-cons (JsonString d) (json.list-empty))))))
 
 (define (lsp-nested-path-test-text) : String
   "(define (foo [x : i64]) : i64
@@ -2304,9 +2289,9 @@
     (let
       [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
       (match (lsp-replace-form-at-position text 1 5 "(define (baz) : i64 3)")
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (string.eq replaced "(define (foo) : i64 1)\n(define (baz) : i64 3)")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-replace-form-at-position-smoke failed")))
 
 (test
@@ -2332,9 +2317,9 @@
     (let
       [text : String "(define (foo) : i64\n  (+ 1 2))\n(define (bar) : i64 3)"]
       (match (lsp-replace-form-at-position text 1 4 "(define (baz) : i64 4)")
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (string.eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-replace-form-at-position-nested-smoke failed")))
 
 (test
@@ -2343,9 +2328,8 @@
     (let
       [text : String "(define (foo) : i64 1)"]
       (match (lsp-replace-form-at-position text 0 22 "(define (bad) : i64 0)")
-        [(lsp.LspEditResult.Ok _) false]
-        [(lsp.LspEditResult.Err message)
-          (string.eq message "No form found at position")]))
+        [(Ok _) false]
+        [(Err message) (string.eq message "No form found at position")]))
     (io.panic "lsp-replace-form-at-position-noop failed")))
 
 (test
@@ -2359,9 +2343,9 @@
         "bar"
         "(define (bar) : i64 42)"
         decls)
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (string.eq replaced "(define (foo) : i64 1)\n(define (bar) : i64 42)")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-structural-replace-by-name-smoke failed")))
 
 (test
@@ -2371,9 +2355,8 @@
       [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
       [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
       (match (lsp.lsp-delete-form-by-name-with-decls text "bar" decls)
-        [(lsp.LspEditResult.Ok deleted)
-          (string.eq deleted "(define (foo) : i64 1)\n")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Ok deleted) (string.eq deleted "(define (foo) : i64 1)\n")]
+        [(Err _) false]))
     (io.panic "lsp-delete-form-by-name-smoke failed")))
 
 (test
@@ -2383,9 +2366,8 @@
       [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
       [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
       (match (lsp.lsp-read-form-by-name-with-decls text "bar" decls)
-        [(lsp.LspStringResult.Ok form-text)
-          (string.eq form-text "(define (bar) : i64 2)")]
-        [(lsp.LspStringResult.Err _) false]))
+        [(Ok form-text) (string.eq form-text "(define (bar) : i64 2)")]
+        [(Err _) false]))
     (io.panic "lsp-read-form-by-name-smoke failed")))
 
 (test
@@ -2395,9 +2377,9 @@
       [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
       [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
       (match (lsp.lsp-replace-pattern-text-with-decls text "bar" "2" "4" decls)
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (string.eq replaced "(define (foo) : i64 1)\n(define (bar) : i64 4)")]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-replace-pattern-by-name-smoke failed")))
 
 (test
@@ -2409,13 +2391,13 @@
       [path : json.JsonSeq (lsp-test-path4 "foo" "let" "match" "Ok")]
       [needle : String "(Ok value)"]
       (match (lsp.lsp-lookup-form-path text decls path)
-        [(lsp.LspPathLookup.Found start end name)
+        [(Found start end name)
           (let
             [form-text : String (string.substring text start (- end start))]
             (and
               (string.eq name "Ok")
               (string.contains (& form-text) (& needle))))]
-        [(lsp.LspPathLookup.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-find-path-nested-smoke failed")))
 
 (test
@@ -2432,11 +2414,11 @@
         path
         (owned_view.compiler-owned-shared-view new-text)
         decls)
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (and
             (string.contains (& replaced) (& new-text))
             (not (string.contains (& replaced) (& old-match))))]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-replace-form-by-path-smoke failed")))
 
 (test
@@ -2453,9 +2435,9 @@
         path
         (owned_view.compiler-owned-shared-view new-body)
         decls)
-        [(lsp.LspEditResult.Ok replaced)
+        [(Ok replaced)
           (and
             (string.contains (& replaced) (& new-body))
             (not (string.contains (& replaced) (& old-match))))]
-        [(lsp.LspEditResult.Err _) false]))
+        [(Err _) false]))
     (io.panic "lsp-replace-body-by-path-smoke failed")))

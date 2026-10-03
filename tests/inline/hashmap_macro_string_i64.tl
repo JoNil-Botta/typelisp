@@ -53,14 +53,14 @@
         (map_string_i64.contains? (& m) "beta")
         "removed key absent")
       (match (map_string_i64.entry-or-insert! m "beta" 22)
-        [(map_string_i64.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq value 22 "entry-or-insert inserted value")]
-        [(map_string_i64.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "entry-or-insert should insert")])
       (match (map_string_i64.entry-or-insert! m "alpha" 99)
-        [(map_string_i64.EntryOrInsertFound value)
+        [(EntryOrInsertFound value)
           (test.assert-i64-eq value 10 "entry-or-insert found existing value")]
-        [(map_string_i64.EntryOrInsertInserted _)
+        [(EntryOrInsertInserted _)
           (test.assert-true false "entry-or-insert should find")])
       (let
         [entry : (map_string_i64.MutEntry m)

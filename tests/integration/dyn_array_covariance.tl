@@ -42,9 +42,9 @@
           (__tl_array-push! longer.items (& second))
           (let
             [third : String "world!"]
-            [maybe : (MaybeWords third) (MaybeWords.SomeWords longer)]
+            [maybe : (MaybeWords third) (SomeWords longer)]
             (match maybe
-              [(MaybeWords.SomeWords held)
+              [(SomeWords held)
                 (begin
                   (__tl_array-push! held.items (& third))
                   (let
@@ -59,4 +59,4 @@
                           (= (total-length (& all)) 16))
                           42
                           1)))))]
-              [(MaybeWords.NoWords) 2])))))))
+              [(NoWords) 2])))))))

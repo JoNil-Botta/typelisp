@@ -52,14 +52,14 @@
 ;; `return` and internal BoxGet template kinds).
 (define (round-trip [sample : Sample]) : i64
   (match (sample_json.decode (sample_json.encode (clone sample)))
-    [(sample_json.Ok decoded)
+    [(Ok decoded)
       (if (and
         (string.eq decoded.label sample.label)
         (= decoded.count sample.count)
         (= decoded.active sample.active))
         (array-ref decoded.marks 2)
         -1)]
-    [(sample_json.Err _) -2]))
+    [(Err _) -2]))
 
 (define (main) : i64
   (let

@@ -545,15 +545,15 @@
             (match (wire.ident-reader-next!
               (&mut reader)
               (byte_buf.bytes-slice-view stream pos (- piece-end pos)))
-              [(wire.SshIdentNeedMore consumed) (set! pos (+ pos consumed))]
-              [(wire.SshIdentBanner consumed)
+              [(SshIdentNeedMore consumed) (set! pos (+ pos consumed))]
+              [(SshIdentBanner consumed)
                 (begin
                   (set! pos (+ pos consumed))
                   (set! out (byte_buf.push out (cast 66 : u8)))
                   (set!
                     out
                     (wire.push-string out (wire.ident-reader-line (& reader)))))]
-              [(wire.SshIdentComplete consumed)
+              [(SshIdentComplete consumed)
                 (begin
                   (set! pos (+ pos consumed))
                   (set! out (byte_buf.push out (cast 73 : u8)))
@@ -561,7 +561,7 @@
                     out
                     (wire.push-string out (wire.ident-reader-line (& reader))))
                   (set! stop true))]
-              [(wire.SshIdentFailed error)
+              [(SshIdentFailed error)
                 (begin
                   (set! out (byte_buf.push out (cast 70 : u8)))
                   (set! out (wire.push-uint32 out error.code))
@@ -613,10 +613,10 @@
             stream
             pos
             (- (byte_buf.bytes-length stream) pos)))
-          [(wire.SshIdentNeedMore consumed) (set! pos (+ pos consumed))]
-          [(wire.SshIdentBanner consumed) (set! pos (+ pos consumed))]
-          [(wire.SshIdentComplete _) (set! done true)]
-          [(wire.SshIdentFailed error)
+          [(SshIdentNeedMore consumed) (set! pos (+ pos consumed))]
+          [(SshIdentBanner consumed) (set! pos (+ pos consumed))]
+          [(SshIdentComplete _) (set! done true)]
+          [(SshIdentFailed error)
             (begin
               (set! code error.code)
               (set! done true))]))
@@ -630,7 +630,7 @@
       (wire.ident-reader-new (wire.default-limits) false)]
     (begin
       (match (wire.ident-reader-next! (&mut reader) stream)
-        [(wire.SshIdentComplete consumed)
+        [(SshIdentComplete consumed)
           (test.assert-i64-eq
             consumed
             (byte_buf.bytes-length stream)
@@ -657,7 +657,7 @@
             "comments may contain a dash")))
       ;; A complete reader takes nothing more.
       (match (wire.ident-reader-next! (&mut reader) stream)
-        [(wire.SshIdentComplete consumed)
+        [(SshIdentComplete consumed)
           (test.assert-i64-eq consumed 0 "nothing after completion")]
         [_ (test.assert-true false "still complete")])
       ;; Banner lines, then the identification, then the first packet's bytes,
@@ -820,14 +820,14 @@
   (let
     [limits : wire.SshWireLimits (wire.default-limits)]
     [small : wire.SshWireLimits (small-limits)]
-    [clear : wire.SshFrameMode (wire.SshFrameClear)]
-    [gcm : wire.SshFrameMode (wire.SshFrameAesGcm)]
+    [clear : wire.SshFrameMode (SshFrameClear)]
+    [gcm : wire.SshFrameMode (SshFrameAesGcm)]
     [payload : i64 1]
     (begin
       (while (<= payload 600)
         (begin
           (match (wire.frame-plan (& clear) payload (& limits))
-            [(wire.SshFramePlanOk plan)
+            [(SshFramePlanOk plan)
               (begin
                 (test.assert-i64-eq
                   plan.packet-length
@@ -846,9 +846,9 @@
                 (test.assert-true
                   (>= (+ 4 plan.packet-length) 16)
                   "clear minimum size"))]
-            [(wire.SshFramePlanErr _) (test.assert-true false "clear plan")])
+            [(SshFramePlanErr _) (test.assert-true false "clear plan")])
           (match (wire.frame-plan (& gcm) payload (& limits))
-            [(wire.SshFramePlanOk plan)
+            [(SshFramePlanOk plan)
               (begin
                 (test.assert-i64-eq
                   plan.packet-length
@@ -861,17 +861,17 @@
                   (< plan.padding-length 20)
                   "gcm padding minimal")
                 (test.assert-i64-eq (% plan.packet-length 16) 0 "gcm alignment"))]
-            [(wire.SshFramePlanErr _) (test.assert-true false "gcm plan")])
+            [(SshFramePlanErr _) (test.assert-true false "gcm plan")])
           (set! payload (+ payload 1))))
       (match (wire.frame-plan (& clear) 0 (& limits))
-        [(wire.SshFramePlanErr error)
+        [(SshFramePlanErr error)
           (test.assert-i64-eq
             error.code
             wire.error-empty-payload
             "empty payload")]
         [_ (test.assert-true false "an empty payload has no plan")])
       (match (wire.frame-plan (& clear) 4090 (& small))
-        [(wire.SshFramePlanErr error)
+        [(SshFramePlanErr error)
           (test.assert-i64-eq
             error.code
             wire.error-packet-length
@@ -882,10 +882,10 @@
 (define (clear-packet [payload : (& payload bytes)]) : byte_buf.ByteBuf
   (let
     [limits : wire.SshWireLimits (wire.default-limits)]
-    [mode : wire.SshFrameMode (wire.SshFrameClear)]
+    [mode : wire.SshFrameMode (SshFrameClear)]
     (match (wire.frame-plan (& mode) (byte_buf.bytes-length payload) (& limits))
-      [(wire.SshFramePlanErr _) (byte_buf.new)]
-      [(wire.SshFramePlanOk plan)
+      [(SshFramePlanErr _) (byte_buf.new)]
+      [(SshFramePlanOk plan)
         (let
           [padding : byte_buf.ByteBuf (byte_buf.new)]
           (begin
@@ -898,8 +898,8 @@
               payload
               (byte_buf.as-bytes (& padding))
               (& limits))
-              [(wire.SshFrameOk packet) packet]
-              [(wire.SshFrameErr _) (byte_buf.new)])))])))
+              [(SshFrameOk packet) packet]
+              [(SshFrameErr _) (byte_buf.new)])))])))
 
 ;; Feed `stream` to a clear packet reader in pieces of at most `chunk` bytes
 ;; and record each packet's sequence number, payload and padding, any failure,
@@ -910,7 +910,7 @@
   [limits : wire.SshWireLimits]) : byte_buf.ByteBuf
   (let
     [reader : wire.SshPacketReader
-      (wire.packet-reader-new limits (wire.SshFrameClear))]
+      (wire.packet-reader-new limits (SshFrameClear))]
     [out : byte_buf.ByteBuf (byte_buf.new)]
     [count : i64 (byte_buf.bytes-length stream)]
     [pos : i64 0]
@@ -926,8 +926,8 @@
             (match (wire.packet-reader-next!
               (&mut reader)
               (byte_buf.bytes-slice-view stream pos (- piece-end pos)))
-              [(wire.SshPacketNeedMore consumed) (set! pos (+ pos consumed))]
-              [(wire.SshPacketComplete consumed)
+              [(SshPacketNeedMore consumed) (set! pos (+ pos consumed))]
+              [(SshPacketComplete consumed)
                 (begin
                   (set! pos (+ pos consumed))
                   (set!
@@ -945,7 +945,7 @@
                     (wire.push-string
                       out
                       (wire.packet-reader-padding (& reader)))))]
-              [(wire.SshPacketFailed error)
+              [(SshPacketFailed error)
                 (begin
                   (set! out (byte_buf.push out (cast 70 : u8)))
                   (set! out (wire.push-uint32 out error.code))
@@ -1078,13 +1078,13 @@
 (define (assert-sealed-packets) : unit
   (let
     [limits : wire.SshWireLimits (wire.default-limits)]
-    [gcm : wire.SshFrameMode (wire.SshFrameAesGcm)]
+    [gcm : wire.SshFrameMode (SshFrameAesGcm)]
     [payload : byte_buf.ByteBuf
       (hex "05 00 00 00 0c 73 73 68 2d 75 73 65 72 61 75 74 68")]
     [plan-padding : i64
       (match (wire.frame-plan (& gcm) (byte_buf.len (& payload)) (& limits))
-        [(wire.SshFramePlanOk plan) plan.padding-length]
-        [(wire.SshFramePlanErr _) 0])]
+        [(SshFramePlanOk plan) plan.padding-length]
+        [(SshFramePlanErr _) 0])]
     [padding : byte_buf.ByteBuf (byte_buf.new)]
     [short-padding : byte_buf.ByteBuf (hex "a0 a0 a0")]
     [tag : byte_buf.ByteBuf
@@ -1097,20 +1097,19 @@
         (byte_buf.as-bytes (& payload))
         (byte_buf.as-bytes (& short-padding))
         (& limits))
-        [(wire.SshFrameErr error)
+        [(SshFrameErr error)
           (test.assert-i64-eq
             error.code
             wire.error-padding-mismatch
             "padding of the wrong size")]
-        [(wire.SshFrameOk _)
-          (test.assert-true false "wrong padding is refused")])
+        [(SshFrameOk _) (test.assert-true false "wrong padding is refused")])
       (match (wire.encode-frame
         (& gcm)
         (byte_buf.as-bytes (& payload))
         (byte_buf.as-bytes (& padding))
         (& limits))
-        [(wire.SshFrameErr _) (test.assert-true false "gcm frame")]
-        [(wire.SshFrameOk frame)
+        [(SshFrameErr _) (test.assert-true false "gcm frame")]
+        [(SshFrameOk frame)
           (let
             ;; A stand-in for the transform: the body is sent as is, with a
             ;; 16-byte tag after it.
@@ -1121,7 +1120,7 @@
                   (byte_buf.as-bytes (& frame)))
                 (byte_buf.as-bytes (& tag)))]
             [reader : wire.SshPacketReader
-              (wire.packet-reader-new limits (wire.SshFrameAesGcm))]
+              (wire.packet-reader-new limits (SshFrameAesGcm))]
             (begin
               (test.assert-i64-eq
                 (% (- (byte_buf.len (& frame)) 4) 16)
@@ -1130,7 +1129,7 @@
               (match (wire.packet-reader-next!
                 (&mut reader)
                 (byte_buf.as-bytes (& stream)))
-                [(wire.SshPacketComplete consumed)
+                [(SshPacketComplete consumed)
                   (test.assert-i64-eq
                     consumed
                     (byte_buf.len (& stream))
@@ -1152,9 +1151,9 @@
               (match (wire.open-plain-body
                 (wire.packet-reader-body (& reader))
                 4)
-                [(wire.SshBodyErr _)
+                [(SshBodyErr _)
                   (test.assert-true false "authenticated body opens")]
-                [(wire.SshBodyOk body)
+                [(SshBodyOk body)
                   (begin
                     (test.assert-true
                       (bytes-eq?
@@ -1171,7 +1170,7 @@
 (define (assert-sequence-wrap) : unit
   (let
     [reader : wire.SshPacketReader
-      (wire.packet-reader-new (wire.default-limits) (wire.SshFrameClear))]
+      (wire.packet-reader-new (wire.default-limits) (SshFrameClear))]
     [payload : byte_buf.ByteBuf (hex "15")]
     [packet : byte_buf.ByteBuf (clear-packet (byte_buf.as-bytes (& payload)))]
     (begin
@@ -1179,7 +1178,7 @@
       (match (wire.packet-reader-next!
         (&mut reader)
         (byte_buf.as-bytes (& packet)))
-        [(wire.SshPacketComplete _)
+        [(SshPacketComplete _)
           (test.assert-i64-eq
             (wire.packet-reader-sequence (& reader))
             wire.max-uint32
@@ -1188,13 +1187,13 @@
       (match (wire.packet-reader-next!
         (&mut reader)
         (byte_buf.as-bytes (& packet)))
-        [(wire.SshPacketComplete _)
+        [(SshPacketComplete _)
           (test.assert-i64-eq
             (wire.packet-reader-sequence (& reader))
             0
             "wraps to zero")]
         [_ (test.assert-true false "packet after the wrap")])
-      (wire.packet-reader-set-mode! (&mut reader) (wire.SshFrameAesGcm))
+      (wire.packet-reader-set-mode! (&mut reader) (SshFrameAesGcm))
       (test.assert-i64-eq
         (wire.mode-tag-length (& reader.mode))
         16

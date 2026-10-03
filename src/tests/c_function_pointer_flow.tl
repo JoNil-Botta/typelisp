@@ -1,5 +1,4 @@
 (import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc_core)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)
 (import stdlib.test)
@@ -7,14 +6,14 @@
 ;: Higher-order C resolvers must not turn their raw result into a closure.
 (define (c-function-pointer-erasure-rejected? [source : String]) : bool
   (match (tc_api.typecheck-compiler-source source)
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+    [(Err diagnostics)
       (let
         [first : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         (string.contains
           (diagnostic.compiler-diagnostic-message first)
           "raw C function pointer"))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (test
   c-function-pointer-higher-order-global-erasure
@@ -80,6 +79,6 @@
 (define (relay [f : (-> i64 i64)]) : (-> i64 i64) f)
 (define saved : (-> i64 i64) (relay increment))
 (define (main) : i64 (saved 41))")
-      [(tc_core.ResultCompilerTypecheck.Ok _) true]
-      [(tc_core.ResultCompilerTypecheck.Err _) false])
+      [(Ok _) true]
+      [(Err _) false])
     "ordinary TypeLisp higher-order functions remain ordinary callable values"))

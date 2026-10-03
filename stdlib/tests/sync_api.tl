@@ -209,8 +209,8 @@
 
 (define (sync-api-run-mutex-create) : i64
   (match (mutex_i64.create 5)
-    [(mutex_i64.CreateErr _) 5]
-    [(mutex_i64.CreateOk mutex) (sync-api-run-mutex (& mutex))]))
+    [(CreateErr _) 5]
+    [(CreateOk mutex) (sync-api-run-mutex (& mutex))]))
 
 (define (sync-api-run-pair-create) : i64
   (let

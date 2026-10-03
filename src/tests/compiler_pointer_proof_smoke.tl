@@ -21,7 +21,7 @@
   [input : proof.PointerProofInput]
   [reference : proof.PointerProofRef]) : proof.PointerProofUse
   (match (proof.pointer-proof-input-use input reference)
-    [(proof.ResultPointerProofUse.Ok use) use]
+    [(Ok use) use]
     [_ (io.panic "pointer-proof smoke: invalid semantic reference")]))
 
 (define (proof-smoke-reference
@@ -33,7 +33,7 @@
 (define (proof-smoke-request
   [input : proof.PointerProofInput]
   [mode : lower.CompilerLowerMode]) : lower.CompilerLowerRequest
-  (lower.CompilerLowerRequest mode (proof.PointerProofRequest.Requested input)))
+  (lower.CompilerLowerRequest mode (Requested input)))
 
 (define (proof-smoke-lower
   [input : proof.PointerProofInput]
@@ -44,7 +44,7 @@
     [lowered : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-request "proof-case.tl" source request)]
     (match (lower.lower-compiler-pointer-proof-result request lowered)
-      [(lower.ResultCompilerLowerPointerProof.Err error)
+      [(Err error)
         (let
           [message : diagnostic.CompilerDiagnostic (deref error)]
           (begin
@@ -52,7 +52,7 @@
               "{}"
               (diagnostic.compiler-diagnostic-render (& message)))
             (io.panic "pointer-proof smoke: requested lowering failed")))]
-      [(lower.ResultCompilerLowerPointerProof.Ok program _ _)
+      [(Ok program _ _)
         (let
           [pools : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
@@ -71,15 +71,13 @@
         (match (proof.pointer-proof-input-use
           input
           (proof.PointerProofRef input.control index))
-          [(proof.ResultPointerProofUse.Ok use)
+          [(Ok use)
             (begin
               (match use.operation
-                [(proof.PointerProofOperation.IntegerToPointer)
-                  (set! found true)]
+                [(IntegerToPointer) (set! found true)]
                 [_ unit])
               (set! index (+ index 1)))]
-          [(proof.ResultPointerProofUse.Err _)
-            (io.panic "pointer-proof smoke: missing occurrence")]))
+          [(Err _) (io.panic "pointer-proof smoke: missing occurrence")]))
       found)))
 
 (define (proof-smoke-distinction [mode : lower.CompilerLowerMode]) : unit
@@ -127,17 +125,15 @@
         (match (proof.pointer-proof-input-use
           input
           (proof.PointerProofRef input.control index))
-          [(proof.ResultPointerProofUse.Err _)
-            (io.panic "pointer-proof smoke: missing mixed use")]
-          [(proof.ResultPointerProofUse.Ok use)
+          [(Err _) (io.panic "pointer-proof smoke: missing mixed use")]
+          [(Ok use)
             (begin
               (match use.operation
-                [(proof.PointerProofOperation.Read binding)
-                  (when (= binding 0) (set! reads (+ reads 1)))]
-                [(proof.PointerProofOperation.Join) (set! joined true)]
-                [(proof.PointerProofOperation.IntegerToPointer)
+                [(Read binding) (when (= binding 0) (set! reads (+ reads 1)))]
+                [(Join) (set! joined true)]
+                [(IntegerToPointer)
                   (match use.span
-                    [(ir.CompilerMaybeSourceSpan.Some span)
+                    [(Some span)
                       (set! conversion-span (> (cast span.start-col : i64) 70))]
                     [_ unit])]
                 [_ unit])
@@ -151,13 +147,13 @@
 (define (proof-smoke-missing-input [mode : lower.CompilerLowerMode]) : unit
   (let
     [request : lower.CompilerLowerRequest
-      (lower.CompilerLowerRequest mode proof.PointerProofRequest.Disabled)]
+      (lower.CompilerLowerRequest mode Disabled)]
     [plain : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-mode
         "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
         mode)]
     (match (lower.lower-compiler-pointer-proof-result request plain)
-      [(lower.ResultCompilerLowerPointerProof.Err _) unit]
+      [(Err _) unit]
       [_
         (io.panic
           "pointer-proof smoke: ordinary lowering admitted missing input")])))
@@ -182,18 +178,17 @@
           source
           mode))]
     (match lowered
-      [(lower.ResultCompilerLower.Err _)
-        (io.panic "pointer-proof smoke: parity source did not lower")]
-      [(lower.ResultCompilerLower.Ok program spans)
+      [(Err _) (io.panic "pointer-proof smoke: parity source did not lower")]
+      [(Ok program spans)
         (begin
           (when
             requested?
             (match (lower.lower-compiler-pointer-proof-result
               request
-              (lower.ResultCompilerLower.Ok
+              (Ok
                 (owned_view.compiler-owned-shared-view program)
                 (owned_view.compiler-owned-shared-view spans)))
-              [(lower.ResultCompilerLowerPointerProof.Ok _ _ _) unit]
+              [(Ok _ _ _) unit]
               [_ (io.panic "pointer-proof smoke: parity proof is incomplete")]))
           (let
             [emitted : driver.ResultCompilerDriver
@@ -203,12 +198,12 @@
                 spans
                 target
                 true
-                backend.CompilerBackendMode.Scalar
+                Scalar
                 level)]
             (begin
               (ast.ast-node-pool-reader-clear!)
               (match emitted
-                [(driver.ResultCompilerDriver.Ok assembly _) assembly]
+                [(Ok assembly _) assembly]
                 [_ (io.panic "pointer-proof smoke: parity emission failed")]))))])))
 
 (define (proof-smoke-parity
@@ -299,7 +294,7 @@
         (owned_view.compiler-owned-shared-view request))]
     (begin
       (match (lower.lower-compiler-pointer-proof-result request lowered)
-        [(lower.ResultCompilerLowerPointerProof.Err error)
+        [(Err error)
           (let
             [message : diagnostic.CompilerDiagnostic (deref error)]
             (unless
@@ -338,9 +333,9 @@
       (while (< index 3)
         (begin
           (match (proof.pointer-proof-input-function input index)
-            [(proof.ResultPointerProofFunction.Err _)
+            [(Err _)
               (io.panic "pointer-proof smoke: missing specialized function")]
-            [(proof.ResultPointerProofFunction.Ok function)
+            [(Ok function)
               (let
                 [parameter : i64 0]
                 (begin
@@ -360,7 +355,7 @@
                           (io.panic
                             "pointer-proof smoke: parameter belongs to another function"))
                         (match use.operation
-                          [(proof.PointerProofOperation.Parameter ordinal)
+                          [(Parameter ordinal)
                             (unless
                               (= ordinal parameter)
                               (io.panic
@@ -371,7 +366,7 @@
                         (when
                           (= parameter 0)
                           (match use.source-type
-                            [(proof.PointerProofType.Pointer) unit]
+                            [(Pointer) unit]
                             [_
                               (io.panic
                                 "pointer-proof smoke: original pointer parameter type lost")]))
@@ -393,7 +388,7 @@
             (proof-smoke-use input (proof.PointerProofRef input.control index))]
           (begin
             (match use.operation
-              [(proof.PointerProofOperation.DirectCall symbol)
+              [(DirectCall symbol)
                 (let
                   [callee-index : i64 0]
                   [found : bool false]
@@ -403,7 +398,7 @@
                         (match (proof.pointer-proof-input-function
                           input
                           callee-index)
-                          [(proof.ResultPointerProofFunction.Ok callee)
+                          [(Ok callee)
                             (when
                               (=
                                 (ir.compiler-ir-symbol-id-value symbol)
@@ -430,19 +425,18 @@
                         (ir.compiler-ir-symbol-id-value use.function))
                       (set! recursive true))
                     (set! calls (+ calls 1))))]
-              [(proof.PointerProofOperation.Assignment binding)
+              [(Assignment binding)
                 (let
                   [bound : proof.PointerProofUse
                     (proof-smoke-use
                       input
                       (proof.PointerProofRef input.control binding))]
                   (match bound.operation
-                    [(proof.PointerProofOperation.Binding)
-                      (set! assignment true)]
+                    [(Binding) (set! assignment true)]
                     [_
                       (io.panic
                         "pointer-proof smoke: assignment lost its lexical binding")]))]
-              [(proof.PointerProofOperation.Return) (set! returned true)]
+              [(Return) (set! returned true)]
               [_ unit])
             (set! index (+ index 1)))))
       (unless
@@ -458,11 +452,11 @@
       (proof.pointer-proof-input-push!
         input
         (ir.compiler-ir-symbol-typed-id 1)
-        proof.PointerProofOperation.IntegerToPointer
-        proof.PointerProofType.Pointer
+        IntegerToPointer
+        Pointer
         (proof.pointer-proof-input-operands input)
         "missing-location.tl"
-        ir.CompilerMaybeSourceSpan.No)
+        No)
       (let
         [message : diagnostic.CompilerDiagnostic
           (proof.pointer-proof-input-diagnostic
@@ -498,34 +492,34 @@
         (proof-smoke-request second mode))]
     [reference : proof.PointerProofRef
       (match (proof.pointer-proof-input-function first 0)
-        [(proof.ResultPointerProofFunction.Ok function) function.result]
+        [(Ok function) function.result]
         [_ (io.panic "pointer-proof smoke: missing function/result binding")])]
     (begin
       (match (proof.pointer-proof-input-use first reference)
-        [(proof.ResultPointerProofUse.Ok _) unit]
+        [(Ok _) unit]
         [_
           (io.panic
             "pointer-proof smoke: later source/interner job invalidated earlier facts")])
       (match (proof.pointer-proof-input-use second reference)
-        [(proof.ResultPointerProofUse.Err _) unit]
+        [(Err _) unit]
         [_
           (io.panic
             "pointer-proof smoke: a foreign semantic reference was admitted")])
       (match (lower.lower-compiler-pointer-proof-result
         (owned_view.compiler-owned-shared-view request)
         (owned_view.compiler-owned-shared-view second-result))
-        [(lower.ResultCompilerLowerPointerProof.Err _) unit]
+        [(Err _) unit]
         [_
           (io.panic
             "pointer-proof smoke: another program reused the first job's evidence")])
       (match (owned_view.compiler-owned-shared-view first-result)
-        [(lower.ResultCompilerLower.Ok program _)
+        [(Ok program _)
           (match (owned_view.compiler-owned-shared-view second-result)
-            [(lower.ResultCompilerLower.Ok _ spans)
+            [(Ok _ spans)
               (match (lower.lower-compiler-pointer-proof-result
                 (owned_view.compiler-owned-shared-view request)
-                (lower.ResultCompilerLower.Ok program spans))
-                [(lower.ResultCompilerLowerPointerProof.Err _) unit]
+                (Ok program spans))
+                [(Err _) unit]
                 [_
                   (io.panic
                     "pointer-proof smoke: foreign source provenance was admitted")])]
@@ -534,7 +528,7 @@
       (match (lower.lower-compiler-pointer-proof-result
         (proof-smoke-request missing mode)
         (owned_view.compiler-owned-shared-view first-result))
-        [(lower.ResultCompilerLowerPointerProof.Err _) unit]
+        [(Err _) unit]
         [_
           (io.panic
             "pointer-proof smoke: incomplete requested owner was admitted")])
@@ -542,17 +536,17 @@
         "reuse.tl"
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view request))
-        [(lower.ResultCompilerLower.Err _) unit]
+        [(Err _) unit]
         [_ (io.panic "pointer-proof smoke: a bound owner was reused")])
       (proof.pointer-proof-input-release! first)
       (match (proof.pointer-proof-input-use first reference)
-        [(proof.ResultPointerProofUse.Err _) unit]
+        [(Err _) unit]
         [_ (io.panic "pointer-proof smoke: retired owner was read")])
       (match (lower.lower-compiler-source-with-request
         "retired.tl"
         source
         request)
-        [(lower.ResultCompilerLower.Err _) unit]
+        [(Err _) unit]
         [_
           (io.panic
             "pointer-proof smoke: retired owner entered another lowering job")])
@@ -574,7 +568,7 @@
             (owned_view.compiler-owned-shared-view request))]
         (begin
           (match failed
-            [(lower.ResultCompilerLower.Err _) unit]
+            [(Err _) unit]
             [_ (io.panic "pointer-proof smoke: invalid source was accepted")])
           (let
             [error : String (proof.pointer-proof-input-begin-error input)]
@@ -586,7 +580,7 @@
             "failed-reuse.tl"
             "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
             request)
-            [(lower.ResultCompilerLower.Err _) unit]
+            [(Err _) unit]
             [_
               (io.panic
                 "pointer-proof smoke: failed owner entered a later source job")])
@@ -630,10 +624,10 @@
         (owned_view.compiler-owned-shared-view path)
         target
         roots
-        backend.CompilerBackendMode.Scalar
+        Scalar
         (cfg_core.compiler-cfg-empty)
         true)
-        [(driver.ResultCompilerDriverLowered.Err error _)
+        [(Err error _)
           (let
             [message : diagnostic.CompilerDiagnostic (deref error)]
             (begin
@@ -641,11 +635,11 @@
                 "{}"
                 (diagnostic.compiler-diagnostic-render (& message)))
               (io.panic "pointer-proof smoke: driver lowering failed")))]
-        [(driver.ResultCompilerDriverLowered.Ok program spans _ _ _ _)
+        [(Ok program spans _ _ _ _)
           (match (lower.lower-compiler-pointer-proof-result
             request
-            (lower.ResultCompilerLower.Ok program spans))
-            [(lower.ResultCompilerLowerPointerProof.Err error)
+            (Ok program spans))
+            [(Err error)
               (let
                 [message : diagnostic.CompilerDiagnostic (deref error)]
                 (begin
@@ -674,41 +668,31 @@
 
 (define (main) : i64
   (begin
-    (proof-smoke-distinction lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-distinction lower.CompilerLowerMode.WindowsScalar)
-    (proof-smoke-mixed-uses lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-mixed-uses lower.CompilerLowerMode.WindowsScalar)
-    (proof-smoke-missing-input lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-missing-input lower.CompilerLowerMode.WindowsScalar)
-    (proof-smoke-interactions
-      lower.CompilerLowerMode.LinuxScalar
-      backend.CompilerBackendTarget.Linux)
-    (proof-smoke-interactions
-      lower.CompilerLowerMode.WindowsScalar
-      backend.CompilerBackendTarget.Windows)
+    (proof-smoke-distinction LinuxScalar)
+    (proof-smoke-distinction WindowsScalar)
+    (proof-smoke-mixed-uses LinuxScalar)
+    (proof-smoke-mixed-uses WindowsScalar)
+    (proof-smoke-missing-input LinuxScalar)
+    (proof-smoke-missing-input WindowsScalar)
+    (proof-smoke-interactions LinuxScalar Linux)
+    (proof-smoke-interactions WindowsScalar Windows)
     (proof-smoke-unsupported
-      lower.CompilerLowerMode.LinuxScalar
+      LinuxScalar
       (proof-smoke-unsupported-producer-source))
     (proof-smoke-unsupported
-      lower.CompilerLowerMode.WindowsScalar
+      WindowsScalar
       (proof-smoke-unsupported-producer-source))
+    (proof-smoke-unsupported LinuxScalar (proof-smoke-unmodelled-binder-source))
     (proof-smoke-unsupported
-      lower.CompilerLowerMode.LinuxScalar
+      WindowsScalar
       (proof-smoke-unmodelled-binder-source))
-    (proof-smoke-unsupported
-      lower.CompilerLowerMode.WindowsScalar
-      (proof-smoke-unmodelled-binder-source))
-    (proof-smoke-bindings lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-bindings lower.CompilerLowerMode.WindowsScalar)
+    (proof-smoke-bindings LinuxScalar)
+    (proof-smoke-bindings WindowsScalar)
     (proof-smoke-missing-location)
-    (proof-smoke-job-guards lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-job-guards lower.CompilerLowerMode.WindowsScalar)
-    (proof-smoke-failed-source-job lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-failed-source-job lower.CompilerLowerMode.WindowsScalar)
-    (proof-smoke-driver-handoff
-      lower.CompilerLowerMode.LinuxScalar
-      backend.CompilerBackendTarget.Linux)
-    (proof-smoke-driver-handoff
-      lower.CompilerLowerMode.WindowsScalar
-      backend.CompilerBackendTarget.Windows)
+    (proof-smoke-job-guards LinuxScalar)
+    (proof-smoke-job-guards WindowsScalar)
+    (proof-smoke-failed-source-job LinuxScalar)
+    (proof-smoke-failed-source-job WindowsScalar)
+    (proof-smoke-driver-handoff LinuxScalar Linux)
+    (proof-smoke-driver-handoff WindowsScalar Windows)
     42))

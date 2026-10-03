@@ -139,9 +139,8 @@
   (match (codec.compiler-embedded-stdlib-tlci-codec-decode
     (& payload)
     raw-limit)
-    [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err message)
-      (string.eq message expected)]
-    [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (tlci-codec-self-test-status) : i64
   (cond
@@ -152,13 +151,13 @@
           (match (codec.compiler-embedded-stdlib-tlci-codec-decode
             (& payload)
             64)
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes)
+            [(Ok bytes)
               (and
                 (= (array-length bytes) 6)
                 (= (array-ref bytes 0) (cast 65 : u8))
                 (= (array-ref bytes 3) (cast 65 : u8))
                 (= (array-ref bytes 5) (cast 67 : u8)))]
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _) false])))
+            [(Err _) false])))
       1]
     [(not
         (let
@@ -167,11 +166,11 @@
           (match (codec.compiler-embedded-stdlib-tlci-codec-decode
             (& payload)
             64)
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes)
+            [(Ok bytes)
               (and
                 (= (array-length bytes) 1)
                 (= (array-ref bytes 0) (cast 65 : u8)))]
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _) false])))
+            [(Err _) false])))
       2]
     [(not
         (tlci-codec-test-rejects?
@@ -444,15 +443,13 @@
     [source : String (tlci-codec-test-round-trip-source)]
     (match (encoder.compiler-embedded-stdlib-tlci-encoder-encode
       (string.copy source))
-      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err _)
-        (string.tl_oob_abort)]
-      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok encoded)
+      [(Err _) (string.tl_oob_abort)]
+      [(Ok encoded)
         (match (codec.compiler-embedded-stdlib-tlci-codec-decode
           (& encoded)
           1048576)
-          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
-            (string.tl_oob_abort)]
-          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok decoded)
+          [(Err _) (string.tl_oob_abort)]
+          [(Ok decoded)
             (let
               [n : i64 (string.string-length source)]
               [i : i64 0]

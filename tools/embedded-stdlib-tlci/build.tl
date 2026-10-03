@@ -96,7 +96,7 @@
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(ast.AstDecl.DefMacro decl-meta name params ret body)
+    [(DefMacro decl-meta name params ret body)
       (begin
         (embedded-stdlib-tlci-push-name! names module name)
         (compiler_tlci_native_producer.tlci-native-macro-captures-push!
@@ -109,13 +109,13 @@
             (compiler_tlci_native_producer.embedded-native-macro-result-kind
               ret)
             body)))]
-    [(ast.AstDecl.Unsafe inner)
+    [(Unsafe inner)
       (embedded-stdlib-tlci-collect-decl!
         (ast.ast-decl-box-shared-view inner)
         module
         names
         captures)]
-    [(ast.AstDecl.ModuleBody nested body)
+    [(ModuleBody nested body)
       (embedded-stdlib-tlci-collect-decls!
         (ast.ast-decl-list-box-shared-view body)
         (ci.intern-str nested)
@@ -130,10 +130,10 @@
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) unit]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) unit]
+    [(Cons decl rest)
       (match (ast.ast-place-shared-view decl)
-        [(ast.AstDecl.Module next-module)
+        [(Module next-module)
           (embedded-stdlib-tlci-collect-decls!
             rest
             (ci.intern-str next-module)
@@ -163,13 +163,13 @@
         (embedded-stdlib-tlci-hash-text! (& suffix))
         (embedded-stdlib-tlci-hash-text! (& source))
         (match (compiler_parse_core.parse-ast-source source)
-          [(compiler_parse_core.ResultAstProgram.Err message)
+          [(Err message)
             (set!
               embedded-stdlib-tlci-build-error
               (str_cat.str-cat "cannot parse " path ": " message))]
-          [(compiler_parse_core.ResultAstProgram.Ok program)
+          [(Ok program)
             (match program
-              [(ast.AstProgram.Program decls)
+              [(Program decls)
                 (embedded-stdlib-tlci-collect-decls!
                   (ast.ast-decl-list-box-shared-view decls)
                   module
@@ -217,7 +217,7 @@
     (begin
       (while (and (not found) (< index params.len))
         (match (array-ref params.slots index)
-          [(ast.AstMacroParam.Param _ _ variadic _)
+          [(Param _ _ variadic _)
             (if variadic
               (set! found true)
               (set! index (+ index 1)))]))
@@ -303,11 +303,11 @@
     rodata
     (ast.ast-place-shared-view names)
     captures)
-    [(compiler_tlci_native_producer.ResultProducerBytes.Err message)
+    [(Err message)
       (begin
         (io.print-error (str_cat.str-cat "embedded stdlib tlci: " message "\n"))
         1)]
-    [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
+    [(Ok bytes)
       (let
         [bytes-len : i64 (array-length bytes)]
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]

@@ -98,11 +98,9 @@
 
 (define (source-tool-linux-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
-  (match (build_run.source-tool-linux-direct-object-eligibility
-    backend.CompilerDirectObjectArtifactKind.Bin
-    image)
-    [(build_run.SourceToolLinuxDirectObjectEligibility.Eligible) true]
-    [(build_run.SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
+  (match (build_run.source-tool-linux-direct-object-eligibility Bin image)
+    [(Eligible) true]
+    [(Fallback _) false]))
 
 (define (source-tool-windows-direct-object-relocations-linkable?
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
@@ -165,16 +163,15 @@
     "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64 (inc answer))"
-    (backend.CompilerBackendTarget.Linux))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Linux))
+    [(Ok image)
       (if (source-tool-linux-direct-object-linkable?
         (owned_view.compiler-owned-shared-view image))
         (match (build_run.source-tool-render-linkable-linux-elf-object image)
-          [(build_run.ResultSourceToolString.Ok obj)
-            (> (string.string-length obj) 0)]
-          [(build_run.ResultSourceToolString.Err _) false])
+          [(Ok obj) (> (string.string-length obj) 0)]
+          [(Err _) false])
         false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
@@ -183,26 +180,25 @@
 (extern unused-data (:symbol \"typelisp_unused_data\") : i64)
 (extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 0)"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Windows))
+    [(Ok image)
       (if (build_run.source-tool-windows-direct-object-linkable?
         (owned_view.compiler-owned-shared-view image))
         (match (build_run.source-tool-render-linkable-windows-coff-object image)
-          [(build_run.ResultSourceToolString.Ok obj)
-            (> (string.string-length obj) 0)]
-          [(build_run.ResultSourceToolString.Err _) false])
+          [(Ok obj) (> (string.string-length obj) 0)]
+          [(Err _) false])
         false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64
   (let [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (array-length items)))"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Windows))
+    [(Ok image)
       (not (build_run.source-tool-windows-direct-object-linkable? image))]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
@@ -211,35 +207,19 @@
     [symbols1 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols0
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetStdHandle"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "GetStdHandle" (Extern) (Function) No))]
     [symbols2 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols1
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtCreateFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "NtCreateFile" (Extern) (Function) No))]
     [symbols3 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols2
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetCurrentProcessId"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "GetCurrentProcessId" (Extern) (Function) No))]
     [symbols4 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols3
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtOpenFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "NtOpenFile" (Extern) (Function) No))]
     [symbols : cobj.CompilerObjectSymbolList
       (cobj.compiler-object-symbol-builder-finish symbols4)]
     [empty-relocs : cobj.CompilerObjectRelocationList
@@ -250,34 +230,18 @@
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-push
             (cobj.compiler-object-relocation-builder-with-capacity 2)
-            (cobj.CompilerObjectRelocation.Relocation
-              (cobj.CompilerObjectSectionKind.Text)
-              "main"
-              (cobj.CompilerObjectRelocationKind.Call)
-              "GetStdHandle"))
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtCreateFile")))]
+            (Relocation (Text) "main" (Call) "GetStdHandle"))
+          (Relocation (Text) "main" (Call) "NtCreateFile")))]
     [blocked-win32-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "GetCurrentProcessId")))]
+          (Relocation (Text) "main" (Call) "GetCurrentProcessId")))]
     [blocked-ntdll-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtOpenFile")))]
+          (Relocation (Text) "main" (Call) "NtOpenFile")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         symbols

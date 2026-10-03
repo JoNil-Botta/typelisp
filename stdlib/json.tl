@@ -1221,11 +1221,11 @@
         (ErrJsonNumberF64 "json: number underflows f64")]
       [else
         (match (io.float-parse-f64 owned)
-          [(io.IoFloatSomeF64 value)
+          [(IoFloatSomeF64 value)
             (if (and nonzero (io.float-f64-zero-magnitude? value))
               (ErrJsonNumberF64 "json: number underflows f64")
               (OkJsonNumberF64 value))]
-          [(io.IoFloatNoF64)
+          [(IoFloatNoF64)
             (ErrJsonNumberF64 "json: number outside finite f64 range")])])))
 
 ;: Parse borrowed JSON number text into a finite f64.

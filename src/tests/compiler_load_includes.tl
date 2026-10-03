@@ -22,8 +22,7 @@
   [id : i64]
   [contents : String]) : bool
   (match (ast.ast-node-pool-context-expr-get pools id)
-    [(ast.AstExpr.Literal (ast.AstLiteral.String value))
-      (string.eq (ci.intern-str value) contents)]
+    [(Literal (String value)) (string.eq (ci.intern-str value) contents)]
     [_ false]))
 
 (define (include-matches?
@@ -32,51 +31,50 @@
   [result : load.ResultCompilerLoadInclude]
   [contents : String]) : bool
   (match result
-    [(load.ResultCompilerLoadInclude.Ok decl)
+    [(Ok decl)
       (match decl
-        [(ast.AstDecl.Def _ name ty body)
+        [(Def _ name ty body)
           (and
             (= name cbi.compiler-builtin-id-fix-x)
             (match kind
-              [(load.CompilerLoadIncludeKind.RuntimeString)
+              [(RuntimeString)
                 (and
                   (match ty
-                    [(ast.AstMaybeType.Some (ast.AstType.String)) true]
+                    [(Some (String)) true]
                     [_ false])
                   (literal-matches? pools body contents))]
-              [(load.CompilerLoadIncludeKind.ComptimeString) false]
+              [(ComptimeString) false]
               [_
                 (and
                   (match ty
-                    [(ast.AstMaybeType.Some (ast.AstType.DynArray element))
+                    [(Some (DynArray element))
                       (match (ast.ast-node-pool-context-type-get pools element)
-                        [(ast.AstType.U8) true]
+                        [(U8) true]
                         [_ false])]
                     [_ false])
                   (match (ast.ast-node-pool-context-expr-get pools body)
-                    [(ast.AstExpr.BinaryData bytes)
+                    [(BinaryData bytes)
                       (string.eq
                         bytes
                         (match kind
-                          [(load.CompilerLoadIncludeKind.LzssString)
+                          [(LzssString)
                             (ctfe.ctfe-embedded-stdlib-binary-data-bytes
                               contents)]
                           [_ contents]))]
                     [_ false]))]))]
-        [(ast.AstDecl.DefMacro _ name params (ast.AstType.String) body)
+        [(DefMacro _ name params (String) body)
           (and
             (match kind
-              [(load.CompilerLoadIncludeKind.ComptimeString) true]
+              [(ComptimeString) true]
               [_ false])
             (= name cbi.compiler-builtin-id-fix-x)
             (= params.len 0)
             (match (ast.ast-node-pool-context-expr-get pools body)
-              [(ast.AstExpr.Call callee args)
+              [(Call callee args)
                 (and
                   (= args.len 1)
                   (match (ast.ast-node-pool-context-expr-get pools callee)
-                    [(ast.AstExpr.Var name)
-                      (= name (cbi.compiler-builtin-ctfe-ref 29))]
+                    [(Var name) (= name (cbi.compiler-builtin-ctfe-ref 29))]
                     [_ false])
                   (literal-matches?
                     pools
@@ -90,7 +88,7 @@
   [result : load.ResultCompilerLoadInclude]
   [message : String]) : bool
   (match result
-    [(load.ResultCompilerLoadInclude.Err boxed)
+    [(Err boxed)
       (let
         [diagnostic : diag.CompilerDiagnostic (deref boxed)]
         (and
@@ -142,7 +140,7 @@
               (cat.str-cat
                 "compiler-load: cannot read "
                 (match kind
-                  [(load.CompilerLoadIncludeKind.Binary) "include-bin"]
+                  [(Binary) "include-bin"]
                   [_ "include-str"])
                 " __missing_include__.bin from tests/integration/include-entry.tl (resolved tests/integration/__missing_include__.bin)"))
             "missing-resource diagnostics retain importer, request and resolved path")
@@ -197,8 +195,7 @@
         (ast.ast-node-pool-context-new-with-capacities 1 1)]
       [index : i64 0]
       (match (embedded.compiler-embedded-stdlib-lookup "option.tl")
-        [(embedded.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-            contents)
+        [(CompilerEmbeddedStdlibSomeSource contents)
           (begin
             (while (< index 4)
               (let

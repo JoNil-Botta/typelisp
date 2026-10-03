@@ -26,7 +26,7 @@
         "(define (main) : i64 (string.string-length (string.concat \"a\" \"b\")))"
         (lint_core.lint-findings-empty))
       0)
-      [(lint_core.LintMaybeFinding.Some finding)
+      [(Some finding)
         (if (and
           (= finding.depth 0)
           (string.eq
@@ -34,8 +34,7 @@
             (lint_core.lint-rule-deprecated-string-concat-id)))
           unit
           (io.panic "lint: string-concat finding should carry default metadata"))]
-      [(lint_core.LintMaybeFinding.No)
-        (io.panic "lint: string-concat call should produce a finding")])
+      [(No) (io.panic "lint: string-concat call should produce a finding")])
     (if (=
       (lint_core.lint-findings-count
         (lint_core.lint-deprecated-string-concat-scan
@@ -58,11 +57,11 @@
         (lint-smoke-nested-string-append-source)
         (lint_core.lint-findings-empty))
       1)
-      [(lint_core.LintMaybeFinding.Some finding)
+      [(Some finding)
         (if (= finding.depth 1)
           unit
           (io.panic "lint: nested string append should carry chain depth"))]
-      [(lint_core.LintMaybeFinding.No)
+      [(No)
         (io.panic "lint: nested string append should produce a chain finding")])
     (match (lint_core_tests.lint-findings-get
       (lint_core.lint-deprecated-string-concat-scan
@@ -78,12 +77,11 @@
       (string.string-length out))))"
         (lint_core.lint-findings-empty))
       0)
-      [(lint_core.LintMaybeFinding.Some finding)
+      [(Some finding)
         (if (= finding.depth 2)
           unit
           (io.panic "lint: loop string append should carry loop depth"))]
-      [(lint_core.LintMaybeFinding.No)
-        (io.panic "lint: loop string append should produce a finding")])
+      [(No) (io.panic "lint: loop string append should produce a finding")])
     42))
 
 (define (lint-smoke-nested-str-cat-self-test) : i64
@@ -124,7 +122,7 @@
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
         0)
-        [(lint_core.LintMaybeFinding.Some finding)
+        [(Some finding)
           (let
             [span : ast.AstSourceSpan finding.span]
             (if (and
@@ -137,7 +135,7 @@
               (= (ast.ast-source-span-start-line span) 23))
               unit
               (io.panic "lint: nested str-cat finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
+        [(No)
           (io.panic "lint: spanned nested str-cat should produce a finding")])
       (if (=
         (lint_core.lint-findings-count

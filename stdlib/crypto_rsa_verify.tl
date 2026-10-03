@@ -133,8 +133,8 @@
           input
           (byte_buf.push input (cast (bit-and counter (cast 255 : u64)) : u8)))
         (match (sha.digest (byte_buf.as-bytes (& input)))
-          [(sha.Sha256FinalizeErr error) (RsaMgf1HashFailure error)]
-          [(sha.Sha256FinalizeOk digest)
+          [(Sha256FinalizeErr error) (RsaMgf1HashFailure error)]
+          [(Sha256FinalizeOk digest)
             (let
               [next : byte_buf.ByteBuf out]
               [used : i64 0]
@@ -303,9 +303,9 @@
                                   (set! part (+ part 1))))
                               (match (sha.digest
                                 (byte_buf.as-bytes (& m-prime)))
-                                [(sha.Sha256FinalizeErr error)
+                                [(Sha256FinalizeErr error)
                                   (RsaVerifyHashFailure error)]
-                                [(sha.Sha256FinalizeOk recomputed)
+                                [(Sha256FinalizeOk recomputed)
                                   (if (sha.digest-eq? (& h) (& recomputed))
                                     (RsaVerifyOk)
                                     (RsaVerifyInvalidSignature))]))))))])))))))))
@@ -317,11 +317,11 @@
   [message : (& message bytes)]
   [signature : (& signature bytes)]) : RsaVerifyResult
   (match (rsa.public-exponentiate key signature)
-    [(rsa.ErrRsaPublicBytes error) (RsaVerifyCoreFailure error)]
-    [(rsa.OkRsaPublicBytes encoded)
+    [(ErrRsaPublicBytes error) (RsaVerifyCoreFailure error)]
+    [(OkRsaPublicBytes encoded)
       (match (sha.digest message)
-        [(sha.Sha256FinalizeErr error) (RsaVerifyHashFailure error)]
-        [(sha.Sha256FinalizeOk digest)
+        [(Sha256FinalizeErr error) (RsaVerifyHashFailure error)]
+        [(Sha256FinalizeOk digest)
           (if (rsa-pkcs1-sha256-encoding-valid?
             (byte_buf.as-bytes (& encoded))
             (& digest))
@@ -335,11 +335,11 @@
   [message : (& message bytes)]
   [signature : (& signature bytes)]) : RsaVerifyResult
   (match (rsa.public-exponentiate key signature)
-    [(rsa.ErrRsaPublicBytes error) (RsaVerifyCoreFailure error)]
-    [(rsa.OkRsaPublicBytes encoded)
+    [(ErrRsaPublicBytes error) (RsaVerifyCoreFailure error)]
+    [(OkRsaPublicBytes encoded)
       (match (sha.digest message)
-        [(sha.Sha256FinalizeErr error) (RsaVerifyHashFailure error)]
-        [(sha.Sha256FinalizeOk digest)
+        [(Sha256FinalizeErr error) (RsaVerifyHashFailure error)]
+        [(Sha256FinalizeOk digest)
           (rsa-pss-sha256-encoding-valid
             (byte_buf.as-bytes (& encoded))
             (rsa.modulus-bit-length key)

@@ -32,7 +32,7 @@
   (Holder (tuple x x) (make-wide x) x))
 
 (define (make-carrier [x : i64]) : Carrier
-  (Carrier.Wide (tuple x x x (+ x 5))))
+  (Wide (tuple x x x (+ x 5))))
 
 (define (make-reader [x : i64]) : (-> i64)
   (let
@@ -129,8 +129,8 @@
       (unless
         (=
           (match c
-            [(Carrier.Wide w) (tuple-ref w 3)]
-            [(Carrier.None) 0])
+            [(Wide w) (tuple-ref w 3)]
+            [(None) 0])
           9)
         (return 3))
       (unless (= (r) 12) (return 4))

@@ -599,22 +599,21 @@
         "process invalid empty executable")
       (test.assert-true
         (process.result-success?
-          (process.OkProcessOutput (process.ProcessOutput 0 "" "")))
+          (OkProcessOutput (process.ProcessOutput 0 "" "")))
         "process result success")
       (test.assert-false
         (process.result-success?
-          (process.OkProcessOutput (process.ProcessOutput 7 "" "")))
+          (OkProcessOutput (process.ProcessOutput 7 "" "")))
         "process result nonzero")
       (test.assert-false
         (process.result-success?
-          (process.ErrProcessOutput (process.ProcessSpawnFailed "spawn failed")))
+          (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))
         "process result error")
       (test.assert-true
-        (process.error-spawn-failed?
-          (process.ProcessSpawnFailed "spawn failed"))
+        (process.error-spawn-failed? (ProcessSpawnFailed "spawn failed"))
         "process spawn predicate")
       (test.assert-true
-        (process.error-wait-failed? (process.ProcessWaitFailed "wait failed"))
+        (process.error-wait-failed? (ProcessWaitFailed "wait failed"))
         "process wait predicate")
       (with
         ([started
@@ -625,7 +624,7 @@
           "process child started predicate"))
       (with
         ([unsupported
-            (process.ErrProcessChild (process.ProcessUnsupported "unsupported"))
+            (process.ErrProcessChild (ProcessUnsupported "unsupported"))
             process.cleanup-result-process-child])
         (test.assert-false
           (process.child-started? (& unsupported))

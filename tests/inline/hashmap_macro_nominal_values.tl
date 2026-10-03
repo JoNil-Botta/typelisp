@@ -103,12 +103,12 @@
         structs
         "three"
         (LocalStructValue 40 "entry" (local-nested-value 4 "entry")))
-        [(map_local_struct_value.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq
             (local-struct-score value)
             45
             "caller-local struct entry inserts")]
-        [(map_local_struct_value.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "caller-local struct entry should insert")])
       (map_local_enum_value.insert!
         states
@@ -148,12 +148,12 @@
         states
         9
         (LocalEnumPair "tombstone" 80))
-        [(map_local_enum_value.EntryOrInsertInserted value)
+        [(EntryOrInsertInserted value)
           (test.assert-i64-eq
             (local-enum-score value)
             89
             "caller-local enum value reuses tombstone")]
-        [(map_local_enum_value.EntryOrInsertFound _)
+        [(EntryOrInsertFound _)
           (test.assert-true false "caller-local enum tombstone should insert")]))))
 
 (test

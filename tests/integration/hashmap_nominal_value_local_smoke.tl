@@ -19,9 +19,8 @@
       (local_struct_map.insert! structs "answer" (LocalHashmapValue 40 "ok"))
       (local_enum_map.insert! states 1 (LocalHashmapPresent "ready"))
       (match (local_struct_map.get (& structs) "answer")
-        [(local_struct_map.LookupFound value)
+        [(LookupFound value)
           (match (local_enum_map.get (& states) 1)
-            [(local_enum_map.LookupFound (LocalHashmapPresent _))
-              (+ value.score 2)]
+            [(LookupFound (LocalHashmapPresent _)) (+ value.score 2)]
             [_ 1])]
-        [(local_struct_map.LookupMissing) 1]))))
+        [(LookupMissing) 1]))))

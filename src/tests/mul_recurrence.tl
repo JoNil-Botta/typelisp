@@ -60,15 +60,15 @@
     [exit : i64 (ir.compiler-ir-label "exit")]
     [ty : ast.AstType
       (if (= mode 3)
-        (ast.AstType.I32)
-        (ast.AstType.I64))]
+        (I32)
+        (I64))]
     [source : ir.CompilerIrValue
-      (ir.CompilerIrValue.Var
+      (Var
         (if (= mode 2)
           2
           1))]
     [factor : ir.CompilerIrValue
-      (ir.CompilerIrValue.I64
+      (I64
         (if (= mode 4)
           129
           33))]
@@ -78,37 +78,32 @@
           (ir.CompilerIrInstr.Phi
             1
             (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var 0)
+              (Var 0)
               entry
               (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 3)
+                (Var 3)
                 body
                 (ir.compiler-ir-phi-input-seq-empty)))
             (view.compiler-owned-shared-view ty))
           (ir.CompilerIrInstr.Phi
             2
             (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.I64 0)
+              (I64 0)
               entry
               (ir.compiler-ir-phi-input-seq-prepend
-                (ir.CompilerIrValue.Var 5)
+                (Var 5)
                 body
                 (ir.compiler-ir-phi-input-seq-empty)))
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.BinOp
-            4
-            (ir.CompilerIrBinOp.Lt)
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.Var 6)
-            (ast.AstType.I64))
-          (ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var 4) body exit))
+            (I64))
+          (ir.CompilerIrInstr.BinOp 4 (Lt) (Var 2) (Var 6) (I64))
+          (ir.CompilerIrInstr.Branch (Var 4) body exit))
         4)]
     [body-instrs : ir.CompilerIrInstrSeq
       (ir.CompilerIrInstrSeq
         (__tl_make-array
           (ir.CompilerIrInstr.BinOp
             3
-            (ir.CompilerIrBinOp.Mul)
+            (Mul)
             (if (= mode 1)
               (view.compiler-owned-shared-view factor)
               (view.compiler-owned-shared-view source))
@@ -116,16 +111,11 @@
               source
               factor)
             (view.compiler-owned-shared-view ty))
-          (ir.CompilerIrInstr.BinOp
-            5
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.I64 1)
-            (ast.AstType.I64))
+          (ir.CompilerIrInstr.BinOp 5 (Add) (Var 2) (I64 1) (I64))
           (ir.CompilerIrInstr.Jump header))
         3)]
     [blocks : ir.CompilerIrBlockList
-      (ir.CompilerIrBlockList.Array
+      (Array
         (ir.CompilerIrBlockSeq
           (__tl_make-array
             (ir.CompilerIrBlock.Block
@@ -135,12 +125,7 @@
               (if (= mode 5)
                 (ir.CompilerIrInstrSeq
                   (__tl_make-array
-                    (ir.CompilerIrInstr.BinOp
-                      3
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 0)
-                      (ir.CompilerIrValue.I64 7)
-                      (ast.AstType.I64))
+                    (ir.CompilerIrInstr.BinOp 3 (Add) (Var 0) (I64 7) (I64))
                     (ir.CompilerIrInstr.Jump header))
                   2)
                 (ir.CompilerIrInstrSeq
@@ -151,13 +136,11 @@
             (ir.CompilerIrBlock.Block
               exit
               (ir.CompilerIrInstrSeq
-                (__tl_make-array
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1))))
+                (__tl_make-array (ir.CompilerIrInstr.Return (Some (Var 1))))
                 1)))
           4))]
     [func : ir.CompilerIrFunction
-      (ir.CompilerIrFunction.Function
+      (Function
         (ci.intern "recurrence_test")
         (ir.CompilerIrParamSeq
           (__tl_make-array
@@ -165,12 +148,12 @@
               "seed"
               (view.compiler-owned-shared-view ty)
               0)
-            (ir.CompilerIrParam.Param "count" (ast.AstType.I64) 6))
+            (ir.CompilerIrParam.Param "count" (I64) 6))
           2)
         ty
         7
         blocks
-        (ir.CompilerIrFunctionAbi.Ordinary))]
+        (Ordinary))]
     [out : ir.CompilerIrFunction (opt.opt-mul-latency-function func)]
     [rewritten : bool (or (< mode 2) (= mode 5))]
     (begin
@@ -187,10 +170,10 @@
           7)
         "only cycles over supported scalar multiply allocate a temporary")
       (match (opt.opt-function-blocks out)
-        [(ir.CompilerIrBlockList.Array seq)
+        [(Array seq)
           (begin
             (match (ir.compiler-ir-block-seq-ref seq 2)
-              [(ir.CompilerIrBlock.Block _ instrs)
+              [(Block _ instrs)
                 (begin
                   (test.assert-i64-eq
                     instrs.len
@@ -205,30 +188,18 @@
                         (match (ir.compiler-ir-instr-seq-ref
                           (view.compiler-owned-shared-view instrs)
                           0)
-                          [(ir.CompilerIrInstr.BinOp
-                              7
-                              (ir.CompilerIrBinOp.Shl (ast.AstType.I64))
-                              (ir.CompilerIrValue.Var 1)
-                              (ir.CompilerIrValue.I64 5)
-                              (ast.AstType.I64))
-                            true]
+                          [(BinOp 7 (Shl (I64)) (Var 1) (I64 5) (I64)) true]
                           [_ false])
                         "shift the recurrence source into the fresh temporary")
                       (test.assert-true
                         (match (ir.compiler-ir-instr-seq-ref instrs 1)
-                          [(ir.CompilerIrInstr.BinOp
-                              3
-                              (ir.CompilerIrBinOp.Add)
-                              (ir.CompilerIrValue.Var 7)
-                              (ir.CompilerIrValue.Var 1)
-                              (ast.AstType.I64))
-                            true]
+                          [(BinOp 3 (Add) (Var 7) (Var 1) (I64)) true]
                           [_ false])
                         "add the original source into the original destination"))))])
             (when
               (= mode 5)
               (match (ir.compiler-ir-block-seq-ref seq 0)
-                [(ir.CompilerIrBlock.Block _ instrs)
+                [(Block _ instrs)
                   (begin
                     (test.assert-i64-eq
                       instrs.len
@@ -236,13 +207,7 @@
                       "a non-multiply definition of the dst is not rewritten")
                     (test.assert-true
                       (match (ir.compiler-ir-instr-seq-ref instrs 0)
-                        [(ir.CompilerIrInstr.BinOp
-                            3
-                            (ir.CompilerIrBinOp.Add)
-                            (ir.CompilerIrValue.Var 0)
-                            (ir.CompilerIrValue.I64 7)
-                            (ast.AstType.I64))
-                          true]
+                        [(BinOp 3 (Add) (Var 0) (I64 7) (I64)) true]
                         [_ false])
                       "the entry add keeps its operands"))])))]))))
 

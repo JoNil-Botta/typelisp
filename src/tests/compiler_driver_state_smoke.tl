@@ -86,15 +86,10 @@
     [wanted-id : i64 (ci.intern "driver-state/wanted")]
     [other-id : i64 (ci.intern "driver-state/other")]
     [source-leaf : i64
-      (ast.ast-node-pool-context-expr-push
-        source-pools
-        (ast.AstExpr.Var wanted-id))]
-    [source-root : ast.AstExpr
-      (ast.AstExpr.Unary (ast.AstUnOp.Not) source-leaf)]
+      (ast.ast-node-pool-context-expr-push source-pools (Var wanted-id))]
+    [source-root : ast.AstExpr (Unary (Not) source-leaf)]
     [_installed-leaf : i64
-      (ast.ast-node-pool-context-expr-push
-        installed-pools
-        (ast.AstExpr.Var other-id))]
+      (ast.ast-node-pool-context-expr-push installed-pools (Var other-id))]
     (begin
       (ast.ast-node-pool-context-install! installed-pools)
       (let
@@ -105,7 +100,7 @@
             (ast.ast-node-pool-context-expr-segment-bases source-pools)
             source-root
             "driver-state/wanted"
-            tc_core.TcStringList.Nil)]
+            Nil)]
         [installed-unchanged : bool
           (= (ast.ast-node-pool-active-expr-segment-bases) installed-bases)]
         (begin
@@ -121,16 +116,16 @@
     [installed-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 4)]
     [source-leaf-id : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push source-pools (I64))]
     [installed-leaf-id : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.Bytes))]
+      (ast.ast-node-pool-context-type-push installed-pools (Bytes))]
     [nested-lifetime : i64 (ci.intern "driver-state/source-lifetime")]
     [source-nested-id : i64
       (ast.ast-node-pool-context-type-push
         source-pools
-        (ast.AstType.Ref nested-lifetime source-leaf-id))]
+        (Ref nested-lifetime source-leaf-id))]
     [installed-nested-id : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.Bool))]
+      (ast.ast-node-pool-context-type-push installed-pools (Bool))]
     (begin
       (ast.ast-node-pool-context-install! installed-pools)
       (let
@@ -143,8 +138,8 @@
             [lifetimes : tc_core.TcNameIdList
               (tc_core.tc-signature-input-lifetimes-into
                 (ast.ast-node-pool-context-type-segment-bases source-pools)
-                (ast.AstType.Array source-nested-id 1)
-                tc_core.TcNameIdList.Nil)]
+                (Array source-nested-id 1)
+                Nil)]
             (and
               (= (tc_core.tc-name-id-list-len lifetimes) 1)
               (= (tc_core.tc-name-id-list-head lifetimes) nested-lifetime)))]
@@ -177,24 +172,23 @@
 (define (driver-state-specialize-result-ok?
   [result : spec.ResultSpecProgramWithPaths]) : bool
   (match result
-    [(spec.ResultSpecProgramWithPaths.Ok _ _) true]
-    [(spec.ResultSpecProgramWithPaths.Err _) false]))
+    [(Ok _ _) true]
+    [(Err _) false]))
 
 (define (driver-state-specialize-result-decl-count
   [result : spec.ResultSpecProgramWithPaths]) : i64
   (match result
-    [(spec.ResultSpecProgramWithPaths.Ok program _)
+    [(Ok program _)
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
-    [(spec.ResultSpecProgramWithPaths.Err _) -1]))
+    [(Err _) -1]))
 
 (define (driver-state-specialize-result-diagnostic
   [result : spec.ResultSpecProgramWithPaths]) : String
   (match result
-    [(spec.ResultSpecProgramWithPaths.Ok _ _) ""]
-    [(spec.ResultSpecProgramWithPaths.Err diag)
-      (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))
+    [(Ok _ _) ""]
+    [(Err diag) (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))
 
 (define (driver-state-specialize-ab-case-ok? [incompatible? : bool]) : bool
   (let
@@ -242,7 +236,7 @@
           (ci.intern-compat-state-install! state-a)
           (ast.ast-node-pool-context-install! serial-pools)
           (match (driver-state-specialize-parse-program incompatible?)
-            [(parser.ResultAstProgram.Ok serial-program)
+            [(Ok serial-program)
               (let
                 [serial-result : spec.ResultSpecProgramWithPaths
                   (spec.compiler-specialize-program-with-paths-and-pools
@@ -253,7 +247,7 @@
                 (begin
                   (ast.ast-node-pool-context-install! owned-pools)
                   (match (driver-state-specialize-parse-program incompatible?)
-                    [(parser.ResultAstProgram.Ok owned-program)
+                    [(Ok owned-program)
                       (let
                         [decoy-source-id : i64
                           (ci.intern-compat-state-intern
@@ -262,11 +256,11 @@
                         [decoy-expr-id : i64
                           (ast.ast-node-pool-context-expr-push
                             decoy-pools
-                            (ast.AstExpr.Var decoy-source-id))]
+                            (Var decoy-source-id))]
                         [decoy-type-id : i64
                           (ast.ast-node-pool-context-type-push
                             decoy-pools
-                            (ast.AstType.I64))]
+                            (I64))]
                         (begin
                           (ci.intern-compat-state-install! state-b)
                           (ast.ast-node-pool-context-install! decoy-pools)
@@ -377,12 +371,12 @@
                                 (match (ast.ast-node-pool-context-expr-get
                                   decoy-pools
                                   decoy-expr-id)
-                                  [(ast.AstExpr.Var id) (= id decoy-source-id)]
+                                  [(Var id) (= id decoy-source-id)]
                                   [_ false])
                                 (match (ast.ast-node-pool-context-type-get
                                   decoy-pools
                                   decoy-type-id)
-                                  [(ast.AstType.I64) true]
+                                  [(I64) true]
                                   [_ false]))]
                             (set!
                               ok
@@ -423,7 +417,7 @@
                                   after-decoy-generated-text)
                                 decoy-node-ok)))))]
                     [_ (set! ok false)])))]
-            [(parser.ResultAstProgram.Err _) (set! ok false)])))
+            [(Err _) (set! ok false)])))
       ;; Restore both compatibility contexts on every normal exit.
       (ast.ast-node-pool-context-install! home-pools)
       (ci.intern-compat-state-install! home-intern)

@@ -18,14 +18,14 @@
 
 (define (main) : i64
   (let
-    [small : Small (Small.B true)]
+    [small : Small (B true)]
     (if (and
       (= (payload (Big.V1001 7)) 7)
       (= (payload (Big.V2499 9)) 1009)
       (= (payload (Big.V0 3)) 2003)
       (= (payload (Big.V1000 5)) -1)
       (match small
-        [(Small.B flag) flag]
-        [(Small.A _) false]))
+        [(B flag) flag]
+        [(A _) false]))
       42
       1)))

@@ -48,8 +48,8 @@
 (define (count-tokens [tokens : (& (Slice Token))]) : i64
   (match tokens
     [(slice) 0]
-    [(slice (Token.Num n) & rest) (+ n (count-tokens rest))]
-    [(slice (Token.Plus) & rest) (+ 100 (count-tokens rest))]
+    [(slice (Num n) & rest) (+ n (count-tokens rest))]
+    [(slice (Plus) & rest) (+ 100 (count-tokens rest))]
     ;; Coverage is by length; refutable element patterns need a fallback.
     [_ -1000]))
 
@@ -57,9 +57,9 @@
 (define (count-items [items : (& (Slice Item))]) : i64
   (match items
     [(slice) 0]
-    [(slice (Item.Word w) & rest)
+    [(slice (Word w) & rest)
       (+ (* 1000 (string.string-length w)) (count-items rest))]
-    [(slice (Item.Gap) & rest) (+ 1 (count-items rest))]
+    [(slice (Gap) & rest) (+ 1 (count-items rest))]
     [(slice _ & rest) (count-items rest)]))
 
 (define (string-head [words : (& (Slice String))]) : i64
@@ -104,15 +104,15 @@
 
 (define (node-score [node : (Node source)]) : i64
   (match node
-    [(Node.Leaf n) n]
-    [(Node.Items (slice)) -1]
-    [(Node.Items (slice a b & _)) (+ a b)]
-    [(Node.Items (slice a)) (* a 2)]
-    [(Node.Items _) -2]))
+    [(Leaf n) n]
+    [(Items (slice)) -1]
+    [(Items (slice a b & _)) (+ a b)]
+    [(Items (slice a)) (* a 2)]
+    [(Items _) -2]))
 
 (define (borrowed-node-score [node : (& (Node source))]) : i64
   (match node
-    [(Node.Items (slice a & rest)) (+ a (sum rest))]
+    [(Items (slice a & rest)) (+ a (sum rest))]
     [_ 0]))
 
 (define (bump-all! [xs : (&mut (Slice i64))]) : unit
@@ -213,9 +213,8 @@
         (unless (= (literal-head (& two)) 16) (return 5))
         (unless (= (literal-head (& three)) -1) (return 6))))
     (let
-      [tokens : (Array Token 3) (array (Token.Num 5) Token.Plus (Token.Num 7))]
-      [items : (Array Item 3)
-        (array (Item.Word "abc") Item.Gap (Item.Word "z"))]
+      [tokens : (Array Token 3) (array (Num 5) Plus (Num 7))]
+      [items : (Array Item 3) (array (Word "abc") Gap (Word "z"))]
       (begin
         (unless (= (count-tokens (& tokens)) 112) (return 7))
         (unless (= (count-items (& items)) 4001) (return 20))))
@@ -242,18 +241,12 @@
     (let
       [values : (Array i64 3) (array 20 22 99)]
       (begin
-        (unless (= (node-score (Node.Leaf 9)) 9) (return 13))
-        (unless
-          (= (node-score (Node.Items (slice-view values 0 0))) -1)
-          (return 14))
-        (unless
-          (= (node-score (Node.Items (slice-view values 0 1))) 40)
-          (return 15))
-        (unless
-          (= (node-score (Node.Items (slice-view values 0 3))) 42)
-          (return 16))
+        (unless (= (node-score (Leaf 9)) 9) (return 13))
+        (unless (= (node-score (Items (slice-view values 0 0))) -1) (return 14))
+        (unless (= (node-score (Items (slice-view values 0 1))) 40) (return 15))
+        (unless (= (node-score (Items (slice-view values 0 3))) 42) (return 16))
         (let
-          [node : (Node values) (Node.Items (slice-view values 0 3))]
+          [node : (Node values) (Items (slice-view values 0 3))]
           (unless (= (borrowed-node-score (& node)) 141) (return 17)))))
     (let
       [items : (Array i64 4) (array 1 1 1 1)]

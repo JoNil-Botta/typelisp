@@ -16,14 +16,14 @@
 
 (define (kind-code [kind : utf8.ErrorKind]) : i64
   (match kind
-    [(utf8.InvalidOffset) 0]
-    [(utf8.InvalidLead) 1]
-    [(utf8.UnexpectedContinuation) 2]
-    [(utf8.Truncated) 3]
-    [(utf8.InvalidContinuation) 4]
-    [(utf8.Overlong) 5]
-    [(utf8.Surrogate) 6]
-    [(utf8.OutOfRange) 7]))
+    [(InvalidOffset) 0]
+    [(InvalidLead) 1]
+    [(UnexpectedContinuation) 2]
+    [(Truncated) 3]
+    [(InvalidContinuation) 4]
+    [(Overlong) 5]
+    [(Surrogate) 6]
+    [(OutOfRange) 7]))
 
 (define (assert-error
   [error : utf8.DecodeError]
@@ -38,10 +38,10 @@
 (define (expect-error [input : (& input str)] [kind : i64] [failure : i64]) : unit
   (begin
     (match (utf8.decode-at input 1)
-      [(utf8.Error error) (assert-error error kind 1 failure)]
+      [(Error error) (assert-error error kind 1 failure)]
       [_ (test.assert-true false "decode must reject")])
     (match (utf8.validate input)
-      [(utf8.Invalid error) (assert-error error kind 1 failure)]
+      [(Invalid error) (assert-error error kind 1 failure)]
       [_ (test.assert-true false "validator must return the same first error")])))
 
 (define (expect-scalar
@@ -50,7 +50,7 @@
   [value : i64]
   [next : i64]) : unit
   (match (utf8.decode-at input offset)
-    [(utf8.Scalar scalar actual-next)
+    [(Scalar scalar actual-next)
       (begin
         (test.assert-i64-eq (cast scalar.value : i64) value "scalar value")
         (test.assert-i64-eq actual-next next "next byte offset")
@@ -59,7 +59,7 @@
 
 (define (expect-valid [input : (& input str)]) : unit
   (match (utf8.validate input)
-    [(utf8.Valid) unit]
+    [(Valid) unit]
     [_ (test.assert-true false "expected valid UTF-8")]))
 
 (define (assert-boundaries) : unit
@@ -100,7 +100,7 @@
           (expect-scalar view 1 (array-ref row 5) end)
           (expect-valid view)
           (match (utf8.decode-at view end)
-            [(utf8.End) unit]
+            [(End) unit]
             [_ (test.assert-true false "exact end")])
           (set! index (+ index 1)))))))
 
@@ -123,7 +123,7 @@
             [(or (< lead 0xc2) (> lead 0xf4)) (expect-error (& text) 1 1)]
             [else
               (match (utf8.decode-at (& text) 1)
-                [(utf8.Scalar scalar next)
+                [(Scalar scalar next)
                   (begin
                     (test.assert-true
                       (<= scalar.value 0x10ffff)
@@ -243,21 +243,21 @@
     (begin
       (expect-valid (& empty))
       (match (utf8.decode-at (& empty) 0)
-        [(utf8.End) unit]
+        [(End) unit]
         [_ (test.assert-true false "empty end")])
       (while (< index 4)
         (let
           [offset : i64 (array-ref offsets index)]
           (begin
             (match (utf8.decode-at (& static) offset)
-              [(utf8.Error error) (assert-error error 0 offset offset)]
+              [(Error error) (assert-error error 0 offset offset)]
               [_ (test.assert-true false "bad caller offset")])
             (set! index (+ index 1)))))
       (expect-scalar (& static) 1 0xe9 3)
       (expect-scalar (& copy) 3 0x20ac 6)
       (expect-scalar (string.substring-view (& copy) 1 9) 5 0x1f600 9)
       (match (utf8.decode-at (& static) 2)
-        [(utf8.Error error) (assert-error error 2 2 2)]
+        [(Error error) (assert-error error 2 2 2)]
         [_ (test.assert-true false "interior continuation")])
       (expect-valid (& static))
       (expect-valid (& copy))
@@ -268,7 +268,7 @@
           (expect-error (& malformed) 4 2)
           (expect-scalar (& malformed) 2 65 3)
           (match saved
-            [(utf8.Error error) (assert-error error 4 1 2)]
+            [(Error error) (assert-error error 4 1 2)]
             [_ (test.assert-true false "retained decode result")])
           (test.assert-i64-eq
             (string.string-length (& malformed))
@@ -341,7 +341,7 @@
           (begin
             (while (< offset (string.string-length (& text)))
               (match (utf8.decode-at (& text) offset)
-                [(utf8.Scalar _ next)
+                [(Scalar _ next)
                   (begin
                     (set! offset next)
                     (set! count (+ count 1)))]

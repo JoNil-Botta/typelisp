@@ -113,11 +113,11 @@
     [section : (__tl_dyn-array u8) (eh-frame-bench-section count)]
     [limits : eh.CompilerEhFrameLimits (eh.compiler-eh-frame-default-limits)]
     (match (eh.compiler-eh-frame-decode (& section) 1 (& limits))
-      [(eh.ResultCompilerEhFrameImage.Err error)
+      [(Err error)
         (begin
           (io.print-error error.message)
           1)]
-      [(eh.ResultCompilerEhFrameImage.Ok image)
+      [(Ok image)
         (let
           [images : (__tl_dyn-array eh.CompilerEhFrameImage)
             (__tl_make-array eh.CompilerEhFrameImage 1)]
@@ -141,22 +141,22 @@
               (& selections)
               0x9000000
               (& limits))
-              [(eh.ResultCompilerEhFrameOutput.Err error)
+              [(Err error)
                 (begin
                   (io.print-error error.message)
                   1)]
-              [(eh.ResultCompilerEhFrameOutput.Ok output)
+              [(Ok output)
                 (match (eh.compiler-eh-frame-encode-header
                   (& output.rows)
                   0x8000000
                   0x9000000
                   (& limits))
-                  [(eh.ResultCompilerEhFrameHeaderBytes.Ok header)
+                  [(Ok header)
                     (match (eh.compiler-eh-frame-decode-header
                       (& header)
                       0x8000000
                       (& limits))
-                      [(eh.ResultCompilerEhFrameHeader.Ok table)
+                      [(Ok table)
                         (begin
                           (io.println "fdes={}" count)
                           (io.println "input_bytes={}" (array-length section))
@@ -177,7 +177,7 @@
                           (if (= (array-length table.rows) count)
                             0
                             1))]
-                      [(eh.ResultCompilerEhFrameHeader.Err error)
+                      [(Err error)
                         (begin
                           (io.print-error error.message)
                           1)])]

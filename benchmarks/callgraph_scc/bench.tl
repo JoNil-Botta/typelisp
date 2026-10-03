@@ -789,7 +789,7 @@
     (set! (array-ref cg-scc-lowlink slot) next-index)
     (set! (array-ref cg-scc-on-stack slot) true)
     (set! (array-ref cg-scc-node-stack node-stack-len) slot)
-    (CgSccDiscoverState.State (+ next-index 1) (+ node-stack-len 1))))
+    (State (+ next-index 1) (+ node-stack-len 1))))
 
 (define (cg-scc-frame-push! [frame-len : i64] [slot : i64]) : i64
   (begin
@@ -816,7 +816,7 @@
             (set! (array-ref cg-scc-of slot) scc-id)
             (set! members (+ members 1))
             (when (= slot root) (set! done true)))))
-      (CgSccPopState.State len members))))
+      (State len members))))
 
 (define (cg-scc-copy-order [count : i64]) : unit
   (let
@@ -863,7 +863,7 @@
             (= (array-ref cg-scc-indices root) (- 0 1))
             (begin
               (match (cg-scc-discover! root node-stack-len next-index)
-                [(CgSccDiscoverState.State next stack-len)
+                [(State next stack-len)
                   (begin
                     (set! next-index next)
                     (set! node-stack-len stack-len))])
@@ -885,7 +885,7 @@
                             child
                             node-stack-len
                             next-index)
-                            [(CgSccDiscoverState.State next stack-len)
+                            [(State next stack-len)
                               (begin
                                 (set! next-index next)
                                 (set! node-stack-len stack-len))])
@@ -904,7 +904,7 @@
                           node-stack-len
                           slot
                           scc-count)
-                          [(CgSccPopState.State stack-len _)
+                          [(State stack-len _)
                             (begin
                               (set! node-stack-len stack-len)
                               (set!

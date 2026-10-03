@@ -23,7 +23,7 @@
 
 (define (fe-lex-float-token-ok? [src : String] [expected : String]) : bool
   (match (lx.result src)
-    [(lx.ResultTokens.Ok toks)
+    [(Ok toks)
       (let
         [value : tk.Token (lx.array-shared-view toks 0)]
         [end : tk.Token (lx.array-shared-view toks 1)]
@@ -31,11 +31,11 @@
           (= (tk.tag (lx.global-shared-view value)) (tk.tag-float))
           (string.eq (tk.float value) expected)
           (= (tk.tag end) (tk.tag-end))))]
-    [(lx.ResultTokens.Err _) false]))
+    [(Err _) false]))
 
 (define (fe-lex-spanned-float-token-ok? [src : String] [expected : String]) : bool
   (match (lx.spanned-result src)
-    [(lx.ResultSpannedTokens.Ok toks)
+    [(Ok toks)
       (let
         [value : tk.Token (tk.spanned-token-tok (lx.array-shared-view toks 0))]
         [end : tk.Token (tk.spanned-token-tok (lx.array-shared-view toks 1))]
@@ -43,12 +43,12 @@
           (= (tk.tag (lx.global-shared-view value)) (tk.tag-float))
           (string.eq (tk.float value) expected)
           (= (tk.tag end) (tk.tag-end))))]
-    [(lx.ResultSpannedTokens.Err _) false]))
+    [(Err _) false]))
 
 (define (fe-lex-prefix-and-symbol-ok?) : bool
   (and
     (match (lx.result "0x1e5")
-      [(lx.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [value : tk.Token (lx.array-shared-view toks 0)]
           [end : tk.Token (lx.array-shared-view toks 1)]
@@ -56,9 +56,9 @@
             (= (tk.tag (lx.global-shared-view value)) (tk.tag-int))
             (= (tk.int value) 485)
             (= (tk.tag end) (tk.tag-end))))]
-      [(lx.ResultTokens.Err _) false])
+      [(Err _) false])
     (match (lx.result "example value")
-      [(lx.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [first : tk.Token (lx.array-shared-view toks 0)]
           [second : tk.Token (lx.array-shared-view toks 1)]
@@ -69,7 +69,7 @@
             (= (tk.tag (lx.global-shared-view second)) (tk.tag-sym))
             (string.eq (tk.sym second) "value")
             (= (tk.tag end) (tk.tag-end))))]
-      [(lx.ResultTokens.Err _) false])))
+      [(Err _) false])))
 
 (define (fe-lex-malformed-exponents-ok?) : bool
   (and
@@ -108,8 +108,8 @@
                   (string.contains (& text) "e")
                   (string.contains (& text) "E")))
               (match (io.float-parse-f64 text)
-                [(io.IoFloatSomeF64 value) (= (io.float-f64-bits value) bits)]
-                [(io.IoFloatNoF64) false]))
+                [(IoFloatSomeF64 value) (= (io.float-f64-bits value) bits)]
+                [(IoFloatNoF64) false]))
               unit
               (set! ok false))
             (set! i (+ i 1)))))
@@ -173,8 +173,8 @@
   [col : i64]
   [expected : (& expected str)]) : bool
   (match (fcst.parse-format-source-result src)
-    [(fcst.ResultFormatCst.Ok _) false]
-    [(fcst.ResultFormatCst.Err err)
+    [(Ok _) false]
+    [(Err err)
       (and
         (string.eq
           (ft.format-source-error-message (lx.global-shared-view err))
@@ -220,8 +220,8 @@
   [line : i64]
   [col : i64]) : bool
   (match (fr.format-rules-render-source-width-result source 80)
-    [(fr.ResultFormatString.Ok _) false]
-    [(fr.ResultFormatString.Err err)
+    [(Ok _) false]
+    [(Err err)
       (and
         (string.eq
           (ft.format-source-error-message (lx.global-shared-view err))
@@ -337,9 +337,8 @@
       (fe-format-cli-malformed-error? "\n  1.5e-" 2 3)
       "missing multiline exponent diagnostic")
     (match (fr.format-rules-render-source-width-result "\n  1.5e-" 80)
-      [(fr.ResultFormatString.Ok _)
-        (io.panic "malformed exponent unexpectedly formatted")]
-      [(fr.ResultFormatString.Err err)
+      [(Ok _) (io.panic "malformed exponent unexpectedly formatted")]
+      [(Err err)
         (fe-assert
           (string.eq
             (fcli.fmt-source-error-message "bad.tl" err)

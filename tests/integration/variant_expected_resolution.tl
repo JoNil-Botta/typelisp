@@ -79,7 +79,7 @@
             (+ (lib.outcome-value outcome) (level-value level))]
           [_ 100])
         (match outer
-          [(Outer (lib.Outcome.Fail value)) (- value 50)]
+          [(Outer (Fail value)) (- value 50)]
           [_ 100])
         (lib.outcome-value (Fail 2))
         (match (maybe 3)

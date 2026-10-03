@@ -23,8 +23,8 @@
   (match (cis.intern-structural-session-template-source-record-for-raw
     session
     raw)
-    [(cis.InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
-    [(cis.InternMaybeTemplateSourceRecord.No) fallback]))
+    [(Some record) record.source-name-id]
+    [(No) fallback]))
 
 (define (intern-fresh-record-components-match?
   [session : cis.InternStructuralSessionHandle]
@@ -32,9 +32,9 @@
   [ordinal : i64]
   [source-name-id : i64]) : bool
   (match (cis.intern-structural-session-fresh-local-record-for-raw session raw)
-    [(cis.InternMaybeFreshLocalRecord.Some record)
+    [(Some record)
       (and (= record.ordinal ordinal) (= record.source-name-id source-name-id))]
-    [(cis.InternMaybeFreshLocalRecord.No) false]))
+    [(No) false]))
 
 (test
   compiler-intern-template-fresh-record-ownership
@@ -69,7 +69,7 @@
     [macro-global : cis.InternMacroGlobalIdentity
       (cis.intern-structural-session-macro-global-identity
         left-session
-        cis.InternMacroGlobalRole.Legacy
+        Legacy
         9
         left-source)]
     [macro-local : cis.InternMacroLocalIdentity

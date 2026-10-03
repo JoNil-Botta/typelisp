@@ -3,5 +3,5 @@
 
 (define (main) : i64
   (match (registry.concurrency-register 1 0 0 0 0 0 0 0 0)
-    [(registry.ConcurrencyShareErr) 1]
-    [(registry.ConcurrencyShared _) 42]))
+    [(ConcurrencyShareErr) 1]
+    [(ConcurrencyShared _) 42]))

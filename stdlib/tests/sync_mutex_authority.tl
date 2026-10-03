@@ -24,8 +24,8 @@
 ;: release a lease nor clear the holder of the live genuine guard.
 (define (stolen-token-cleanup-is-inert? [mutex : (& mutex mutex_i64.Mutex)]) : bool
   (match (mutex_i64.share mutex)
-    [(mutex_i64.ShareErr) false]
-    [(mutex_i64.Shared alias)
+    [(ShareErr) false]
+    [(Shared alias)
       (let
         [token : (Box i64) alias.authority.token]
         (begin
@@ -66,8 +66,8 @@
     [authorities-before-share : i64 (live-authorities)]
     [alias-code : i64
       (match (mutex_i64.share mutex)
-        [(mutex_i64.ShareErr) 1]
-        [(mutex_i64.Shared alias)
+        [(ShareErr) 1]
+        [(Shared alias)
           (let
             [value : i64
               (with
@@ -77,8 +77,8 @@
             [alias-close : bool (mutex_i64.close (& alias))]
             [alias-share-code : i64
               (match (mutex_i64.share (& alias))
-                [(mutex_i64.ShareErr) 0]
-                [(mutex_i64.Shared _) 1])]
+                [(ShareErr) 0]
+                [(Shared _) 1])]
             (cond
               [(not (= value 43)) 2]
               [(not closed) 3]
@@ -105,11 +105,11 @@
     [closed : bool (mutex_i64.close mutex)]
     [shared : bool
       (match (mutex_i64.share mutex)
-        [(mutex_i64.Shared other)
+        [(Shared other)
           (begin
             (mutex_i64.release other)
             true)]
-        [(mutex_i64.ShareErr) false])]
+        [(ShareErr) false])]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [stored : bool
       (unsafe
@@ -140,8 +140,8 @@
       0
       0
       0))
-    [(registry.ConcurrencyShareErr) 5]
-    [(registry.ConcurrencyShared authority)
+    [(ConcurrencyShareErr) 5]
+    [(ConcurrencyShared authority)
       (with
         ([mutex (mutex_i64.Mutex authority) mutex_i64.release])
         (let
@@ -156,8 +156,8 @@
     [authorities : i64 (live-authorities)]
     [code : i64
       (match (mutex_i64.create 0)
-        [(mutex_i64.CreateErr _) 1]
-        [(mutex_i64.CreateOk mutex) (run (& mutex))])]
+        [(CreateErr _) 1]
+        [(CreateOk mutex) (run (& mutex))])]
     [wrong-family : i64 (wrong-family-code)]
     (cond
       [(not (= code 42)) code]

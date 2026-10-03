@@ -81,27 +81,21 @@
   stdlib-eq-generated-enum-modules
   (begin
     (test.assert-true
-      (choice-eq.eq
-        (EqChoice.Point (EqPoint 7 "seven"))
-        (EqChoice.Point (EqPoint 7 "seven")))
+      (choice-eq.eq (Point (EqPoint 7 "seven")) (Point (EqPoint 7 "seven")))
       "enum equality compares aggregate payloads")
     (test.assert-true
-      (choice-eq.eq?
-        (EqChoice.Pair (tuple 8 "eight"))
-        (EqChoice.Pair (tuple 8 "eight")))
+      (choice-eq.eq? (Pair (tuple 8 "eight")) (Pair (tuple 8 "eight")))
       "enum equality compares tuple payloads")
     (test.assert-false
-      (choice-eq.eq
-        (EqChoice.Point (EqPoint 7 "seven"))
-        (EqChoice.Point (EqPoint 7 "other")))
+      (choice-eq.eq (Point (EqPoint 7 "seven")) (Point (EqPoint 7 "other")))
       "enum equality detects payload mismatches")
     (test.assert-false
-      (choice-eq.eq (EqChoice.Empty) (EqChoice.Point (EqPoint 0 "zero")))
+      (choice-eq.eq (Empty) (Point (EqPoint 0 "zero")))
       "enum equality rejects differing variants")
     (test.assert-true
       (choice-eq.eq
-        (EqChoice.Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b")))
-        (EqChoice.Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b"))))
+        (Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b")))
+        (Route (EqRoute (EqPoint 1 "a") (EqPoint 2 "b"))))
       "enum equality recurses through nested structs")))
 
 (test

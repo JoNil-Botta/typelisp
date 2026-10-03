@@ -268,10 +268,10 @@
             line
             parser.line-start
             (& field-limits))
-            [(http_types.HttpFieldLinePartsErr error)
+            [(HttpFieldLinePartsErr error)
               (HttpResponseTrailerLineErr
                 (response-trailer-field-error error field-index))]
-            [(http_types.HttpFieldLinePartsOk parts)
+            [(HttpFieldLinePartsOk parts)
               (let
                 [next-retained-0 : i64
                   (response-trailer-bounded-add
@@ -300,12 +300,10 @@
                       (& parser.declared)
                       false
                       parser.line-start)
-                      [(http_trailer_policy.HttpTrailerFieldDispositionErr
-                          error)
+                      [(HttpTrailerFieldDispositionErr error)
                         (HttpResponseTrailerLineErr
                           (response-trailer-policy-error error))]
-                      [(http_trailer_policy.HttpTrailerFieldDispositionOk
-                          sensitivity)
+                      [(HttpTrailerFieldDispositionOk sensitivity)
                         (let
                           [field : http_types.HttpHeaderField
                             (http_types.copy-field-line-parts

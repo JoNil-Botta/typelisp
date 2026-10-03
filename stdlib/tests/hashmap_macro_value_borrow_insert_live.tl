@@ -4,8 +4,8 @@
 (define (borrowed-value-found?
   [lookup : (map_i64_string.BorrowedValueLookup map)]) : bool
   (match lookup
-    [(map_i64_string.BorrowedValueFound _) true]
-    [(map_i64_string.BorrowedValueMissing) false]))
+    [(BorrowedValueFound _) true]
+    [(BorrowedValueMissing) false]))
 
 (define (main) : i64
   (let

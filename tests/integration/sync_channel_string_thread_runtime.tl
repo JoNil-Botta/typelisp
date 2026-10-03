@@ -34,15 +34,15 @@
 (define (sync-string-integration-send-ok?
   [result : sync.ChannelStringSendResult]) : bool
   (match result
-    [(sync.ChannelStringSendOk) true]
-    [(sync.ChannelStringSendErr _) false]))
+    [(ChannelStringSendOk) true]
+    [(ChannelStringSendErr _) false]))
 
 (define (sync-string-integration-recv-value-or
   [result : sync.ChannelStringRecvResult]
   [fallback : String]) : String
   (match result
-    [(sync.ChannelStringRecvOk value) value]
-    [(sync.ChannelStringRecvErr _) fallback]))
+    [(ChannelStringRecvOk value) value]
+    [(ChannelStringRecvErr _) fallback]))
 
 (define (sync-string-integration-message [index : i64]) : String
   (string.append "message:" (string.int->string index)))
@@ -151,5 +151,5 @@
 
 (define (main) : i64
   (match (sync.channel-string-create 4)
-    [(sync.ChannelStringCreateErr _) 1]
-    [(sync.ChannelStringCreateOk channel) (sync-string-integration-run channel)]))
+    [(ChannelStringCreateErr _) 1]
+    [(ChannelStringCreateOk channel) (sync-string-integration-run channel)]))

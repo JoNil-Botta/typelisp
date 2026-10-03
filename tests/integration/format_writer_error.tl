@@ -83,8 +83,8 @@
 
 (define (error-77? [result : format.FormatResult]) : bool
   (match result
-    [(format.FormatOk) false]
-    [(format.FormatErr status) (= status 77)]))
+    [(FormatOk) false]
+    [(FormatErr status) (= status 77)]))
 
 (define (main) : i64
   (let

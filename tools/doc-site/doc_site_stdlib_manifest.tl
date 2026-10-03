@@ -48,7 +48,7 @@
   (let
     [dir : String (doc-site-stdlib-dir-shared-view)]
     (match (fs.try-read-dir (& dir))
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (let
           [names : doc_site_manifest_names.Vec (doc_site_manifest_names.new)]
           [i : i64 0]
@@ -68,7 +68,7 @@
             ;; sidebar, index, expansion pass, and generated files reproducible.
             (doc_site_manifest_sort.sort! (&mut names) sort.string-less?)
             names))]
-      [(fs.ErrIoStringVector _)
+      [(ErrIoStringVector _)
         (io.panic
           (str_cat.str-cat
             "doc-site: could not read stdlib module directory: "

@@ -41,7 +41,7 @@
   (let
     [length : i64 (string.string-length path)]
     [index : i64 1]
-    [result : io.ResultIoUnit io.OkIoUnit]
+    [result : io.ResultIoUnit OkIoUnit]
     [failed : bool false]
     (begin
       (while (and (not failed) (< index length))
@@ -52,10 +52,10 @@
               (if (dir_set.contains? dirs (string.copy (& prefix)))
                 unit
                 (match (fs.try-mkdir-if-missing (& prefix))
-                  [(io.OkIoUnit) (dir_set.insert-ref! dirs prefix 1)]
-                  [(io.ErrIoUnit error)
+                  [(OkIoUnit) (dir_set.insert-ref! dirs prefix 1)]
+                  [(ErrIoUnit error)
                     (begin
-                      (set! result (io.ErrIoUnit error))
+                      (set! result (ErrIoUnit error))
                       (set! failed true))])))
             unit)
           (set! index (+ index 1))))
@@ -67,13 +67,13 @@
   [destination : String]
   [dirs : (&mut dirs dir_set.Map)]) : i64
   (match (io.try-read-file (& source))
-    [(io.ErrIoBytes error)
+    [(ErrIoBytes error)
       (stage-fail
         line-number
         (str_cat.str-cat "cannot read " source ": " (io.error-message error)))]
-    [(io.OkIoBytes contents)
+    [(OkIoBytes contents)
       (match (stage-ensure-parents (& destination) dirs)
-        [(io.ErrIoUnit error)
+        [(ErrIoUnit error)
           (stage-fail
             line-number
             (str_cat.str-cat
@@ -81,11 +81,11 @@
               destination
               ": "
               (io.error-message error)))]
-        [(io.OkIoUnit)
+        [(OkIoUnit)
           (match (io.try-write-file
             (& destination)
             (byte_buf.as-bytes (& contents)))
-            [(io.ErrIoUnit error)
+            [(ErrIoUnit error)
               (stage-fail
                 line-number
                 (str_cat.str-cat
@@ -95,7 +95,7 @@
                   source
                   ": "
                   (io.error-message error)))]
-            [(io.OkIoUnit) 0])])]))
+            [(OkIoUnit) 0])])]))
 
 (define (stage-line-end [plan : (& plan str)] [start : i64]) : i64
   (let
@@ -180,7 +180,7 @@
     (let
       [plan-path : String (io.arg 1)]
       (match (io.try-read-file (& plan-path))
-        [(io.ErrIoBytes error)
+        [(ErrIoBytes error)
           (begin
             (io.print-error
               (str_cat.str-cat
@@ -190,4 +190,4 @@
                 (io.error-message error)
                 "\n"))
             1)]
-        [(io.OkIoBytes contents) (stage-run-plan (byte_buf.to-string contents))]))))
+        [(OkIoBytes contents) (stage-run-plan (byte_buf.to-string contents))]))))

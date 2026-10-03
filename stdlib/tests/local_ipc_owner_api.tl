@@ -23,13 +23,12 @@
 
 (define (io-kind [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Failed failure)
-      (local_ipc.error-kind-code failure.kind)]
+    [(Failed failure) (local_ipc.error-kind-code failure.kind)]
     [_ 0]))
 
 (define (io-done [result : local_ipc.LocalIpcIoResult]) : i64
   (match result
-    [(local_ipc.LocalIpcIoResult.Done count) count]
+    [(Done count) count]
     [_ -1]))
 
 (define kind-closed : i64
@@ -37,7 +36,7 @@
 (define far-deadline : i64
   1000000)
 (define agent-socket : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.UnixPath "/run/user/1000/agent.sock"))
+  (UnixPath "/run/user/1000/agent.sock"))
 
 (define (open [context : i64]) : local_ipc.LocalIpcConnection
   (local_ipc.connect

@@ -96,30 +96,30 @@
 (define (lower-symbol-smoke-extern-metadata
   [link-id : i64]
   [matches-source : bool]) : ast.AstExternMetadata
-  (ast.AstExternMetadata.Metadata
-    (ast.AstExternAbi.C)
+  (Metadata
+    (C)
     (ci.intern-id-from-renderable link-id)
     (ast.ast-extern-link-input-list-new)
     (ast.ast-extern-metadata-flags false matches-source)
-    ast.AstImportedSpmdMetadata.No))
+    No))
 
 (define (lower-symbol-smoke-parsed-extern-match?
   [source : String]
   [want : bool]) : bool
   (match (compiler_parse_core.parse-ast-source source)
-    [(compiler_parse_core.ResultAstProgram.Ok program)
+    [(Ok program)
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-              [(ast.AstDecl.Extern _ _ _ metadata _)
+              [(Extern _ _ _ metadata _)
                 (=
                   (ast.ast-extern-metadata-symbol-matches-source?
                     (deref metadata))
                   want)]
               [_ false]))])]
-    [(compiler_parse_core.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (lower-symbol-smoke-ok?) : bool
   (let
@@ -159,7 +159,7 @@
             "same-name")]
         [root-env : lower.LowerNameEnv
           (lower.lower-name-env-add-module-binding-id
-            lower.LowerNameEnv.Nil
+            Nil
             ""
             (compiler_symbols.compiler-symbol-root-module-id)
             "same-name"
@@ -173,7 +173,7 @@
         [entry-main-env : lower.LowerNameEnv
           (lower.lower-name-env-add-decl-module-binding-id
             lower-state
-            lower.LowerNameEnv.Nil
+            Nil
             "entry.tl"
             "entry.tl"
             ""
@@ -191,13 +191,13 @@
               entry-main-source-id
               cbi.compiler-builtin-id-fix-main
               stale-main-symbol-id
-              lower.LowerNameEnv.Nil))]
+              Nil))]
         [derived-env : lower.LowerNameEnv
           (compiler_lower_tests.lower-name-env-bind-logical-id
             source-id
             "same-name"
             opaque-logical-id
-            lower.LowerNameEnv.Nil)]
+            Nil)]
         (begin
           ;; A composite module key can numerically equal the source key passed
           ;; through a later boundary, but it is not an interned symbol id.
@@ -275,7 +275,7 @@
                   "main")
                 entry-main-source-id)))
           (match (lower.lower-name-env-view derived-env)
-            [(lower.LowerNameEnvView.Bind _ logical-id symbol-id _)
+            [(Bind _ logical-id symbol-id _)
               (set!
                 ok
                 (and
@@ -325,8 +325,8 @@
 (define (first [x : i64]) : i64 (shared x))
 (define (second [x : i64]) : i64 (shared (first x)))
 (define (main) : i64 (+ (first 1) (second 2)))")
-        [(compiler_backend.ResultCompilerBackend.Ok _) true]
-        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+        [(Ok _) true]
+        [(Err _) false])]
     [lane-after-compile : i64 (ci.intern-generated-count)]
     [derived-after-compile : i64
       (compiler_ir_types.compiler-ir-symbol-count-value)]
@@ -369,8 +369,8 @@
   [paths : ast.AstDeclPathList]
   [needle : String]) : bool
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Nil) false]
-    [(ast.AstDeclPathListStep.Cons path rest)
+    [(Nil) false]
+    [(Cons path rest)
       (or
         (compiler-driver-pic-smoke-contains?
           (& path)
@@ -390,11 +390,11 @@
   (in-arena
     caller
     (match (compiler-driver-load-runtime-prelude-cache-miss key roots cfgs)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+      [(Ok _ paths _ _)
         (and
           (= (arena.tl_arena_current) caller-handle)
           (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-driver-runtime-prelude-cache-arena-scope-ok?) : bool
   (let
@@ -418,12 +418,12 @@
     (begin
       (arena.destroy-safe! caller)
       (match (driver.compiler-driver-runtime-prelude-cache-lookup key)
-        [(compiler_load.CompilerLoadPreludeCacheHit _ paths _ _)
+        [(CompilerLoadPreludeCacheHit _ paths _ _)
           (and
             scoped-ok?
             home-restored?
             (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
-        [(compiler_load.CompilerLoadPreludeCacheMiss) false]))))
+        [(CompilerLoadPreludeCacheMiss) false]))))
 
 (define (compiler-driver-pic-smoke-output-ok?
   [output : compiler_backend.CompilerBackendPicOutput]) : bool
@@ -450,11 +450,10 @@
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(driver.ResultCompilerDriverPic.Ok output _)
-      (compiler-driver-pic-smoke-output-ok? output)]
-    [(driver.ResultCompilerDriverPic.Err _ _) false]))
+    [(Ok output _) (compiler-driver-pic-smoke-output-ok? output)]
+    [(Err _ _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -470,8 +469,8 @@
   [path : (& path str)]
   [contents : (& contents str)]) : bool
   (match (io.try-write-file path (byte_buf.str-as-bytes contents))
-    [(io.OkIoUnit) true]
-    [(io.ErrIoUnit _) false]))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
 
 (define (compiler-driver-pic-smoke-write-extern-fixture) : String
   (let
@@ -513,15 +512,15 @@
 (define (compiler-driver-smoke-module-macro-diagnostic-ok?) : bool
   (match (driver.compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
     (compiler-driver-smoke-write-module-macro-diagnostic-fixture)
-    (compiler_backend.CompilerBackendTarget.Linux)
+    (Linux)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty)
     true)
-    [(driver.ResultCompilerDriver.Ok _ _) false]
-    [(driver.ResultCompilerDriver.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
         (and
@@ -631,8 +630,8 @@
     backend-state
     pools
     program
-    (compiler_backend.CompilerBackendTarget.Linux)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Linux)
+    (Scalar)
     spans
     true
     false
@@ -657,7 +656,7 @@
     pools-b
     program-b
     spans-b)
-    [(compiler_backend.ResultCompilerBackend.Ok asm-b)
+    [(Ok asm-b)
       (if (not
         (compiler-driver-reader-context-smoke-installed?
           expr-segment-bases
@@ -670,7 +669,7 @@
           pools-a
           program-a
           spans-a)
-          [(compiler_backend.ResultCompilerBackend.Ok asm-a)
+          [(Ok asm-a)
             (cond
               [(not
                   (compiler-driver-reader-context-smoke-installed?
@@ -691,12 +690,12 @@
                 (compiler-driver-reader-context-smoke-fail
                   "backend scalar options changed")]
               [else true])]
-          [(compiler_backend.ResultCompilerBackend.Err diag)
+          [(Err diag)
             (compiler-driver-reader-context-smoke-fail
               (str_cat.str-cat
                 "state A backend failed: "
                 (cdiag.compiler-diagnostic-render (deref diag))))]))]
-    [(compiler_backend.ResultCompilerBackend.Err diag)
+    [(Err diag)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state B backend failed: "
@@ -718,9 +717,7 @@
     program-a
     spans-a
     (compiler_optimize.optimize-request pools-a 1))
-    [(compiler_optimize.CompilerOptimizedProgram.Program
-        optimized-a
-        optimized-spans-a)
+    [(Program optimized-a optimized-spans-a)
       (if (not
         (compiler-driver-reader-context-smoke-installed?
           expr-segment-bases
@@ -732,9 +729,7 @@
           program-b
           spans-b
           (compiler_optimize.optimize-request pools-b 1))
-          [(compiler_optimize.CompilerOptimizedProgram.Program
-              optimized-b
-              optimized-spans-b)
+          [(Program optimized-b optimized-spans-b)
             (if (not
               (compiler-driver-reader-context-smoke-installed?
                 expr-segment-bases
@@ -759,21 +754,9 @@
   [lowered-a : driver.ResultCompilerDriverLowered]
   [lowered-b : driver.ResultCompilerDriverLowered]) : bool
   (match lowered-a
-    [(driver.ResultCompilerDriverLowered.Ok
-        program-a
-        spans-a
-        pools-a
-        _profile-a
-        backend-state-a
-        _typecheck-a)
+    [(Ok program-a spans-a pools-a _profile-a backend-state-a _typecheck-a)
       (match lowered-b
-        [(driver.ResultCompilerDriverLowered.Ok
-            program-b
-            spans-b
-            pools-b
-            _profile-b
-            backend-state-b
-            _typecheck-b)
+        [(Ok program-b spans-b pools-b _profile-b backend-state-b _typecheck-b)
           (let
             [intern-a : ci.InternCompatState
               (compiler_backend.compiler-backend-state-exact-intern
@@ -821,12 +804,12 @@
             (begin
               (ast.ast-node-pool-reader-use! restore-reader)
               ok))]
-        [(driver.ResultCompilerDriverLowered.Err diag _)
+        [(Err diag _)
           (compiler-driver-reader-context-smoke-fail
             (str_cat.str-cat
               "state B lower failed: "
               (cdiag.compiler-diagnostic-render (deref diag))))])]
-    [(driver.ResultCompilerDriverLowered.Err diag _)
+    [(Err diag _)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state A lower failed: "
@@ -971,10 +954,8 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [source : String (compiler-driver-reader-context-smoke-write-fixture)]
-    [target : compiler_backend.CompilerBackendTarget
-      (compiler_backend.CompilerBackendTarget.Linux)]
-    [mode : compiler_backend.CompilerBackendMode
-      (compiler_backend.CompilerBackendMode.Scalar)]
+    [target : compiler_backend.CompilerBackendTarget (Linux)]
+    [mode : compiler_backend.CompilerBackendMode (Scalar)]
     [roots-a : svec.Vec (compiler-driver-pic-smoke-roots)]
     [idle-backend-state-ok? : bool
       (compiler-driver-reader-context-smoke-backend-states-idle?
@@ -1004,13 +985,7 @@
           ;; state-owned reader context here, then interleave the phases covered
           ;; by this smoke: optimizer, regalloc, and backend.
           (match (owned_view.compiler-owned-shared-view lowered-a)
-            [(driver.ResultCompilerDriverLowered.Ok
-                program-a
-                spans-a
-                pools-a
-                _profile-a
-                _backend-a
-                _typecheck-a)
+            [(Ok program-a spans-a pools-a _profile-a _backend-a _typecheck-a)
               (let
                 [pools-b : ast.AstNodePoolContext
                   (ast.ast-node-pool-context-clone-types-only pools-a)]
@@ -1024,14 +999,14 @@
                   (driver.compiler-driver-state-adopt-pools! state-b pools-b)
                   (compiler-driver-reader-context-smoke-lowered-ok?
                     lowered-a
-                    (driver.ResultCompilerDriverLowered.Ok
+                    (Ok
                       program-b
                       spans-b
                       pools-b
                       (driver.compiler-driver-state-profile state-b)
                       (driver.compiler-driver-state-backend state-b)
                       (driver.compiler-driver-state-typecheck state-b)))))]
-            [(driver.ResultCompilerDriverLowered.Err diag _)
+            [(Err diag _)
               (compiler-driver-reader-context-smoke-fail
                 (str_cat.str-cat
                   "state A lower failed: "
@@ -1066,11 +1041,11 @@
           true
           (compiler-driver-pic-smoke-roots)
           0
-          compiler_backend.CompilerBackendMode.Scalar
+          Scalar
           cfgs
           true)
-          [(driver.ResultCompilerDriverBuffer.Ok _ _) true]
-          [(driver.ResultCompilerDriverBuffer.Err diagnostic _)
+          [(Ok _ _) true]
+          [(Err diagnostic _)
             (compiler-driver-reader-context-smoke-fail
               (cdiag.compiler-diagnostic-render (deref diagnostic)))])))))
 
@@ -1081,10 +1056,7 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [a-enabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        true)]
+      (compiler-driver-generated-cfg-job-ok? state-a Linux true)]
     [a-intern : ci.InternCompatState
       (driver.compiler-driver-state-owned-interns state-a)]
     [a-table : i64 (ci.intern-compat-state-table-id a-intern)]
@@ -1094,10 +1066,7 @@
     [a-exprs : i64 (ast.ast-node-pool-context-expr-len a-pools)]
     [a-types : i64 (ast.ast-node-pool-context-type-len a-pools)]
     [b-disabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-b
-        compiler_backend.CompilerBackendTarget.Windows
-        false)]
+      (compiler-driver-generated-cfg-job-ok? state-b Windows false)]
     [a-unchanged : bool
       (let
         [intern : ci.InternCompatState
@@ -1109,21 +1078,11 @@
           (= (ci.intern-compat-state-pool-len intern) a-count)
           (= (ast.ast-node-pool-context-expr-len pools) a-exprs)
           (= (ast.ast-node-pool-context-type-len pools) a-types)))]
-    [a-reused : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        true)]
+    [a-reused : bool (compiler-driver-generated-cfg-job-ok? state-a Linux true)]
     [a-disabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        false)]
+      (compiler-driver-generated-cfg-job-ok? state-a Linux false)]
     [b-enabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-b
-        compiler_backend.CompilerBackendTarget.Windows
-        true)]
+      (compiler-driver-generated-cfg-job-ok? state-b Windows true)]
     (and a-enabled b-disabled a-unchanged a-reused a-disabled b-enabled)))
 
 (define (compiler-driver-reader-context-smoke-main) : i64
@@ -1203,8 +1162,8 @@
               macro-state
               importer
               alias)
-              [(tc.TcMaybeNameId.Some actual) (= actual target)]
-              [(tc.TcMaybeNameId.No) false])))))))
+              [(Some actual) (= actual target)]
+              [(No) false])))))))
 
 ;; The lowered-result boundary must reset the job that produced the IR while
 ;; retaining its compact definition-site alias handoff for package surface
@@ -1241,11 +1200,11 @@
         (= (tc.tc-lazy-import-stub-count-for-state macro-a) 1)
         (= (tc.tc-lazy-import-stub-count-for-state macro-b) 1)
         (match (tc.tc-lazy-import-stub-target-id-for-state macro-a 11 12)
-          [(tc.TcMaybeNameId.Some target) (= target 13)]
-          [(tc.TcMaybeNameId.No) false])
+          [(Some target) (= target 13)]
+          [(No) false])
         (match (tc.tc-lazy-import-stub-target-id-for-state macro-b 11 12)
-          [(tc.TcMaybeNameId.Some target) (= target 14)]
-          [(tc.TcMaybeNameId.No) false])))))
+          [(Some target) (= target 14)]
+          [(No) false])))))
 
 (define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
   (let
@@ -1415,10 +1374,10 @@
         lower-b
         "<state-b-pre-failure>"
         "(define"
-        (lower.CompilerLowerMode.Scalar)
+        (Scalar)
         "package-b-pre-failure")
-        [(lower.ResultCompilerLower.Err _) true]
-        [(lower.ResultCompilerLower.Ok _ _) false])]
+        [(Err _) true]
+        [(Ok _ _) false])]
     [a-after-b-prepopulate-failure : lower.CompilerLowerStateObservation
       (lower.compiler-lower-state-observe lower-a)]
     (match (lower.lower-compiler-source-with-path-mode-package-and-state
@@ -1427,14 +1386,14 @@
       "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))"
-      (lower.CompilerLowerMode.Scalar)
+      (Scalar)
       "package-a")
-      [(lower.ResultCompilerLower.Err diag)
+      [(Err diag)
         (compiler-driver-reader-context-smoke-fail
           (str_cat.str-cat
             "lower state A failed: "
             (cdiag.compiler-diagnostic-render (deref diag))))]
-      [(lower.ResultCompilerLower.Ok _ _)
+      [(Ok _ _)
         (let
           [a-before : lower.CompilerLowerStateObservation
             (lower.compiler-lower-state-observe lower-a)]
@@ -1444,10 +1403,10 @@
               "<state-b-failure>"
               "(module main)
 (define (main) : i64 lower-state-controlled-failure)"
-              (lower.CompilerLowerMode.Scalar)
+              (Scalar)
               "package-b-failure")
-              [(lower.ResultCompilerLower.Err _) true]
-              [(lower.ResultCompilerLower.Ok _ _) false])]
+              [(Err _) true]
+              [(Ok _ _) false])]
           (begin
             (driver.compiler-driver-state-reset-lower!
               (owned_view.compiler-owned-shared-view state-b))
@@ -1460,14 +1419,14 @@
                 "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))"
-                (lower.CompilerLowerMode.Scalar)
+                (Scalar)
                 "package-b-reuse")
-                [(lower.ResultCompilerLower.Err diag)
+                [(Err diag)
                   (compiler-driver-reader-context-smoke-fail
                     (str_cat.str-cat
                       "lower state B reuse failed: "
                       (cdiag.compiler-diagnostic-render (deref diag))))]
-                [(lower.ResultCompilerLower.Ok _ _)
+                [(Ok _ _)
                   (let
                     [a-after-b-reuse : lower.CompilerLowerStateObservation
                       (lower.compiler-lower-state-observe lower-a)]
@@ -1628,14 +1587,14 @@
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)
-    (compiler_backend.CompilerBackendTarget.Windows)
+    (Windows)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(driver.ResultCompilerDriverPic.Ok _ _) false]
-    [(driver.ResultCompilerDriverPic.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
         (compiler-driver-pic-smoke-contains?
@@ -1655,7 +1614,7 @@
 (define (compiler-driver-advisory-fixture [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
     (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message)
-    cdiag.CompilerDiagnosticWarning))
+    CompilerDiagnosticWarning))
 
 (define (compiler-driver-advisory-phase-is?
   [advisories : (& advisories cdiag.CompilerAdvisoryList)]
@@ -1665,25 +1624,25 @@
     [advisory : cdiag.CompilerAdvisory
       (cdiag.compiler-advisory-list-get advisories index)]
     (match phase
-      [(cdiag.CompilerAdvisoryPhase.Semantic)
+      [(Semantic)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Semantic) true]
+          [(Semantic) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Lowering)
+      [(Lowering)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Lowering) true]
+          [(Lowering) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Optimization)
+      [(Optimization)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Optimization) true]
+          [(Optimization) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.RegisterAllocation)
+      [(RegisterAllocation)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.RegisterAllocation) true]
+          [(RegisterAllocation) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Backend)
+      [(Backend)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Backend) true]
+          [(Backend) true]
           [_ false])])))
 
 (define (compiler-driver-advisory-transport-ok?) : bool
@@ -1714,77 +1673,62 @@
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
             (driver.compiler-driver-state-typecheck state-a))
-          cdiag.CompilerAdvisoryPhase.Semantic
+          Semantic
           (& semantic))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_lower_tests.compiler-lower-state-advisory-sink
             (driver.compiler-driver-state-owned-lower-state state-a))
-          cdiag.CompilerAdvisoryPhase.Lowering
+          Lowering
           (& lowering))
         (cdiag_tests.compiler-advisory-sink-push!
           sink-a
-          cdiag.CompilerAdvisoryPhase.Optimization
+          Optimization
           (& optimization))
         (cdiag_tests.compiler-advisory-sink-push!
           sink-a
-          cdiag.CompilerAdvisoryPhase.RegisterAllocation
+          RegisterAllocation
           (& regalloc))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_backend.compiler-backend-state-advisory-sink
             (driver.compiler-driver-state-backend state-a))
-          cdiag.CompilerAdvisoryPhase.Backend
+          Backend
           (& backend))
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
             (driver.compiler-driver-state-typecheck state-b))
-          cdiag.CompilerAdvisoryPhase.Semantic
+          Semantic
           (& other))
         unit)]
     [advisories : cdiag.CompilerAdvisoryList
       (driver.compiler-driver-state-advisories
         (owned_view.compiler-owned-shared-view state-a))]
     [success : driver.ResultCompilerDriver
-      (driver.ResultCompilerDriver.Ok
+      (Ok
         "artifact"
         (driver.compiler-driver-state-advisories
           (owned_view.compiler-owned-shared-view state-a)))]
     [failure : driver.ResultCompilerDriver
-      (driver.ResultCompilerDriver.Err
+      (Err
         (box fatal)
         (driver.compiler-driver-state-advisories
           (owned_view.compiler-owned-shared-view state-a)))]
     [transport-ok? : bool
       (and
         (= (cdiag.compiler-advisory-list-count (& advisories)) 5)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          0
-          cdiag.CompilerAdvisoryPhase.Semantic)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          1
-          cdiag.CompilerAdvisoryPhase.Lowering)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          2
-          cdiag.CompilerAdvisoryPhase.Optimization)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          3
-          cdiag.CompilerAdvisoryPhase.RegisterAllocation)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          4
-          cdiag.CompilerAdvisoryPhase.Backend)
+        (compiler-driver-advisory-phase-is? (& advisories) 0 Semantic)
+        (compiler-driver-advisory-phase-is? (& advisories) 1 Lowering)
+        (compiler-driver-advisory-phase-is? (& advisories) 2 Optimization)
+        (compiler-driver-advisory-phase-is? (& advisories) 3 RegisterAllocation)
+        (compiler-driver-advisory-phase-is? (& advisories) 4 Backend)
         (match success
-          [(driver.ResultCompilerDriver.Ok artifact carried)
+          [(Ok artifact carried)
             (and
               (string.eq artifact "artifact")
               (= (cdiag.compiler-advisory-list-count (& carried)) 5))]
-          [(driver.ResultCompilerDriver.Err _ _) false])
+          [(Err _ _) false])
         (match failure
-          [(driver.ResultCompilerDriver.Ok _ _) false]
-          [(driver.ResultCompilerDriver.Err diag carried)
+          [(Ok _ _) false]
+          [(Err diag carried)
             (let
               [fatal-diagnostic : cdiag.CompilerDiagnostic (deref diag)]
               (and
@@ -1812,14 +1756,8 @@
   (begin
     (unless (compiler-driver-restore-arena-owner-current-ok?) (return 5))
     (unless (compiler-driver-lower-name-store-owner-current-ok?) (return 6))
-    (unless
-      (compiler-driver-pic-smoke-core-macros-ok?
-        (compiler_backend.CompilerBackendTarget.Linux))
-      (return 1))
-    (unless
-      (compiler-driver-pic-smoke-core-macros-ok?
-        (compiler_backend.CompilerBackendTarget.Windows))
-      (return 2))
+    (unless (compiler-driver-pic-smoke-core-macros-ok? (Linux)) (return 1))
+    (unless (compiler-driver-pic-smoke-core-macros-ok? (Windows)) (return 2))
     (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
     (unless (compiler-driver-smoke-module-macro-diagnostic-ok?) (return 7))
     (unless

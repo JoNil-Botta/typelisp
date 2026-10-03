@@ -47,7 +47,7 @@
 (define (sa-lookup-in [var : i64]) : SynthValue
   (if (and (>= var 0) (< var sa-len))
     (clone (array-ref sa-slots var))
-    (SynthValue.Unknown)))
+    (Unknown)))
 
 ;; The wrapper, and the site this fixture exists for: the accessor call is the
 ;; first thing its ENTRY block does, and the struct it returns is rebuilt once
@@ -56,23 +56,23 @@
   (let
     [found : SynthValue (sa-lookup-in payload)]
     (match found
-      [(SynthValue.Const k a b) (SynthValue.Const (+ k bump) a b)]
-      [(SynthValue.Unknown) (SynthValue.Unknown)]
-      [(SynthValue.Over) (SynthValue.Over)])))
+      [(Const k a b) (Const (+ k bump) a b)]
+      [(Unknown) (Unknown)]
+      [(Over) (Over)])))
 
 ;; The consumer, which takes the struct BY VALUE.
 (define (sa-bind [slot : i64] [value : SynthValue]) : i64
   (match value
-    [(SynthValue.Unknown) 0]
-    [(SynthValue.Const k a b) (+ (+ k a) (+ b slot))]
-    [(SynthValue.Over) 1]))
+    [(Unknown) 0]
+    [(Const k a b) (+ (+ k a) (+ b slot))]
+    [(Over) 1]))
 
 ;; The cold second reference to the accessor, so it is not a single-site callee.
 (define (sa-peek [var : i64]) : i64
   (match (sa-lookup-in var)
-    [(SynthValue.Const k _ _) k]
-    [(SynthValue.Unknown) 0]
-    [(SynthValue.Over) 2]))
+    [(Const k _ _) k]
+    [(Unknown) 0]
+    [(Over) 2]))
 
 ;; The nested loop the whole chain hangs from: two levels, so the sites below it
 ;; carry a depth-2 census weight once the counts are propagated.
@@ -106,10 +106,10 @@
           (set!
             (array-ref sa-slots i)
             (if (= (% i 3) 0)
-              (SynthValue.Unknown)
+              (Unknown)
               (if (= (% i 3) 1)
-                (SynthValue.Const (* i 3) (+ i 5) (- (* i 2) 7))
-                (SynthValue.Over))))
+                (Const (* i 3) (+ i 5) (- (* i 2) 7))
+                (Over))))
           (set! i (+ i 1))))
       (set! total (sa-walk 16 16))
       ;; The cold second references: one apiece for the accessor and for the

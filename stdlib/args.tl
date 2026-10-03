@@ -421,7 +421,7 @@
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
-    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
+    [error : ArgsError (ArgsUnknownOption "")]
     (begin
       (while (and (< i last) (not failed))
         (let
@@ -442,11 +442,11 @@
                 (set! i (+ i 1)))]
             [(stdlib.args.option-looking-token? current)
               (match (stdlib.args.find-spec-token specs current)
-                [(stdlib.args.ArgsNoOptionSpec)
+                [(ArgsNoOptionSpec)
                   (begin
-                    (set! error (stdlib.args.ArgsUnknownOption current))
+                    (set! error (ArgsUnknownOption current))
                     (set! failed true))]
-                [(stdlib.args.ArgsSomeOptionSpec spec)
+                [(ArgsSomeOptionSpec spec)
                   (if (stdlib.args.option-arity-value?
                     (stdlib.args.option-spec-arity spec))
                     (if has-next
@@ -461,7 +461,7 @@
                               true)))
                         (set! i (+ i 2)))
                       (begin
-                        (set! error (stdlib.args.ArgsMissingValue current))
+                        (set! error (ArgsMissingValue current))
                         (set! failed true)))
                     (begin
                       (set!
@@ -478,8 +478,8 @@
                 (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
-        (stdlib.args.ErrArgsParsed error)
-        (stdlib.args.OkArgsParsed (parse-finish-fields options positionals))))))
+        (ErrArgsParsed error)
+        (OkArgsParsed (parse-finish-fields options positionals))))))
 
 ;: Parse a borrowed argv Slice.
 (define (parse-slice
@@ -505,7 +505,7 @@
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
-    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
+    [error : ArgsError (ArgsUnknownOption "")]
     (begin
       (while (and (< i last) (not failed))
         (let
@@ -526,11 +526,11 @@
                 (set! i (+ i 1)))]
             [(stdlib.args.option-looking-token? current)
               (match (stdlib.args.find-spec-token specs current)
-                [(stdlib.args.ArgsNoOptionSpec)
+                [(ArgsNoOptionSpec)
                   (begin
-                    (set! error (stdlib.args.ArgsUnknownOption current))
+                    (set! error (ArgsUnknownOption current))
                     (set! failed true))]
-                [(stdlib.args.ArgsSomeOptionSpec spec)
+                [(ArgsSomeOptionSpec spec)
                   (if (stdlib.args.option-arity-value?
                     (stdlib.args.option-spec-arity spec))
                     (if has-next
@@ -545,7 +545,7 @@
                               true)))
                         (set! i (+ i 2)))
                       (begin
-                        (set! error (stdlib.args.ArgsMissingValue current))
+                        (set! error (ArgsMissingValue current))
                         (set! failed true)))
                     (begin
                       (set!
@@ -562,8 +562,8 @@
                 (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
-        (stdlib.args.ErrArgsParsed error)
-        (stdlib.args.OkArgsParsed (parse-finish-fields options positionals))))))
+        (ErrArgsParsed error)
+        (OkArgsParsed (parse-finish-fields options positionals))))))
 
 ;: Parse process argv from `start` through `(arg-count)`.
 (define (parse-argv [specs : ArgsOptionSpecList] [start : i64]) : ResultArgsParsed

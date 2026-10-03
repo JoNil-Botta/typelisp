@@ -10,10 +10,10 @@
 
 (define (token-score [token : Token]) : i64
   (match token
-    [(Token.Ident "if") 12]
-    [(Token.Ident "else") 20]
-    [(Token.Ident _) 5]
-    [(Token.End) 0]))
+    [(Ident "if") 12]
+    [(Ident "else") 20]
+    [(Ident _) 5]
+    [(End) 0]))
 
 (define (main) : i64
   (+
@@ -21,7 +21,5 @@
     (+
       (op-score "/")
       (+
-        (token-score (Token.Ident "if"))
-        (+
-          (token-score (Token.Ident "while"))
-          (+ (token-score (Token.End)) (op-score "*")))))))
+        (token-score (Ident "if"))
+        (+ (token-score (Ident "while")) (+ (token-score (End)) (op-score "*")))))))

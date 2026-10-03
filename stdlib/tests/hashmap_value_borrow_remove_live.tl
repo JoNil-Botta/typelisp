@@ -7,8 +7,8 @@
 (define (hashmap-borrowed-value-len
   [lookup : (map_string_string.BorrowedValueLookup map)]) : i64
   (match lookup
-    [(map_string_string.BorrowedValueFound value) (string-length value)]
-    [(map_string_string.BorrowedValueMissing) 0]))
+    [(BorrowedValueFound value) (string-length value)]
+    [(BorrowedValueMissing) 0]))
 
 ; Must fail: removing a slot would invalidate the returned value reference.
 (define (main) : i64

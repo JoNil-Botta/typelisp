@@ -24,23 +24,18 @@
   (compiler_load.compiler-load-parse-context-name-id text))
 
 (define (compiler-load-decl-run-def [name : String]) : ast.AstDecl
-  (ast.ast-decl-def-id
-    (compiler-load-decl-run-name-id name)
-    (ast.AstMaybeType.No)
-    0))
+  (ast.ast-decl-def-id (compiler-load-decl-run-name-id name) (No) 0))
 
 (define (compiler-load-decl-run-macro-import
   [path : String]
   [macro-name : String]) : ast.AstDecl
-  (ast.AstDecl.Import
+  (Import
     (ast.ast-decl-meta-runtime-shared-view)
-    (ast.AstImportSpec.Spec
-      (ast.AstImportKind.Macro
-        (compiler-load-decl-run-name-id macro-name)
-        (ast.AstMaybeModuleName.No))
+    (Spec
+      (Macro (compiler-load-decl-run-name-id macro-name) (No))
       path
-      (ast.AstMaybeModuleName.No)
-      (ast.AstMaybeImportAlias.No)
+      (No)
+      (No)
       (box (ast.ast-source-span 1 1 1 1)))))
 
 ;; Declarations in source order: two ordinary definitions, a module body holding
@@ -78,14 +73,12 @@
 
 (define (compiler-load-decl-run-decl-text [decl : ast.AstDecl]) : String
   (match decl
-    [(ast.AstDecl.Module name) (str_cat.str-cat "Module:" (ci.intern-str name))]
-    [(ast.AstDecl.ModuleBody name _)
-      (str_cat.str-cat "ModuleBody:" (ci.intern-str name))]
-    [(ast.AstDecl.Def _ name _ _) (str_cat.str-cat "Def:" (ci.intern-str name))]
-    [(ast.AstDecl.DefStruct _ name _ _ _)
+    [(Module name) (str_cat.str-cat "Module:" (ci.intern-str name))]
+    [(ModuleBody name _) (str_cat.str-cat "ModuleBody:" (ci.intern-str name))]
+    [(Def _ name _ _) (str_cat.str-cat "Def:" (ci.intern-str name))]
+    [(DefStruct _ name _ _ _)
       (str_cat.str-cat "DefStruct:" (ci.intern-str name))]
-    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec _ path _ _ _))
-      (str_cat.str-cat "Import:" path)]
+    [(Import _ (Spec _ path _ _ _)) (str_cat.str-cat "Import:" path)]
     [_ "Other"]))
 
 (define (compiler-load-decl-run-render-decls [decls : ast.AstDeclList]) : String
@@ -156,8 +149,8 @@
     (begin
       (while (not done)
         (match (sym_i64_env.sym-i64-view cursor)
-          [(sym_i64_env.SymI64ViewNil) (set! done true)]
-          [(sym_i64_env.SymI64ViewBind key value rest)
+          [(SymI64ViewNil) (set! done true)]
+          [(SymI64ViewBind key value rest)
             (begin
               (set!
                 out
@@ -194,11 +187,7 @@
       (svec.new)
       "src/tests"
       (cfg.compiler-cfg-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          decls
-          paths
-          modules
-          out-seen)
+      [(Ok decls paths modules out-seen)
         (str_cat.str-cat
           "decls["
           (compiler-load-decl-run-render-decls decls)
@@ -209,7 +198,7 @@
           "] seen["
           (compiler-load-decl-run-render-seen out-seen)
           "]")]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) "ERR"])))
+      [(Err _) "ERR"])))
 
 (define (compiler-load-decl-run-expected-path [owner : String]) : String
   (str_cat.str-cat
@@ -267,7 +256,7 @@
   [decls : (& decls ast.AstDeclList)]
   [index : i64]) : String
   (match (parser.compiler-parse-semantic-origin-run decls index)
-    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+    [(Some run)
       (let
         [origin : parser.CompilerParseSemanticOrigin
           (parser.compiler-parse-semantic-origin-run-get
@@ -279,7 +268,7 @@
           (ci.intern-str origin.written-name)
           "@"
           (string.int->string (ast.ast-source-span-start-line span))))]
-    [(parser.CompilerParseMaybeSemanticOriginRun.None) "none"]))
+    [(None) "none"]))
 
 (define (compiler-load-decl-run-origin-shape) : String
   (let
@@ -293,7 +282,7 @@
       (match (load_tests.compiler-load-file-with-paths
         "target/cl_decl_run_origin.tl"
         (sym_i64_env.sym-i64-empty))
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
+        [(Ok decls _ _ _)
           (let
             [count : i64 (ast.ast-decl-list-len (& decls))]
             [index : i64 0]
@@ -312,7 +301,7 @@
                       ";"))
                   (set! index (+ index 1))))
               (set! out text)))]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        [(Err _) unit])
       (reader.sp-node-pool-truncate! mark)
       (parser.compiler-parse-decl-origin-cache-reset!)
       out)))

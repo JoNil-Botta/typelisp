@@ -15,8 +15,8 @@
 
 (define (ok? [result : format.FormatResult]) : bool
   (match result
-    [(format.FormatOk) true]
-    [(format.FormatErr _) false]))
+    [(FormatOk) true]
+    [(FormatErr _) false]))
 
 (define (main) : i64
   (let

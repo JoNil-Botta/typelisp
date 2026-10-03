@@ -16,7 +16,7 @@
 (define greeting
   "hello")
 (define choice : option_i64.Option
-  (option_i64.Some 8))
+  (Some 8))
 (define pair
   (Pair 10 11))
 
@@ -25,7 +25,7 @@
 (define cells
   (__tl_make-array i64 3))
 (define nested : Nested
-  (Nested "ok" (option_i64.Some 3)))
+  (Nested "ok" (Some 3)))
 
 (define (make-pair [x : i64] [y : i64]) : Pair
   (Pair x y))
@@ -48,10 +48,10 @@
       (+ (+ (string.string-length greeting) (length cells)) (+ pair.x pair.y))
       (+
         (match choice
-          [(option_i64.Some n) n]
-          [(option_i64.None) 0])
+          [(Some n) n]
+          [(None) 0])
         (+
           (string.string-length nested.label)
           (match nested.choice
-            [(option_i64.Some n) n]
-            [(option_i64.None) 0]))))))
+            [(Some n) n]
+            [(None) 0]))))))

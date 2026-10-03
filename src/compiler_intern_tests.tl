@@ -1118,14 +1118,13 @@
         session-a
         parsed-a
         "different")
-        [(ci.InternSourceNameResolution.ParsedIdentity id)
-          (unless (= id equal-id) (set! ok false))]
+        [(ParsedIdentity id) (unless (= id equal-id) (set! ok false))]
         [_ (set! ok false)])
       (match (ci.intern-source-name-session-resolve
         session-a
         generated-a
         "equal")
-        [(ci.InternSourceNameResolution.GeneratedIdentity id lookup)
+        [(GeneratedIdentity id lookup)
           (begin
             (unless (= id generated-id) (set! ok false))
             (match lookup
@@ -1137,7 +1136,7 @@
         session-a
         generated-a
         "missing")
-        [(ci.InternSourceNameResolution.GeneratedIdentity id lookup)
+        [(GeneratedIdentity id lookup)
           (begin
             (unless (= id generated-id) (set! ok false))
             (match lookup
@@ -1148,13 +1147,13 @@
         session-a
         generated-a
         "after-boundary")
-        [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
+        [(GeneratedIdentity _ lookup)
           (match lookup
             [(InternLookupMissing) unit]
             [(InternLookupFound _) (set! ok false)])]
         [_ (set! ok false)])
       (match (ci.intern-source-name-session-resolve session-a generated-a "")
-        [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
+        [(GeneratedIdentity _ lookup)
           (match lookup
             [(InternLookupFound id) (unless (= id empty-id) (set! ok false))]
             [(InternLookupMissing) (set! ok false)])]
@@ -1163,7 +1162,7 @@
         session-a
         generated-a
         "pkg/module.name")
-        [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
+        [(GeneratedIdentity _ lookup)
           (match lookup
             [(InternLookupFound id)
               (unless (= id qualified-id) (set! ok false))]
@@ -1173,13 +1172,13 @@
         session-a
         generated-a
         "local#hygiene")
-        [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
+        [(GeneratedIdentity _ lookup)
           (match lookup
             [(InternLookupFound id) (unless (= id hygiene-id) (set! ok false))]
             [(InternLookupMissing) (set! ok false)])]
         [_ (set! ok false)])
       (match (ci.intern-source-name-session-resolve session-b parsed-a "equal")
-        [(ci.InternSourceNameResolution.WrongOwner) unit]
+        [(WrongOwner) unit]
         [_ (set! ok false)])
       (match (ci.intern-source-name-session-resolve
         session-a
@@ -1188,14 +1187,14 @@
           session-a.reset-generation
           -1)
         "equal")
-        [(ci.InternSourceNameResolution.InvalidIdentity) unit]
+        [(InvalidIdentity) unit]
         [_ (set! ok false)])
       (ci.intern-compat-state-reset-to! (&mut state-a) source-mark)
       (match (ci.intern-source-name-session-resolve
         session-a
         generated-a
         "equal")
-        [(ci.InternSourceNameResolution.StaleGeneration) unit]
+        [(StaleGeneration) unit]
         [_ (set! ok false)])
       (let
         [next-session : ci.InternSourceNameSession
@@ -1206,7 +1205,7 @@
           next-session
           next-generated
           "equal")
-          [(ci.InternSourceNameResolution.GeneratedIdentity _ lookup)
+          [(GeneratedIdentity _ lookup)
             (match lookup
               [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
               [(InternLookupMissing) (set! ok false)])]

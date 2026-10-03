@@ -108,12 +108,11 @@
             (ivec.contains? (& mapped) 18)
             "contains? finds scalar")
           (match (ivec.pop! v)
-            [(ivec.Pop.Ok value)
+            [(Ok value)
               (begin
                 (test.assert-i64-eq value 4 "pop returns last value")
                 (test.assert-i64-eq (ivec.len (& v)) 4 "pop shrinks in place"))]
-            [ivec.Pop.Empty
-              (test.assert-true false "pop should return a value")]))))))
+            [Empty (test.assert-true false "pop should return a value")]))))))
 
 (test
   vector-macro-string-alias
@@ -135,7 +134,7 @@
         (svec.contains? (& words) "bee")
         "aliased string contains")
       (match (svec.pop! words)
-        [(svec.Pop.Ok value)
+        [(Ok value)
           (begin
             (test.assert-string-eq
               (& value)
@@ -145,7 +144,7 @@
               (svec.len (& words))
               1
               "aliased string pop shrinks"))]
-        [svec.Pop.Empty
+        [Empty
           (test.assert-true false "aliased string pop should return a value")]))))
 
 (test

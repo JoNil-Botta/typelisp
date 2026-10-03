@@ -16,15 +16,15 @@
 
 (define (gap-score [value : GapTag]) : i64
   (match value
-    [(GapTag.T0) 1]
-    [(GapTag.T1) 2]
-    [(GapTag.T2) 3]
-    [(GapTag.T4) 5]
-    [(GapTag.T5) 6]
-    [(GapTag.T7) 8]
-    [(GapTag.T8) 9]
-    [(GapTag.T9) 10]
-    [(GapTag.T11) 12]
+    [(T0) 1]
+    [(T1) 2]
+    [(T2) 3]
+    [(T4) 5]
+    [(T5) 6]
+    [(T7) 8]
+    [(T8) 9]
+    [(T9) 10]
+    [(T11) 12]
     [_ 100]))
 
 (define (main) : i64
@@ -33,18 +33,18 @@
     [i : i64 0]
     [sum : i64 0]
     (begin
-      (set! (array-ref values 0) (GapTag.T0))
-      (set! (array-ref values 1) (GapTag.T1))
-      (set! (array-ref values 2) (GapTag.T2))
-      (set! (array-ref values 3) (GapTag.T3))
-      (set! (array-ref values 4) (GapTag.T4))
-      (set! (array-ref values 5) (GapTag.T5))
-      (set! (array-ref values 6) (GapTag.T6))
-      (set! (array-ref values 7) (GapTag.T7))
-      (set! (array-ref values 8) (GapTag.T8))
-      (set! (array-ref values 9) (GapTag.T9))
-      (set! (array-ref values 10) (GapTag.T10))
-      (set! (array-ref values 11) (GapTag.T11))
+      (set! (array-ref values 0) (T0))
+      (set! (array-ref values 1) (T1))
+      (set! (array-ref values 2) (T2))
+      (set! (array-ref values 3) (T3))
+      (set! (array-ref values 4) (T4))
+      (set! (array-ref values 5) (T5))
+      (set! (array-ref values 6) (T6))
+      (set! (array-ref values 7) (T7))
+      (set! (array-ref values 8) (T8))
+      (set! (array-ref values 9) (T9))
+      (set! (array-ref values 10) (T10))
+      (set! (array-ref values 11) (T11))
       (while (< i 12)
         (begin
           (set! sum (+ sum (gap-score (array-ref values i))))

@@ -23,8 +23,8 @@
               sframe.compiler-sframe-v3-dwarf-rsp
               false
               8
-              (sframe.CompilerSframeV3Rule.Fixed -8)
-              (sframe.CompilerSframeV3Rule.Unavailable)))
+              (Fixed -8)
+              (Unavailable)))
           (set!
             (array-ref functions index)
             (sframe.CompilerSframeV3Function
@@ -54,26 +54,26 @@
         134217728
         1000000)]
     (match (sframe.compiler-sframe-v3-plan (& image) (& limits))
-      [(sframe.ResultCompilerSframeV3Plan.Err _)
+      [(Err _)
         (begin
           (io.print-error "sframe-v3-bench: planning failed\n")
           1)]
-      [(sframe.ResultCompilerSframeV3Plan.Ok plan)
+      [(Ok plan)
         (match (sframe.compiler-sframe-v3-encode (& image) 524288 (& limits))
-          [(sframe.ResultCompilerSframeV3Bytes.Err _)
+          [(Err _)
             (begin
               (io.print-error "sframe-v3-bench: encoding failed\n")
               1)]
-          [(sframe.ResultCompilerSframeV3Bytes.Ok bytes)
+          [(Ok bytes)
             (match (sframe.compiler-sframe-v3-decode
               (& bytes)
               524288
               (& limits))
-              [(sframe.ResultCompilerSframeV3Image.Err _)
+              [(Err _)
                 (begin
                   (io.print-error "sframe-v3-bench: decoding failed\n")
                   1)]
-              [(sframe.ResultCompilerSframeV3Image.Ok decoded)
+              [(Ok decoded)
                 (let
                   [decoded-function-count : i64
                     (array-length decoded.functions)]

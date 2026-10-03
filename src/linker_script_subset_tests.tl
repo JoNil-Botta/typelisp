@@ -57,8 +57,8 @@
       "?"
       "")
     (match input.kind
-      [(script.LinkerScriptInputKind.Library) "-l"]
-      [(script.LinkerScriptInputKind.Path) ""])
+      [(Library) "-l"]
+      [(Path) ""])
     (if input.quoted
       "\""
       "")
@@ -109,12 +109,9 @@
                 (at item.line item.column)
                 " "
                 (match item.command
-                  [(script.LinkerScriptCommand.OutputFormat name)
+                  [(OutputFormat name)
                     (cat.str-cat "OUTPUT_FORMAT(" (string.copy name) ")")]
-                  [(script.LinkerScriptCommand.OutputFormatEndian
-                      default
-                      big
-                      little)
+                  [(OutputFormatEndian default big little)
                     (cat.str-cat
                       "OUTPUT_FORMAT("
                       (string.copy default)
@@ -123,44 +120,44 @@
                       ", "
                       (string.copy little)
                       ")")]
-                  [(script.LinkerScriptCommand.Input first count)
+                  [(Input first count)
                     (cat.str-cat "INPUT" (render-files read first count))]
-                  [(script.LinkerScriptCommand.Group first count)
+                  [(Group first count)
                     (cat.str-cat "GROUP" (render-files read first count))]
-                  [(script.LinkerScriptCommand.SearchDir name)
+                  [(SearchDir name)
                     (cat.str-cat "SEARCH_DIR(" (string.copy name) ")")])))
             (set! index (+ index 1)))))
       out)))
 
 (define (kind-name [kind : (& k script.LinkerScriptErrorKind)]) : String
   (match kind
-    [(script.LinkerScriptErrorKind.InvalidLimits) "InvalidLimits"]
-    [(script.LinkerScriptErrorKind.TooLarge) "TooLarge"]
-    [(script.LinkerScriptErrorKind.TooManyTokens) "TooManyTokens"]
-    [(script.LinkerScriptErrorKind.TokenTooLong) "TokenTooLong"]
-    [(script.LinkerScriptErrorKind.TooDeep) "TooDeep"]
-    [(script.LinkerScriptErrorKind.NulByte) "NulByte"]
-    [(script.LinkerScriptErrorKind.NonAscii) "NonAscii"]
-    [(script.LinkerScriptErrorKind.ControlByte) "ControlByte"]
-    [(script.LinkerScriptErrorKind.UnterminatedComment) "UnterminatedComment"]
-    [(script.LinkerScriptErrorKind.UnterminatedQuote) "UnterminatedQuote"]
-    [(script.LinkerScriptErrorKind.UnbalancedParen) "UnbalancedParen"]
-    [(script.LinkerScriptErrorKind.UnsupportedCommand) "UnsupportedCommand"]
-    [(script.LinkerScriptErrorKind.Assignment) "Assignment"]
-    [(script.LinkerScriptErrorKind.Expression) "Expression"]
-    [(script.LinkerScriptErrorKind.UnknownCommand) "UnknownCommand"]
-    [(script.LinkerScriptErrorKind.UnexpectedToken) "UnexpectedToken"]
-    [(script.LinkerScriptErrorKind.MissingParen) "MissingParen"]
-    [(script.LinkerScriptErrorKind.EmptyArgument) "EmptyArgument"]
-    [(script.LinkerScriptErrorKind.ArgumentCount) "ArgumentCount"]
-    [(script.LinkerScriptErrorKind.EmptyLibrary) "EmptyLibrary"]
-    [(script.LinkerScriptErrorKind.Option) "Option"]))
+    [(InvalidLimits) "InvalidLimits"]
+    [(TooLarge) "TooLarge"]
+    [(TooManyTokens) "TooManyTokens"]
+    [(TokenTooLong) "TokenTooLong"]
+    [(TooDeep) "TooDeep"]
+    [(NulByte) "NulByte"]
+    [(NonAscii) "NonAscii"]
+    [(ControlByte) "ControlByte"]
+    [(UnterminatedComment) "UnterminatedComment"]
+    [(UnterminatedQuote) "UnterminatedQuote"]
+    [(UnbalancedParen) "UnbalancedParen"]
+    [(UnsupportedCommand) "UnsupportedCommand"]
+    [(Assignment) "Assignment"]
+    [(Expression) "Expression"]
+    [(UnknownCommand) "UnknownCommand"]
+    [(UnexpectedToken) "UnexpectedToken"]
+    [(MissingParen) "MissingParen"]
+    [(EmptyArgument) "EmptyArgument"]
+    [(ArgumentCount) "ArgumentCount"]
+    [(EmptyLibrary) "EmptyLibrary"]
+    [(Option) "Option"]))
 
 ;; A result as one line: the script rendering, or `error KIND L:C | message`.
 (define (render [result : script.ResultLinkerScript]) : String
   (match result
-    [(script.ResultLinkerScript.Ok read) (render-script (& read))]
-    [(script.ResultLinkerScript.Err error)
+    [(Ok read) (render-script (& read))]
+    [(Err error)
       (cat.str-cat
         "error "
         (kind-name (& error.kind))

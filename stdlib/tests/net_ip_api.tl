@@ -23,46 +23,46 @@
 
 (define (error-kind-code [kind : net_ip.IpAddrErrorKind]) : i64
   (match kind
-    [(net_ip.IpEmpty) 0]
-    [(net_ip.IpInputTooLong) 1]
-    [(net_ip.IpInvalidCharacter) 2]
-    [(net_ip.IpInvalidSeparator) 3]
-    [(net_ip.IpTooFewComponents) 4]
-    [(net_ip.IpTooManyComponents) 5]
-    [(net_ip.IpLeadingZero) 6]
-    [(net_ip.IpComponentOverflow) 7]
-    [(net_ip.IpMultipleCompression) 8]
-    [(net_ip.IpCompressionWithoutZero) 9]
-    [(net_ip.IpEmbeddedIpv4NotFinal) 10]
-    [(net_ip.IpInvalidByteLength) 11]))
+    [(IpEmpty) 0]
+    [(IpInputTooLong) 1]
+    [(IpInvalidCharacter) 2]
+    [(IpInvalidSeparator) 3]
+    [(IpTooFewComponents) 4]
+    [(IpTooManyComponents) 5]
+    [(IpLeadingZero) 6]
+    [(IpComponentOverflow) 7]
+    [(IpMultipleCompression) 8]
+    [(IpCompressionWithoutZero) 9]
+    [(IpEmbeddedIpv4NotFinal) 10]
+    [(IpInvalidByteLength) 11]))
 
 (define (assert-ipv4-text [source : String] [canonical : String]) : unit
   (match (net_ip.parse-ipv4 (& source))
-    [(net_ip.Ipv4Err _) (fail "expected valid IPv4 text")]
-    [(net_ip.Ipv4Ok address)
+    [(Ipv4Err _) (fail "expected valid IPv4 text")]
+    [(Ipv4Ok address)
       (let
         [actual : String (net_ip.ipv4-to-string (& address))]
         (test.assert-string-eq (& actual) (& canonical) "IPv4 canonical text"))]))
 
 (define (assert-ipv6-text [source : String] [canonical : String]) : unit
   (match (net_ip.parse-ipv6 (& source))
-    [(net_ip.Ipv6Err _) (fail "expected valid IPv6 text")]
-    [(net_ip.Ipv6Ok address)
+    [(Ipv6Err _) (fail "expected valid IPv6 text")]
+    [(Ipv6Ok address)
       (let
         [actual : String (net_ip.ipv6-to-string (& address))]
         (begin
           (test.assert-string-eq (& actual) (& canonical) "IPv6 canonical text")
           (match (net_ip.parse-ipv6 (& actual))
-            [(net_ip.Ipv6Err _) (fail "canonical IPv6 output did not parse")]
-            [(net_ip.Ipv6Ok reparsed)
+            [(Ipv6Err _) (fail "canonical IPv6 output did not parse")]
+            [(Ipv6Ok reparsed)
               (test.assert-true
                 (net_ip.ipv6-eq? (& address) (& reparsed))
                 "IPv6 format/parse round trip")])))]))
 
 (define (assert-ipv4-error [text : String] [kind-code : i64] [offset : i64]) : unit
   (match (net_ip.parse-ipv4 (& text))
-    [(net_ip.Ipv4Ok _) (fail text)]
-    [(net_ip.Ipv4Err error)
+    [(Ipv4Ok _) (fail text)]
+    [(Ipv4Err error)
       (begin
         (test.assert-i64-eq
           (error-kind-code error.kind)
@@ -72,8 +72,8 @@
 
 (define (assert-ipv6-error [text : String] [kind-code : i64] [offset : i64]) : unit
   (match (net_ip.parse-ipv6 (& text))
-    [(net_ip.Ipv6Ok _) (fail text)]
-    [(net_ip.Ipv6Err error)
+    [(Ipv6Ok _) (fail text)]
+    [(Ipv6Err error)
       (begin
         (test.assert-i64-eq
           (error-kind-code error.kind)
@@ -88,9 +88,9 @@
     [v4-next : net_ip.Ipv4Addr (net_ip.ipv4 192 0 2 129)]
     [mapped : net_ip.Ipv6Addr (net_ip.ipv6 0 0 0 0 0 0xffff 0xc000 0x0280)]
     [mapped-copy : net_ip.Ipv6Addr (net_ip.ipv6 0 0 0 0 0 0xffff 0xc000 0x0280)]
-    [as-v4 : net_ip.IpAddr (net_ip.V4 v4)]
-    [as-v6 : net_ip.IpAddr (net_ip.V6 mapped)]
-    [as-v6-copy : net_ip.IpAddr (net_ip.V6 mapped-copy)]
+    [as-v4 : net_ip.IpAddr (V4 v4)]
+    [as-v6 : net_ip.IpAddr (V6 mapped)]
+    [as-v6-copy : net_ip.IpAddr (V6 mapped-copy)]
     (begin
       (test.assert-i64-eq
         (cast (net_ip.ipv4-octet (& v4) 3) : i64)
@@ -150,8 +150,8 @@
     [fifteen : String "abcdefghijklmno"]
     (begin
       (match (net_ip.ipv4-from-bytes (byte_buf.str-as-bytes (& four)))
-        [(net_ip.Ipv4Err _) (fail "four-byte IPv4 rejected")]
-        [(net_ip.Ipv4Ok address)
+        [(Ipv4Err _) (fail "four-byte IPv4 rejected")]
+        [(Ipv4Ok address)
           (begin
             (test.assert-i64-eq
               (cast (net_ip.ipv4-octet (& address) 0) : i64)
@@ -162,15 +162,15 @@
               68
               "IPv4 byte order last"))])
       (match (net_ip.ipv6-from-bytes (byte_buf.str-as-bytes (& sixteen)))
-        [(net_ip.Ipv6Err _) (fail "sixteen-byte IPv6 rejected")]
-        [(net_ip.Ipv6Ok address)
+        [(Ipv6Err _) (fail "sixteen-byte IPv6 rejected")]
+        [(Ipv6Ok address)
           (test.assert-i64-eq
             (cast (net_ip.ipv6-segment (& address) 0) : i64)
             0x6162
             "IPv6 byte order")])
       (match (net_ip.ipv4-from-bytes (byte_buf.str-as-bytes (& three)))
-        [(net_ip.Ipv4Ok _) (fail "short IPv4 bytes accepted")]
-        [(net_ip.Ipv4Err error)
+        [(Ipv4Ok _) (fail "short IPv4 bytes accepted")]
+        [(Ipv4Err error)
           (begin
             (test.assert-i64-eq
               (error-kind-code error.kind)
@@ -178,21 +178,21 @@
               "IPv4 byte length kind")
             (test.assert-i64-eq error.offset 3 "IPv4 byte length value"))])
       (match (net_ip.ipv6-from-bytes (byte_buf.str-as-bytes (& fifteen)))
-        [(net_ip.Ipv6Ok _) (fail "short IPv6 bytes accepted")]
-        [(net_ip.Ipv6Err error)
+        [(Ipv6Ok _) (fail "short IPv6 bytes accepted")]
+        [(Ipv6Err error)
           (test.assert-i64-eq error.offset 15 "IPv6 byte length value")])
       (match (net_ip.ip-from-bytes (byte_buf.str-as-bytes (& four)))
-        [(net_ip.IpErr _) (fail "family-selected IPv4 bytes rejected")]
-        [(net_ip.IpOk address)
+        [(IpErr _) (fail "family-selected IPv4 bytes rejected")]
+        [(IpOk address)
           (match address
-            [(net_ip.V4 _) unit]
-            [(net_ip.V6 _) (fail "four bytes selected IPv6")])])
+            [(V4 _) unit]
+            [(V6 _) (fail "four bytes selected IPv6")])])
       (match (net_ip.ip-from-bytes (byte_buf.str-as-bytes (& sixteen)))
-        [(net_ip.IpErr _) (fail "family-selected IPv6 bytes rejected")]
-        [(net_ip.IpOk address)
+        [(IpErr _) (fail "family-selected IPv6 bytes rejected")]
+        [(IpOk address)
           (match address
-            [(net_ip.V4 _) (fail "sixteen bytes selected IPv4")]
-            [(net_ip.V6 _) unit])]))))
+            [(V4 _) (fail "sixteen bytes selected IPv4")]
+            [(V6 _) unit])]))))
 
 (define (assert-positive-text) : unit
   (begin
@@ -218,17 +218,17 @@
       [v6-text : String "2001:db8::9"]
       (begin
         (match (net_ip.parse-ip (& v4-text))
-          [(net_ip.IpErr _) (fail "generic IPv4 parse failed")]
-          [(net_ip.IpOk address)
+          [(IpErr _) (fail "generic IPv4 parse failed")]
+          [(IpOk address)
             (match address
-              [(net_ip.V4 _) unit]
-              [(net_ip.V6 _) (fail "generic IPv4 family")])])
+              [(V4 _) unit]
+              [(V6 _) (fail "generic IPv4 family")])])
         (match (net_ip.parse-ip (& v6-text))
-          [(net_ip.IpErr _) (fail "generic IPv6 parse failed")]
-          [(net_ip.IpOk address)
+          [(IpErr _) (fail "generic IPv6 parse failed")]
+          [(IpOk address)
             (match address
-              [(net_ip.V4 _) (fail "generic IPv6 family")]
-              [(net_ip.V6 _) unit])])))))
+              [(V4 _) (fail "generic IPv6 family")]
+              [(V6 _) unit])])))))
 
 (define (assert-negative-text) : unit
   (begin
@@ -272,8 +272,8 @@
         [text : String (net_ip.ipv4-to-string (& address))]
         (begin
           (match (net_ip.parse-ipv4 (& text))
-            [(net_ip.Ipv4Err _) (fail "exhaustive IPv4 suffix parse")]
-            [(net_ip.Ipv4Ok reparsed)
+            [(Ipv4Err _) (fail "exhaustive IPv4 suffix parse")]
+            [(Ipv4Ok reparsed)
               (test.assert-true
                 (net_ip.ipv4-eq? (& address) (& reparsed))
                 "exhaustive IPv4 suffix round trip")])
@@ -297,8 +297,8 @@
         [text : String (net_ip.ipv6-to-string (& address))]
         (begin
           (match (net_ip.parse-ipv6 (& text))
-            [(net_ip.Ipv6Err _) (fail "generated IPv6 parse")]
-            [(net_ip.Ipv6Ok reparsed)
+            [(Ipv6Err _) (fail "generated IPv6 parse")]
+            [(Ipv6Ok reparsed)
               (test.assert-true
                 (net_ip.ipv6-eq? (& address) (& reparsed))
                 "generated IPv6 round trip")])
@@ -332,8 +332,8 @@
         "IPv6 formatter allocates only exact returned String")
       (test.assert-i64-eq parse-bytes 0 "IPv6 parser allocation free")
       (match parsed
-        [(net_ip.Ipv6Err _) (fail "allocation probe IPv6 rejected")]
-        [(net_ip.Ipv6Ok _) unit])
+        [(Ipv6Err _) (fail "allocation probe IPv6 rejected")]
+        [(Ipv6Ok _) unit])
       (test.assert-i64-eq
         (string-length (& v4-text))
         15

@@ -13,23 +13,21 @@
     (begin
       (compiler_lower.lower-active-global-name-cache-set!
         lower-state
-        (compiler_lower.lower-name-cache-from-env
-          lower-state
-          compiler_lower.LowerNameEnv.Nil))
+        (compiler_lower.lower-name-cache-from-env lower-state Nil))
       (match (compiler_lower.lower-compiler-source-with-path-mode-and-state
         lower-state
         "<source>"
         "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))"
-        (compiler_lower.CompilerLowerMode.Scalar))
-        [(compiler_lower.ResultCompilerLower.Ok _ _)
+        (Scalar))
+        [(Ok _ _)
           (begin
             (compiler_lower.lower-active-global-name-cache-set!
               lower-state
               prev-name-cache)
             42)]
-        [(compiler_lower.ResultCompilerLower.Err diagnostic)
+        [(Err diagnostic)
           (io.panic
             (diag.compiler-diagnostic-message (__tl-box-place diagnostic)))]))))
 

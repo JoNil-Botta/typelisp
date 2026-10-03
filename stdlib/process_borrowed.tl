@@ -654,8 +654,8 @@
         (process.stdin-string "process: executable path contains NUL")]
       [else
         (match (args-validation-error argv-view)
-          [(process.ProcessSomeString message) (process.stdin-string message)]
-          [(process.ProcessNoString)
+          [(ProcessSomeString message) (process.stdin-string message)]
+          [(ProcessNoString)
             (match (maybe-normalize (command-cwd command))
               [(ProcessBorrowedSomeString cwd)
                 (cond
@@ -687,8 +687,8 @@
     [info : process.ProcessMaybeStringInfo
       (process.maybe-string-info (command-validation-error command))]
     (if (process.maybe-string-info-present? info)
-      (process.ErrProcessOutput
-        (process.ProcessInvalidCommand (process.maybe-string-info-value info)))
+      (ErrProcessOutput
+        (ProcessInvalidCommand (process.maybe-string-info-value info)))
       (process.output (command-owned command)))))
 
 ;: Run a borrowed command using the same captured-output path as
@@ -704,8 +704,8 @@
     [info : process.ProcessMaybeStringInfo
       (process.maybe-string-info (command-validation-error command))]
     (if (process.maybe-string-info-present? info)
-      (process.ErrProcessChild
-        (process.ProcessInvalidCommand (process.maybe-string-info-value info)))
+      (ErrProcessChild
+        (ProcessInvalidCommand (process.maybe-string-info-value info)))
       (process.start (command-owned command)))))
 
 ;: Inline test helper that forces a borrowed process test failure.

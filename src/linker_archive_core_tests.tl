@@ -42,7 +42,7 @@
     [data : String "!<arch>\n"]
     [policy : archive.ArchiveProfile (profile)]
     (match (archive.scan (& data) (identity) (& policy) (limits))
-      [(archive.Scanned directory)
+      [(Scanned directory)
         (test.assert-i64-eq (array-length directory.members) 0 "empty archive")]
       [_ (test.assert-true false "empty archive must scan")])))
 
@@ -53,22 +53,22 @@
     (begin
       (test.assert-i64-eq (string.string-length (& data)) 72 "fixture size")
       (match (archive.scan (& data) (identity) (& policy) (limits))
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (begin
             (test.assert-i64-eq (array-length directory.members) 1 "one member")
             (match (archive.new-session (& directory))
-              [(archive.SessionReady session)
+              [(SessionReady session)
                 (match (archive.map-index! (& directory) (&mut session) 8 true)
-                  [(archive.IndexMapped id)
+                  [(IndexMapped id)
                     (match (archive.open! (& directory) (&mut session) id)
-                      [(archive.Opened opened payload)
+                      [(Opened opened payload)
                         (begin
                           (test.assert-i64-eq
                             opened.header-offset
                             8
                             "header provenance")
                           (match (archive.open! (& directory) (&mut session) id)
-                            [(archive.AlreadyOpened again)
+                            [(AlreadyOpened again)
                               (test.assert-i64-eq
                                 again.ordinal
                                 0
@@ -84,29 +84,29 @@
 
 (define (kind-code [kind : archive.ArchiveErrorKind]) : i64
   (match kind
-    [(archive.InvalidLimits) 1]
-    [(archive.InvalidProfile) 2]
-    [(archive.InputLimit) 3]
-    [(archive.MemberLimit) 4]
-    [(archive.RetainedLimit) 5]
-    [(archive.SpecialLimit) 6]
-    [(archive.IndexLimit) 7]
-    [(archive.WorkLimit) 8]
-    [(archive.DiagnosticLimit) 9]
-    [(archive.BadSignature) 10]
-    [(archive.TruncatedHeader) 11]
-    [(archive.BadTerminator) 12]
-    [(archive.BadNumeric) 13]
-    [(archive.NumericOverflow) 14]
-    [(archive.BadName) 15]
-    [(archive.BadPadding) 16]
-    [(archive.PayloadRange) 17]
-    [(archive.WrongInput) 18]
-    [(archive.StaleIdentity) 19]
-    [(archive.InvalidMember) 20]
-    [(archive.InvalidIndexTarget) 21]
-    [(archive.SpecialTarget) 22]
-    [(archive.InvalidEncoder) 23]))
+    [(InvalidLimits) 1]
+    [(InvalidProfile) 2]
+    [(InputLimit) 3]
+    [(MemberLimit) 4]
+    [(RetainedLimit) 5]
+    [(SpecialLimit) 6]
+    [(IndexLimit) 7]
+    [(WorkLimit) 8]
+    [(DiagnosticLimit) 9]
+    [(BadSignature) 10]
+    [(TruncatedHeader) 11]
+    [(BadTerminator) 12]
+    [(BadNumeric) 13]
+    [(NumericOverflow) 14]
+    [(BadName) 15]
+    [(BadPadding) 16]
+    [(PayloadRange) 17]
+    [(WrongInput) 18]
+    [(StaleIdentity) 19]
+    [(InvalidMember) 20]
+    [(InvalidIndexTarget) 21]
+    [(SpecialTarget) 22]
+    [(InvalidEncoder) 23]))
 
 (define (assert-error
   [error : archive.ArchiveError]
@@ -132,7 +132,7 @@
   [ordinal : i64]
   [offset : i64]) : unit
   (match (archive.scan data (identity) policy caps)
-    [(archive.ScanFailed error) (assert-error error kind ordinal offset)]
+    [(ScanFailed error) (assert-error error kind ordinal offset)]
     [_ (test.assert-true false "invalid archive accepted")]))
 
 (define (patch [data : (& d str)] [offset : i64] [byte : i64]) : String
@@ -157,7 +157,7 @@
               (identity)
               (& policy)
               (limits))
-              [(archive.Scanned _) unit]
+              [(Scanned _) unit]
               [_ (test.assert-true false "signature-only prefix")])
             (assert-scan-error
               (string.substring-view (& data) 0 length)
@@ -242,7 +242,7 @@
         (identity)
         (& policy)
         (limits))
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (test.assert-i64-eq
             (array-length directory.members)
             1
@@ -293,7 +293,7 @@
             0
             (string.string-length (& item.text))
             (& rule))
-            [(archive.Number value blank)
+            [(Number value blank)
               (begin
                 (test.assert-i64-eq item.kind 0 "numeric success")
                 (test.assert-i64-eq value item.value "numeric maximum/value")
@@ -301,7 +301,7 @@
                   blank
                   (string.eq (& item.text) "    ")
                   "blank metadata"))]
-            [(archive.NumberFailed kind offset)
+            [(NumberFailed kind offset)
               (begin
                 (test.assert-i64-eq (kind-code kind) item.kind "numeric error")
                 (test.assert-i64-eq offset item.offset "numeric error byte"))])
@@ -345,11 +345,11 @@
       (set! caps.max-special-members 1)
       (set! caps.max-work 199)
       (match (archive.scan (& data) (identity) (& policy) caps)
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (begin
             (test.assert-i64-eq directory.work-left 0 "exact scan work cap")
             (match (archive.new-session (& directory))
-              [(archive.SessionFailed error) (assert-error error 8 -1 0)]
+              [(SessionFailed error) (assert-error error 8 -1 0)]
               [_ (test.assert-true false "session initialization needs budget")]))]
         [_ (test.assert-true false "exact scan limits")])
       (set! (array-ref policy.special-names 0) "short")
@@ -374,7 +374,7 @@
           "xy")
         (output.ArchiveEncodeMember "/               " (array -1 -1 -1 -1) ""))]
     (match (output.encode (& plans) (identity) (& policy) (limits))
-      [(output.Output bytes) bytes]
+      [(Output bytes) bytes]
       [_
         (begin
           (test.assert-true false "canonical encode")
@@ -394,7 +394,7 @@
   [ordinal : i64]
   [offset : i64]) : unit
   (match result
-    [(output.OutputFailed error) (assert-error error kind ordinal offset)]
+    [(OutputFailed error) (assert-error error kind ordinal offset)]
     [_ (test.assert-true false "output should fail")]))
 
 (define (assert-index-error
@@ -403,7 +403,7 @@
   [ordinal : i64]
   [offset : i64]) : unit
   (match result
-    [(archive.IndexFailed error) (assert-error error kind ordinal offset)]
+    [(IndexFailed error) (assert-error error kind ordinal offset)]
     [_ (test.assert-true false "index should fail")]))
 
 (define (assert-claim-error
@@ -412,7 +412,7 @@
   [ordinal : i64]
   [offset : i64]) : unit
   (match result
-    [(archive.ClaimFailed error) (assert-error error kind ordinal offset)]
+    [(ClaimFailed error) (assert-error error kind ordinal offset)]
     [_ (test.assert-true false "claim should fail")]))
 
 (define (assert-members) : unit
@@ -432,14 +432,14 @@
         (string.eq (& data) (multi-member))
         "deterministic encoder")
       (match (archive.scan (& data) (identity) (& policy) (limits))
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (begin
             (test.assert-i64-eq
               (array-length directory.members)
               3
               "three physical members")
             (match (archive.new-session (& directory))
-              [(archive.SessionReady session)
+              [(SessionReady session)
                 (let
                   [one : (& directory archive.ArchiveMember)
                     (& (array-ref directory.members 0))]
@@ -473,20 +473,20 @@
                       (&mut session)
                       134
                       false)
-                      [(archive.IndexMapped id)
+                      [(IndexMapped id)
                         (test.assert-i64-eq
                           id.ordinal
                           2
                           "special hook identity")]
                       [_ (test.assert-true false "special hook")])
                     (match (archive.open! (& directory) (&mut session) first)
-                      [(archive.Opened _ payload)
+                      [(Opened _ payload)
                         (begin
                           (match (archive.open!
                             (& directory)
                             (&mut session)
                             second)
-                            [(archive.Opened id second-payload)
+                            [(Opened id second-payload)
                               (begin
                                 (test.assert-i64-eq id.ordinal 1 "second claim")
                                 (test.assert-true
@@ -508,21 +508,21 @@
                               "payload borrows exact source span")))]
                       [_ (test.assert-true false "first claim")])
                     (match (archive.open! (& directory) (&mut session) third)
-                      [(archive.Opened _ payload)
+                      [(Opened _ payload)
                         (test.assert-i64-eq
                           (string.string-length payload)
                           0
                           "empty payload")]
                       [_ (test.assert-true false "special payload")])
                     (match (archive.open! (& directory) (&mut session) first)
-                      [(archive.AlreadyOpened id)
+                      [(AlreadyOpened id)
                         (test.assert-i64-eq
                           id.header-offset
                           8
                           "repeat stable ID")]
                       [_ (test.assert-true false "first stays claimed")])
                     (match (output.dump (& directory) (&mut session))
-                      [(output.Output dump)
+                      [(Output dump)
                         (begin
                           (test.assert-i64-eq
                             (string.string-length (& dump))
@@ -533,7 +533,7 @@
                             "archive 0000000000000029:0000000000000049\n0000000000000000 0000000000000008 0000000000000044 0000000000000003 6475702f202020202020202020202020 O\n"
                             "stable dump golden")
                           (match (output.dump (& directory) (&mut session))
-                            [(output.Output again)
+                            [(Output again)
                               (test.assert-true
                                 (string.eq (& dump) (& again))
                                 "repeat dump")]
@@ -547,9 +547,9 @@
     [data : String (multi-member)]
     [policy : archive.ArchiveProfile (special-profile)]
     (match (archive.scan (& data) (identity) (& policy) (limits))
-      [(archive.Scanned directory)
+      [(Scanned directory)
         (match (archive.new-session (& directory))
-          [(archive.SessionReady session)
+          [(SessionReady session)
             (let
               [offsets : (Array i64 9)
                 (array -1 0 7 9 68 71 73 194 9223372036854775807)]
@@ -605,7 +605,7 @@
                   8)
                 (set! bad.archive.content (cast 73 : u64))
                 (match (archive.open! (& directory) (&mut session) bad)
-                  [(archive.Opened _ _) unit]
+                  [(Opened _ _) unit]
                   [_ (test.assert-true false "invalid IDs never claim")])
                 (set! session.limits.max-index-entries session.index-entries)
                 (assert-index-error
@@ -657,7 +657,7 @@
                   [foreign : archive.ArchiveIdentity
                     (archive.ArchiveIdentity (cast 42 : u64) (cast 73 : u64))]
                   (match (archive.scan (& data) foreign (& policy) (limits))
-                    [(archive.Scanned other)
+                    [(Scanned other)
                       (assert-claim-error
                         (archive.open! (& other) (&mut session) bad)
                         18
@@ -668,7 +668,7 @@
                   [stale : archive.ArchiveIdentity
                     (archive.ArchiveIdentity (cast 41 : u64) (cast 74 : u64))]
                   (match (archive.scan (& data) stale (& policy) (limits))
-                    [(archive.Scanned other)
+                    [(Scanned other)
                       (assert-index-error
                         (archive.map-index! (& other) (&mut session) 8 true)
                         19
@@ -736,7 +736,7 @@
         8)
       (set! caps.max-work 349)
       (match (output.encode (& plans) (identity) (& policy) caps)
-        [(output.Output data)
+        [(Output data)
           (test.assert-true
             (string.eq (& data) (one-member))
             "exact encoder work")]
@@ -785,7 +785,7 @@
         0
         8)
       (match (output.encode (slice-view plans 0 0) (identity) (& policy) caps)
-        [(output.Output data)
+        [(Output data)
           (test.assert-true (string.eq (& data) "!<arch>\n") "empty encode")]
         [_ (test.assert-true false "empty encoder")]))))
 
@@ -800,7 +800,7 @@
       (set! binary (patch (& binary) 68 255))
       (set! policy.ascii-names false)
       (match (archive.scan (& binary) (identity) (& policy) (limits))
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (let
             [member : (& directory archive.ArchiveMember)
               (& (array-ref directory.members 0))]
@@ -809,12 +809,12 @@
                 (= (array-ref member.raw-name 0) (cast 0 : u8))
                 "raw name preserves NUL")
               (match (archive.new-session (& directory))
-                [(archive.SessionReady session)
+                [(SessionReady session)
                   (match (archive.open!
                     (& directory)
                     (&mut session)
                     (clone member.id))
-                    [(archive.Opened _ payload)
+                    [(Opened _ payload)
                       (test.assert-i64-eq
                         (cast (string.string-ref payload 0) : i64)
                         255
@@ -827,7 +827,7 @@
         9223372036854775807
         9223372036854775807
         (& rule))
-        [(archive.NumberFailed kind offset)
+        [(NumberFailed kind offset)
           (begin
             (test.assert-i64-eq (kind-code kind) 2 "overflowing field range")
             (test.assert-i64-eq
@@ -836,7 +836,7 @@
               "overflow provenance"))]
         [_ (test.assert-true false "overflowing field range accepted")])
       (match (archive.read-number "9" -1 1 (& rule))
-        [(archive.NumberFailed _ _) unit]
+        [(NumberFailed _ _) unit]
         [_ (test.assert-true false "negative field range")]))))
 
 ;; A fixed small mutation corpus exercises every byte without generating large
@@ -857,7 +857,7 @@
               [changed : String (patch (& data) at (array-ref values index))]
               (begin
                 (match (archive.scan (& changed) (identity) (& policy) (limits))
-                  [(archive.ScanFailed first)
+                  [(ScanFailed first)
                     (assert-scan-error
                       (& changed)
                       (& policy)
@@ -865,14 +865,14 @@
                       (kind-code first.kind)
                       first.ordinal
                       first.offset)]
-                  [(archive.Scanned first)
+                  [(Scanned first)
                     (begin
                       (match (archive.scan
                         (& changed)
                         (identity)
                         (& policy)
                         (limits))
-                        [(archive.Scanned second)
+                        [(Scanned second)
                           (test.assert-i64-eq
                             (array-length second.members)
                             (array-length first.members)
@@ -904,7 +904,7 @@
     [before : i64 (runtime-profile.alloc-total)]
     (begin
       (match (archive.scan data (identity) (& policy) (limits))
-        [(archive.Scanned directory)
+        [(Scanned directory)
           (test.assert-i64-eq
             (array-length directory.members)
             1
@@ -932,7 +932,7 @@
         [small : String (one-member)]
         [small-allocation : i64 (scan-allocation (& small))]
         (match (output.encode (& plans) (identity) (& policy) (limits))
-          [(output.Output large)
+          [(Output large)
             (let
               [large-allocation : i64 (scan-allocation (& large))]
               (begin

@@ -35,15 +35,15 @@
 
 (define (sync-integration-send-ok? [result : channel_i64.SendResult]) : bool
   (match result
-    [(channel_i64.SendOk) true]
-    [(channel_i64.SendErr _) false]))
+    [(SendOk) true]
+    [(SendErr _) false]))
 
 (define (sync-integration-recv-value-or
   [result : channel_i64.RecvResult]
   [fallback : i64]) : i64
   (match result
-    [(channel_i64.RecvOk value) value]
-    [(channel_i64.RecvErr _) fallback]))
+    [(RecvOk value) value]
+    [(RecvErr _) fallback]))
 
 (define (sync-integration-sum [base : i64] [count : i64]) : i64
   (let
@@ -172,5 +172,5 @@
 
 (define (main) : i64
   (match (channel_i64.create 8)
-    [(channel_i64.CreateErr _) 1]
-    [(channel_i64.CreateOk channel) (sync-integration-run channel)]))
+    [(CreateErr _) 1]
+    [(CreateOk channel) (sync-integration-run channel)]))

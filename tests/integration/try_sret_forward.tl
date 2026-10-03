@@ -21,23 +21,23 @@
 
 (define (check [x : i64]) : Check
   (if (> x 0)
-    Check.Ok
-    (Check.Err (- 0 x))))
+    Ok
+    (Err (- 0 x))))
 
 (define (checked [x : i64]) : SpanResult
   (if (< x -999999)
     (checked (+ x 1))
     (let
       [_ (try (check x))]
-      (SpanResult.Ok (Span x (* 2 x) 14)))))
+      (Ok (Span x (* 2 x) 14)))))
 
 (define (forward [x : i64]) : SpanResult
   (checked (+ x 1)))
 
 (define (score [r : SpanResult]) : i64
   (match r
-    [(SpanResult.Ok s) (+ s.start s.end s.line)]
-    [(SpanResult.Err e) (- 0 e)]))
+    [(Ok s) (+ s.start s.end s.line)]
+    [(Err e) (- 0 e)]))
 
 (define (main) : i64
   (let

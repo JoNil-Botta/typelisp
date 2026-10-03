@@ -1722,19 +1722,19 @@
           (thread.spawn winsock-test-failing-worker 0))
         (unsafe
           (thread.spawn winsock-test-worker 0)))
-        [(thread.ThreadSpawnErr _)
+        [(ThreadSpawnErr _)
           (begin
             (unsafe
               (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
             false)]
-        [(thread.ThreadSpawnOk worker)
+        [(ThreadSpawnOk worker)
           (let
             [later-ok : bool
               (winsock-test-spawn-wave (- remaining 1) total failing)]
             (match (unsafe
               (thread.join worker))
-              [(thread.ThreadJoinErr _) false]
-              [(thread.ThreadJoinOk code) (and later-ok (= code 1))]))]))))
+              [(ThreadJoinErr _) false]
+              [(ThreadJoinOk code) (and later-ok (= code 1))]))]))))
 
 (cfg
   test

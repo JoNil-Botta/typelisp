@@ -8,16 +8,16 @@
   [result : ast.AstType]) : i64
   (ast.ast-node-pool-reader-type-push
     (ast_tests.ast-ty-c-func
-      (ast.ast-type-cons ast.AstType.I64 (ast.ast-type-list-new))
+      (ast.ast-type-cons I64 (ast.ast-type-list-new))
       result
       mode)))
 
 (define (c-function-test-mode [index : i64]) : ast.AstCFunctionMode
   (cond
-    [(= index 0) ast.AstCFunctionMode.Nullable]
-    [(= index 1) ast.AstCFunctionMode.NonNull]
-    [(= index 2) ast.AstCFunctionMode.UnsafeNullable]
-    [else ast.AstCFunctionMode.UnsafeNonNull]))
+    [(= index 0) Nullable]
+    [(= index 1) NonNull]
+    [(= index 2) UnsafeNullable]
+    [else UnsafeNonNull]))
 
 (test
   c-function-type-node-stride
@@ -32,16 +32,14 @@
     (let
       [ordinary : i64
         (ast.ast-node-pool-reader-type-push
-          (ast.ast-ty-func
-            (ast.ast-type-cons ast.AstType.I64 (ast.ast-type-list-new))
-            ast.AstType.I64))]
+          (ast.ast-ty-func (ast.ast-type-cons I64 (ast.ast-type-list-new)) I64))]
       [index : i64 0]
       (while (< index 4)
         (let
           [mode : ast.AstCFunctionMode (c-function-test-mode index)]
-          [first : i64 (c-function-test-type-id mode ast.AstType.I64)]
-          [repeated : i64 (c-function-test-type-id mode ast.AstType.I64)]
-          [other-result : i64 (c-function-test-type-id mode ast.AstType.U64)]
+          [first : i64 (c-function-test-type-id mode I64)]
+          [repeated : i64 (c-function-test-type-id mode I64)]
+          [other-result : i64 (c-function-test-type-id mode U64)]
           [other : i64 0]
           (begin
             (test.assert-true
@@ -56,9 +54,7 @@
             (while (< other 4)
               (let
                 [second : i64
-                  (c-function-test-type-id
-                    (c-function-test-mode other)
-                    ast.AstType.I64)]
+                  (c-function-test-type-id (c-function-test-mode other) I64)]
                 (begin
                   (test.assert-true
                     (= (= first second) (= index other))

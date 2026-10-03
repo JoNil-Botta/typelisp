@@ -26,8 +26,8 @@
         [(EnvNoString) (io.print-format "{}" "no-path\n")])
       (match (crypto_random.fill-random!
         (byte_buf.as-mut-bytes (&mut empty-random)))
-        [(crypto_random.OkFillRandom)
+        [(OkFillRandom)
           (if (and exists (> (string-length cwd) 0))
             0
             1)]
-        [(crypto_random.ErrFillRandom _) 2]))))
+        [(ErrFillRandom _) 2]))))

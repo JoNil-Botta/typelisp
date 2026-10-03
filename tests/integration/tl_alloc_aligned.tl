@@ -217,8 +217,8 @@
 
 (define (joined-address [result : thread.ThreadJoinResult]) : i64
   (match result
-    [(thread.ThreadJoinOk value) value]
-    [(thread.ThreadJoinErr _) 0]))
+    [(ThreadJoinOk value) value]
+    [(ThreadJoinErr _) 0]))
 
 (define (atomic-contention-ok?) : bool
   (let
@@ -230,16 +230,16 @@
       (set! (array-ref context-b 0) (arena.raw-handle owner))
       (match (unsafe
         (thread.spawn atomic-aligned-worker (array-i64-address context-a)))
-        [(thread.ThreadSpawnErr _) false]
-        [(thread.ThreadSpawnOk worker-a)
+        [(ThreadSpawnErr _) false]
+        [(ThreadSpawnOk worker-a)
           (match (unsafe
             (thread.spawn atomic-aligned-worker (array-i64-address context-b)))
-            [(thread.ThreadSpawnErr _)
+            [(ThreadSpawnErr _)
               (begin
                 (unsafe
                   (thread.join worker-a))
                 false)]
-            [(thread.ThreadSpawnOk worker-b)
+            [(ThreadSpawnOk worker-b)
               (let
                 [address-a : i64
                   (joined-address

@@ -74,8 +74,8 @@
         (check-true (env.sym-i64-contains-id e 1) "single-hit-contains")
         (check-equal
           (match (env.sym-i64-lookup-id e 1)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           10
           "single-hit-value")))
     ; Miss after single bind
@@ -96,8 +96,8 @@
           20)]
       (check-equal
         (match (env.sym-i64-lookup-id e 1)
-          [(option_i64.Some v) v]
-          [(option_i64.None) 0])
+          [(Some v) v]
+          [(None) 0])
         20
         "shadow-newest"))
     ; Saved outer env preserved after inner bind
@@ -107,21 +107,21 @@
       (begin
         (check-equal
           (match (env.sym-i64-lookup-id outer 1)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           10
           "outer-preserved-a")
         (check-false (env.sym-i64-contains-id outer 2) "outer-no-b")
         (check-equal
           (match (env.sym-i64-lookup-id inner 1)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           10
           "inner-sees-a")
         (check-equal
           (match (env.sym-i64-lookup-id inner 2)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           20
           "inner-sees-b")))
     ; Sibling forks remain isolated even though they share append-only storage.
@@ -159,20 +159,20 @@
       (begin
         (check-equal
           (match (env.sym-i64-lookup-id e 1)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           1
           "chain-x")
         (check-equal
           (match (env.sym-i64-lookup-id e 2)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           2
           "chain-y")
         (check-equal
           (match (env.sym-i64-lookup-id e 3)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           3
           "chain-z")))
     ; ID API
@@ -183,8 +183,8 @@
         (check-true (env.sym-i64-contains-id e id) "id-key-contains")
         (check-equal
           (match (env.sym-i64-lookup-id e id)
-            [(option_i64.Some v) v]
-            [(option_i64.None) 0])
+            [(Some v) v]
+            [(None) 0])
           88
           "id-key-value")))
     ; Exercise growth beyond the largest observed self-host member set (26,863).

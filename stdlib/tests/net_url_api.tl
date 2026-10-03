@@ -22,16 +22,16 @@
 ;: The canonical spelling of an HTTP URL, or `kind@offset` for an error.
 (define (http-text-with [text : (& text str)] [limits : url.UrlLimits]) : String
   (match (url.parse-http-url text limits)
-    [(url.HttpUrlOk parsed) (url.http-url-to-string (& parsed))]
-    [(url.HttpUrlErr error) (error-text (& error))]))
+    [(HttpUrlOk parsed) (url.http-url-to-string (& parsed))]
+    [(HttpUrlErr error) (error-text (& error))]))
 
 (define (http-text [text : (& text str)]) : String
   (http-text-with text (url.default-url-limits)))
 
 (define (reference-text [text : (& text str)]) : String
   (match (url.parse-uri-reference text (url.default-url-limits))
-    [(url.UriReferenceOk reference) (url.uri-reference-to-string (& reference))]
-    [(url.UriReferenceErr error) (error-text (& error))]))
+    [(UriReferenceOk reference) (url.uri-reference-to-string (& reference))]
+    [(UriReferenceErr error) (error-text (& error))]))
 
 ;: Assert the canonical spelling, or `kind@offset`, of TEXT.
 (define (outcome [text : String] [expected : String]) : unit
@@ -77,20 +77,20 @@
   [reference-text-in : String]
   [expected : String]) : unit
   (match (url.parse-uri-reference reference-text-in (url.default-url-limits))
-    [(url.UriReferenceOk reference)
+    [(UriReferenceOk reference)
       (match (url.uri-reference-resolve base (& reference))
-        [(url.UriReferenceOk resolved)
+        [(UriReferenceOk resolved)
           (expect
             (str_cat.str-cat "resolve " reference-text-in)
             (url.uri-reference-to-string (& resolved))
             expected)]
-        [(url.UriReferenceErr error)
+        [(UriReferenceErr error)
           (fail
             (str_cat.str-cat
               "resolve "
               reference-text-in
               (error-text (& error))))])]
-    [(url.UriReferenceErr error)
+    [(UriReferenceErr error)
       (fail
         (str_cat.str-cat
           "parse reference "
@@ -100,8 +100,8 @@
 ;; Every normal and abnormal example, resolved against http://a/b/c/d;p?q.
 (define (assert-rfc3986-examples) : unit
   (match (url.parse-uri-reference "http://a/b/c/d;p?q" (url.default-url-limits))
-    [(url.UriReferenceErr _) (fail "rfc base")]
-    [(url.UriReferenceOk base)
+    [(UriReferenceErr _) (fail "rfc base")]
+    [(UriReferenceOk base)
       (begin
         (rfc-case (& base) "g:h" "g:h")
         (rfc-case (& base) "g" "http://a/b/c/g")
@@ -180,8 +180,8 @@
 
 (define (parse-http-ok [text : (& text str)]) : url.HttpUrl
   (match (url.parse-http-url text (url.default-url-limits))
-    [(url.HttpUrlOk parsed) parsed]
-    [(url.HttpUrlErr error)
+    [(HttpUrlOk parsed) parsed]
+    [(HttpUrlErr error)
       (begin
         (fail
           (str_cat.str-cat
@@ -277,8 +277,8 @@
   (let
     [u : url.HttpUrl (parse-http-ok base)]
     (match (url.http-url-resolve (& u) reference (url.default-url-limits))
-      [(url.HttpUrlOk resolved) (url.http-url-to-string (& resolved))]
-      [(url.HttpUrlErr error) (error-text (& error))])))
+      [(HttpUrlOk resolved) (url.http-url-to-string (& resolved))]
+      [(HttpUrlErr error) (error-text (& error))])))
 
 (define (assert-http-resolution) : unit
   (begin
@@ -574,8 +574,8 @@
           [prefix : String (string.substring text 0 k)]
           (begin
             (match (url.parse-http-url prefix (url.default-url-limits))
-              [(url.HttpUrlOk _) unit]
-              [(url.HttpUrlErr error)
+              [(HttpUrlOk _) unit]
+              [(HttpUrlErr error)
                 (when
                   (or (< error.offset 0) (> error.offset k))
                   (fail (str_cat.str-cat "prefix offset " at)))])

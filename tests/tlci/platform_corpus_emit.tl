@@ -30,11 +30,11 @@
   [path : String]
   [image : tlci_core.TlciImage]) : i64
   (match (tlci_core.tlci-emit-image image)
-    [(tlci_core.ResultTlciBytes.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]
-    [(tlci_core.ResultTlciBytes.Ok bytes)
+    [(Ok bytes)
       (let
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
         (begin
@@ -47,11 +47,11 @@
       tlci_core.tlci-host-platform-x86-64-linux
       "corpus.platform-unknown"
       false))
-    [(tlci_core.ResultTlciBytes.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]
-    [(tlci_core.ResultTlciBytes.Ok bytes)
+    [(Ok bytes)
       (let
         [_unknown-platform : unit (tlci_core.tlci-set-u64! (&mut bytes) 16 99)]
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]

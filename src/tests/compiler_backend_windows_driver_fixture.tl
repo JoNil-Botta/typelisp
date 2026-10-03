@@ -12,12 +12,12 @@
       1)
     (match (compiler_backend.compiler-backend-emit-source-for-target
       (compiler_backend.compiler-backend-windows-driver-runtime-source)
-      (compiler_backend.CompilerBackendTarget.Windows))
-      [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (Windows))
+      [(Ok asm)
         (begin
           (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
           0)]
-      [(compiler_backend.ResultCompilerBackend.Err diag)
+      [(Err diag)
         (begin
           (io.print-error (diagnostic.compiler-diagnostic-render (deref diag)))
           1)])))

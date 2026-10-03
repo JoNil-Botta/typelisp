@@ -81,13 +81,7 @@
       (planner.plan
         (one-snapshot (clone source))
         (one-candidate
-          (candidate
-            "a"
-            source
-            2
-            4
-            "Z"
-            diag.CompilerDiagnosticMachineApplicable))
+          (candidate "a" source 2 4 "Z" CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [applied : planner.LintFixSnapshotSeq (planner.apply (clone batch))]
     (and
@@ -101,7 +95,7 @@
     [source : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 7 true)]
     [stale : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 8 true)]
     [candidate : planner.LintFixCandidate
-      (candidate "maybe" source 2 4 "Z" diag.CompilerDiagnosticMaybeIncorrect)]
+      (candidate "maybe" source 2 4 "Z" CompilerDiagnosticMaybeIncorrect)]
     [skipped : planner.LintFixPlan
       (planner.plan
         (one-snapshot (clone stale))
@@ -116,11 +110,11 @@
       skipped.publishable
       (= skipped.edits.len 0)
       (match (array-ref skipped.outcomes.slots 0).reason
-        [(planner.ApplicabilityExcluded) true]
+        [(ApplicabilityExcluded) true]
         [_ false])
       (not admitted.publishable)
       (match (array-ref admitted.outcomes.slots 0).reason
-        [(planner.StaleVersion) true]
+        [(StaleVersion) true]
         [_ false]))))
 
 (define (invalid-boundaries-ok?) : bool
@@ -137,7 +131,7 @@
             2
             3
             "z"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [crlf : planner.LintFixPlan
       (planner.plan
@@ -149,7 +143,7 @@
             4
             5
             "z"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [synthetic : planner.LintFixSnapshot
       (planner.snapshot "unicode.tl" "é\r\nend" 0 false)]
@@ -163,41 +157,29 @@
             1
             3
             "z"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     (and
       (not utf.publishable)
       (match (array-ref utf.outcomes.slots 0).reason
-        [(planner.InvalidUtf8Boundary) true]
+        [(InvalidUtf8Boundary) true]
         [_ false])
       (not crlf.publishable)
       (match (array-ref crlf.outcomes.slots 0).reason
-        [(planner.InvalidUtf8Boundary) true]
+        [(InvalidUtf8Boundary) true]
         [_ false])
       (not rejected.publishable)
       (match (array-ref rejected.outcomes.slots 0).reason
-        [(planner.SyntheticSource) true]
+        [(SyntheticSource) true]
         [_ false]))))
 
 (define (permuted-edits-ok?) : bool
   (let
     [source : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 7 true)]
     [early : planner.LintFixCandidate
-      (candidate
-        "z"
-        (clone source)
-        2
-        3
-        "Z"
-        diag.CompilerDiagnosticMachineApplicable)]
+      (candidate "z" (clone source) 2 3 "Z" CompilerDiagnosticMachineApplicable)]
     [late : planner.LintFixCandidate
-      (candidate
-        "a"
-        (clone source)
-        5
-        6
-        "Y"
-        diag.CompilerDiagnosticMachineApplicable)]
+      (candidate "a" (clone source) 5 6 "Y" CompilerDiagnosticMachineApplicable)]
     [forward : planner.LintFixPlan
       (planner.plan
         (one-snapshot (clone source))
@@ -226,21 +208,9 @@
   (let
     [source : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 7 true)]
     [first : planner.LintFixCandidate
-      (candidate
-        "a"
-        (clone source)
-        2
-        4
-        "Z"
-        diag.CompilerDiagnosticMachineApplicable)]
+      (candidate "a" (clone source) 2 4 "Z" CompilerDiagnosticMachineApplicable)]
     [second : planner.LintFixCandidate
-      (candidate
-        "b"
-        (clone source)
-        3
-        5
-        "Y"
-        diag.CompilerDiagnosticMachineApplicable)]
+      (candidate "b" (clone source) 3 5 "Y" CompilerDiagnosticMachineApplicable)]
     [overlap : planner.LintFixPlan
       (planner.plan
         (one-snapshot (clone source))
@@ -257,7 +227,7 @@
             2
             4
             "Z"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [same-id : planner.LintFixPlan
       (planner.plan
@@ -270,7 +240,7 @@
             5
             6
             "Y"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [changed : planner.LintFixSnapshot
       (planner.snapshot "a.tl" "ABCDEF" 7 true)]
@@ -278,34 +248,28 @@
       (planner.plan
         (one-snapshot changed)
         (one-candidate
-          (candidate
-            "x"
-            source
-            2
-            4
-            "Z"
-            diag.CompilerDiagnosticMachineApplicable))
+          (candidate "x" source 2 4 "Z" CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     (and
       (not overlap.publishable)
       (= overlap.edits.len 0)
       (match (array-ref overlap.outcomes.slots 0).reason
-        [(planner.OverlappingEdit) true]
+        [(OverlappingEdit) true]
         [_ false])
       (match (array-ref overlap.outcomes.slots 1).reason
-        [(planner.OverlappingEdit) true]
+        [(OverlappingEdit) true]
         [_ false])
       (not duplicate.publishable)
       (match (array-ref duplicate.outcomes.slots 0).reason
-        [(planner.DuplicateEdit) true]
+        [(DuplicateEdit) true]
         [_ false])
       (not same-id.publishable)
       (match (array-ref same-id.outcomes.slots 0).reason
-        [(planner.DuplicateCandidate) true]
+        [(DuplicateCandidate) true]
         [_ false])
       (not stale.publishable)
       (match (array-ref stale.outcomes.slots 0).reason
-        [(planner.StaleSource) true]
+        [(StaleSource) true]
         [_ false]))))
 
 (define (multi-file-and-large-fix-ok?) : bool
@@ -338,7 +302,7 @@
         [fix : diag.CompilerDiagnosticFix
           (diag.compiler-diagnostic-fix-new
             "Two files"
-            diag.CompilerDiagnosticMachineApplicable
+            CompilerDiagnosticMachineApplicable
             (diag.CompilerDiagnosticTextEditSeq edits 2))]
         [candidate : planner.LintFixCandidate
           (planner.LintFixCandidate
@@ -381,7 +345,7 @@
         [fix : diag.CompilerDiagnosticFix
           (diag.compiler-diagnostic-fix-new
             "Seventeen edits"
-            diag.CompilerDiagnosticMachineApplicable
+            CompilerDiagnosticMachineApplicable
             (diag.CompilerDiagnosticTextEditSeq edits 17))]
         [candidate : planner.LintFixCandidate
           (planner.LintFixCandidate
@@ -415,14 +379,14 @@
             2
             4
             "L"
-            diag.CompilerDiagnosticMachineApplicable)
+            CompilerDiagnosticMachineApplicable)
           (candidate
             "right"
             (clone source)
             4
             6
             "R"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [same-position : planner.LintFixPlan
       (planner.plan
@@ -434,14 +398,14 @@
             3
             3
             "X"
-            diag.CompilerDiagnosticMachineApplicable)
+            CompilerDiagnosticMachineApplicable)
           (candidate
             "insert-b"
             (clone source)
             3
             3
             "Y"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     [nested : planner.LintFixPlan
       (planner.plan
@@ -453,14 +417,8 @@
             3
             3
             "X"
-            diag.CompilerDiagnosticMachineApplicable)
-          (candidate
-            "outer"
-            source
-            2
-            5
-            "Z"
-            diag.CompilerDiagnosticMachineApplicable))
+            CompilerDiagnosticMachineApplicable)
+          (candidate "outer" source 2 5 "Z" CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
     (and
       touching.publishable
@@ -468,11 +426,11 @@
       (not same-position.publishable)
       (= same-position.edits.len 0)
       (match (array-ref same-position.outcomes.slots 0).reason
-        [(planner.OverlappingEdit) true]
+        [(OverlappingEdit) true]
         [_ false])
       (not nested.publishable)
       (match (array-ref nested.outcomes.slots 0).reason
-        [(planner.OverlappingEdit) true]
+        [(OverlappingEdit) true]
         [_ false]))))
 
 (define (missing-identity-and-atomicity-ok?) : bool
@@ -485,7 +443,7 @@
         1
         2
         "X"
-        diag.CompilerDiagnosticMachineApplicable)]
+        CompilerDiagnosticMachineApplicable)]
     [missing : planner.LintFixCandidate
       (candidate
         "missing"
@@ -493,7 +451,7 @@
         2
         3
         "Y"
-        diag.CompilerDiagnosticMachineApplicable)]
+        CompilerDiagnosticMachineApplicable)]
     (begin
       (set!
         missing.sources
@@ -512,7 +470,7 @@
           (= plan.edits.len 1)
           (string.eq (array-ref applied.slots 0).source "abc")
           (match (array-ref plan.outcomes.slots 0).reason
-            [(planner.MissingIdentity) true]
+            [(MissingIdentity) true]
             [_ false]))))))
 
 (test

@@ -102,12 +102,12 @@
 ;; `panic` yields unit and never returns.
 (define (single-token [c : char]) : token.Token
   (cond
-    [(= c '+') token.Token.Plus]
-    [(= c '-') token.Token.Minus]
-    [(= c '*') token.Token.Star]
-    [(= c '/') token.Token.Slash]
-    [(= c '(') token.Token.LParen]
-    [(= c ')') token.Token.RParen]
+    [(= c '+') Plus]
+    [(= c '-') Minus]
+    [(= c '*') Star]
+    [(= c '/') Slash]
+    [(= c '(') LParen]
+    [(= c ')') RParen]
     [else (io.panic "lexer: unexpected character")]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
@@ -205,7 +205,7 @@
         [v : i64 (current-val toks cur)]
         (begin
           (advance cur)
-          (Expr.Num v)))
+          (Num v)))
       (if (= t (token.tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
@@ -232,10 +232,10 @@
         (if (= (current-tag toks cur) (token.tag-star))
           (begin
             (advance cur)
-            (set! acc (Expr.Mul (box acc) (box (parse-factor toks cur)))))
+            (set! acc (Mul (box acc) (box (parse-factor toks cur)))))
           (begin
             (advance cur)
-            (set! acc (Expr.Div (box acc) (box (parse-factor toks cur)))))))
+            (set! acc (Div (box acc) (box (parse-factor toks cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
@@ -254,10 +254,10 @@
         (if (= (current-tag toks cur) (token.tag-plus))
           (begin
             (advance cur)
-            (set! acc (Expr.Add (box acc) (box (parse-term toks cur)))))
+            (set! acc (Add (box acc) (box (parse-term toks cur)))))
           (begin
             (advance cur)
-            (set! acc (Expr.Sub (box acc) (box (parse-term toks cur)))))))
+            (set! acc (Sub (box acc) (box (parse-term toks cur)))))))
       acc)))
 
 ;; Parse a whole token vector starting at index 0: thread a fresh cursor cell
@@ -275,15 +275,11 @@
 ;; (`a`/`b`) are pointers to the child enums, passed straight back into `eval`.
 (define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Expr.Num n) (deref n)]
-    [(Expr.Add a b)
-      (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Sub a b)
-      (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Mul a b)
-      (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Expr.Div a b)
-      (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
+    [(Num n) (deref n)]
+    [(Add a b) (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Sub a b) (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Mul a b) (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Div a b) (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":

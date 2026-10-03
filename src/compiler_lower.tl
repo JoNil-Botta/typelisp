@@ -80,9 +80,8 @@
     [first : (__tl_dyn-array LowerNameBinding)
       (__tl_make-array LowerNameBinding 16)]
     [owner : i64 (arena.tl_arena_current)]
-    (begin
-      (set! (array-ref segments 0) first)
-      (LowerNameStore segments 1 0 owner))))
+    (set! (array-ref segments 0) first)
+    (LowerNameStore segments 1 0 owner)))
 
 (define (lower-name-store-segments-copy-range!
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
@@ -91,9 +90,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (lower-name-store-add-segment! [store : (&mut store LowerNameStore)]) : unit
   (let
@@ -102,26 +100,24 @@
     [owner : i64 store.arena]
     (in-arena
       (arena.Arena owner)
-      (begin
-        (if (< count capacity)
-          unit
-          (let
-            [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-              (__tl_make-array
-                (__tl_dyn-array LowerNameBinding)
-                (if (< capacity 1)
-                  4
-                  (* capacity 2)))]
-            (begin
-              (lower-name-store-segments-copy-range!
-                (&mut bigger)
-                (& store.segments)
-                count)
-              (set! store.segments bigger))))
-        (set!
-          (array-ref store.segments count)
-          (__tl_make-array LowerNameBinding 16))
-        (set! store.segment-count (+ count 1))))))
+      (if (< count capacity)
+        unit
+        (let
+          [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+            (__tl_make-array
+              (__tl_dyn-array LowerNameBinding)
+              (if (< capacity 1)
+                4
+                (* capacity 2)))]
+          (lower-name-store-segments-copy-range!
+            (&mut bigger)
+            (& store.segments)
+            count)
+          (set! store.segments bigger)))
+      (set!
+        (array-ref store.segments count)
+        (__tl_make-array LowerNameBinding 16))
+      (set! store.segment-count (+ count 1)))))
 
 (define (lower-name-store-ensure-index!
   [store : (&mut store LowerNameStore)]
@@ -160,11 +156,10 @@
   [binding : LowerNameBinding]) : i64
   (let
     [index : i64 store.len]
-    (begin
-      (lower-name-store-ensure-index! store index)
-      (lower-name-store-write-index! store index binding)
-      (set! store.len (+ index 1))
-      index)))
+    (lower-name-store-ensure-index! store index)
+    (lower-name-store-write-index! store index binding)
+    (set! store.len (+ index 1))
+    index))
 
 (define (lower-name-env-bind-ids-raw
   [source-id : i64]
@@ -459,10 +454,9 @@
   (let
     [cache : (__tl_dyn-array i64)
       (__tl_make-array i64 lower-comptime-cache-size)]
-    (begin
-      (set! (array-ref cache lower-comptime-cache-generation-index) -1)
-      (set! (array-ref cache lower-comptime-cache-table-id-index) -1)
-      cache)))
+    (set! (array-ref cache lower-comptime-cache-generation-index) -1)
+    (set! (array-ref cache lower-comptime-cache-table-id-index) -1)
+    cache))
 
 ;; The owner points at a fixed directory of typed cell addresses. Keeping the
 ;; directory untyped avoids reflecting one giant aggregate (and recomputing its
@@ -687,12 +681,11 @@
 (defmacro (compiler-lower-state-cell [_T : type] [value : Expr]) : Expr
   `(let
     [cell : (__tl_dyn-array ,_T) (__tl_make-array ,_T 1)]
-    (begin
-      (set! (array-ref cell 0) ,value)
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_T))))
-        : i64))))
+    (set! (array-ref cell 0) ,value)
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_T))))
+      : i64)))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
   (CompilerLowerState address))
@@ -1000,17 +993,16 @@
   [state : CompilerLowerState]
   [intern-state : ci.InternCompatState]
   [source-names : ci.InternSourceNameSessionHandle]) : unit
-  (begin
-    (compiler-lower-state-write!
-      state
-      ci.InternCompatState
-      intern-owner
-      intern-state)
-    (compiler-lower-state-write!
-      state
-      cis.InternStructuralSessionHandle
-      structural-session-owner
-      (cis.intern-structural-session-handle-from-source-names source-names))))
+  (compiler-lower-state-write!
+    state
+    ci.InternCompatState
+    intern-owner
+    intern-state)
+  (compiler-lower-state-write!
+    state
+    cis.InternStructuralSessionHandle
+    structural-session-owner
+    (cis.intern-structural-session-handle-from-source-names source-names)))
 
 ;; Scalar snapshot used by state-isolation tests. Each fingerprint covers the
 ;; complete inline representation stored in the field cell (including map
@@ -1073,19 +1065,17 @@
     [word-count : i64 (comptime (/ (+ (size-of (type ,_T)) 7) 8))]
     [index : i64 0]
     [out : i64 0]
-    (begin
-      (while (< index word-count)
-        (begin
-          (set!
-            out
-            (hash.combine
-              out
-              (hash.i64
-                (unsafe
-                  (ptr-read
-                    (int->ptr (cast (+ base (* index 8)) : u64) : (Ptr i64)))))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index word-count)
+      (set!
+        out
+        (hash.combine
+          out
+          (hash.i64
+            (unsafe
+              (ptr-read
+                (int->ptr (cast (+ base (* index 8)) : u64) : (Ptr i64)))))))
+      (set! index (+ index 1)))
+    out))
 
 (define (lower-comptime-error-id-cache-fingerprint [state : CompilerLowerState]) : i64
   (let
@@ -1096,12 +1086,10 @@
         comptime-error-cache)]
     [index : i64 0]
     [out : i64 0]
-    (begin
-      (while (< index lower-comptime-cache-size)
-        (begin
-          (set! out (hash.combine out (hash.i64 (array-ref cache index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index lower-comptime-cache-size)
+      (set! out (hash.combine out (hash.i64 (array-ref cache index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-lower-checked-pools-state-fingerprint
   [state : CompilerLowerState]) : i64
@@ -1316,39 +1304,37 @@
 ;; active function too so lowering a nested lambda cannot mistake its fresh,
 ;; low-numbered vars for locals owned by the enclosing loop.
 (define (lower-module-phase-caches-reset! [state : CompilerLowerState]) : unit
-  (begin
-    (compiler-lower-state-write!
-      state
-      LowerModuleNameCacheStore
-      active-module-name-caches
-      (lower-module-name-cache-store-empty))
-    (compiler-lower-state-write!
-      state
-      LowerModuleLocalViewStore
-      active-module-local-views
-      (lower-module-local-view-store-empty))
-    (compiler-lower-state-write! state i64 active-loop-function -1)
-    (compiler-lower-state-write! state i64 active-loop-entry-var-limit -1)))
+  (compiler-lower-state-write!
+    state
+    LowerModuleNameCacheStore
+    active-module-name-caches
+    (lower-module-name-cache-store-empty))
+  (compiler-lower-state-write!
+    state
+    LowerModuleLocalViewStore
+    active-module-local-views
+    (lower-module-local-view-store-empty))
+  (compiler-lower-state-write! state i64 active-loop-function -1)
+  (compiler-lower-state-write! state i64 active-loop-entry-var-limit -1))
 
 ;; Reset once per prune reach walk; lower-reach-process records each reachable
 ;; function body's source path so type-decl DCE can keep local support types.
 (define (lower-reach-scratch-state-reset! [state : CompilerLowerState]) : unit
-  (begin
-    (lower-active-global-name-cache-set!
-      state
-      (lower-empty-global-name-cache state.address))
-    (compiler-lower-state-write! state bool active-symbols-ready false)
-    (lower-module-phase-caches-reset! state)
-    (compiler-lower-state-write!
-      state
-      lower_i64_i64_map.Map
-      reach-active-runtime-paths
-      (lower_i64_i64_map.with-capacity 8))
-    (compiler-lower-state-write!
-      state
-      lower_i64_i64_map.Map
-      reach-active-body-used-types
-      (lower_i64_i64_map.with-capacity 8))))
+  (lower-active-global-name-cache-set!
+    state
+    (lower-empty-global-name-cache state.address))
+  (compiler-lower-state-write! state bool active-symbols-ready false)
+  (lower-module-phase-caches-reset! state)
+  (compiler-lower-state-write!
+    state
+    lower_i64_i64_map.Map
+    reach-active-runtime-paths
+    (lower_i64_i64_map.with-capacity 8))
+  (compiler-lower-state-write!
+    state
+    lower_i64_i64_map.Map
+    reach-active-body-used-types
+    (lower_i64_i64_map.with-capacity 8)))
 
 (defenum LowerReachState
   (State lower_i64_i64_map.Map LowerIdSet CompilerLowerState))
@@ -2059,25 +2045,23 @@
             handoff.deferred-expr-capacity
             handoff.deferred-type-capacity
             dest-arena)]
-        (begin
-          (set! handoff.context (Context dest-pools))
-          (set! handoff.deferred false)
-          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+        (set! handoff.context (Context dest-pools))
+        (set! handoff.deferred false)
+        (compiler-lower-state-checked-pools-set! lower-state handoff))
       unit)))
 
 (define (compiler-lower-checked-dest-pools-current
   [lower-state : CompilerLowerState]) : ast.AstNodePoolContext
-  (begin
-    ;; The post-macro destination is intentionally absent during the macro
-    ;; walk. Materialize it only when the caller is ready to compact, after
-    ;; macro-owned scratch generations have already been released.
-    (lower-checked-dest-pools-materialize-deferred! lower-state)
-    (let
-      [handoff : CompilerLowerCheckedPoolsState
-        (compiler-lower-state-checked-pools lower-state)]
-      [pools : ast.AstNodePoolContext
-        (compiler-lower-checked-pools-context handoff)]
-      pools)))
+  ;; The post-macro destination is intentionally absent during the macro
+  ;; walk. Materialize it only when the caller is ready to compact, after
+  ;; macro-owned scratch generations have already been released.
+  (lower-checked-dest-pools-materialize-deferred! lower-state)
+  (let
+    [handoff : CompilerLowerCheckedPoolsState
+      (compiler-lower-state-checked-pools lower-state)]
+    [pools : ast.AstNodePoolContext
+      (compiler-lower-checked-pools-context handoff)]
+    pools))
 
 (define (compiler-lower-checked-dest-pools-abort-uncommitted!
   [lower-state : CompilerLowerState]) : unit
@@ -2088,56 +2072,52 @@
       (if handoff.rolled-over
         handoff.frontend-release-arena
         0)]
-    (begin
-      (if handoff.rolled-over
-        (begin
-          ;; Rollover installs the macro frontend as the active allocation arena.
-          ;; Move back to the driver's surviving first destination before releasing
-          ;; either abort-owned generation; otherwise the frontend destroy leaves a
-          ;; dangling current arena for the next pool-context installation.
-          (unless
-            (> handoff.source-release-arena 0)
-            (io.panic "compiler lower abort: missing surviving source arena"))
+    (when
+      handoff.rolled-over
+      ;; Rollover installs the macro frontend as the active allocation arena.
+      ;; Move back to the driver's surviving first destination before releasing
+      ;; either abort-owned generation; otherwise the frontend destroy leaves a
+      ;; dangling current arena for the next pool-context installation.
+      (unless
+        (> handoff.source-release-arena 0)
+        (io.panic "compiler lower abort: missing surviving source arena"))
+      (unsafe
+        (arena.tl_arena_set handoff.source-release-arena))
+      ;; The driver's original destination is the compact macro source after a
+      ;; rollover. Release a materialized second destination here; if expansion
+      ;; failed before demand, it never existed. The driver then releases the
+      ;; original source through its stable owner.
+      (if handoff.deferred
+        unit
+        (let
+          [owned-dest-pools : ast.AstNodePoolContext
+            (compiler-lower-checked-pools-context handoff)]
+          [dest-pools : ast.AstNodePoolContext owned-dest-pools]
+          (ast.ast-node-pool-context-destroy-storage! dest-pools)
           (unsafe
-            (arena.tl_arena_set handoff.source-release-arena))
-          ;; The driver's original destination is the compact macro source after a
-          ;; rollover. Release a materialized second destination here; if expansion
-          ;; failed before demand, it never existed. The driver then releases the
-          ;; original source through its stable owner.
-          (if handoff.deferred
-            unit
-            (let
-              [owned-dest-pools : ast.AstNodePoolContext
-                (compiler-lower-checked-pools-context handoff)]
-              [dest-pools : ast.AstNodePoolContext owned-dest-pools]
-              (begin
-                (ast.ast-node-pool-context-destroy-storage! dest-pools)
-                (unsafe
-                  (arena.tl_arena_destroy
-                    (ast.ast-node-pool-context-base-arena dest-pools))))))
-          ;; Rollover cut a fresh arena for macro-owned list spines after the
-          ;; original frontend was retired. Neither the driver nor its stable
-          ;; first destination owns that arena, so abort must release it here.
-          (if (= macro-frontend-arena 0)
-            unit
-            (unsafe
-              (arena.tl_arena_destroy macro-frontend-arena))))
-        unit)
-      ;; Abort is a terminal transition. Remove every borrowed arena/context and
-      ;; capacity even when no rollover occurred; the driver retains ownership
-      ;; of its original destination and releases it separately.
-      (compiler-lower-checked-dest-pools-clear! lower-state))))
+            (arena.tl_arena_destroy
+              (ast.ast-node-pool-context-base-arena dest-pools)))))
+      ;; Rollover cut a fresh arena for macro-owned list spines after the
+      ;; original frontend was retired. Neither the driver nor its stable
+      ;; first destination owns that arena, so abort must release it here.
+      (if (= macro-frontend-arena 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy macro-frontend-arena))))
+    ;; Abort is a terminal transition. Remove every borrowed arena/context and
+    ;; capacity even when no rollover occurred; the driver retains ownership
+    ;; of its original destination and releases it separately.
+    (compiler-lower-checked-dest-pools-clear! lower-state)))
 
 (define (lower-checked-dest-pools-deactivate-after-commit!
   [lower-state : CompilerLowerState]) : unit
   (let
     [handoff : CompilerLowerCheckedPoolsState
       (compiler-lower-state-checked-pools lower-state)]
-    (if handoff.committed
-      (begin
-        (set! handoff.active false)
-        (compiler-lower-state-checked-pools-set! lower-state handoff))
-      unit)))
+    (when
+      handoff.committed
+      (set! handoff.active false)
+      (compiler-lower-state-checked-pools-set! lower-state handoff))))
 
 (define (lower-checked-dest-pools-rollover-for-macro!
   [lower-state : CompilerLowerState]) : unit
@@ -2155,32 +2135,31 @@
         [type-capacity : i64
           (ast.ast-node-pool-context-type-capacity source-pools)]
         [macro-frontend-arena : i64 (arena.tl_arena_make)]
-        (begin
-          ;; The first compact generation is now the macro walk's read/write
-          ;; source. Keep macro-owned lists in a fresh frontend arena. Defer the
-          ;; second compact generation until expansion returns so its empty
-          ;; backing arrays do not overlap the whole macro walk.
-          (set! handoff.deferred-expr-capacity expr-capacity)
-          (set! handoff.deferred-type-capacity type-capacity)
-          (set! handoff.deferred true)
-          (set! handoff.source-release-arena source-arena)
-          (set!
-            handoff.source-release-expr-storage-arena
-            (ast.ast-node-pool-context-expr-storage-arena source-pools))
-          (set!
-            handoff.source-release-type-storage-arena
-            (ast.ast-node-pool-context-type-storage-arena source-pools))
-          (set! handoff.frontend-release-arena macro-frontend-arena)
-          ;; The driver's original frontend has already been retired. Preserve
-          ;; that fact so an error between the two compactions restores allocation
-          ;; to the caller arena rather than to the unmapped original frontend.
-          (set! handoff.frontend-released true)
-          (set! handoff.committed false)
-          (set! handoff.rolled-over true)
-          (set! handoff.active true)
-          (compiler-lower-state-checked-pools-set! lower-state handoff)
-          (unsafe
-            (arena.tl_arena_set macro-frontend-arena))))
+        ;; The first compact generation is now the macro walk's read/write
+        ;; source. Keep macro-owned lists in a fresh frontend arena. Defer the
+        ;; second compact generation until expansion returns so its empty
+        ;; backing arrays do not overlap the whole macro walk.
+        (set! handoff.deferred-expr-capacity expr-capacity)
+        (set! handoff.deferred-type-capacity type-capacity)
+        (set! handoff.deferred true)
+        (set! handoff.source-release-arena source-arena)
+        (set!
+          handoff.source-release-expr-storage-arena
+          (ast.ast-node-pool-context-expr-storage-arena source-pools))
+        (set!
+          handoff.source-release-type-storage-arena
+          (ast.ast-node-pool-context-type-storage-arena source-pools))
+        (set! handoff.frontend-release-arena macro-frontend-arena)
+        ;; The driver's original frontend has already been retired. Preserve
+        ;; that fact so an error between the two compactions restores allocation
+        ;; to the caller arena rather than to the unmapped original frontend.
+        (set! handoff.frontend-released true)
+        (set! handoff.committed false)
+        (set! handoff.rolled-over true)
+        (set! handoff.active true)
+        (compiler-lower-state-checked-pools-set! lower-state handoff)
+        (unsafe
+          (arena.tl_arena_set macro-frontend-arena)))
       unit)))
 
 ;; Macro expansion rebuilt only temporary list spines and proved that every
@@ -2197,27 +2176,26 @@
       (let
         [macro-frontend-arena : i64 handoff.frontend-release-arena]
         [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
-        (begin
+        (unsafe
+          (arena.tl_arena_set source-arena))
+        (set! handoff.context (Context source-pools))
+        (ast.ast-node-pool-context-install! source-pools)
+        (if (= macro-frontend-arena 0)
+          unit
           (unsafe
-            (arena.tl_arena_set source-arena))
-          (set! handoff.context (Context source-pools))
-          (ast.ast-node-pool-context-install! source-pools)
-          (if (= macro-frontend-arena 0)
-            unit
-            (unsafe
-              (arena.tl_arena_destroy macro-frontend-arena)))
-          (set! handoff.source-release-arena 0)
-          (set! handoff.source-release-expr-storage-arena 0)
-          (set! handoff.source-release-type-storage-arena 0)
-          (set! handoff.frontend-release-arena 0)
-          (set! handoff.deferred false)
-          (set! handoff.deferred-expr-capacity 0)
-          (set! handoff.deferred-type-capacity 0)
-          (set! handoff.rolled-over false)
-          (set! handoff.committed true)
-          (set! handoff.active false)
-          (set! handoff.frontend-released true)
-          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+            (arena.tl_arena_destroy macro-frontend-arena)))
+        (set! handoff.source-release-arena 0)
+        (set! handoff.source-release-expr-storage-arena 0)
+        (set! handoff.source-release-type-storage-arena 0)
+        (set! handoff.frontend-release-arena 0)
+        (set! handoff.deferred false)
+        (set! handoff.deferred-expr-capacity 0)
+        (set! handoff.deferred-type-capacity 0)
+        (set! handoff.rolled-over false)
+        (set! handoff.committed true)
+        (set! handoff.active false)
+        (set! handoff.frontend-released true)
+        (compiler-lower-state-checked-pools-set! lower-state handoff))
       unit)))
 
 (define (lower-copy-string-into-pools
@@ -2240,25 +2218,23 @@
         [count : i64 (ast.ast-decl-path-list-len (& paths))]
         [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (let
-              [path : String (ast.ast-decl-path-list-get (& paths) index "")]
-              [owned-path : String (string.copy (& path))]
-              (begin
-                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-                  (&mut out)
-                  owned-path
-                  (ast.ast-decl-path-list-owner-id
-                    (& paths)
-                    index
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-provenance-id
-                    (& paths)
-                    index
-                    cbi.compiler-builtin-id-fix-empty))
-                (set! index (+ index 1)))))
-          out)))))
+        (while (< index count)
+          (let
+            [path : String (ast.ast-decl-path-list-get (& paths) index "")]
+            [owned-path : String (string.copy (& path))]
+            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+              (&mut out)
+              owned-path
+              (ast.ast-decl-path-list-owner-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty)
+              (ast.ast-decl-path-list-provenance-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set! index (+ index 1))))
+        out))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
   [job-state : tc_core.TcJobState]
@@ -2268,10 +2244,9 @@
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
     (in-arena
       base-arena
-      (begin
-        (load.compiler-load-dotted-path-cache-reset!)
-        (tc_core.compiler-typecheck-clear-macro-expanded-source-caches-for-job!
-          job-state)))))
+      (load.compiler-load-dotted-path-cache-reset!)
+      (tc_core.compiler-typecheck-clear-macro-expanded-source-caches-for-job!
+        job-state))))
 
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match (lower-global-shared-view names)
@@ -2305,54 +2280,52 @@
           (ast.ast-expr-pool-cell-read pools.expr-pool)]
         [final-type-state : ast.AstTypeNodePoolState
           (ast.ast-type-pool-cell-read pools.type-pool)]
-        (begin
-          (set! handoff.committed true)
-          (set! handoff.rolled-over false)
-          (set! handoff.source-release-arena 0)
-          (set! handoff.source-release-expr-storage-arena 0)
-          (set! handoff.source-release-type-storage-arena 0)
-          (set! handoff.frontend-release-arena 0)
-          (set! handoff.deferred false)
-          (set! handoff.deferred-expr-capacity 0)
-          (set! handoff.deferred-type-capacity 0)
+        (set! handoff.committed true)
+        (set! handoff.rolled-over false)
+        (set! handoff.source-release-arena 0)
+        (set! handoff.source-release-expr-storage-arena 0)
+        (set! handoff.source-release-type-storage-arena 0)
+        (set! handoff.frontend-release-arena 0)
+        (set! handoff.deferred false)
+        (set! handoff.deferred-expr-capacity 0)
+        (set! handoff.deferred-type-capacity 0)
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        ;; `ast-program-compact-with-pools` and the original destination both
+        ;; carry one-element state arrays allocated in the caller arena. Rebuild
+        ;; the complete context here so its wrapper cells and aggregate shell,
+        ;; not just its large backing pools, survive frontend retirement.
+        (set!
+          handoff.context
+          (Context
+            (ast.ast-node-pool-context-new
+              final-expr-state
+              final-type-state
+              dest-arena)))
+        (let
+          [committed-pools : ast.AstNodePoolContext
+            (compiler-lower-checked-pools-context handoff)]
+          (ast.ast-node-pool-context-install! committed-pools))
+        (ast.ast-node-pool-storage-arenas-destroy!
+          old-expr-storage-arena
+          old-type-storage-arena
+          old-arena)
+        (if (= old-arena 0)
+          unit
           (unsafe
-            (arena.tl_arena_set dest-arena))
-          ;; `ast-program-compact-with-pools` and the original destination both
-          ;; carry one-element state arrays allocated in the caller arena. Rebuild
-          ;; the complete context here so its wrapper cells and aggregate shell,
-          ;; not just its large backing pools, survive frontend retirement.
-          (set!
-            handoff.context
-            (Context
-              (ast.ast-node-pool-context-new
-                final-expr-state
-                final-type-state
-                dest-arena)))
-          (let
-            [committed-pools : ast.AstNodePoolContext
-              (compiler-lower-checked-pools-context handoff)]
-            (ast.ast-node-pool-context-install! committed-pools))
-          (ast.ast-node-pool-storage-arenas-destroy!
-            old-expr-storage-arena
-            old-type-storage-arena
-            old-arena)
-          (if (= old-arena 0)
-            unit
-            (unsafe
-              (arena.tl_arena_destroy old-arena)))
-          ;; Macro expansion has compacted every surviving AST node, path, and
-          ;; string into `pools`, and the cache reset above removed the remaining
-          ;; source-derived globals. Uncached emit jobs can therefore retire the
-          ;; distinct load/macro arena here, before typecheck and lowering grow
-          ;; the checked pools. Cached sessions pass zero and preserve their
-          ;; program-lifetime storage unchanged.
-          (if (= old-frontend-arena 0)
-            unit
-            (begin
-              (unsafe
-                (arena.tl_arena_destroy old-frontend-arena))
-              (set! handoff.frontend-released true)))
-          (compiler-lower-state-checked-pools-set! lower-state handoff)))
+            (arena.tl_arena_destroy old-arena)))
+        ;; Macro expansion has compacted every surviving AST node, path, and
+        ;; string into `pools`, and the cache reset above removed the remaining
+        ;; source-derived globals. Uncached emit jobs can therefore retire the
+        ;; distinct load/macro arena here, before typecheck and lowering grow
+        ;; the checked pools. Cached sessions pass zero and preserve their
+        ;; program-lifetime storage unchanged.
+        (unless
+          (= old-frontend-arena 0)
+          (unsafe
+            (arena.tl_arena_destroy old-frontend-arena))
+          (set! handoff.frontend-released true))
+        (compiler-lower-state-checked-pools-set! lower-state handoff))
       unit)))
 
 (defenum LowerFieldInfo
@@ -2612,25 +2585,24 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-start [state : CompilerLowerState]) : unit
-    (begin
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-ms-metric
-        (profile.now-ms))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-total-metric
-        (profile.alloc-total))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-live-metric
-        (profile.alloc-live))
-      (compiler-lower-profile-set!
-        state
-        compiler-lower-profile-start-intern-render-metric
-        (ci.intern-profile-render-value
-          (compiler-lower-profile-intern-metrics-address state)))
-      (profile.alloc-reset-peak))))
+    (compiler-lower-profile-set!
+      state
+      compiler-lower-profile-start-ms-metric
+      (profile.now-ms))
+    (compiler-lower-profile-set!
+      state
+      compiler-lower-profile-start-total-metric
+      (profile.alloc-total))
+    (compiler-lower-profile-set!
+      state
+      compiler-lower-profile-start-live-metric
+      (profile.alloc-live))
+    (compiler-lower-profile-set!
+      state
+      compiler-lower-profile-start-intern-render-metric
+      (ci.intern-profile-render-value
+        (compiler-lower-profile-intern-metrics-address state)))
+    (profile.alloc-reset-peak)))
 
 (cfg
   compile-profile
@@ -2800,19 +2772,18 @@
 (cfg
   (any compile-profile test)
   (define (compiler-lower-profile-name-reset [state : CompilerLowerState]) : unit
-    (begin
-      (profile_state.compiler-profile-state-metric-reset-range!
-        (compiler-lower-state-profile state)
-        compiler-lower-profile-name-env-binds-metric
-        compiler-lower-name-cache-profile-end)
-      (profile_state.compiler-profile-state-metric-reset-range!
-        (compiler-lower-state-profile state)
-        compiler-lower-profile-name-cache-id-growth-views-metric
-        compiler-lower-profile-alias-overlay-growth-slots-metric)
-      (profile_state.compiler-profile-state-metric-reset-range!
-        (compiler-lower-state-profile state)
-        compiler-lower-profile-module-local-view-released-metric
-        compiler-lower-module-view-profile-end))))
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile state)
+      compiler-lower-profile-name-env-binds-metric
+      compiler-lower-name-cache-profile-end)
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile state)
+      compiler-lower-profile-name-cache-id-growth-views-metric
+      compiler-lower-profile-alias-overlay-growth-slots-metric)
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile state)
+      compiler-lower-profile-module-local-view-released-metric
+      compiler-lower-module-view-profile-end)))
 
 (cfg
   compile-profile
@@ -2824,86 +2795,77 @@
           state
           lower_i64_i64_map.Map
           alias-overlay-ids)]
-      (begin
-        (compiler-lower-name-env-profile-emit! address)
-        (compiler-lower-name-storage-profile-emit! address)
-        (counters.profile-counter-live-row!
-          "lower.alias_overlay.capacity_slots"
-          (lower_i64_i64_map.capacity (& ids)))
-        (compiler-lower-name-cache-profile-emit! address)
-        (compiler-lower-module-view-profile-emit! address)))))
+      (compiler-lower-name-env-profile-emit! address)
+      (compiler-lower-name-storage-profile-emit! address)
+      (counters.profile-counter-live-row!
+        "lower.alias_overlay.capacity_slots"
+        (lower_i64_i64_map.capacity (& ids)))
+      (compiler-lower-name-cache-profile-emit! address)
+      (compiler-lower-module-view-profile-emit! address))))
 
 (cfg
   (any compile-profile test)
   (define (compiler-lower-profile-name-cache-lookup
     [metrics : profile_state.CompilerProfileMetrics]
     [hit : bool]) : unit
-    (begin
+    (profile_state.compiler-profile-metrics-add!
+      (profile_state.compiler-profile-state-shared-view metrics)
+      compiler-lower-profile-name-cache-lookups-metric
+      1)
+    (if hit
       (profile_state.compiler-profile-metrics-add!
-        (profile_state.compiler-profile-state-shared-view metrics)
-        compiler-lower-profile-name-cache-lookups-metric
+        metrics
+        compiler-lower-profile-name-cache-local-hits-metric
         1)
-      (if hit
-        (profile_state.compiler-profile-metrics-add!
-          metrics
-          compiler-lower-profile-name-cache-local-hits-metric
-          1)
-        (profile_state.compiler-profile-metrics-add!
-          metrics
-          compiler-lower-profile-name-cache-local-misses-metric
-          1)))))
+      (profile_state.compiler-profile-metrics-add!
+        metrics
+        compiler-lower-profile-name-cache-local-misses-metric
+        1))))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-pools
     [point : String]
     [pools : ast.AstNodePoolContext]) : unit
-    (begin
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".len")
-        (ast.ast-node-pool-context-expr-len pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".capacity")
-        (ast.ast-node-pool-context-expr-capacity pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".segments")
-        (ast.ast-node-pool-context-expr-segment-count pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_expr_pool."
-          (lower-global-shared-view point)
-          ".segment_bytes")
-        (ast.ast-node-pool-context-expr-segment-bytes pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_type_pool."
-          (lower-global-shared-view point)
-          ".len")
-        (ast.ast-node-pool-context-type-len pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_type_pool."
-          (lower-global-shared-view point)
-          ".capacity")
-        (ast.ast-node-pool-context-type-capacity pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat
-          "ast_type_pool."
-          (lower-global-shared-view point)
-          ".segments")
-        (ast.ast-node-pool-context-type-segment-count pools))
-      (compiler-lower-profile-counter
-        (str_cat.str-cat "ast_type_pool." point ".segment_bytes")
-        (ast.ast-node-pool-context-type-segment-bytes pools)))))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat "ast_expr_pool." (lower-global-shared-view point) ".len")
+      (ast.ast-node-pool-context-expr-len pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat
+        "ast_expr_pool."
+        (lower-global-shared-view point)
+        ".capacity")
+      (ast.ast-node-pool-context-expr-capacity pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat
+        "ast_expr_pool."
+        (lower-global-shared-view point)
+        ".segments")
+      (ast.ast-node-pool-context-expr-segment-count pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat
+        "ast_expr_pool."
+        (lower-global-shared-view point)
+        ".segment_bytes")
+      (ast.ast-node-pool-context-expr-segment-bytes pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat "ast_type_pool." (lower-global-shared-view point) ".len")
+      (ast.ast-node-pool-context-type-len pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat
+        "ast_type_pool."
+        (lower-global-shared-view point)
+        ".capacity")
+      (ast.ast-node-pool-context-type-capacity pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat
+        "ast_type_pool."
+        (lower-global-shared-view point)
+        ".segments")
+      (ast.ast-node-pool-context-type-segment-count pools))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat "ast_type_pool." point ".segment_bytes")
+      (ast.ast-node-pool-context-type-segment-bytes pools))))
 
 (cfg
   compile-profile
@@ -2920,16 +2882,15 @@
       [(Program decls-box)
         (let
           [decls : ast.AstDeclList (deref decls-box)]
-          (begin
-            (compiler-lower-profile-counter
-              (str_cat.str-cat
-                "checked_program."
-                (lower-global-shared-view point)
-                ".decls")
-              (compiler-lower-profile-decl-list-count decls))
-            (compiler-lower-profile-counter
-              (str_cat.str-cat "checked_program." point ".functions")
-              (lower-function-decl-count decls))))])))
+          (compiler-lower-profile-counter
+            (str_cat.str-cat
+              "checked_program."
+              (lower-global-shared-view point)
+              ".decls")
+            (compiler-lower-profile-decl-list-count decls))
+          (compiler-lower-profile-counter
+            (str_cat.str-cat "checked_program." point ".functions")
+            (lower-function-decl-count decls)))])))
 
 (cfg
   compile-profile
@@ -2938,19 +2899,15 @@
     [program : ir.CompilerIrProgram]) : unit
     (match program
       [(Program _ functions _)
-        (begin
-          (compiler-lower-profile-counter
-            (str_cat.str-cat
-              "ir."
-              (lower-global-shared-view point)
-              ".functions")
-            (ir.compiler-ir-function-seq-count functions))
-          (compiler-lower-profile-counter
-            (str_cat.str-cat "ir." (lower-global-shared-view point) ".blocks")
-            (ir.compiler-ir-function-seq-block-count functions))
-          (compiler-lower-profile-counter
-            (str_cat.str-cat "ir." point ".instructions")
-            (ir.compiler-ir-function-seq-instruction-count functions)))])))
+        (compiler-lower-profile-counter
+          (str_cat.str-cat "ir." (lower-global-shared-view point) ".functions")
+          (ir.compiler-ir-function-seq-count functions))
+        (compiler-lower-profile-counter
+          (str_cat.str-cat "ir." (lower-global-shared-view point) ".blocks")
+          (ir.compiler-ir-function-seq-block-count functions))
+        (compiler-lower-profile-counter
+          (str_cat.str-cat "ir." point ".instructions")
+          (ir.compiler-ir-function-seq-instruction-count functions))])))
 
 (cfg
   compile-profile
@@ -3100,17 +3057,14 @@
       [(Dense store head _)
         (let
           [cursor : i64 head]
-          (begin
-            (while (>= cursor 0)
-              (let
-                [binding : LowerNameBinding
-                  (lower-name-store-binding-at
-                    (& (__tl-box-place store))
-                    cursor)]
-                (if (= binding.source-id source-id)
-                  (return binding.symbol-id)
-                  (set! cursor binding.parent))))
-            fallback))])))
+          (while (>= cursor 0)
+            (let
+              [binding : LowerNameBinding
+                (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
+              (if (= binding.source-id source-id)
+                (return binding.symbol-id)
+                (set! cursor binding.parent))))
+          fallback)])))
 
 (define (lower-name-env-lookup-logical-id
   [names : LowerNameEnv]
@@ -3127,17 +3081,14 @@
       [(Dense store head _)
         (let
           [cursor : i64 head]
-          (begin
-            (while (>= cursor 0)
-              (let
-                [binding : LowerNameBinding
-                  (lower-name-store-binding-at
-                    (& (__tl-box-place store))
-                    cursor)]
-                (if (= binding.source-id source-id)
-                  (return binding.logical-id)
-                  (set! cursor binding.parent))))
-            fallback))])))
+          (while (>= cursor 0)
+            (let
+              [binding : LowerNameBinding
+                (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
+              (if (= binding.source-id source-id)
+                (return binding.logical-id)
+                (set! cursor binding.parent))))
+          fallback)])))
 
 (define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : tc_core.TcMaybeString
   (let
@@ -3174,17 +3125,16 @@
           (let
             [binding : LowerNameBinding
               (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
-            (begin
-              (lower-name-store-write-index!
-                target
-                write
-                (LowerNameBinding
-                  binding.source-id
-                  binding.logical-id
-                  binding.symbol-id
-                  (- write 1)))
-              (set! cursor binding.parent)
-              (set! write (- write 1))))))]))
+            (lower-name-store-write-index!
+              target
+              write
+              (LowerNameBinding
+                binding.source-id
+                binding.logical-id
+                binding.symbol-id
+                (- write 1)))
+            (set! cursor binding.parent)
+            (set! write (- write 1)))))]))
 
 (define (lower-name-env-materialize-two
   [left : LowerNameEnv]
@@ -3215,9 +3165,8 @@
             left
             (&mut (__tl-box-place store))
             right-count)]
-        (begin
-          (__tl-project-set-field (__tl-box-place store) len count)
-          (Dense store (- count 1) count))))))
+        (__tl-project-set-field (__tl-box-place store) len count)
+        (Dense store (- count 1) count)))))
 
 (define (lower-name-env-rebuild-over
   [left : LowerNameEnv]
@@ -3229,33 +3178,30 @@
       (__tl_make-array LowerNameFlatBinding count)]
     [index : i64 0]
     [out : LowerNameEnv right]
-    (begin
-      (while (match (lower-global-shared-view cur)
-        [(Nil) false]
-        [_ true])
-        (match (lower-name-env-view (lower-global-shared-view cur))
-          [(Nil) unit]
-          [(Bind source-id logical-id symbol-id rest)
-            (begin
-              (set!
-                (array-ref bindings index)
-                (LowerNameFlatBinding source-id logical-id symbol-id))
-              (set! index (+ index 1))
-              (set! cur rest))]))
-      (set! index (- count 1))
-      (while (>= index 0)
-        (let
-          [binding : LowerNameFlatBinding (array-ref bindings index)]
-          (begin
-            (set!
-              out
-              (lower-name-env-bind-ids-raw
-                binding.source-id
-                binding.logical-id
-                binding.symbol-id
-                out))
-            (set! index (- index 1)))))
-      out)))
+    (while (match (lower-global-shared-view cur)
+      [(Nil) false]
+      [_ true])
+      (match (lower-name-env-view (lower-global-shared-view cur))
+        [(Nil) unit]
+        [(Bind source-id logical-id symbol-id rest)
+          (set!
+            (array-ref bindings index)
+            (LowerNameFlatBinding source-id logical-id symbol-id))
+          (set! index (+ index 1))
+          (set! cur rest)]))
+    (set! index (- count 1))
+    (while (>= index 0)
+      (let
+        [binding : LowerNameFlatBinding (array-ref bindings index)]
+        (set!
+          out
+          (lower-name-env-bind-ids-raw
+            binding.source-id
+            binding.logical-id
+            binding.symbol-id
+            out))
+        (set! index (- index 1))))
+    out))
 
 (define (lower-name-env-append [left : LowerNameEnv] [right : LowerNameEnv]) : LowerNameEnv
   (match (lower-global-shared-view left)
@@ -3298,11 +3244,10 @@
     [logical-id : i64]
     [symbol-id : i64]
     [rest : LowerNameEnv]) : LowerNameEnv
-    (begin
-      (lower-name-env-bind-ids-profile-storage-note!
-        metrics
-        (lower-global-shared-view rest))
-      (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest))))
+    (lower-name-env-bind-ids-profile-storage-note!
+      metrics
+      (lower-global-shared-view rest))
+    (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest)))
 
 (cfg
   (any compile-profile test)
@@ -3315,17 +3260,16 @@
     (let
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
-      (begin
-        (profile_state.compiler-profile-metrics-add!
-          (profile_state.compiler-profile-state-shared-view metrics)
-          compiler-lower-profile-name-env-binds-metric
-          1)
-        (lower-name-env-bind-ids-profile-storage
-          metrics
-          source-id
-          logical-id
-          symbol-id
-          rest)))))
+      (profile_state.compiler-profile-metrics-add!
+        (profile_state.compiler-profile-state-shared-view metrics)
+        compiler-lower-profile-name-env-binds-metric
+        1)
+      (lower-name-env-bind-ids-profile-storage
+        metrics
+        source-id
+        logical-id
+        symbol-id
+        rest))))
 
 (cfg
   (any compile-profile test)
@@ -3337,43 +3281,38 @@
     (let
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
-      (begin
-        (profile_state.compiler-profile-metrics-add!
-          (profile_state.compiler-profile-state-shared-view metrics)
-          compiler-lower-profile-name-env-lookups-metric
-          1)
-        (if (< source-id 0)
-          fallback
-          (match names
-            [(Nil) fallback]
-            [(Inline bind-id _ symbol-id)
-              (begin
-                (profile_state.compiler-profile-metrics-add!
-                  metrics
-                  compiler-lower-profile-name-env-lookup-steps-metric
-                  1)
-                (if (= bind-id source-id)
-                  symbol-id
-                  fallback))]
-            [(Dense store head _)
-              (let
-                [cursor : i64 head]
-                [storage : LowerNameStore (deref store)]
-                (begin
-                  (while (>= cursor 0)
-                    (let
-                      [binding : LowerNameBinding
-                        (lower-name-store-binding-at (& storage) cursor)]
-                      (begin
-                        (profile_state.compiler-profile-metrics-add!
-                          (profile_state.compiler-profile-state-shared-view
-                            metrics)
-                          compiler-lower-profile-name-env-lookup-steps-metric
-                          1)
-                        (if (= binding.source-id source-id)
-                          (return binding.symbol-id)
-                          (set! cursor binding.parent)))))
-                  fallback))]))))))
+      (profile_state.compiler-profile-metrics-add!
+        (profile_state.compiler-profile-state-shared-view metrics)
+        compiler-lower-profile-name-env-lookups-metric
+        1)
+      (if (< source-id 0)
+        fallback
+        (match names
+          [(Nil) fallback]
+          [(Inline bind-id _ symbol-id)
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-lookup-steps-metric
+              1)
+            (if (= bind-id source-id)
+              symbol-id
+              fallback)]
+          [(Dense store head _)
+            (let
+              [cursor : i64 head]
+              [storage : LowerNameStore (deref store)]
+              (while (>= cursor 0)
+                (let
+                  [binding : LowerNameBinding
+                    (lower-name-store-binding-at (& storage) cursor)]
+                  (profile_state.compiler-profile-metrics-add!
+                    (profile_state.compiler-profile-state-shared-view metrics)
+                    compiler-lower-profile-name-env-lookup-steps-metric
+                    1)
+                  (if (= binding.source-id source-id)
+                    (return binding.symbol-id)
+                    (set! cursor binding.parent))))
+              fallback)])))))
 
 (cfg
   (any compile-profile test)
@@ -3398,27 +3337,26 @@
       [count : i64 (+ (lower-name-env-count left) (lower-name-env-count right))]
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
-      (begin
-        (when
-          (> count 0)
-          (begin
-            (profile_state.compiler-profile-metrics-add!
-              (profile_state.compiler-profile-state-shared-view metrics)
-              compiler-lower-profile-name-env-materializations-metric
-              1)
-            (profile_state.compiler-profile-metrics-add!
-              (profile_state.compiler-profile-state-shared-view metrics)
-              compiler-lower-profile-name-env-materialized-entries-metric
-              count)
-            (profile_state.compiler-profile-metrics-add!
-              (profile_state.compiler-profile-state-shared-view metrics)
-              compiler-lower-profile-name-env-stores-metric
-              1)
-            (profile_state.compiler-profile-metrics-add!
-              metrics
-              compiler-lower-profile-name-env-store-grows-metric
-              (/ (- count 1) 16))))
-        (lower-name-env-materialize-two left right)))))
+      (when
+        (> count 0)
+        (begin
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-env-materializations-metric
+            1)
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-env-materialized-entries-metric
+            count)
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-env-stores-metric
+            1)
+          (profile_state.compiler-profile-metrics-add!
+            metrics
+            compiler-lower-profile-name-env-store-grows-metric
+            (/ (- count 1) 16))))
+      (lower-name-env-materialize-two left right))))
 
 (cfg
   (any compile-profile test)
@@ -3430,34 +3368,32 @@
       [append-count : i64 (lower-name-env-count left)]
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view state)]
-      (begin
-        (match (lower-global-shared-view right)
-          [(Nil) unit]
-          [(Inline _ _ _)
-            (begin
-              (profile_state.compiler-profile-metrics-add!
-                (profile_state.compiler-profile-state-shared-view metrics)
-                compiler-lower-profile-name-env-stores-metric
-                1)
+      (match (lower-global-shared-view right)
+        [(Nil) unit]
+        [(Inline _ _ _)
+          (profile_state.compiler-profile-metrics-add!
+            (profile_state.compiler-profile-state-shared-view metrics)
+            compiler-lower-profile-name-env-stores-metric
+            1)
+          (profile_state.compiler-profile-metrics-add!
+            metrics
+            compiler-lower-profile-name-env-store-grows-metric
+            (/ append-count 16))]
+        [(Dense store _ _)
+          (let
+            [storage : LowerNameStore (deref store)]
+            [needed : i64 (+ storage.len append-count)]
+            [needed-segments : i64
+              (if (< needed 1)
+                0
+                (+ (/ (- needed 1) 16) 1))]
+            (when
+              (> needed-segments storage.segment-count)
               (profile_state.compiler-profile-metrics-add!
                 metrics
                 compiler-lower-profile-name-env-store-grows-metric
-                (/ append-count 16)))]
-          [(Dense store _ _)
-            (let
-              [storage : LowerNameStore (deref store)]
-              [needed : i64 (+ storage.len append-count)]
-              [needed-segments : i64
-                (if (< needed 1)
-                  0
-                  (+ (/ (- needed 1) 16) 1))]
-              (when
-                (> needed-segments storage.segment-count)
-                (profile_state.compiler-profile-metrics-add!
-                  metrics
-                  compiler-lower-profile-name-env-store-grows-metric
-                  (- needed-segments storage.segment-count))))])
-        (lower-name-env-rebuild-over left right)))))
+                (- needed-segments storage.segment-count))))])
+      (lower-name-env-rebuild-over left right))))
 
 (cfg
   (any compile-profile test)
@@ -3562,19 +3498,17 @@
       (let
         [cursor : i64 head]
         [count : i64 0]
-        (begin
-          (while (>= cursor 0)
-            (let
-              [binding : LowerNameBinding
-                (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
-              (begin
-                (when
-                  (lower-name-binding-logical-alias?
-                    binding.source-id
-                    binding.logical-id)
-                  (set! count (+ count 1)))
-                (set! cursor binding.parent))))
-          count))]))
+        (while (>= cursor 0)
+          (let
+            [binding : LowerNameBinding
+              (lower-name-store-binding-at (& (__tl-box-place store)) cursor)]
+            (when
+              (lower-name-binding-logical-alias?
+                binding.source-id
+                binding.logical-id)
+              (set! count (+ count 1)))
+            (set! cursor binding.parent)))
+        count)]))
 
 (cfg
   (any compile-profile test)
@@ -3585,23 +3519,22 @@
       [metrics : profile_state.CompilerProfileMetrics
         (compiler-lower-profile-metrics-view
           (lower-name-cache-owner-state after))]
-      (begin
-        (when
-          (>
-            (lower_i64_i64_map.capacity (& after.ids))
-            (lower_i64_i64_map.capacity (& before.ids)))
-          (profile_state.compiler-profile-metrics-add!
-            (profile_state.compiler-profile-state-shared-view metrics)
-            compiler-lower-profile-name-cache-id-growth-views-metric
-            1))
-        (when
-          (>
-            (lower_i64_i64_map.capacity (& after.logical-symbols))
-            (lower_i64_i64_map.capacity (& before.logical-symbols)))
-          (profile_state.compiler-profile-metrics-add!
-            metrics
-            compiler-lower-profile-name-cache-logical-growth-views-metric
-            1))))))
+      (when
+        (>
+          (lower_i64_i64_map.capacity (& after.ids))
+          (lower_i64_i64_map.capacity (& before.ids)))
+        (profile_state.compiler-profile-metrics-add!
+          (profile_state.compiler-profile-state-shared-view metrics)
+          compiler-lower-profile-name-cache-id-growth-views-metric
+          1))
+      (when
+        (>
+          (lower_i64_i64_map.capacity (& after.logical-symbols))
+          (lower_i64_i64_map.capacity (& before.logical-symbols)))
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-cache-logical-growth-views-metric
+          1)))))
 
 (cfg
   (any compile-profile test)
@@ -3685,46 +3618,38 @@
             (let
               [current : i64 module-id]
               [node : i64 0]
-              (begin
-                (lower_i64_i64_map.insert-ref! (&mut modules) module-id 1)
-                (while (>= current 0)
-                  (let
-                    [segment : i64
-                      (if (ci.intern-compat-state-dotted? intern-state current)
-                        (ci.intern-compat-state-leading-dot-id
-                          intern-state
-                          current)
-                        current)]
-                    [edge-key : i64
-                      (csym.compiler-composite-pair-key-id node segment)]
-                    [child : i64
-                      (lower_i64_i64_map.get-value-or (& edges) edge-key -1)]
-                    (begin
-                      (if (< child 0)
-                        (begin
-                          (set! child next-node)
-                          (set! next-node (+ next-node 1))
-                          (lower_i64_i64_map.insert-ref!
-                            (&mut edges)
-                            edge-key
-                            child))
-                        unit)
-                      (set! node child)
-                      (set!
-                        current
-                        (if (ci.intern-compat-state-dotted?
-                          intern-state
-                          current)
-                          (ci.intern-compat-state-dotted-tail-id
-                            intern-state
-                            current)
-                          -1)))))
-                (lower_i64_i64_map.insert-ref! (&mut terminals) node module-id)
-                (set! index.edges edges)
-                (set! index.terminals terminals)
-                (set! index.modules modules)
-                (set! index.next-node next-node)
-                unit))])))))
+              (lower_i64_i64_map.insert-ref! (&mut modules) module-id 1)
+              (while (>= current 0)
+                (let
+                  [segment : i64
+                    (if (ci.intern-compat-state-dotted? intern-state current)
+                      (ci.intern-compat-state-leading-dot-id
+                        intern-state
+                        current)
+                      current)]
+                  [edge-key : i64
+                    (csym.compiler-composite-pair-key-id node segment)]
+                  [child : i64
+                    (lower_i64_i64_map.get-value-or (& edges) edge-key -1)]
+                  (when
+                    (< child 0)
+                    (set! child next-node)
+                    (set! next-node (+ next-node 1))
+                    (lower_i64_i64_map.insert-ref! (&mut edges) edge-key child))
+                  (set! node child)
+                  (set!
+                    current
+                    (if (ci.intern-compat-state-dotted? intern-state current)
+                      (ci.intern-compat-state-dotted-tail-id
+                        intern-state
+                        current)
+                      -1))))
+              (lower_i64_i64_map.insert-ref! (&mut terminals) node module-id)
+              (set! index.edges edges)
+              (set! index.terminals terminals)
+              (set! index.modules modules)
+              (set! index.next-node next-node)
+              unit)])))))
 
 (defenum LowerNameCacheMaybeId
   (No)
@@ -3928,13 +3853,12 @@
                   (lower-name-store-binding-at
                     (& (__tl-box-place store))
                     cursor)]
-                (begin
-                  (lower-name-cache-add-id!
-                    (&mut out)
-                    binding.source-id
-                    binding.logical-id
-                    binding.symbol-id)
-                  (set! cursor binding.parent)))))])
+                (lower-name-cache-add-id!
+                  (&mut out)
+                  binding.source-id
+                  binding.logical-id
+                  binding.symbol-id)
+                (set! cursor binding.parent))))])
       (cfg
         (any compile-profile test)
         (lower-name-cache-map-growth-profile cache out)
@@ -4008,9 +3932,8 @@
   (let
     [index : i64 0]
     (while (< index len)
-      (begin
-        (set! (array-ref destination index) (array-ref source index))
-        (set! index (+ index 1))))))
+      (set! (array-ref destination index) (array-ref source index))
+      (set! index (+ index 1)))))
 
 (define (lower-module-name-cache-store-grow [store : LowerModuleNameCacheStore]) : LowerModuleNameCacheStore
   (let
@@ -4021,12 +3944,11 @@
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerNameCache)
       (__tl_make-array LowerNameCache next-capacity)]
-    (begin
-      (lower-module-name-cache-store-copy-prefix!
-        store.values
-        (&mut next-values)
-        store.len)
-      (LowerModuleNameCacheStore store.modules next-values store.len))))
+    (lower-module-name-cache-store-copy-prefix!
+      store.values
+      (&mut next-values)
+      store.len)
+    (LowerModuleNameCacheStore store.modules next-values store.len)))
 
 (define (lower-module-name-cache-store-lookup
   [store : LowerModuleNameCacheStore]
@@ -4042,9 +3964,8 @@
   [cache : LowerNameCache]) : LowerModuleNameCacheStore
   (match (lower_i64_i64_map.get (& store.modules) module-id)
     [(LookupFound slot)
-      (begin
-        (set! (array-ref store.values slot) cache)
-        store)]
+      (set! (array-ref store.values slot) cache)
+      store]
     [(LookupMissing)
       (let
         [ready : LowerModuleNameCacheStore
@@ -4262,77 +4183,70 @@
     [node : i64 0]
     [result : i64 fallback]
     [done : bool false]
-    (begin
-      (while (and
-        (not done)
-        (ci.intern-compat-state-dotted? intern-state current))
-        (let
-          [segment : i64
-            (ci.intern-compat-state-leading-dot-id intern-state current)]
-          [remainder : i64
-            (ci.intern-compat-state-dotted-tail-id intern-state current)]
-          [edge-key : i64 (csym.compiler-composite-pair-key-id node segment)]
-          [child : i64 (lower_i64_i64_map.get-value-or (& edges) edge-key -1)]
-          (if (< child 0)
-            (set! done true)
-            (let
-              [module-id : i64
-                (lower_i64_i64_map.get-value-or (& terminals) child -1)]
-              (begin
-                (set! node child)
-                (when
-                  (and (>= module-id 0) (>= remainder 0))
-                  (let
-                    [raw-logical-id : i64
-                      (lower-name-cache-lookup-logical-id
-                        cache
-                        (csym.compiler-symbol-module-key-id-by-id
-                          module-id
-                          remainder)
-                        -1)]
-                    (if (>= raw-logical-id 0)
-                      (set! result raw-logical-id)
-                      (when
-                        (and
-                          (ci.intern-compat-state-dotted?
+    (while (and
+      (not done)
+      (ci.intern-compat-state-dotted? intern-state current))
+      (let
+        [segment : i64
+          (ci.intern-compat-state-leading-dot-id intern-state current)]
+        [remainder : i64
+          (ci.intern-compat-state-dotted-tail-id intern-state current)]
+        [edge-key : i64 (csym.compiler-composite-pair-key-id node segment)]
+        [child : i64 (lower_i64_i64_map.get-value-or (& edges) edge-key -1)]
+        (if (< child 0)
+          (set! done true)
+          (let
+            [module-id : i64
+              (lower_i64_i64_map.get-value-or (& terminals) child -1)]
+            (set! node child)
+            (when
+              (and (>= module-id 0) (>= remainder 0))
+              (let
+                [raw-logical-id : i64
+                  (lower-name-cache-lookup-logical-id
+                    cache
+                    (csym.compiler-symbol-module-key-id-by-id
+                      module-id
+                      remainder)
+                    -1)]
+                (if (>= raw-logical-id 0)
+                  (set! result raw-logical-id)
+                  (when
+                    (and
+                      (ci.intern-compat-state-dotted? intern-state remainder)
+                      (not
+                        (ci.intern-compat-state-dotted?
+                          intern-state
+                          (ci.intern-compat-state-dotted-tail-id
+                            intern-state
+                            remainder))))
+                    (let
+                      [qualified-base-id : i64
+                        (csym.compiler-composite-pair-key-id
+                          (ci.intern-compat-state-leading-dot-id
                             intern-state
                             remainder)
-                          (not
-                            (ci.intern-compat-state-dotted?
-                              intern-state
-                              (ci.intern-compat-state-dotted-tail-id
-                                intern-state
-                                remainder))))
-                        (let
-                          [qualified-base-id : i64
-                            (csym.compiler-composite-pair-key-id
-                              (ci.intern-compat-state-leading-dot-id
-                                intern-state
-                                remainder)
-                              (ci.intern-compat-state-dotted-tail-id
-                                intern-state
-                                remainder))]
-                          [qualified-logical-id : i64
-                            (lower-name-cache-lookup-logical-id
-                              cache
-                              (csym.compiler-symbol-module-key-id-by-id
-                                module-id
-                                qualified-base-id)
-                              -1)]
-                          (when
-                            (>= qualified-logical-id 0)
-                            (set! result qualified-logical-id)))))))
-                (set! current remainder))))))
-      (if (and
-        (< result 0)
-        (match cache.parent
-          [(Global) true]
-          [(None) false]))
-        (lower-name-cache-global-resolve-module-path-id
-          cache
-          source-id
-          fallback)
-        result))))
+                          (ci.intern-compat-state-dotted-tail-id
+                            intern-state
+                            remainder))]
+                      [qualified-logical-id : i64
+                        (lower-name-cache-lookup-logical-id
+                          cache
+                          (csym.compiler-symbol-module-key-id-by-id
+                            module-id
+                            qualified-base-id)
+                          -1)]
+                      (when
+                        (>= qualified-logical-id 0)
+                        (set! result qualified-logical-id)))))))
+            (set! current remainder)))))
+    (if (and
+      (< result 0)
+      (match cache.parent
+        [(Global) true]
+        [(None) false]))
+      (lower-name-cache-global-resolve-module-path-id cache source-id fallback)
+      result)))
 
 (define (lower-name-cache-resolve-logical-id
   [cache : (& cache LowerNameCache)]
@@ -4514,10 +4428,9 @@
       (match (lower_i64_i64_map.get (& ids) name-id)
         [(LookupFound _) cache]
         [(LookupMissing)
-          (begin
-            (set! (array-ref values next) ty)
-            (lower_i64_i64_map.insert-ref! (&mut ids) name-id next)
-            (LowerTypeCache.Some ids values (+ next 1) parent owner-address))])]))
+          (set! (array-ref values next) ty)
+          (lower_i64_i64_map.insert-ref! (&mut ids) name-id next)
+          (LowerTypeCache.Some ids values (+ next 1) parent owner-address)])]))
 
 (define (lower-type-cache-from-env-into
   [env : tc_core.TcTypeEnv]
@@ -5050,15 +4963,14 @@
         (match (lower-name-env-view (lower-global-shared-view cur))
           [(Nil) unit]
           [(Bind bind-id logical-id _ rest)
-            (begin
-              (if (< bind-id 0)
-                (set! valid false)
-                (lower-alias-overlay-insert!
-                  lower-state
-                  (&mut ids)
-                  bind-id
-                  logical-id))
-              (set! cur rest))]))
+            (if (< bind-id 0)
+              (set! valid false)
+              (lower-alias-overlay-insert!
+                lower-state
+                (&mut ids)
+                bind-id
+                logical-id))
+            (set! cur rest)]))
       (cfg
         (any compile-profile test)
         (lower-alias-overlay-growth-profile lower-state (& ids))
@@ -5099,16 +5011,14 @@
           1
           count))]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) -1)
-          (set! index (+ index 1))))
-      (compiler-lower-state-write!
-        lower-state
-        (__tl_dyn-array i64)
-        alias-symbol-memo
-        slots))))
+    (while (< index count)
+      (set! (array-ref slots index) -1)
+      (set! index (+ index 1)))
+    (compiler-lower-state-write!
+      lower-state
+      (__tl_dyn-array i64)
+      alias-symbol-memo
+      slots)))
 
 (define (lower-alias-symbol-memo-release! [lower-state : CompilerLowerState]) : unit
   (compiler-lower-state-write!
@@ -5153,58 +5063,57 @@
   [_ : String]
   [logical-id : i64]
   [symbol-id : i64]) : LowerNameEnv
-  (begin
+  (when
+    (< source-id 0)
+    (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
+  ;; Re-entering a flattened module can repeat the exact same aliased import.
+  ;; Its source and logical IDs are identical, so another shadowing node cannot
+  ;; change resolution. A later reuse of the alias for a different logical ID
+  ;; still binds and replaces the tracked value.
+  (when
+    (not (string.eq alias ""))
     (when
-      (< source-id 0)
-      (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
-    ;; Re-entering a flattened module can repeat the exact same aliased import.
-    ;; Its source and logical IDs are identical, so another shadowing node cannot
-    ;; change resolution. A later reuse of the alias for a different logical ID
-    ;; still binds and replaces the tracked value.
-    (when
-      (not (string.eq alias ""))
+      (compiler-lower-state-read lower-state bool alias-overlay-valid)
       (when
-        (compiler-lower-state-read lower-state bool alias-overlay-valid)
-        (when
-          (=
-            (lower-alias-overlay-logical-id-or lower-state source-id -1)
-            logical-id)
-          (return names))
-        (lower-alias-overlay-record! lower-state source-id logical-id))
-      (return
-        (lower-name-env-bind-logical-symbol-id-owned
-          lower-state
-          source-id
-          logical-id
-          symbol-id
-          names)))
-    ;; Empty alias, degraded set (a <0 id appeared): exact linear scan preserves
-    ;; the Some/No decision byte-for-byte.
-    (when
-      (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
-      (return
-        (match (lower-name-env-lookup-with-id-owned
-          lower-state
-          (lower-global-shared-view names)
-          source-id)
-          [(Some _) names]
-          [(No)
-            (lower-name-env-bind-logical-symbol-id-owned
-              lower-state
-              source-id
-              logical-id
-              symbol-id
-              names)])))
-    ;; Fast path: O(1) membership check against the base-seeded overlay set,
-    ;; same accept decision as scanning `names`.
-    (when (lower-alias-overlay-contains? lower-state source-id) (return names))
-    (lower-alias-overlay-record! lower-state source-id logical-id)
-    (lower-name-env-bind-logical-symbol-id-owned
-      lower-state
-      source-id
-      logical-id
-      symbol-id
-      names)))
+        (=
+          (lower-alias-overlay-logical-id-or lower-state source-id -1)
+          logical-id)
+        (return names))
+      (lower-alias-overlay-record! lower-state source-id logical-id))
+    (return
+      (lower-name-env-bind-logical-symbol-id-owned
+        lower-state
+        source-id
+        logical-id
+        symbol-id
+        names)))
+  ;; Empty alias, degraded set (a <0 id appeared): exact linear scan preserves
+  ;; the Some/No decision byte-for-byte.
+  (when
+    (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
+    (return
+      (match (lower-name-env-lookup-with-id-owned
+        lower-state
+        (lower-global-shared-view names)
+        source-id)
+        [(Some _) names]
+        [(No)
+          (lower-name-env-bind-logical-symbol-id-owned
+            lower-state
+            source-id
+            logical-id
+            symbol-id
+            names)])))
+  ;; Fast path: O(1) membership check against the base-seeded overlay set,
+  ;; same accept decision as scanning `names`.
+  (when (lower-alias-overlay-contains? lower-state source-id) (return names))
+  (lower-alias-overlay-record! lower-state source-id logical-id)
+  (lower-name-env-bind-logical-symbol-id-owned
+    lower-state
+    source-id
+    logical-id
+    symbol-id
+    names))
 
 (define (lower-name-env-add-decl-import-alias-binding-base-id
   [lower-state : CompilerLowerState]
@@ -5266,17 +5175,16 @@
             (lower-global-shared-view logical-name)
             logical-id
             direct)]
-        (begin
-          (lower-alias-symbol-memo-set! lower-state position symbol-id)
-          (lower-name-env-add-import-alias-binding-symbol-id
-            lower-state
-            names
-            alias
-            source-name
-            source-key-id
-            logical-name
-            logical-id
-            symbol-id))))))
+        (lower-alias-symbol-memo-set! lower-state position symbol-id)
+        (lower-name-env-add-import-alias-binding-symbol-id
+          lower-state
+          names
+          alias
+          source-name
+          source-key-id
+          logical-name
+          logical-id
+          symbol-id)))))
 
 (define (lower-name-env-add-import-alias-binding-base-symbol-id
   [lower-state : CompilerLowerState]
@@ -5316,64 +5224,61 @@
       (compiler-lower-state-from-name-cache base-cache)]
     [source-id : i64
       (csym.compiler-symbol-module-key-id-by-id alias-id base-id)]
-    (begin
+    (when
+      (< source-id 0)
+      (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
+    ;; Identical aliased imports may recur when a flattened module is
+    ;; re-entered. Skip only an identical source/logical pair; a different
+    ;; logical target still shadows and updates the tracked value.
+    (when
+      (not (string.eq alias ""))
       (when
-        (< source-id 0)
-        (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
-      ;; Identical aliased imports may recur when a flattened module is
-      ;; re-entered. Skip only an identical source/logical pair; a different
-      ;; logical target still shadows and updates the tracked value.
-      (when
-        (not (string.eq alias ""))
+        (compiler-lower-state-read lower-state bool alias-overlay-valid)
         (when
-          (compiler-lower-state-read lower-state bool alias-overlay-valid)
-          (when
-            (=
-              (lower-alias-overlay-logical-id-or lower-state source-id -1)
-              logical-id)
-            (return names))
-          (lower-alias-overlay-record! lower-state source-id logical-id))
-        (return
-          (lower-name-env-bind-logical-symbol-id-owned
-            lower-state
-            source-id
-            logical-id
-            symbol-id
-            names)))
-      ;; Empty alias already provided by the base module: nothing to add.
-      (when
-        (and
-          dedup-base
-          (lower-name-cache-contains-local-id? base-cache source-id))
-        (return names))
-      ;; Degraded set (a <0 id appeared): exact linear scan preserves the
-      ;; Some/No decision byte-for-byte.
-      (when
-        (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
-        (return
-          (match (lower-name-env-lookup-with-id-owned
-            lower-state
-            (lower-global-shared-view names)
-            source-id)
-            [(Some _) names]
-            [(No)
-              (lower-name-env-bind-logical-symbol-id-owned
-                lower-state
-                source-id
-                logical-id
-                symbol-id
-                names)])))
-      ;; Fast path: O(1) overlay dedup, same accept decision as scanning `names`.
-      (when
-        (lower-alias-overlay-contains? lower-state source-id)
-        (return names))
-      (lower-alias-overlay-record! lower-state source-id logical-id)
-      (lower-name-env-bind-logical-symbol-id-owned
-        lower-state
-        source-id
-        logical-id
-        symbol-id
-        names))))
+          (=
+            (lower-alias-overlay-logical-id-or lower-state source-id -1)
+            logical-id)
+          (return names))
+        (lower-alias-overlay-record! lower-state source-id logical-id))
+      (return
+        (lower-name-env-bind-logical-symbol-id-owned
+          lower-state
+          source-id
+          logical-id
+          symbol-id
+          names)))
+    ;; Empty alias already provided by the base module: nothing to add.
+    (when
+      (and
+        dedup-base
+        (lower-name-cache-contains-local-id? base-cache source-id))
+      (return names))
+    ;; Degraded set (a <0 id appeared): exact linear scan preserves the
+    ;; Some/No decision byte-for-byte.
+    (when
+      (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
+      (return
+        (match (lower-name-env-lookup-with-id-owned
+          lower-state
+          (lower-global-shared-view names)
+          source-id)
+          [(Some _) names]
+          [(No)
+            (lower-name-env-bind-logical-symbol-id-owned
+              lower-state
+              source-id
+              logical-id
+              symbol-id
+              names)])))
+    ;; Fast path: O(1) overlay dedup, same accept decision as scanning `names`.
+    (when (lower-alias-overlay-contains? lower-state source-id) (return names))
+    (lower-alias-overlay-record! lower-state source-id logical-id)
+    (lower-name-env-bind-logical-symbol-id-owned
+      lower-state
+      source-id
+      logical-id
+      symbol-id
+      names)))
 
 ;; The module-local alias fanout resolves every (import, declaration) pair
 ;; through the base module's name cache, which holds the pair's symbol on
@@ -5762,69 +5667,56 @@
     (lower-name-cache-ir-symbol names logical-id source-id logical-name)))
 
 (define (lower-tl-alloc-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-alloc))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-alloc)
 
 (define (lower-tl-oob-abort-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-oob-abort))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-oob-abort)
 
 (define (lower-tl-shift-abort-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-shift-abort))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-shift-abort)
 
 (define (lower-tl-region-reset-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-region-reset))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-region-reset)
 
 (define (lower-tl-region-mark-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-region-mark))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-region-mark)
 
 (define (lower-tl-arena-set-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-arena-set))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-arena-set)
 
 (define (lower-tl-arena-current-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-arena-current))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-arena-current)
 
 (define (lower-tl-substring-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-substring))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-substring)
 
 (define (lower-tl-str-view-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-str-view))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-str-view)
 
 (define (lower-tl-array-fill8-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-array-fill8))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-array-fill8)
 
 (define (lower-tl-array-zero-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-array-zero))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-array-zero)
 
 (define (lower-tl-arena-make-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-arena-make))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-arena-make)
 
 (define (lower-tl-arena-destroy-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-arena-destroy))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-arena-destroy)
 
 (define (lower-resolve-call-name-id
   [state : LowerState]
@@ -5919,16 +5811,14 @@
     [n : i64 (string.string-length path)]
     [i : i64 0]
     [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (lower-path-separator? (string.string-ref path i))
-            (set! last i)
-            (set! last last))
-          (set! i (+ i 1))))
-      (if (< last 0)
-        ""
-        (string.substring path 0 (+ last 1))))))
+    (while (< i n)
+      (if (lower-path-separator? (string.string-ref path i))
+        (set! last i)
+        (set! last last))
+      (set! i (+ i 1)))
+    (if (< last 0)
+      ""
+      (string.substring path 0 (+ last 1)))))
 
 ;; Join segments with '/' in one linear text-buf build. A fold-with-append
 ;; copies the whole accumulated prefix on every segment (quadratic in rendered
@@ -5942,16 +5832,14 @@
         [buf : text_buf.TextBuf
           (text_buf.append (text_buf.empty) (svec.get (& segments) 0 ""))]
         [i : i64 1]
-        (begin
-          (while (< i count)
-            (begin
-              (set!
-                buf
-                (text_buf.append
-                  (text_buf.append buf "/")
-                  (svec.get (& segments) i "")))
-              (set! i (+ i 1))))
-          (text_buf.render buf))))))
+        (while (< i count)
+          (set!
+            buf
+            (text_buf.append
+              (text_buf.append buf "/")
+              (svec.get (& segments) i "")))
+          (set! i (+ i 1)))
+        (text_buf.render buf)))))
 
 (define (lower-path-normalize-segment
   [segment : String]
@@ -5980,51 +5868,48 @@
     [i : i64 0]
     [segment-start : i64 0]
     [ok : bool (> n 0)]
-    (begin
-      (while (and ok (< i n))
-        (let
-          [c : char (string.string-ref path i)]
-          (begin
-            (cond
-              [(= c '\\') (set! ok false)]
-              [(= c '/')
-                (let
-                  [segment-len : i64 (- i segment-start)]
-                  (begin
-                    (if (and (= segment-len 0) (not (= i 0)))
-                      (set! ok false)
-                      unit)
-                    (if (and
-                      (= segment-len 1)
-                      (= (string.string-ref path segment-start) '.'))
-                      (set! ok false)
-                      unit)
-                    (if (and
-                      (= segment-len 2)
-                      (= (string.string-ref path segment-start) '.')
-                      (= (string.string-ref path (+ segment-start 1)) '.'))
-                      (set! ok false)
-                      unit)
-                    (set! segment-start (+ i 1))))]
-              [else unit])
-            (set! i (+ i 1)))))
-      (if (not ok)
-        false
-        (let
-          [segment-len : i64 (- n segment-start)]
-          (cond
-            [(= segment-len 0)
-              (or (= n 1) (and (= n 3) (lower-path-drive-qualified? path)))]
-            [(and
+    (while (and ok (< i n))
+      (let
+        [c : char (string.string-ref path i)]
+        (cond
+          [(= c '\\') (set! ok false)]
+          [(= c '/')
+            (let
+              [segment-len : i64 (- i segment-start)]
+              (if (and (= segment-len 0) (not (= i 0)))
+                (set! ok false)
+                unit)
+              (if (and
                 (= segment-len 1)
                 (= (string.string-ref path segment-start) '.'))
-              false]
-            [(and
+                (set! ok false)
+                unit)
+              (if (and
                 (= segment-len 2)
                 (= (string.string-ref path segment-start) '.')
                 (= (string.string-ref path (+ segment-start 1)) '.'))
-              false]
-            [else true]))))))
+                (set! ok false)
+                unit)
+              (set! segment-start (+ i 1)))]
+          [else unit])
+        (set! i (+ i 1))))
+    (if (not ok)
+      false
+      (let
+        [segment-len : i64 (- n segment-start)]
+        (cond
+          [(= segment-len 0)
+            (or (= n 1) (and (= n 3) (lower-path-drive-qualified? path)))]
+          [(and
+              (= segment-len 1)
+              (= (string.string-ref path segment-start) '.'))
+            false]
+          [(and
+              (= segment-len 2)
+              (= (string.string-ref path segment-start) '.')
+              (= (string.string-ref path (+ segment-start 1)) '.'))
+            false]
+          [else true])))))
 
 ;; --- proven-canonical path memo ---------------------------------------
 ;; lower-normalize-path returns its argument unchanged when the path is
@@ -6059,10 +5944,9 @@
   (compiler-lower-state-write! lower-state String canonical-path-prior path))
 
 (define (lower-canonical-path-memo-reset! [lower-state : CompilerLowerState]) : unit
-  (begin
-    (compiler-lower-state-write! lower-state i64 canonical-path-count 0)
-    (lower-canonical-path-recent-set! lower-state "")
-    (lower-canonical-path-prior-set! lower-state "")))
+  (compiler-lower-state-write! lower-state i64 canonical-path-count 0)
+  (lower-canonical-path-recent-set! lower-state "")
+  (lower-canonical-path-prior-set! lower-state ""))
 
 (define (lower-canonical-path-remembered?
   [lower-state : CompilerLowerState]
@@ -6081,18 +5965,17 @@
   (let
     [count : i64
       (compiler-lower-state-read lower-state i64 canonical-path-count)]
-    (begin
-      (lower-canonical-path-prior-set!
+    (lower-canonical-path-prior-set!
+      lower-state
+      (lower-canonical-path-recent-current lower-state))
+    (lower-canonical-path-recent-set! lower-state path)
+    (if (< count 2)
+      (compiler-lower-state-write!
         lower-state
-        (lower-canonical-path-recent-current lower-state))
-      (lower-canonical-path-recent-set! lower-state path)
-      (if (< count 2)
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          canonical-path-count
-          (+ count 1))
-        unit))))
+        i64
+        canonical-path-count
+        (+ count 1))
+      unit)))
 
 (define (lower-path-known-canonical?
   [lower-state : CompilerLowerState]
@@ -6132,37 +6015,35 @@
             0))]
       [segment-start : i64 i]
       [segments : svec.Vec (svec.new)]
-      (begin
-        (while (< i n)
+      (while (< i n)
+        (if (lower-path-separator? (string.string-ref path i))
           (begin
-            (if (lower-path-separator? (string.string-ref path i))
-              (begin
-                (lower-path-normalize-segment
-                  (string.substring path segment-start (- i segment-start))
-                  (&mut segments)
-                  rooted)
-                (set! segment-start (+ i 1)))
-              (set! segment-start segment-start))
-            (set! i (+ i 1))))
-        (lower-path-normalize-segment
-          (string.substring path segment-start (- n segment-start))
-          (&mut segments)
-          rooted)
-        (let
-          [body : String (lower-path-segment-vec-render segments)]
-          (cond
-            [(if drive-root
-                (= (string.string-length body) 0)
-                false)
-              (str_cat.str-cat (string.substring path 0 2) "/")]
-            [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
-            [(if rooted
-                (= (string.string-length body) 0)
-                false)
-              "/"]
-            [rooted (str_cat.str-cat "/" body)]
-            [(= (string.string-length body) 0) "."]
-            [else body]))))))
+            (lower-path-normalize-segment
+              (string.substring path segment-start (- i segment-start))
+              (&mut segments)
+              rooted)
+            (set! segment-start (+ i 1)))
+          (set! segment-start segment-start))
+        (set! i (+ i 1)))
+      (lower-path-normalize-segment
+        (string.substring path segment-start (- n segment-start))
+        (&mut segments)
+        rooted)
+      (let
+        [body : String (lower-path-segment-vec-render segments)]
+        (cond
+          [(if drive-root
+              (= (string.string-length body) 0)
+              false)
+            (str_cat.str-cat (string.substring path 0 2) "/")]
+          [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
+          [(if rooted
+              (= (string.string-length body) 0)
+              false)
+            "/"]
+          [rooted (str_cat.str-cat "/" body)]
+          [(= (string.string-length body) 0) "."]
+          [else body])))))
 
 (define (lower-string-prefix-at?
   [text : String]
@@ -6178,16 +6059,15 @@
         (let
           [i : i64 0]
           [ok : bool true]
-          (begin
-            (while ok
-              (if (< i prefix-len)
-                (if (=
-                  (cast (string.string-ref text (+ start i)) : i64)
-                  (cast (string.string-ref prefix i) : i64))
-                  (set! i (+ i 1))
-                  (set! ok false))
-                (set! ok false)))
-            (= i prefix-len)))))))
+          (while ok
+            (if (< i prefix-len)
+              (if (=
+                (cast (string.string-ref text (+ start i)) : i64)
+                (cast (string.string-ref prefix i) : i64))
+                (set! i (+ i 1))
+                (set! ok false))
+              (set! ok false)))
+          (= i prefix-len))))))
 
 (define (lower-module-id
   [lower-state : CompilerLowerState]
@@ -6362,11 +6242,10 @@
             cbi.compiler-builtin-id-fix-empty
             owner-module-id)
           "lower-structural-module")]
-      (begin
-        (ci.intern-compat-state-install! installed)
-        (if ok
-          unit
-          (io.panic "lower: structural owner module name smoke failed"))))))
+      (ci.intern-compat-state-install! installed)
+      (if ok
+        unit
+        (io.panic "lower: structural owner module name smoke failed")))))
 
 (define (lower-entry-main-decl? [decl : ast.AstDecl]) : bool
   (match decl
@@ -6482,45 +6361,38 @@
   [selection : LowerMaybeEntryMainModule]) : unit
   (match selection
     [(No)
-      (begin
-        (compiler-lower-state-write!
-          lower-state
-          bool
-          entry-main-module-active
-          false)
-        (lower-entry-main-module-set! lower-state "")
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          entry-main-module-id
-          cbi.compiler-builtin-id-fix-empty))]
+      (compiler-lower-state-write!
+        lower-state
+        bool
+        entry-main-module-active
+        false)
+      (lower-entry-main-module-set! lower-state "")
+      (compiler-lower-state-write!
+        lower-state
+        i64
+        entry-main-module-id
+        cbi.compiler-builtin-id-fix-empty)]
     [(Some module module-id)
-      (begin
-        (compiler-lower-state-write!
-          lower-state
-          bool
-          entry-main-module-active
-          true)
-        (lower-entry-main-module-set! lower-state module)
-        (compiler-lower-state-write!
-          lower-state
-          i64
-          entry-main-module-id
-          module-id))]))
+      (compiler-lower-state-write!
+        lower-state
+        bool
+        entry-main-module-active
+        true)
+      (lower-entry-main-module-set! lower-state module)
+      (compiler-lower-state-write!
+        lower-state
+        i64
+        entry-main-module-id
+        module-id)]))
 
 (define (lower-entry-main-selection-restore!
   [lower-state : CompilerLowerState]
   [active : bool]
   [module : String]
   [module-id : i64]) : unit
-  (begin
-    (compiler-lower-state-write!
-      lower-state
-      bool
-      entry-main-module-active
-      active)
-    (lower-entry-main-module-set! lower-state module)
-    (compiler-lower-state-write! lower-state i64 entry-main-module-id module-id)))
+  (compiler-lower-state-write! lower-state bool entry-main-module-active active)
+  (lower-entry-main-module-set! lower-state module)
+  (compiler-lower-state-write! lower-state i64 entry-main-module-id module-id))
 
 (define (lower-entry-main-logical-id
   [all-functions : (& all-functions lower_i64_i64_map.Map)]) : i64
@@ -6822,59 +6694,56 @@
     [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 module-id]
-    (begin
-      (while (< index count)
-        (let
-          [decl : ast.AstDecl
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index))]
-          [decl-path : String
-            (ast.ast-decl-path-list-get
-              (& paths)
-              index
-              (lower-global-shared-view entry-path))]
-          [logical-module-id : i64
-            (lower-decl-owner-module-id
-              lower-state
-              (& paths)
-              index
-              (lower-global-shared-view entry-path)
-              (lower-global-shared-view decl-path)
-              cur-module-id)]
-          (begin
-            (match (lower-global-shared-view decl)
-              [(Def decl-meta _ _ _) unit]
-              [_ unit])
-            (match (lower-global-shared-view decl)
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_
-                (let
-                  [owner-names : LowerNameEnv
-                    (lower-name-env-add-decl-in-module
-                      lower-state
-                      (lower-global-shared-view cur-names)
-                      (lower-global-shared-view entry-path)
-                      decl-path
-                      (lower-decl-owner-module-name
-                        lower-state
-                        cur-module-id
-                        logical-module-id)
-                      logical-module-id
-                      (lower-global-shared-view decl))]
-                  (set!
-                    cur-names
-                    (if (and
-                      (csym.compiler-symbol-root-module-id? cur-module-id)
-                      (not
-                        (csym.compiler-symbol-root-module-id? logical-module-id)))
-                      (lower-name-env-add-root-alias-from-latest-owned
-                        lower-state
-                        owner-names
-                        decl)
-                      owner-names)))])
-            (set! index (+ index 1)))))
-      cur-names)))
+    (while (< index count)
+      (let
+        [decl : ast.AstDecl
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index))]
+        [decl-path : String
+          (ast.ast-decl-path-list-get
+            (& paths)
+            index
+            (lower-global-shared-view entry-path))]
+        [logical-module-id : i64
+          (lower-decl-owner-module-id
+            lower-state
+            (& paths)
+            index
+            (lower-global-shared-view entry-path)
+            (lower-global-shared-view decl-path)
+            cur-module-id)]
+        (match (lower-global-shared-view decl)
+          [(Def decl-meta _ _ _) unit]
+          [_ unit])
+        (match (lower-global-shared-view decl)
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_
+            (let
+              [owner-names : LowerNameEnv
+                (lower-name-env-add-decl-in-module
+                  lower-state
+                  (lower-global-shared-view cur-names)
+                  (lower-global-shared-view entry-path)
+                  decl-path
+                  (lower-decl-owner-module-name
+                    lower-state
+                    cur-module-id
+                    logical-module-id)
+                  logical-module-id
+                  (lower-global-shared-view decl))]
+              (set!
+                cur-names
+                (if (and
+                  (csym.compiler-symbol-root-module-id? cur-module-id)
+                  (not (csym.compiler-symbol-root-module-id? logical-module-id)))
+                  (lower-name-env-add-root-alias-from-latest-owned
+                    lower-state
+                    owner-names
+                    decl)
+                  owner-names)))])
+        (set! index (+ index 1))))
+    cur-names))
 
 (define (lower-name-env-add-clone-decl-in-module-inner
   [lower-state : CompilerLowerState]
@@ -7024,32 +6893,30 @@
     ;; and hands the slot straight on (aggregate arguments pass by reference).
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (begin
-      (while (< index count)
-        (let
-          [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
-          (begin
-            (match (lower-global-array-element-shared-view
-              decl-slots
-              (+ decl-offset index))
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_
-                (set!
-                  cur-names
-                  (lower-name-env-add-clone-decl-in-module
-                    lower-state
-                    cur-names
-                    roots
-                    bind-syntax?
-                    (lower-global-shared-view entry-path)
-                    decl-path
-                    (compiler-lower-state-name-text lower-state cur-module-id)
-                    cur-module-id
-                    (lower-global-array-element-shared-view
-                      decl-slots
-                      (+ decl-offset index))))])
-            (set! index (+ index 1)))))
-      cur-names)))
+    (while (< index count)
+      (let
+        [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
+        (match (lower-global-array-element-shared-view
+          decl-slots
+          (+ decl-offset index))
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_
+            (set!
+              cur-names
+              (lower-name-env-add-clone-decl-in-module
+                lower-state
+                cur-names
+                roots
+                bind-syntax?
+                (lower-global-shared-view entry-path)
+                decl-path
+                (compiler-lower-state-name-text lower-state cur-module-id)
+                cur-module-id
+                (lower-global-array-element-shared-view
+                  decl-slots
+                  (+ decl-offset index))))])
+        (set! index (+ index 1))))
+    cur-names))
 
 (define (lower-name-env-add-clone-decls
   [lower-state : CompilerLowerState]
@@ -7516,46 +7383,44 @@
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [decl-offset : i64 decls.offset]
         [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-        (begin
-          (while (< index end)
-            (let
-              [position : i64
-                (lower-global-array-element-shared-view positions index)]
-              [decl : ast.AstDecl
-                (lower-global-array-element-shared-view
-                  decl-slots
-                  (+ decl-offset position))]
-              [decl-path : String
-                (ast.ast-decl-path-list-get
-                  (& paths)
-                  position
-                  (lower-global-shared-view entry-path))]
-              (begin
-                (match (lower-global-shared-view decl)
-                  [(Module _) unit]
-                  [(Import decl-meta _) unit]
-                  [(IncludeStr _ _) unit]
-                  [(IncludeStrComptime _ _) unit]
-                  [(IncludeStrLzss _ _) unit]
-                  [(IncludeBin _ _) unit]
-                  [(Test _ _ _ _) unit]
-                  [_
-                    (set!
-                      cur-names
-                      (lower-name-env-add-decl-alias-in-module
-                        lower-state
-                        cur-names
-                        position
-                        (lower-global-shared-view entry-path)
-                        decl-path
-                        (lower-global-shared-view alias)
-                        alias-id
-                        (lower-global-shared-view target-module)
-                        target-module-id
-                        decl
-                        path-aware))])
-                (set! index (+ index 1)))))
-          cur-names)))))
+        (while (< index end)
+          (let
+            [position : i64
+              (lower-global-array-element-shared-view positions index)]
+            [decl : ast.AstDecl
+              (lower-global-array-element-shared-view
+                decl-slots
+                (+ decl-offset position))]
+            [decl-path : String
+              (ast.ast-decl-path-list-get
+                (& paths)
+                position
+                (lower-global-shared-view entry-path))]
+            (match (lower-global-shared-view decl)
+              [(Module _) unit]
+              [(Import decl-meta _) unit]
+              [(IncludeStr _ _) unit]
+              [(IncludeStrComptime _ _) unit]
+              [(IncludeStrLzss _ _) unit]
+              [(IncludeBin _ _) unit]
+              [(Test _ _ _ _) unit]
+              [_
+                (set!
+                  cur-names
+                  (lower-name-env-add-decl-alias-in-module
+                    lower-state
+                    cur-names
+                    position
+                    (lower-global-shared-view entry-path)
+                    decl-path
+                    (lower-global-shared-view alias)
+                    alias-id
+                    (lower-global-shared-view target-module)
+                    target-module-id
+                    decl
+                    path-aware))])
+            (set! index (+ index 1))))
+        cur-names))))
 
 ;; --- per-program module -> decl-position index ------------------
 ;; Import-alias fanout, its cache-backed module-local variant, and
@@ -7570,53 +7435,39 @@
 ;; compiler-lower-state-reset! drops it between programs and the (len, offset)
 ;; stamp re-checks the list shape on every ensure.
 (define (lower-module-decl-index-reset! [lower-state : CompilerLowerState]) : unit
-  (begin
-    (compiler-lower-state-write! lower-state bool module-decl-index-ready false)
-    (compiler-lower-state-write!
-      lower-state
-      i64
-      module-decl-index-decl-count
-      -1)
-    (compiler-lower-state-write!
-      lower-state
-      i64
-      module-decl-index-decl-offset
-      -1)
-    ;; The stale array/map handles are never read while ready is false (every
-    ;; consumer goes through ensure!), so destroying their owner arena is safe.
-    (let
-      [index-arena : i64
-        (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
-      (if (= index-arena 0)
-        unit
-        (begin
-          (unsafe
-            (arena.tl_arena_destroy index-arena))
-          (compiler-lower-state-write!
-            lower-state
-            i64
-            module-decl-index-arena
-            0))))
-    (compiler-lower-state-write!
-      lower-state
-      lower_i64_i64_map.Map
-      module-decl-index-modules
-      (lower_i64_i64_map.with-capacity 16))
-    (compiler-lower-state-write!
-      lower-state
-      (__tl_dyn-array i64)
-      module-decl-index-starts
-      (__tl_make-array i64 0))
-    (compiler-lower-state-write!
-      lower-state
-      (__tl_dyn-array i64)
-      module-decl-index-ends
-      (__tl_make-array i64 0))
-    (compiler-lower-state-write!
-      lower-state
-      (__tl_dyn-array i64)
-      module-decl-index-positions
-      (__tl_make-array i64 0))))
+  (compiler-lower-state-write! lower-state bool module-decl-index-ready false)
+  (compiler-lower-state-write! lower-state i64 module-decl-index-decl-count -1)
+  (compiler-lower-state-write! lower-state i64 module-decl-index-decl-offset -1)
+  ;; The stale array/map handles are never read while ready is false (every
+  ;; consumer goes through ensure!), so destroying their owner arena is safe.
+  (let
+    [index-arena : i64
+      (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
+    (unless
+      (= index-arena 0)
+      (unsafe
+        (arena.tl_arena_destroy index-arena))
+      (compiler-lower-state-write! lower-state i64 module-decl-index-arena 0)))
+  (compiler-lower-state-write!
+    lower-state
+    lower_i64_i64_map.Map
+    module-decl-index-modules
+    (lower_i64_i64_map.with-capacity 16))
+  (compiler-lower-state-write!
+    lower-state
+    (__tl_dyn-array i64)
+    module-decl-index-starts
+    (__tl_make-array i64 0))
+  (compiler-lower-state-write!
+    lower-state
+    (__tl_dyn-array i64)
+    module-decl-index-ends
+    (__tl_make-array i64 0))
+  (compiler-lower-state-write!
+    lower-state
+    (__tl_dyn-array i64)
+    module-decl-index-positions
+    (__tl_make-array i64 0)))
 
 (define (lower-module-decl-index-ensure!
   [lower-state : CompilerLowerState]
@@ -7643,15 +7494,14 @@
       [index-arena : i64
         (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
       [_make-arena : unit
-        (if (= index-arena 0)
-          (begin
-            (set! index-arena (arena.tl_arena_make_small))
-            (compiler-lower-state-write!
-              lower-state
-              i64
-              module-decl-index-arena
-              index-arena))
-          unit)]
+        (when
+          (= index-arena 0)
+          (set! index-arena (arena.tl_arena_make_small))
+          (compiler-lower-state-write!
+            lower-state
+            i64
+            module-decl-index-arena
+            index-arena))]
       (in-arena
         (arena.Arena index-arena)
         (let
@@ -7665,91 +7515,83 @@
           [cur-module-id : i64 empty-module-id]
           [i : i64 0]
           [running : i64 0]
-          (begin
-            ;; Pass 1: assign a dense slot per module id and count its decls.
-            (while (< i count)
-              (begin
-                (match (array-ref decl-slots (+ decl-offset i))
-                  [(Module next-module) (set! cur-module-id next-module)]
-                  [_
-                    (let
-                      [slot : i64
-                        (match (lower_i64_i64_map.get (& modules) cur-module-id)
-                          [(LookupFound found-slot) found-slot]
-                          [(LookupMissing)
-                            (let
-                              [new-slot : i64 module-count]
-                              (begin
-                                (lower_i64_i64_map.insert-ref!
-                                  (&mut modules)
-                                  cur-module-id
-                                  new-slot)
-                                (set! module-count (+ module-count 1))
-                                new-slot))])]
-                      (set!
-                        (array-ref counts slot)
-                        (+ (array-ref counts slot) 1)))])
-                (set! i (+ i 1))))
-            ;; Prefix sums: starts fixed, ends double as fill cursors below.
-            (set! i 0)
-            (while (< i module-count)
-              (begin
-                (set! (array-ref starts i) running)
-                (set! (array-ref ends i) running)
-                (set! running (+ running (array-ref counts i)))
-                (set! i (+ i 1))))
-            ;; Pass 2: fill program-order positions per module slot.
-            (set! cur-module-id empty-module-id)
-            (set! i 0)
-            (while (< i count)
-              (begin
-                (match (array-ref decl-slots (+ decl-offset i))
-                  [(Module next-module) (set! cur-module-id next-module)]
-                  [_
+          ;; Pass 1: assign a dense slot per module id and count its decls.
+          (while (< i count)
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(Module next-module) (set! cur-module-id next-module)]
+              [_
+                (let
+                  [slot : i64
                     (match (lower_i64_i64_map.get (& modules) cur-module-id)
-                      [(LookupFound slot)
+                      [(LookupFound found-slot) found-slot]
+                      [(LookupMissing)
                         (let
-                          [cursor : i64 (array-ref ends slot)]
-                          (begin
-                            (set! (array-ref positions cursor) i)
-                            (set! (array-ref ends slot) (+ cursor 1))))]
-                      [(LookupMissing) unit])])
-                (set! i (+ i 1))))
-            (compiler-lower-state-write!
-              lower-state
-              lower_i64_i64_map.Map
-              module-decl-index-modules
-              modules)
-            (compiler-lower-state-write!
-              lower-state
-              (__tl_dyn-array i64)
-              module-decl-index-starts
-              starts)
-            (compiler-lower-state-write!
-              lower-state
-              (__tl_dyn-array i64)
-              module-decl-index-ends
-              ends)
-            (compiler-lower-state-write!
-              lower-state
-              (__tl_dyn-array i64)
-              module-decl-index-positions
-              positions)
-            (compiler-lower-state-write!
-              lower-state
-              i64
-              module-decl-index-decl-count
-              count)
-            (compiler-lower-state-write!
-              lower-state
-              i64
-              module-decl-index-decl-offset
-              decl-offset)
-            (compiler-lower-state-write!
-              lower-state
-              bool
-              module-decl-index-ready
-              true)))))))
+                          [new-slot : i64 module-count]
+                          (lower_i64_i64_map.insert-ref!
+                            (&mut modules)
+                            cur-module-id
+                            new-slot)
+                          (set! module-count (+ module-count 1))
+                          new-slot)])]
+                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))])
+            (set! i (+ i 1)))
+          ;; Prefix sums: starts fixed, ends double as fill cursors below.
+          (set! i 0)
+          (while (< i module-count)
+            (set! (array-ref starts i) running)
+            (set! (array-ref ends i) running)
+            (set! running (+ running (array-ref counts i)))
+            (set! i (+ i 1)))
+          ;; Pass 2: fill program-order positions per module slot.
+          (set! cur-module-id empty-module-id)
+          (set! i 0)
+          (while (< i count)
+            (match (array-ref decl-slots (+ decl-offset i))
+              [(Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (lower_i64_i64_map.get (& modules) cur-module-id)
+                  [(LookupFound slot)
+                    (let
+                      [cursor : i64 (array-ref ends slot)]
+                      (set! (array-ref positions cursor) i)
+                      (set! (array-ref ends slot) (+ cursor 1)))]
+                  [(LookupMissing) unit])])
+            (set! i (+ i 1)))
+          (compiler-lower-state-write!
+            lower-state
+            lower_i64_i64_map.Map
+            module-decl-index-modules
+            modules)
+          (compiler-lower-state-write!
+            lower-state
+            (__tl_dyn-array i64)
+            module-decl-index-starts
+            starts)
+          (compiler-lower-state-write!
+            lower-state
+            (__tl_dyn-array i64)
+            module-decl-index-ends
+            ends)
+          (compiler-lower-state-write!
+            lower-state
+            (__tl_dyn-array i64)
+            module-decl-index-positions
+            positions)
+          (compiler-lower-state-write!
+            lower-state
+            i64
+            module-decl-index-decl-count
+            count)
+          (compiler-lower-state-write!
+            lower-state
+            i64
+            module-decl-index-decl-offset
+            decl-offset)
+          (compiler-lower-state-write!
+            lower-state
+            bool
+            module-decl-index-ready
+            true))))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (lower-module-decl-index-slot
@@ -7800,38 +7642,36 @@
         [target-module : String
           (lower-name-id-text lower-state target-module-id)]
         [alias : String (lower-name-id-text lower-state alias-id)]
-        (begin
-          (while (< j end)
-            (let
-              [decl : ast.AstDecl
-                (lower-global-array-element-shared-view
-                  decls.slots
-                  (+
-                    decls.offset
-                    (lower-global-array-element-shared-view positions j)))]
-              (begin
-                (match (lower-global-shared-view decl)
-                  [(Module _) unit]
-                  [(Import decl-meta _) unit]
-                  [(IncludeStr _ _) unit]
-                  [(IncludeStrComptime _ _) unit]
-                  [(IncludeStrLzss _ _) unit]
-                  [(IncludeBin _ _) unit]
-                  [(Test _ _ _ _) unit]
-                  [_
-                    (set!
-                      cur-names
-                      (lower-name-env-add-decl-alias-in-module-cache
-                        cur-names
-                        base-cache
-                        dedup-base
-                        alias
-                        alias-id
-                        (lower-global-shared-view target-module)
-                        target-module-id
-                        decl))])
-                (set! j (+ j 1)))))
-          cur-names)))))
+        (while (< j end)
+          (let
+            [decl : ast.AstDecl
+              (lower-global-array-element-shared-view
+                decls.slots
+                (+
+                  decls.offset
+                  (lower-global-array-element-shared-view positions j)))]
+            (match (lower-global-shared-view decl)
+              [(Module _) unit]
+              [(Import decl-meta _) unit]
+              [(IncludeStr _ _) unit]
+              [(IncludeStrComptime _ _) unit]
+              [(IncludeStrLzss _ _) unit]
+              [(IncludeBin _ _) unit]
+              [(Test _ _ _ _) unit]
+              [_
+                (set!
+                  cur-names
+                  (lower-name-env-add-decl-alias-in-module-cache
+                    cur-names
+                    base-cache
+                    dedup-base
+                    alias
+                    alias-id
+                    (lower-global-shared-view target-module)
+                    target-module-id
+                    decl))])
+            (set! j (+ j 1))))
+        cur-names))))
 
 (define (lower-name-env-add-selected-item-alias
   [lower-state : CompilerLowerState]
@@ -7913,59 +7753,57 @@
     [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
-    (begin
-      ;; Seed the overlay membership set from the base env so the per-alias
-      ;; "already bound?" check below is O(1) instead of an O(base) linear scan.
-      (lower-alias-overlay-seed-from-env!
-        lower-state
-        (lower-global-shared-view cur-names))
-      ;; The fanout below revisits each imported declaration once per importing
-      ;; alias; the memo is indexed by that declaration's position in
-      ;; `all-decls` and is valid only while this pass' (decls, paths,
-      ;; entry-path, path-aware) tuple is fixed.
-      (lower-alias-symbol-memo-reset!
-        lower-state
-        (ast.ast-decl-list-len (& all-decls)))
-      (while (< index count)
-        (let
-          [decl : ast.AstDecl
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index))]
-          (begin
-            (match (lower-global-shared-view decl)
-              [(Import
-                  decl-meta
-                  (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
-                (set!
-                  cur-names
-                  (lower-name-env-add-selected-item-alias
-                    lower-state
-                    cur-names
-                    cur-module-id
-                    target-module
-                    item
-                    alias))]
-              [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
-                (set!
-                  cur-names
-                  (lower-name-env-add-module-aliases
-                    lower-state
-                    all-decls
-                    all-paths
-                    (lower-global-shared-view entry-path)
-                    cur-names
-                    target-module
-                    (lower-import-alias-key-id cur-module-id alias)
-                    cbi.compiler-builtin-id-fix-empty
-                    path-aware))]
-              [_ unit])
-            (match decl
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      (lower-alias-symbol-memo-release! lower-state)
-      cur-names)))
+    ;; Seed the overlay membership set from the base env so the per-alias
+    ;; "already bound?" check below is O(1) instead of an O(base) linear scan.
+    (lower-alias-overlay-seed-from-env!
+      lower-state
+      (lower-global-shared-view cur-names))
+    ;; The fanout below revisits each imported declaration once per importing
+    ;; alias; the memo is indexed by that declaration's position in
+    ;; `all-decls` and is valid only while this pass' (decls, paths,
+    ;; entry-path, path-aware) tuple is fixed.
+    (lower-alias-symbol-memo-reset!
+      lower-state
+      (ast.ast-decl-list-len (& all-decls)))
+    (while (< index count)
+      (let
+        [decl : ast.AstDecl
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index))]
+        (match (lower-global-shared-view decl)
+          [(Import
+              decl-meta
+              (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
+            (set!
+              cur-names
+              (lower-name-env-add-selected-item-alias
+                lower-state
+                cur-names
+                cur-module-id
+                target-module
+                item
+                alias))]
+          [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
+            (set!
+              cur-names
+              (lower-name-env-add-module-aliases
+                lower-state
+                all-decls
+                all-paths
+                (lower-global-shared-view entry-path)
+                cur-names
+                target-module
+                (lower-import-alias-key-id cur-module-id alias)
+                cbi.compiler-builtin-id-fix-empty
+                path-aware))]
+          [_ unit])
+        (match decl
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_ unit])
+        (set! index (+ index 1))))
+    (lower-alias-symbol-memo-release! lower-state)
+    cur-names))
 
 (define (lower-name-env-with-import-aliases
   [lower-state : CompilerLowerState]
@@ -8015,59 +7853,49 @@
         lower-state
         (__tl_dyn-array i64)
         module-decl-index-positions)]
-    (begin
-      ;; `names` is always a fresh (empty) overlay here, so seed the overlay
-      ;; membership set empty; it then mirrors every alias bound below.
-      (lower-alias-overlay-reset! lower-state)
-      (if (< slot 0)
-        cur-names
-        (let
-          [j : i64 (lower-global-array-element-shared-view starts slot)]
-          [end : i64 (lower-global-array-element-shared-view ends slot)]
-          (begin
-            (while (< j end)
-              (let
-                [decl : ast.AstDecl
-                  (lower-global-array-element-shared-view
-                    decls.slots
-                    (+
-                      decls.offset
-                      (lower-global-array-element-shared-view positions j)))]
-                (begin
-                  (match decl
-                    [(Import
-                        decl-meta
-                        (Spec
-                          (ModuleItem item)
-                          _
-                          (Some target-module)
-                          (Some alias)
-                          _))
-                      (set!
-                        cur-names
-                        (lower-name-env-add-selected-item-alias-cache
-                          cur-names
-                          base-cache
-                          target-current-module-id
-                          target-module
-                          item
-                          alias))]
-                    [(Import
-                        decl-meta
-                        (Spec _ _ (Some target-module) (Some alias) _))
-                      (set!
-                        cur-names
-                        (lower-name-env-add-module-aliases-cache
-                          (lower-global-shared-view all-decls)
-                          base-cache
-                          dedup-base
-                          cur-names
-                          target-module
-                          alias
-                          cbi.compiler-builtin-id-fix-empty))]
-                    [_ unit])
-                  (set! j (+ j 1)))))
-            cur-names))))))
+    ;; `names` is always a fresh (empty) overlay here, so seed the overlay
+    ;; membership set empty; it then mirrors every alias bound below.
+    (lower-alias-overlay-reset! lower-state)
+    (if (< slot 0)
+      cur-names
+      (let
+        [j : i64 (lower-global-array-element-shared-view starts slot)]
+        [end : i64 (lower-global-array-element-shared-view ends slot)]
+        (while (< j end)
+          (let
+            [decl : ast.AstDecl
+              (lower-global-array-element-shared-view
+                decls.slots
+                (+
+                  decls.offset
+                  (lower-global-array-element-shared-view positions j)))]
+            (match decl
+              [(Import
+                  decl-meta
+                  (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
+                (set!
+                  cur-names
+                  (lower-name-env-add-selected-item-alias-cache
+                    cur-names
+                    base-cache
+                    target-current-module-id
+                    target-module
+                    item
+                    alias))]
+              [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
+                (set!
+                  cur-names
+                  (lower-name-env-add-module-aliases-cache
+                    (lower-global-shared-view all-decls)
+                    base-cache
+                    dedup-base
+                    cur-names
+                    target-module
+                    alias
+                    cbi.compiler-builtin-id-fix-empty))]
+              [_ unit])
+            (set! j (+ j 1))))
+        cur-names))))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : ast.AstDeclList]
@@ -8340,42 +8168,38 @@
     [decl-offset : i64 decls.offset]
     [result : ResultLowerModuleLocalEnv (Err "lower: module local env walk")]
     [done : bool false]
-    (begin
-      (while (and (not done) (< index count))
-        (let
-          [decl : ast.AstDecl
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+
-                decl-offset
-                (lower-global-array-element-shared-view positions index)))]
-          (begin
-            (match (lower-global-shared-view decl)
-              [(Module _) unit]
-              [_
-                (match (lower-module-local-type-envs-add-decl
-                  top-env
-                  cur-type-env
-                  cur-local-type-env
-                  target-module-id
-                  decl)
-                  [(Ok next-type-env next-local-type-env)
-                    (begin
-                      (set! cur-type-env next-type-env)
-                      (set! cur-local-type-env next-local-type-env))]
-                  [(Err message)
-                    (begin
-                      (set! result (Err message))
-                      (set! done true))])])
-            (set! index (+ index 1)))))
-      (if done
-        result
-        (Ok
-          ;; Keep the module declaration-count phase from seeding function-local
-          ;; partial-cache collapse depth.
-          (tc_core.tc-env-with-cache-layer-over-explicit cur-type-env)
-          cur-local-type-env
-          cur-local-names)))))
+    (while (and (not done) (< index count))
+      (let
+        [decl : ast.AstDecl
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+
+              decl-offset
+              (lower-global-array-element-shared-view positions index)))]
+        (match (lower-global-shared-view decl)
+          [(Module _) unit]
+          [_
+            (match (lower-module-local-type-envs-add-decl
+              top-env
+              cur-type-env
+              cur-local-type-env
+              target-module-id
+              decl)
+              [(Ok next-type-env next-local-type-env)
+                (set! cur-type-env next-type-env)
+                (set! cur-local-type-env next-local-type-env)]
+              [(Err message)
+                (set! result (Err message))
+                (set! done true)])])
+        (set! index (+ index 1))))
+    (if done
+      result
+      (Ok
+        ;; Keep the module declaration-count phase from seeding function-local
+        ;; partial-cache collapse depth.
+        (tc_core.tc-env-with-cache-layer-over-explicit cur-type-env)
+        cur-local-type-env
+        cur-local-names))))
 
 (define (lower-module-local-envs
   [ctx : tc_core.TcContext]
@@ -8420,9 +8244,8 @@
   (let
     [index : i64 0]
     (while (< index len)
-      (begin
-        (set! (array-ref destination index) (array-ref source index))
-        (set! index (+ index 1))))))
+      (set! (array-ref destination index) (array-ref source index))
+      (set! index (+ index 1)))))
 
 (define (lower-module-local-view-store-grow [store : LowerModuleLocalViewStore]) : LowerModuleLocalViewStore
   (let
@@ -8433,12 +8256,11 @@
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerModuleLocalView)
       (__tl_make-array LowerModuleLocalView next-capacity)]
-    (begin
-      (lower-module-local-view-store-copy-prefix!
-        store.values
-        (&mut next-values)
-        store.len)
-      (LowerModuleLocalViewStore store.modules next-values store.len))))
+    (lower-module-local-view-store-copy-prefix!
+      store.values
+      (&mut next-values)
+      store.len)
+    (LowerModuleLocalViewStore store.modules next-values store.len)))
 
 (define (lower-module-local-view-store-lookup
   [store : LowerModuleLocalViewStore]
@@ -8454,9 +8276,8 @@
   [view : LowerModuleLocalView]) : LowerModuleLocalViewStore
   (match (lower_i64_i64_map.get (& store.modules) module-id)
     [(LookupFound slot)
-      (begin
-        (set! (array-ref store.values slot) view)
-        store)]
+      (set! (array-ref store.values slot) view)
+      store]
     [(LookupMissing)
       (let
         [ready : LowerModuleLocalViewStore
@@ -8574,30 +8395,27 @@
     [count : i64 0]
     [cursor : ast.AstDeclList decls]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (begin
-              (match (lower-global-shared-view decl)
-                [(Module module-id)
-                  (begin
-                    (lower_i64_i64_map.insert-ref!
-                      (&mut last-markers)
-                      module-id
-                      count)
-                    (set! count (+ count 1)))]
-                [_ unit])
-              (set! cursor rest))]))
-      (LowerModuleViewEpochs
-        last-markers
-        count
-        (__tl_make-array i64 lower-module-view-epoch-count)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        0
-        0))))
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (match (lower-global-shared-view decl)
+            [(Module module-id)
+              (lower_i64_i64_map.insert-ref!
+                (&mut last-markers)
+                module-id
+                count)
+              (set! count (+ count 1))]
+            [_ unit])
+          (set! cursor rest)]))
+    (LowerModuleViewEpochs
+      last-markers
+      count
+      (__tl_make-array i64 lower-module-view-epoch-count)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      0
+      0)))
 
 (define (lower-module-view-epoch
   [epochs : (& epochs LowerModuleViewEpochs)]
@@ -8624,50 +8442,47 @@
   (match (lower-active-module-local-view-lookup lower-state module-id)
     [(Some view) (Ok view)]
     [(No)
-      (begin
-        (if (string.eq module "")
-          unit
-          (match (tc_core.tc-context-program ctx)
-            [(Program decls-box)
-              (lower-module-decl-index-ensure! lower-state (deref decls-box))]))
-        (let
-          [epoch : i64 (lower-module-view-epoch epochs module-id)]
-          [view-arena : i64
-            (if (> (array-ref epochs.arenas epoch) 0)
-              (array-ref epochs.arenas epoch)
-              (let
-                [created : i64 (arena.tl_arena_make_small)]
-                (begin
-                  (ast.compiler-arena-debug-protect-never-reset! created)
-                  (set! (array-ref epochs.arenas epoch) created)
-                  created)))]
-          [home : i64 (arena.tl_arena_current)]
-          [_enter : unit
-            (unsafe
-              (arena.tl_arena_set view-arena))]
-          [built : ResultLowerModuleLocalView
-            (lower-module-local-view-build
+      (if (string.eq module "")
+        unit
+        (match (tc_core.tc-context-program ctx)
+          [(Program decls-box)
+            (lower-module-decl-index-ensure! lower-state (deref decls-box))]))
+      (let
+        [epoch : i64 (lower-module-view-epoch epochs module-id)]
+        [view-arena : i64
+          (if (> (array-ref epochs.arenas epoch) 0)
+            (array-ref epochs.arenas epoch)
+            (let
+              [created : i64 (arena.tl_arena_make_small)]
+              (ast.compiler-arena-debug-protect-never-reset! created)
+              (set! (array-ref epochs.arenas epoch) created)
+              created))]
+        [home : i64 (arena.tl_arena_current)]
+        [_enter : unit
+          (unsafe
+            (arena.tl_arena_set view-arena))]
+        [built : ResultLowerModuleLocalView
+          (lower-module-local-view-build
+            lower-state
+            ctx
+            top-env
+            names
+            module
+            module-id)]
+        [_leave : unit
+          (unsafe
+            (arena.tl_arena_set home))]
+        (match built
+          [(Ok view)
+            (lower-active-module-local-view-insert!
               lower-state
-              ctx
-              top-env
-              names
-              module
-              module-id)]
-          [_leave : unit
-            (unsafe
-              (arena.tl_arena_set home))]
-          (match built
-            [(Ok view)
-              (begin
-                (lower-active-module-local-view-insert!
-                  lower-state
-                  module-id
-                  (lower-global-shared-view view))
-                (__tl_array-push! epochs.modules module-id)
-                (__tl_array-push! epochs.module-epochs epoch)
-                (set! epochs.built (+ epochs.built 1))
-                (Ok view))]
-            [(Err message) (Err message)])))]))
+              module-id
+              (lower-global-shared-view view))
+            (__tl_array-push! epochs.modules module-id)
+            (__tl_array-push! epochs.module-epochs epoch)
+            (set! epochs.built (+ epochs.built 1))
+            (Ok view)]
+          [(Err message) (Err message)]))]))
 
 ;; Release every epoch the loop has passed at marker index MARKER: each one
 ;; whose modules all have their last marker before it. Their views' map entries
@@ -8693,36 +8508,33 @@
           active-module-local-views)]
       [modules : lower_i64_i64_map.Map store.modules]
       [index : i64 0]
-      (begin
-        (while (< index epochs.built)
+      (while (< index epochs.built)
+        (if (= (array-ref epochs.module-epochs index) epoch)
           (begin
-            (if (= (array-ref epochs.module-epochs index) epoch)
-              (begin
-                (lower_i64_i64_map.remove-ref!
-                  (&mut modules)
-                  (array-ref epochs.modules index))
-                (cfg
-                  (any compile-profile test)
-                  (profile_state.compiler-profile-metrics-add!
-                    (compiler-lower-profile-metrics-view lower-state)
-                    compiler-lower-profile-module-local-view-released-metric
-                    1)
-                  unit)
-                unit)
+            (lower_i64_i64_map.remove-ref!
+              (&mut modules)
+              (array-ref epochs.modules index))
+            (cfg
+              (any compile-profile test)
+              (profile_state.compiler-profile-metrics-add!
+                (compiler-lower-profile-metrics-view lower-state)
+                compiler-lower-profile-module-local-view-released-metric
+                1)
               unit)
-            (set! index (+ index 1))))
-        (compiler-lower-state-write!
-          lower-state
-          LowerModuleLocalViewStore
-          active-module-local-views
-          (LowerModuleLocalViewStore modules store.values store.len))
-        (if (> (array-ref epochs.arenas epoch) 0)
-          (begin
-            (ast.compiler-arena-retire-protected-owner!
-              (array-ref epochs.arenas epoch))
-            (set! (array-ref epochs.arenas epoch) 0))
+            unit)
           unit)
-        (set! epochs.released (+ epoch 1))))))
+        (set! index (+ index 1)))
+      (compiler-lower-state-write!
+        lower-state
+        LowerModuleLocalViewStore
+        active-module-local-views
+        (LowerModuleLocalViewStore modules store.values store.len))
+      (when
+        (> (array-ref epochs.arenas epoch) 0)
+        (ast.compiler-arena-retire-protected-owner!
+          (array-ref epochs.arenas epoch))
+        (set! (array-ref epochs.arenas epoch) 0))
+      (set! epochs.released (+ epoch 1)))))
 
 (define (lower-id-set-empty) : LowerIdSet
   (LowerIdSet (__tl_make-array i64 0) 0))
@@ -8731,14 +8543,12 @@
   (let
     [index : i64 items.len]
     [found : bool false]
-    (begin
-      (while (and (not found) (> index 0))
-        (begin
-          (set! index (- index 1))
-          (if (= (array-ref items.slots index) name)
-            (set! found true)
-            unit)))
-      found)))
+    (while (and (not found) (> index 0))
+      (set! index (- index 1))
+      (if (= (array-ref items.slots index) name)
+        (set! found true)
+        unit))
+    found))
 
 (define (lower-id-set-insert [items : LowerIdSet] [name : i64]) : LowerIdSet
   (if (lower-id-set-contains? items name)
@@ -8747,13 +8557,11 @@
       [len : i64 items.len]
       [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
       [index : i64 0]
-      (begin
-        (while (< index len)
-          (begin
-            (set! (array-ref slots index) (array-ref items.slots index))
-            (set! index (+ index 1))))
-        (set! (array-ref slots len) name)
-        (LowerIdSet slots (+ len 1))))))
+      (while (< index len)
+        (set! (array-ref slots index) (array-ref items.slots index))
+        (set! index (+ index 1)))
+      (set! (array-ref slots len) name)
+      (LowerIdSet slots (+ len 1)))))
 
 ;; Stack push for the reach worklist only: that state is threaded linearly, so
 ;; the backing array is reused instead of copied. Popping just shrinks `len`,
@@ -8762,11 +8570,10 @@
   (let
     [slots : (__tl_dyn-array i64) items.slots]
     [len : i64 items.len]
-    (begin
-      (if (< len (array-length slots))
-        (set! (array-ref slots len) name)
-        (__tl_array-push! slots name))
-      (LowerIdSet slots (+ len 1)))))
+    (if (< len (array-length slots))
+      (set! (array-ref slots len) name)
+      (__tl_array-push! slots name))
+    (LowerIdSet slots (+ len 1))))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerIdSet
   (lower-id-set-empty))
@@ -8790,34 +8597,17 @@
       (compiler-lower-state-spmd-package state)]
     [home : i64 (arena.tl_arena_current)]
     [next : i64 (arena.tl_arena_make_small)]
-    (begin
+    (unsafe
+      (arena.tl_arena_set next))
+    (let
+      [package : CompilerLowerSpmdPackageState
+        (CompilerLowerSpmdPackageState
+          next
+          (string.copy name)
+          (lower_i64_i64_map.with-capacity 8)
+          (lower_i64_i64_map.with-capacity 8))]
       (unsafe
-        (arena.tl_arena_set next))
-      (let
-        [package : CompilerLowerSpmdPackageState
-          (CompilerLowerSpmdPackageState
-            next
-            (string.copy name)
-            (lower_i64_i64_map.with-capacity 8)
-            (lower_i64_i64_map.with-capacity 8))]
-        (begin
-          (unsafe
-            (arena.tl_arena_set home))
-          (if (= previous.arena 0)
-            unit
-            (unsafe
-              (arena.tl_arena_destroy previous.arena)))
-          (compiler-lower-state-write!
-            state
-            CompilerLowerSpmdPackageState
-            spmd-package-state
-            package))))))
-
-(define (compiler-lower-state-clear-spmd-package! [state : CompilerLowerState]) : unit
-  (let
-    [previous : CompilerLowerSpmdPackageState
-      (compiler-lower-state-spmd-package state)]
-    (begin
+        (arena.tl_arena_set home))
       (if (= previous.arena 0)
         unit
         (unsafe
@@ -8826,7 +8616,21 @@
         state
         CompilerLowerSpmdPackageState
         spmd-package-state
-        (compiler-lower-spmd-package-state-empty)))))
+        package))))
+
+(define (compiler-lower-state-clear-spmd-package! [state : CompilerLowerState]) : unit
+  (let
+    [previous : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package state)]
+    (if (= previous.arena 0)
+      unit
+      (unsafe
+        (arena.tl_arena_destroy previous.arena)))
+    (compiler-lower-state-write!
+      state
+      CompilerLowerSpmdPackageState
+      spmd-package-state
+      (compiler-lower-spmd-package-state-empty))))
 
 (define (compiler-lower-state-ensure-spmd-package! [state : CompilerLowerState]) : unit
   (let
@@ -8883,24 +8687,21 @@
               LowerVariantArmResolution
               lower-variant-arm-memo-cap)]
           [index : i64 0]
-          (begin
-            (while (< index tc-rtf-cap)
-              (begin
-                (set! (array-ref rtf-generations index) 0)
-                (set! index (+ index 1))))
-            (set! index 0)
-            (while (< index lower-variant-arm-memo-cap)
-              (begin
-                (set! (array-ref variant-stamps index) 0)
-                (set! index (+ index 1))))
-            (set! storage.rtf-generations rtf-generations)
-            (set! storage.rtf-ids rtf-ids)
-            (set! storage.rtf-types rtf-types)
-            (set! storage.variant-stamps variant-stamps)
-            (set! storage.variant-keys variant-keys)
-            (set! storage.variant-scrutinee-types variant-scrutinee-types)
-            (set! storage.variant-outcomes variant-outcomes)
-            (compiler-lower-function-memo-storage-set! state storage)))))))
+          (while (< index tc-rtf-cap)
+            (set! (array-ref rtf-generations index) 0)
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index lower-variant-arm-memo-cap)
+            (set! (array-ref variant-stamps index) 0)
+            (set! index (+ index 1)))
+          (set! storage.rtf-generations rtf-generations)
+          (set! storage.rtf-ids rtf-ids)
+          (set! storage.rtf-types rtf-types)
+          (set! storage.variant-stamps variant-stamps)
+          (set! storage.variant-keys variant-keys)
+          (set! storage.variant-scrutinee-types variant-scrutinee-types)
+          (set! storage.variant-outcomes variant-outcomes)
+          (compiler-lower-function-memo-storage-set! state storage))))))
 
 (define (compiler-lower-function-state-ptr [state : CompilerLowerFunctionState]) : (MutPtr
     CompilerLowerFunctionStateData)
@@ -8917,38 +8718,36 @@
 (define (compiler-lower-function-state-new-with-stack
   [owner : CompilerLowerState]
   [stack : LowerIdSet]) : CompilerLowerFunctionState
-  (begin
-    (compiler-lower-function-memo-storage-ensure! owner)
-    (let
-      [storage : CompilerLowerFunctionMemoStorage
-        (compiler-lower-function-memo-storage owner)]
-      [rtf-generation : i64 (+ storage.next-rtf-generation 1)]
-      [variant-generation : i64 (+ storage.next-variant-generation 1)]
-      [cell : (__tl_dyn-array CompilerLowerFunctionStateData)
-        (__tl_make-array CompilerLowerFunctionStateData 1)]
-      [address : i64
-        (cast
-          (unsafe
-            (ptr->int
-              (ptr-cast
-                (__tl_array-data cell)
-                : (Ptr CompilerLowerFunctionStateData))))
-          : i64)]
-      (begin
-        (set! storage.next-rtf-generation rtf-generation)
-        (set! storage.next-variant-generation variant-generation)
-        (compiler-lower-function-memo-storage-set! owner storage)
-        (set!
-          (array-ref cell 0)
-          (CompilerLowerFunctionStateData
-            owner.address
-            stack
-            false
-            0
-            (No)
-            rtf-generation
-            variant-generation))
-        (CompilerLowerFunctionState address)))))
+  (compiler-lower-function-memo-storage-ensure! owner)
+  (let
+    [storage : CompilerLowerFunctionMemoStorage
+      (compiler-lower-function-memo-storage owner)]
+    [rtf-generation : i64 (+ storage.next-rtf-generation 1)]
+    [variant-generation : i64 (+ storage.next-variant-generation 1)]
+    [cell : (__tl_dyn-array CompilerLowerFunctionStateData)
+      (__tl_make-array CompilerLowerFunctionStateData 1)]
+    [address : i64
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast
+              (__tl_array-data cell)
+              : (Ptr CompilerLowerFunctionStateData))))
+        : i64)]
+    (set! storage.next-rtf-generation rtf-generation)
+    (set! storage.next-variant-generation variant-generation)
+    (compiler-lower-function-memo-storage-set! owner storage)
+    (set!
+      (array-ref cell 0)
+      (CompilerLowerFunctionStateData
+        owner.address
+        stack
+        false
+        0
+        (No)
+        rtf-generation
+        variant-generation))
+    (CompilerLowerFunctionState address)))
 
 (define (compiler-lower-function-state-new [owner : CompilerLowerState]) : CompilerLowerFunctionState
   (compiler-lower-function-state-new-with-stack
@@ -8996,20 +8795,19 @@
         (compiler-lower-function-state-ptr state)]
       [next : i64 (deref data).inline-next-temp]
       [owner-address : i64 (deref data).owner-address]
-      (begin
-        (set! (deref data).inline-next-temp (+ next 1))
-        (let
-          [session : cis.InternStructuralSessionHandle
-            (compiler-lower-state-structural-session
-              (compiler-lower-state-from-address owner-address))]
-          (cis.intern-fresh-local-identity-raw
-            (cis.intern-structural-session-fresh-local-identity
+      (set! (deref data).inline-next-temp (+ next 1))
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (compiler-lower-state-structural-session
+            (compiler-lower-state-from-address owner-address))]
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity
+            session
+            next
+            (tc_core.macro-hygiene-global-source-name-id-or
               session
-              next
-              (tc_core.macro-hygiene-global-source-name-id-or
-                session
-                source-name-id
-                source-name-id))))))))
+              source-name-id
+              source-name-id)))))))
 
 (define (compiler-lower-function-state-scalar-call-context
   [state : CompilerLowerFunctionState]) : LowerSpmdScalarCallContext
@@ -9040,38 +8838,37 @@
   (comptime (size-of (type LowerVariantArmResolution))))
 
 (define (compiler-lower-state-reset! [lower-state : CompilerLowerState]) : unit
-  (begin
-    (compiler-lower-state-clear-spmd-package! lower-state)
-    (lower-canonical-path-memo-reset! lower-state)
-    (lower-entry-main-selection-restore!
-      lower-state
-      false
-      ""
-      cbi.compiler-builtin-id-fix-empty)
-    (compiler-lower-state-write! lower-state i64 current-source-path-id 0)
-    (compiler-lower-state-write! lower-state bool current-decl-generated false)
-    (compiler-lower-state-write!
-      lower-state
-      LowerTypeCache
-      decls-global-type-cache
-      (LowerTypeCache.No))
-    (compiler-lower-state-write!
-      lower-state
-      lower_i64_i64_map.Map
-      rvo-early-return-functions
-      (lower_i64_i64_map.with-capacity 8))
-    (compiler-lower-state-write!
-      lower-state
-      csym.CompilerSymbols
-      active-symbols
-      (csym.compiler-symbols-empty))
-    (compiler-lower-state-write! lower-state bool active-symbols-ready false)
-    (lower-alias-overlay-reset! lower-state)
-    (lower-alias-symbol-memo-release! lower-state)
-    (lower-reach-scratch-state-reset! lower-state)
-    (lower-module-decl-index-reset! lower-state)
-    (lower-comptime-error-ids-reset! lower-state)
-    (compiler-lower-checked-dest-pools-clear! lower-state)))
+  (compiler-lower-state-clear-spmd-package! lower-state)
+  (lower-canonical-path-memo-reset! lower-state)
+  (lower-entry-main-selection-restore!
+    lower-state
+    false
+    ""
+    cbi.compiler-builtin-id-fix-empty)
+  (compiler-lower-state-write! lower-state i64 current-source-path-id 0)
+  (compiler-lower-state-write! lower-state bool current-decl-generated false)
+  (compiler-lower-state-write!
+    lower-state
+    LowerTypeCache
+    decls-global-type-cache
+    (LowerTypeCache.No))
+  (compiler-lower-state-write!
+    lower-state
+    lower_i64_i64_map.Map
+    rvo-early-return-functions
+    (lower_i64_i64_map.with-capacity 8))
+  (compiler-lower-state-write!
+    lower-state
+    csym.CompilerSymbols
+    active-symbols
+    (csym.compiler-symbols-empty))
+  (compiler-lower-state-write! lower-state bool active-symbols-ready false)
+  (lower-alias-overlay-reset! lower-state)
+  (lower-alias-symbol-memo-release! lower-state)
+  (lower-reach-scratch-state-reset! lower-state)
+  (lower-module-decl-index-reset! lower-state)
+  (lower-comptime-error-ids-reset! lower-state)
+  (compiler-lower-checked-dest-pools-clear! lower-state))
 
 (define (lower-reset-file-state!) : unit
   unit)
@@ -9112,18 +8909,15 @@
   (let
     [index : i64 subs.len]
     [found : i64 -1]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (if (= (lower-global-array-element-shared-view subs.names index) name)
-            (begin
-              (set! found index)
-              (set! index 0))
-            unit)))
-      (if (< found 0)
-        (No)
-        (Some (lower-global-array-element-shared-view subs.values found))))))
+    (while (> index 0)
+      (set! index (- index 1))
+      (when
+        (= (lower-global-array-element-shared-view subs.names index) name)
+        (set! found index)
+        (set! index 0)))
+    (if (< found 0)
+      (No)
+      (Some (lower-global-array-element-shared-view subs.values found)))))
 
 (define (lower-spmd-inline-subst-remove
   [subs : LowerSpmdInlineSubst]
@@ -9134,17 +8928,14 @@
     [values : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr len)]
     [index : i64 0]
     [kept : i64 0]
-    (begin
-      (while (< index len)
-        (begin
-          (if (= (array-ref subs.names index) name)
-            unit
-            (begin
-              (set! (array-ref names kept) (array-ref subs.names index))
-              (set! (array-ref values kept) (array-ref subs.values index))
-              (set! kept (+ kept 1))))
-          (set! index (+ index 1))))
-      (LowerSpmdInlineSubst names values kept))))
+    (while (< index len)
+      (unless
+        (= (array-ref subs.names index) name)
+        (set! (array-ref names kept) (array-ref subs.names index))
+        (set! (array-ref values kept) (array-ref subs.values index))
+        (set! kept (+ kept 1)))
+      (set! index (+ index 1)))
+    (LowerSpmdInlineSubst names values kept)))
 
 (define (lower-spmd-inline-subst-cons
   [name : i64]
@@ -9156,15 +8947,13 @@
     [values : (__tl_dyn-array ast.AstExpr)
       (__tl_make-array ast.AstExpr (+ len 1))]
     [index : i64 0]
-    (begin
-      (while (< index len)
-        (begin
-          (set! (array-ref names index) (array-ref rest.names index))
-          (set! (array-ref values index) (array-ref rest.values index))
-          (set! index (+ index 1))))
-      (set! (array-ref names len) name)
-      (set! (array-ref values len) value)
-      (LowerSpmdInlineSubst names values (+ len 1)))))
+    (while (< index len)
+      (set! (array-ref names index) (array-ref rest.names index))
+      (set! (array-ref values index) (array-ref rest.values index))
+      (set! index (+ index 1)))
+    (set! (array-ref names len) name)
+    (set! (array-ref values len) value)
+    (LowerSpmdInlineSubst names values (+ len 1))))
 
 (define (lower-spmd-inline-helper-from-decl
   [ctx : tc_core.TcContext]
@@ -9269,24 +9058,23 @@
           (cond
             [(not (csym.compiler-symbols-handle-found? handle)) (Ok (No))]
             [(and
-                (=
-                  (csym.compiler-symbol-handle-kind handle)
-                  (csym.compiler-symbol-kind-function-define))
-                (let
-                  [helper-stack
-                    (compiler-lower-function-state-inline-helper-stack
-                      function-state)]
-                  (lower-id-set-contains? helper-stack handle)))
-              (begin
-                (compiler-lower-function-state-recursion-detected-set!
-                  function-state
-                  true)
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      func
-                      (lower-spmd-inline-recursive-message)))))]
+              (=
+                (csym.compiler-symbol-handle-kind handle)
+                (csym.compiler-symbol-kind-function-define))
+              (let
+                [helper-stack
+                  (compiler-lower-function-state-inline-helper-stack
+                    function-state)]
+                (lower-id-set-contains? helper-stack handle)))
+              (compiler-lower-function-state-recursion-detected-set!
+                function-state
+                true)
+              (Err
+                (box
+                  (lower-diagnostic-at-expr
+                    ctx
+                    func
+                    (lower-spmd-inline-recursive-message))))]
             [(or
                 (=
                   (csym.compiler-symbol-handle-kind handle)
@@ -9388,14 +9176,13 @@
                 (let
                   [local : i64
                     (lower-spmd-inline-fresh-local-id function-state param-name)]
-                  (begin
-                    (ast.ast-let-binding-list-push
-                      staged
-                      (ast.ast-let-binding-id
-                        local
-                        (lower-spmd-inline-staged-type param-ty)
-                        arg-id))
-                    (lower-spmd-inline-subst-cons param-name (Var local) subst))))
+                  (ast.ast-let-binding-list-push
+                    staged
+                    (ast.ast-let-binding-id
+                      local
+                      (lower-spmd-inline-staged-type param-ty)
+                      arg-id))
+                  (lower-spmd-inline-subst-cons param-name (Var local) subst)))
               staged
               origin)]))]))
 
@@ -9446,20 +9233,19 @@
         subst
         shadowed)
         [(Ok rewritten-head)
-          (begin
-            (ast.ast-expr-list-push
-              out
-              (lower-context-expr-push ctx rewritten-head))
-            (lower-spmd-inline-expr-list-into
-              ctx
-              function-state
-              env
-              type-env
-              exprs
-              (+ index 1)
-              subst
-              shadowed
-              out))]
+          (ast.ast-expr-list-push
+            out
+            (lower-context-expr-push ctx rewritten-head))
+          (lower-spmd-inline-expr-list-into
+            ctx
+            function-state
+            env
+            type-env
+            exprs
+            (+ index 1)
+            subst
+            shadowed
+            out)]
         [(Err diag) (Err diag)]))))
 
 (define (lower-spmd-inline-let-bindings
@@ -9521,28 +9307,27 @@
             subst
             shadowed)
             [(Ok rewritten-init)
-              (begin
-                (ast.ast-let-binding-list-push
-                  out
-                  (ast.ast-let-binding-id
-                    bind-id
-                    maybe-ty
-                    (lower-context-expr-push ctx rewritten-init)))
-                (lower-spmd-inline-let-bindings-into
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  bindings
-                  (if renamed
-                    (lower-spmd-inline-subst-cons
-                      name
-                      (Var bind-id)
-                      (lower-spmd-inline-subst-remove subst name))
+              (ast.ast-let-binding-list-push
+                out
+                (ast.ast-let-binding-id
+                  bind-id
+                  maybe-ty
+                  (lower-context-expr-push ctx rewritten-init)))
+              (lower-spmd-inline-let-bindings-into
+                ctx
+                function-state
+                env
+                type-env
+                bindings
+                (if renamed
+                  (lower-spmd-inline-subst-cons
+                    name
+                    (Var bind-id)
                     (lower-spmd-inline-subst-remove subst name))
-                  (lower-id-set-insert shadowed name)
-                  (+ index 1)
-                  out))]
+                  (lower-spmd-inline-subst-remove subst name))
+                (lower-id-set-insert shadowed name)
+                (+ index 1)
+                out)]
             [(Err diag) (Err diag)]))])))
 
 (define (lower-spmd-inline-helper-body
@@ -9577,37 +9362,36 @@
                   ctx
                   origin
                   (lower-spmd-inline-recursive-message))))]
-          (begin
-            (compiler-lower-function-state-inline-helper-stack-set!
-              function-state
-              (lower-id-set-insert (lower-global-shared-view previous) handle))
-            (set!
-              result
-              (let
-                [shadowed (lower-id-set-empty)]
-                (lower-spmd-inline-expr
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  body
-                  helper-subst
-                  shadowed)))
-            (compiler-lower-function-state-inline-helper-stack-set!
-              function-state
-              previous)
-            (match result
-              [(Ok rewritten)
-                (if (= (ast.ast-let-binding-list-len (& staged)) 0)
-                  (Ok rewritten)
-                  (Ok
-                    (lower-context-expr-get
-                      ctx
-                      (ast.ast-expr-let-with-pools
-                        (tc_core.tc-context-pools ctx)
-                        staged
-                        (lower-context-expr-push ctx rewritten)))))]
-              [(Err diag) (Err diag)])))]
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-state
+            (lower-id-set-insert (lower-global-shared-view previous) handle))
+          (set!
+            result
+            (let
+              [shadowed (lower-id-set-empty)]
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                body
+                helper-subst
+                shadowed)))
+          (compiler-lower-function-state-inline-helper-stack-set!
+            function-state
+            previous)
+          (match result
+            [(Ok rewritten)
+              (if (= (ast.ast-let-binding-list-len (& staged)) 0)
+                (Ok rewritten)
+                (Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-let-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      staged
+                      (lower-context-expr-push ctx rewritten)))))]
+            [(Err diag) (Err diag)]))]
       [(Err diag) (Err diag)])))
 
 ;; Keep the established small-helper rewrite, but stop cloning larger helper
@@ -10538,56 +10322,54 @@
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [cur-out : lower_i64_i64_map.Map out]
-    (begin
-      (while (< index count)
-        (let
-          [decl : ast.AstDecl
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index))]
-          [decl-path : String
-            (ast.ast-decl-path-list-get
-              (& paths)
-              index
-              (lower-global-shared-view entry-path))]
-          [logical-module-id : i64
-            (lower-decl-owner-module-id
+    (while (< index count)
+      (let
+        [decl : ast.AstDecl
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index))]
+        [decl-path : String
+          (ast.ast-decl-path-list-get
+            (& paths)
+            index
+            (lower-global-shared-view entry-path))]
+        [logical-module-id : i64
+          (lower-decl-owner-module-id
+            lower-state
+            (& paths)
+            index
+            (lower-global-shared-view entry-path)
+            (lower-global-shared-view decl-path)
+            cur-module-id)]
+        (match (lower-global-shared-view decl)
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_
+            (match (lower-function-logical-id-from-decl
               lower-state
-              (& paths)
-              index
               (lower-global-shared-view entry-path)
-              (lower-global-shared-view decl-path)
-              cur-module-id)]
-          (begin
-            (match (lower-global-shared-view decl)
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_
-                (match (lower-function-logical-id-from-decl
-                  lower-state
-                  (lower-global-shared-view entry-path)
-                  decl-path
-                  (lower-decl-owner-module-name
-                    lower-state
-                    cur-module-id
-                    logical-module-id)
-                  logical-module-id
-                  decl)
-                  ;; Assign each distinct function name a dense slot
-                  ;; (0..N-1, its insertion order) instead of a constant 1, so
-                  ;; prune reachability `reachable` can key on that i64 slot.
-                  ;; Skip names already present so the slot stays a bijection.
-                  [(Some logical-id)
-                    (if (lower_i64_i64_map.contains? (& cur-out) logical-id)
-                      unit
-                      (let
-                        [slot : i64 (lower_i64_i64_map.len (& cur-out))]
-                        (lower_i64_i64_map.insert-ref!
-                          (&mut cur-out)
-                          logical-id
-                          slot)))]
-                  [(No) unit])])
-            (set! index (+ index 1)))))
-      cur-out)))
+              decl-path
+              (lower-decl-owner-module-name
+                lower-state
+                cur-module-id
+                logical-module-id)
+              logical-module-id
+              decl)
+              ;; Assign each distinct function name a dense slot
+              ;; (0..N-1, its insertion order) instead of a constant 1, so
+              ;; prune reachability `reachable` can key on that i64 slot.
+              ;; Skip names already present so the slot stays a bijection.
+              [(Some logical-id)
+                (if (lower_i64_i64_map.contains? (& cur-out) logical-id)
+                  unit
+                  (let
+                    [slot : i64 (lower_i64_i64_map.len (& cur-out))]
+                    (lower_i64_i64_map.insert-ref!
+                      (&mut cur-out)
+                      logical-id
+                      slot)))]
+              [(No) unit])])
+        (set! index (+ index 1))))
+    cur-out))
 
 (define (lower-function-set-from-decls
   [lower-state : CompilerLowerState]
@@ -10616,12 +10398,11 @@
             state
             (let
               [next-reachable : lower_i64_i64_map.Map reachable]
-              (begin
-                (lower_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
-                (LowerReachState.State
-                  next-reachable
-                  (lower-id-set-push worklist logical-id)
-                  lower-state))))])]))
+              (lower_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
+              (LowerReachState.State
+                next-reachable
+                (lower-id-set-push worklist logical-id)
+                lower-state)))])]))
 
 (define (lower-runtime-prelude-string-helper-id
   [session : cis.InternStructuralSessionHandle]
@@ -11100,11 +10881,10 @@
     [(Wildcard) unit]
     [(Binding _) unit]
     [(Variant name patterns-box)
-      (begin
-        (lower-reach-used-type-name-add-source! lower-state name)
-        (lower-reach-used-types-add-pattern-list-roots!
-          lower-state
-          (deref patterns-box)))]
+      (lower-reach-used-type-name-add-source! lower-state name)
+      (lower-reach-used-types-add-pattern-list-roots!
+        lower-state
+        (deref patterns-box))]
     [(Literal _) unit]))
 
 (define (lower-reach-used-types-add-pattern-list-roots!
@@ -11116,16 +10896,15 @@
   [lower-state : CompilerLowerState]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : unit
-  (if (>= index patterns.len)
-    unit
-    (begin
-      (lower-reach-used-types-add-pattern-roots!
-        lower-state
-        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
-      (lower-reach-used-types-add-pattern-list-roots-at!
-        lower-state
-        patterns
-        (+ index 1)))))
+  (unless
+    (>= index patterns.len)
+    (lower-reach-used-types-add-pattern-roots!
+      lower-state
+      (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
+    (lower-reach-used-types-add-pattern-list-roots-at!
+      lower-state
+      patterns
+      (+ index 1))))
 
 (define (lower-reach-expr-list
   [pools : (& pools ast.AstNodePoolContext)]
@@ -11210,17 +10989,16 @@
         (let
           [body : ast.AstExpr
             (ast.ast-node-pool-context-expr-get pools body-box)]
-          (begin
-            (lower-reach-used-types-add-pattern-roots!
-              (lower-reach-state-owner (lower-global-shared-view state))
-              pattern)
-            (lower-reach-match-arms-at
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr pools all-functions names state body)
-              arms
-              (+ index 1))))])))
+          (lower-reach-used-types-add-pattern-roots!
+            (lower-reach-state-owner (lower-global-shared-view state))
+            pattern)
+          (lower-reach-match-arms-at
+            pools
+            all-functions
+            (lower-global-shared-view names)
+            (lower-reach-expr pools all-functions names state body)
+            arms
+            (+ index 1)))])))
 
 (define (lower-reach-resource-bindings
   [pools : (& pools ast.AstNodePoolContext)]
@@ -11275,34 +11053,32 @@
   (let
     [index : i64 (- (clone_support.clone-root-entries-len roots) 1)]
     [out : ast.AstExprList (ast.ast-expr-list-new)]
-    (begin
-      ;; Dense roots expose logical newest-first order; cons from the oldest
-      ;; logical entry back to index 0 so the list keeps that order.
-      (while (>= index 0)
-        (let
-          [root-key-id : i64
-            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-          [module-id : i64
-            (if (clone_support.clone-name-key-qualified? root-key-id)
-              (clone_support.clone-name-key-module-id root-key-id)
-              cbi.compiler-builtin-id-fix-empty)]
-          (begin
-            (set!
-              out
-              (ast.ast-expr-cons
-                (ast.ast-node-pool-context-expr-push
-                  pools
-                  (Literal (String module-id)))
-                (ast.ast-expr-cons
-                  (ast.ast-node-pool-context-expr-push
+    ;; Dense roots expose logical newest-first order; cons from the oldest
+    ;; logical entry back to index 0 so the list keeps that order.
+    (while (>= index 0)
+      (let
+        [root-key-id : i64
+          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+        [module-id : i64
+          (if (clone_support.clone-name-key-qualified? root-key-id)
+            (clone_support.clone-name-key-module-id root-key-id)
+            cbi.compiler-builtin-id-fix-empty)]
+        (set!
+          out
+          (ast.ast-expr-cons
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (Literal (String module-id)))
+            (ast.ast-expr-cons
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (TypeLiteral
+                  (ast.ast-node-pool-context-type-push
                     pools
-                    (TypeLiteral
-                      (ast.ast-node-pool-context-type-push
-                        pools
-                        (tc_core.tc-resolve-type ctx (Var root-key-id)))))
-                  out)))
-            (set! index (- index 1)))))
-      out)))
+                    (tc_core.tc-resolve-type ctx (Var root-key-id)))))
+              out)))
+        (set! index (- index 1))))
+    out))
 
 (define (lower-clone-handoff-request-decl
   [ctx : tc_core.TcContext]
@@ -11399,15 +11175,14 @@
   (let
     [macro-state : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state job-state)]
-    (begin
-      (tc_core.macro-generated-decls-memo-reset! macro-state)
-      (tc_core.macro-generated-module-memo-reset! macro-state)
-      (tc_core.tc-macro-helper-env-cache-reset! macro-state)
-      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
-      (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
-      (tc_core.tc-job-state-reset-file-state! job-state)
-      (ctfe.ctfe-module-macro-export-reset-for-state!
-        (tc_core.tc-macro-ctfe-state macro-state)))))
+    (tc_core.macro-generated-decls-memo-reset! macro-state)
+    (tc_core.macro-generated-module-memo-reset! macro-state)
+    (tc_core.tc-macro-helper-env-cache-reset! macro-state)
+    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+    (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
+    (tc_core.tc-job-state-reset-file-state! job-state)
+    (ctfe.ctfe-module-macro-export-reset-for-state!
+      (tc_core.tc-macro-ctfe-state macro-state))))
 
 ;; The handoff expansion runs the full macro/CTFE machinery for every clone
 ;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
@@ -11449,40 +11224,37 @@
     [request : ast.AstDecl (lower-clone-handoff-request-decl ctx pools roots)]
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (arena.tl_arena_make)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [raw : tc_core.ResultMacroDeclExpansion
-          (tc_core.macro-expand-decl-with-path
-            (tc_core.tc-context-with-module-id
-              ctx
-              ""
-              cbi.compiler-builtin-id-fix-empty)
-            top-env
-            top-env
-            source-decls
+    (unsafe
+      (arena.tl_arena_set scratch))
+    (let
+      [raw : tc_core.ResultMacroDeclExpansion
+        (tc_core.macro-expand-decl-with-path
+          (tc_core.tc-context-with-module-id
+            ctx
             ""
-            cbi.compiler-builtin-id-fix-empty
-            request
-            ;; This internal Clone request uses the closed core-macro prelude,
-            ;; whose source-language cfg set is explicitly empty.
-            (lower-source-language-cfgs)
-            entry-path)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (ast.ast-node-pool-context-capture-active! pools)
-          (let
-            [escaped : tc_core.ResultMacroDeclExpansion
-              (lower-clone-handoff-expansion-copy-out pools raw)]
-            (begin
-              (lower-clone-handoff-expansion-cache-clear!
-                (tc_core.tc-context-job-state ctx))
-              (unsafe
-                (arena.tl_arena_destroy scratch))
-              (ast.ast-node-pool-context-install! pools)
-              escaped)))))))
+            cbi.compiler-builtin-id-fix-empty)
+          top-env
+          top-env
+          source-decls
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          request
+          ;; This internal Clone request uses the closed core-macro prelude,
+          ;; whose source-language cfg set is explicitly empty.
+          (lower-source-language-cfgs)
+          entry-path)]
+      (unsafe
+        (arena.tl_arena_set enclosing))
+      (ast.ast-node-pool-context-capture-active! pools)
+      (let
+        [escaped : tc_core.ResultMacroDeclExpansion
+          (lower-clone-handoff-expansion-copy-out pools raw)]
+        (lower-clone-handoff-expansion-cache-clear!
+          (tc_core.tc-context-job-state ctx))
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        (ast.ast-node-pool-context-install! pools)
+        escaped))))
 
 (define (lower-clone-handoff-source-helper-root-id
   [lower-state : CompilerLowerState]
@@ -11493,27 +11265,25 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
     [found : i64 -1]
-    (begin
-      (while (and (< index count) (< found 0))
-        (let
-          [root-key-id : i64
-            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-          [helper-name-id : i64
-            (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
-          [root-module-id : i64
-            (if (clone_support.clone-name-key-qualified? root-key-id)
-              (clone_support.clone-name-key-module-id root-key-id)
-              cbi.compiler-builtin-id-fix-empty)]
-          (begin
-            (if (and
-              (= module-id root-module-id)
-              (string.eq
-                (tc_core.tc-env-key-name-text name-id)
-                (compiler-lower-state-intern-str lower-state helper-name-id)))
-              (set! found root-key-id)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< index count) (< found 0))
+      (let
+        [root-key-id : i64
+          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+        [helper-name-id : i64
+          (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
+        [root-module-id : i64
+          (if (clone_support.clone-name-key-qualified? root-key-id)
+            (clone_support.clone-name-key-module-id root-key-id)
+            cbi.compiler-builtin-id-fix-empty)]
+        (if (and
+          (= module-id root-module-id)
+          (string.eq
+            (tc_core.tc-env-key-name-text name-id)
+            (compiler-lower-state-intern-str lower-state helper-name-id)))
+          (set! found root-key-id)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 (define (lower-clone-handoff-source-conflict-in-module
   [lower-state : CompilerLowerState]
@@ -11531,28 +11301,26 @@
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (begin
-          (match (ast.ast-decl-unwrapped
-            (lower-global-array-element-shared-view
-              decl-slots
-              (+ decl-offset index)))
-            [(Module next-module) (set! cur-module-id next-module)]
-            [(DefFn decl-meta name _ _ _ _)
-              (let
-                [root-key-id : i64
-                  (lower-clone-handoff-source-helper-root-id
-                    lower-state
-                    name
-                    cur-module-id
-                    roots)]
-                (if (>= root-key-id 0)
-                  (set! found root-key-id)
-                  unit))]
-            [_ unit])
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< found 0) (< index count))
+      (match (ast.ast-decl-unwrapped
+        (lower-global-array-element-shared-view
+          decl-slots
+          (+ decl-offset index)))
+        [(Module next-module) (set! cur-module-id next-module)]
+        [(DefFn decl-meta name _ _ _ _)
+          (let
+            [root-key-id : i64
+              (lower-clone-handoff-source-helper-root-id
+                lower-state
+                name
+                cur-module-id
+                roots)]
+            (if (>= root-key-id 0)
+              (set! found root-key-id)
+              unit))]
+        [_ unit])
+      (set! index (+ index 1)))
+    found))
 
 (define (lower-clone-handoff-source-conflict
   [lower-state : CompilerLowerState]
@@ -11572,32 +11340,30 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
     [ok : bool true]
-    (begin
-      (while (and (< index count) ok)
-        (let
-          [root-key-id : i64
-            (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-          [helper-name-id : i64
-            (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
-          (begin
-            (if (and
-              (=
-                (clone_support.clone-helper-decl-count
-                  (lower-global-shared-view generated)
-                  root-key-id
-                  helper-name-id)
-                1)
-              (=
-                (lower-clone-handoff-generated-origin-count
-                  lower-state
-                  (lower-global-shared-view generated)
-                  root-key-id
-                  helper-name-id)
-                1))
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      ok)))
+    (while (and (< index count) ok)
+      (let
+        [root-key-id : i64
+          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
+        [helper-name-id : i64
+          (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
+        (if (and
+          (=
+            (clone_support.clone-helper-decl-count
+              (lower-global-shared-view generated)
+              root-key-id
+              helper-name-id)
+            1)
+          (=
+            (lower-clone-handoff-generated-origin-count
+              lower-state
+              (lower-global-shared-view generated)
+              root-key-id
+              helper-name-id)
+            1))
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    ok))
 
 (define (lower-clone-handoff-generated-summary-at
   [lower-state : CompilerLowerState]
@@ -11809,14 +11575,13 @@
           (tc_core.tc-context-with-program ctx program)]
         (match (tc_core.env-extend-with-module next-ctx top-env clone-decls)
           [(Ok next-env)
-            (begin
-              (tc_core.tc-context-capture-active-pools! next-ctx)
-              (tc_core.tc-hygiene-reset-active-top-env!
-                (tc_core.tc-context-macro-state next-ctx)
-                next-env)
-              (tc_core.tc-macro-helper-env-cache-reset!
-                (tc_core.tc-context-macro-state next-ctx))
-              (Ok next-ctx next-env))]
+            (tc_core.tc-context-capture-active-pools! next-ctx)
+            (tc_core.tc-hygiene-reset-active-top-env!
+              (tc_core.tc-context-macro-state next-ctx)
+              next-env)
+            (tc_core.tc-macro-helper-env-cache-reset!
+              (tc_core.tc-context-macro-state next-ctx))
+            (Ok next-ctx next-env)]
           [(Err message) (Err message)]))]))
 
 (define (lower-reach-call-callee
@@ -12989,12 +12754,11 @@
                 module-id)]
             [cache : LowerNameCache
               (lower-name-cache-overlay lower-state alias-only-names module-id)]
-            (begin
-              (lower-active-module-name-cache-insert!
-                lower-state
-                module-id
-                (lower-global-shared-view cache))
-              cache))]))))
+            (lower-active-module-name-cache-insert!
+              lower-state
+              module-id
+              (lower-global-shared-view cache))
+            cache)]))))
 
 (define (lower-function-decl-count-one [decl : ast.AstDecl]) : i64
   (match decl
@@ -13007,19 +12771,17 @@
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
     [out : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (+
-              out
-              (lower-function-decl-count-one
-                (lower-global-array-element-shared-view
-                  decls.slots
-                  (+ decls.offset index)))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (+
+          out
+          (lower-function-decl-count-one
+            (lower-global-array-element-shared-view
+              decls.slots
+              (+ decls.offset index)))))
+      (set! index (+ index 1)))
+    out))
 
 (define (lower-function-body-index-add
   [index : LowerFunctionBodyIndex]
@@ -13031,12 +12793,11 @@
     [ids : lower_i64_i64_map.Map index.ids]
     [bodies : (__tl_dyn-array LowerMaybeFunctionBody) index.bodies]
     [next : i64 index.next]
-    (begin
-      (set!
-        (array-ref bodies next)
-        (LowerMaybeFunctionBody.Some body names decl-path-owner-id))
-      (lower_i64_i64_map.insert-ref! (&mut ids) logical-id next)
-      (LowerFunctionBodyIndex ids bodies (+ next 1)))))
+    (set!
+      (array-ref bodies next)
+      (LowerMaybeFunctionBody.Some body names decl-path-owner-id))
+    (lower_i64_i64_map.insert-ref! (&mut ids) logical-id next)
+    (LowerFunctionBodyIndex ids bodies (+ next 1))))
 
 (define (lower-function-body-index-find
   [index : (& index LowerFunctionBodyIndex)]
@@ -13173,29 +12934,28 @@
   [entry-path : String]
   [names : LowerNameEnv]
   [count : i64]) : LowerFunctionBodyIndex
-  (begin
-    (compiler-lower-state-write!
+  (compiler-lower-state-write!
+    lower-state
+    LowerModuleNameCacheStore
+    active-module-name-caches
+    (lower-module-name-cache-store-empty))
+  (let
+    [name-cache : LowerNameCache
+      (lower-name-cache-from-env lower-state (lower-global-shared-view names))]
+    (lower-function-body-index-from-decls-in-module
       lower-state
-      LowerModuleNameCacheStore
-      active-module-name-caches
-      (lower-module-name-cache-store-empty))
-    (let
-      [name-cache : LowerNameCache
-        (lower-name-cache-from-env lower-state (lower-global-shared-view names))]
-      (lower-function-body-index-from-decls-in-module
-        lower-state
-        pools
-        (lower-global-shared-view decls)
-        (lower-global-shared-view paths)
-        entry-path
-        ""
-        cbi.compiler-builtin-id-fix-empty
-        decls
-        paths
-        names
-        (lower-global-shared-view name-cache)
-        name-cache
-        (lower-function-body-index-empty count)))))
+      pools
+      (lower-global-shared-view decls)
+      (lower-global-shared-view paths)
+      entry-path
+      ""
+      cbi.compiler-builtin-id-fix-empty
+      decls
+      paths
+      names
+      (lower-global-shared-view name-cache)
+      name-cache
+      (lower-function-body-index-empty count))))
 
 (define (lower-reach-process
   [pools : (& pools ast.AstNodePoolContext)]
@@ -13218,34 +12978,27 @@
                 lower-state)]
             (match (lower-function-body-index-find body-index name)
               [(Some body body-names body-path-owner-id)
-                (begin
-                  (let
-                    [runtime-paths : lower_i64_i64_map.Map
-                      (compiler-lower-state-read
-                        lower-state
-                        lower_i64_i64_map.Map
-                        reach-active-runtime-paths)]
-                    (begin
-                      (lower_i64_i64_map.insert-ref!
-                        (&mut runtime-paths)
-                        body-path-owner-id
-                        1)
-                      (compiler-lower-state-write!
-                        lower-state
-                        lower_i64_i64_map.Map
-                        reach-active-runtime-paths
-                        runtime-paths)))
-                  (lower-reach-process
-                    pools
-                    all-functions
-                    names
-                    body-index
-                    (lower-reach-expr
-                      pools
-                      all-functions
-                      body-names
-                      popped
-                      body)))]
+                (let
+                  [runtime-paths : lower_i64_i64_map.Map
+                    (compiler-lower-state-read
+                      lower-state
+                      lower_i64_i64_map.Map
+                      reach-active-runtime-paths)]
+                  (lower_i64_i64_map.insert-ref!
+                    (&mut runtime-paths)
+                    body-path-owner-id
+                    1)
+                  (compiler-lower-state-write!
+                    lower-state
+                    lower_i64_i64_map.Map
+                    reach-active-runtime-paths
+                    runtime-paths))
+                (lower-reach-process
+                  pools
+                  all-functions
+                  names
+                  body-index
+                  (lower-reach-expr pools all-functions body-names popped body))]
               [(No)
                 (lower-reach-process
                   pools
@@ -13310,12 +13063,11 @@
           names
           (let
             [next-out : lower_i64_i64_map.Map out]
-            (begin
-              (lower_i64_i64_map.insert-ref!
-                (&mut next-out)
-                (lower-dispatch-variant-logical-id module-id names variant-name)
-                1)
-              next-out)))])))
+            (lower_i64_i64_map.insert-ref!
+              (&mut next-out)
+              (lower-dispatch-variant-logical-id module-id names variant-name)
+              1)
+            next-out))])))
 
 (define (lower-dispatch-variant-set-add-list
   [variants : ast.AstDispatchVariantList]
@@ -13349,39 +13101,37 @@
     [index : i64 0]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [cur-out : lower_i64_i64_map.Map out]
-    (begin
-      (while (< index count)
-        (let
-          [decl : ast.AstDecl
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index))]
-          [decl-path : String
-            (ast.ast-decl-path-list-get
-              (& paths)
-              index
-              (lower-global-shared-view entry-path))]
-          [logical-module-id : i64
-            (lower-decl-owner-module-id
-              (compiler-lower-state-from-name-cache names)
-              (& paths)
-              index
-              (lower-global-shared-view entry-path)
-              decl-path
-              cur-module-id)]
-          (begin
-            (match (lower-global-shared-view decl)
-              [(Module next-module) (set! cur-module-id next-module)]
-              [_
-                (set!
-                  cur-out
-                  (lower-dispatch-variant-set-add-decl
-                    decl
-                    logical-module-id
-                    names
-                    cur-out))])
-            (set! index (+ index 1)))))
-      cur-out)))
+    (while (< index count)
+      (let
+        [decl : ast.AstDecl
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index))]
+        [decl-path : String
+          (ast.ast-decl-path-list-get
+            (& paths)
+            index
+            (lower-global-shared-view entry-path))]
+        [logical-module-id : i64
+          (lower-decl-owner-module-id
+            (compiler-lower-state-from-name-cache names)
+            (& paths)
+            index
+            (lower-global-shared-view entry-path)
+            decl-path
+            cur-module-id)]
+        (match (lower-global-shared-view decl)
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_
+            (set!
+              cur-out
+              (lower-dispatch-variant-set-add-decl
+                decl
+                logical-module-id
+                names
+                cur-out))])
+        (set! index (+ index 1))))
+    cur-out))
 
 (define (lower-dispatch-variant-set-from-decls
   [decls : ast.AstDeclList]
@@ -13597,19 +13347,17 @@
   [name : i64]) : lower_i64_i64_map.Map
   (let
     [with-source : lower_i64_i64_map.Map used]
-    (begin
-      (lower_i64_i64_map.insert-ref! (&mut with-source) name 1)
-      (if (or
-        (lower-session-name-qualified? session name)
-        (>= (lower-session-name-first-dot-id session name) 0))
-        (let
-          [leaf : i64 (lower-used-type-name-leaf-id session name)]
-          (begin
-            (if (< leaf 0)
-              unit
-              (lower_i64_i64_map.insert-ref! (&mut with-source) leaf 1))
-            with-source))
-        with-source))))
+    (lower_i64_i64_map.insert-ref! (&mut with-source) name 1)
+    (if (or
+      (lower-session-name-qualified? session name)
+      (>= (lower-session-name-first-dot-id session name) 0))
+      (let
+        [leaf : i64 (lower-used-type-name-leaf-id session name)]
+        (if (< leaf 0)
+          unit
+          (lower_i64_i64_map.insert-ref! (&mut with-source) leaf 1))
+        with-source)
+      with-source)))
 
 (define (lower-used-type-name-contains?
   [session : cis.InternStructuralSessionHandle]
@@ -13629,12 +13377,11 @@
 (define (lower-used-types-precise-empty) : lower_i64_i64_map.Map
   (let
     [used : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 8192)]
-    (begin
-      (lower_i64_i64_map.insert-ref!
-        (&mut used)
-        cbi.compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
-        1)
-      used)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut used)
+      cbi.compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
+      1)
+    used))
 
 (define (lower-used-types-add-type-id
   [session : cis.InternStructuralSessionHandle]
@@ -14581,44 +14328,42 @@
     [index : i64 0]
     [current-module : String module]
     [current-used : lower_i64_i64_map.Map used]
-    (begin
-      (while (< index count)
-        (begin
-          (match (lower-global-array-element-shared-view
-            decl-slots
-            (+ decl-offset index))
-            [(Module next-module)
-              (set!
+    (while (< index count)
+      (match (lower-global-array-element-shared-view
+        decl-slots
+        (+ decl-offset index))
+        [(Module next-module)
+          (set!
+            current-module
+            (lower-name-id-text-for-session session next-module))]
+        [_
+          (if (and
+            (lower-type-decl?
+              (lower-global-array-element-shared-view
+                decl-slots
+                (+ decl-offset index)))
+            (or
+              (lower-comptime-runtime-skip-module? current-module)
+              (lower-type-decl-used?
+                session
                 current-module
-                (lower-name-id-text-for-session session next-module))]
-            [_
-              (if (and
-                (lower-type-decl?
-                  (lower-global-array-element-shared-view
-                    decl-slots
-                    (+ decl-offset index)))
-                (or
-                  (lower-comptime-runtime-skip-module? current-module)
-                  (lower-type-decl-used?
-                    session
-                    current-module
-                    current-used
-                    (lower-global-array-element-shared-view
-                      decl-slots
-                      (+ decl-offset index)))))
-                (set!
-                  current-used
-                  (lower-used-types-add-type-decl-deps
-                    session
-                    pools
-                    current-used
-                    (lower-global-shared-view current-module)
-                    (lower-global-array-element-shared-view
-                      decl-slots
-                      (+ decl-offset index))))
-                unit)])
-          (set! index (+ index 1))))
-      current-used)))
+                current-used
+                (lower-global-array-element-shared-view
+                  decl-slots
+                  (+ decl-offset index)))))
+            (set!
+              current-used
+              (lower-used-types-add-type-decl-deps
+                session
+                pools
+                current-used
+                (lower-global-shared-view current-module)
+                (lower-global-array-element-shared-view
+                  decl-slots
+                  (+ decl-offset index))))
+            unit)])
+      (set! index (+ index 1)))
+    current-used))
 
 (define (lower-used-types-expand-fixed
   [session : cis.InternStructuralSessionHandle]
@@ -14629,26 +14374,24 @@
     [current : lower_i64_i64_map.Map used]
     [iterations : i64 0]
     [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [before : i64 (lower_i64_i64_map.len (& current))]
-          [next : lower_i64_i64_map.Map
-            (lower-used-types-add-type-decl-deps-in-module
-              session
-              pools
-              decls
-              ""
-              (lower-global-shared-view current))]
-          (begin
-            (set! current next)
-            (set! iterations (+ iterations 1))
-            (if (or
-              (= before (lower_i64_i64_map.len (& current)))
-              (>= iterations 8))
-              (set! done true)
-              unit))))
-      current)))
+    (while (not done)
+      (let
+        [before : i64 (lower_i64_i64_map.len (& current))]
+        [next : lower_i64_i64_map.Map
+          (lower-used-types-add-type-decl-deps-in-module
+            session
+            pools
+            decls
+            ""
+            (lower-global-shared-view current))]
+        (set! current next)
+        (set! iterations (+ iterations 1))
+        (if (or
+          (= before (lower_i64_i64_map.len (& current)))
+          (>= iterations 8))
+          (set! done true)
+          unit)))
+    current))
 
 (define (lower-comptime-runtime-skip-module? [module : (& module str)]) : bool
   (string.eq module "stdlib.comptime"))
@@ -14661,13 +14404,11 @@
         (__tl_dyn-array i64)
         comptime-error-cache)]
     [index : i64 0]
-    (begin
-      (while (< index lower-comptime-cache-size)
-        (begin
-          (set! (array-ref cache index) 0)
-          (set! index (+ index 1))))
-      (set! (array-ref cache lower-comptime-cache-generation-index) -1)
-      (set! (array-ref cache lower-comptime-cache-table-id-index) -1))))
+    (while (< index lower-comptime-cache-size)
+      (set! (array-ref cache index) 0)
+      (set! index (+ index 1)))
+    (set! (array-ref cache lower-comptime-cache-generation-index) -1)
+    (set! (array-ref cache lower-comptime-cache-table-id-index) -1)))
 
 (define (lower-comptime-error-ids-ensure!
   [lower-state : CompilerLowerState]
@@ -14682,60 +14423,55 @@
         lower-state
         (__tl_dyn-array i64)
         comptime-error-cache)]
-    (if (and
-      (= (array-ref cache lower-comptime-cache-table-id-index) table-id)
-      (= (array-ref cache lower-comptime-cache-generation-index) generation))
-      unit
-      (begin
-        (unless
-          (cbi.state-table-current-with? builtin-state generation table-id)
-          (io.panic "lower: builtin snapshot does not match intern owner"))
-        (set!
-          (array-ref cache lower-comptime-cache-id-index)
-          (cbi.state-ref builtin-state 94))
-        (set!
-          (array-ref cache lower-comptime-cache-comptime-dot-id-index)
-          (cbi.state-ref builtin-state 90))
-        (set!
-          (array-ref cache lower-comptime-cache-comptime-slash-id-index)
-          (cbi.state-ref builtin-state 90))
-        (set!
-          (array-ref cache lower-comptime-cache-comptime-error-dot-id-index)
-          (cbi.state-ref builtin-state 91))
-        (set!
-          (array-ref cache lower-comptime-cache-comptime-error-slash-id-index)
-          (cbi.state-ref builtin-state 91))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index)
-          (cbi.state-ref builtin-state 149))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index)
-          (cbi.state-ref builtin-state 149))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index)
-          (cbi.state-ref builtin-state 149))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index)
-          (cbi.state-ref builtin-state 149))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index)
-          (cbi.state-ref builtin-state 150))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index)
-          (cbi.state-ref builtin-state 150))
-        (set!
-          (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index)
-          (cbi.state-ref builtin-state 150))
-        (set!
-          (array-ref
-            cache
-            lower-comptime-cache-stdlib-error-slash-slash-id-index)
-          (cbi.state-ref builtin-state 150))
-        ;; Publish the stamp last so readers never accept partially rebuilt IDs.
-        (set! (array-ref cache lower-comptime-cache-table-id-index) table-id)
-        (set!
-          (array-ref cache lower-comptime-cache-generation-index)
-          generation)))))
+    (unless
+      (and
+        (= (array-ref cache lower-comptime-cache-table-id-index) table-id)
+        (= (array-ref cache lower-comptime-cache-generation-index) generation))
+      (unless
+        (cbi.state-table-current-with? builtin-state generation table-id)
+        (io.panic "lower: builtin snapshot does not match intern owner"))
+      (set!
+        (array-ref cache lower-comptime-cache-id-index)
+        (cbi.state-ref builtin-state 94))
+      (set!
+        (array-ref cache lower-comptime-cache-comptime-dot-id-index)
+        (cbi.state-ref builtin-state 90))
+      (set!
+        (array-ref cache lower-comptime-cache-comptime-slash-id-index)
+        (cbi.state-ref builtin-state 90))
+      (set!
+        (array-ref cache lower-comptime-cache-comptime-error-dot-id-index)
+        (cbi.state-ref builtin-state 91))
+      (set!
+        (array-ref cache lower-comptime-cache-comptime-error-slash-id-index)
+        (cbi.state-ref builtin-state 91))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-dot-dot-id-index)
+        (cbi.state-ref builtin-state 149))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-dot-slash-id-index)
+        (cbi.state-ref builtin-state 149))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-slash-dot-id-index)
+        (cbi.state-ref builtin-state 149))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-slash-slash-id-index)
+        (cbi.state-ref builtin-state 149))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-error-dot-dot-id-index)
+        (cbi.state-ref builtin-state 150))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-error-dot-slash-id-index)
+        (cbi.state-ref builtin-state 150))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-dot-id-index)
+        (cbi.state-ref builtin-state 150))
+      (set!
+        (array-ref cache lower-comptime-cache-stdlib-error-slash-slash-id-index)
+        (cbi.state-ref builtin-state 150))
+      ;; Publish the stamp last so readers never accept partially rebuilt IDs.
+      (set! (array-ref cache lower-comptime-cache-table-id-index) table-id)
+      (set! (array-ref cache lower-comptime-cache-generation-index) generation))))
 
 (define (lower-comptime-error-call-id-with-cache?
   [lower-state : CompilerLowerState]
@@ -14836,77 +14572,67 @@
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [source-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-          [decl-path : String
-            (ast.ast-decl-path-list-get
-              (& paths)
-              index
-              (lower-global-shared-view entry-path))]
-          [logical-module-id : i64
-            (lower-decl-owner-module-id
-              lower-state
-              (& paths)
-              index
-              (lower-global-shared-view entry-path)
-              (lower-global-shared-view decl-path)
-              source-module-id)]
-          [kept : bool
-            (match (& decl)
-              [(Module _) true]
-              [_
-                (lower-decl-kept-by-reach-or-dispatch?
+    (while (< index count)
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+        [decl-path : String
+          (ast.ast-decl-path-list-get
+            (& paths)
+            index
+            (lower-global-shared-view entry-path))]
+        [logical-module-id : i64
+          (lower-decl-owner-module-id
+            lower-state
+            (& paths)
+            index
+            (lower-global-shared-view entry-path)
+            (lower-global-shared-view decl-path)
+            source-module-id)]
+        [kept : bool
+          (match (& decl)
+            [(Module _) true]
+            [_
+              (lower-decl-kept-by-reach-or-dispatch?
+                lower-state
+                (lower-global-shared-view entry-path)
+                (lower-global-shared-view decl-path)
+                (lower-decl-owner-module-name
                   lower-state
-                  (lower-global-shared-view entry-path)
-                  (lower-global-shared-view decl-path)
-                  (lower-decl-owner-module-name
-                    lower-state
-                    source-module-id
-                    logical-module-id)
-                  logical-module-id
-                  all-functions
-                  reachable
-                  dispatch-variants
-                  used-types
-                  (lower-global-shared-view decl))])]
-          (begin
-            (if kept
-              (begin
-                (set! (array-ref keep index) 1)
-                (ast.ast-decl-list-push
-                  (&mut out)
-                  (lower-global-shared-view decl))
-                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-                  (&mut out-paths)
-                  decl-path
-                  (ast.ast-decl-path-list-owner-id
-                    (& paths)
-                    index
-                    source-module-id)
-                  (ast.ast-decl-path-list-provenance-id
-                    (& paths)
-                    index
-                    cbi.compiler-builtin-id-fix-empty)))
-              unit)
-            (match decl
-              [(Module next-module) (set! source-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      (Filtered out out-paths (LowerDeclKeepPlan keep count)))))
+                  source-module-id
+                  logical-module-id)
+                logical-module-id
+                all-functions
+                reachable
+                dispatch-variants
+                used-types
+                (lower-global-shared-view decl))])]
+        (when
+          kept
+          (set! (array-ref keep index) 1)
+          (ast.ast-decl-list-push (&mut out) (lower-global-shared-view decl))
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut out-paths)
+            decl-path
+            (ast.ast-decl-path-list-owner-id (& paths) index source-module-id)
+            (ast.ast-decl-path-list-provenance-id
+              (& paths)
+              index
+              cbi.compiler-builtin-id-fix-empty)))
+        (match decl
+          [(Module next-module) (set! source-module-id next-module)]
+          [_ unit])
+        (set! index (+ index 1))))
+    (Filtered out out-paths (LowerDeclKeepPlan keep count))))
 
 (define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
   (let
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref keep index) 1)
-          (set! index (+ index 1))))
-      (LowerDeclKeepPlan keep count))))
+    (while (< index count)
+      (set! (array-ref keep index) 1)
+      (set! index (+ index 1)))
+    (LowerDeclKeepPlan keep count)))
 
 (define (lower-decl-required-by-clone-roots?
   [roots : (& roots clone_support.CloneNameSet)]
@@ -14941,23 +14667,21 @@
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
         [index : i64 0]
         [count : i64 (ast.ast-decl-list-len (& decls))]
-        (begin
-          (while (and (< index count) (< index source-count))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              (begin
-                (if (lower-decl-required-by-clone-roots?
-                  roots
-                  module-id
-                  (lower-global-shared-view decl))
-                  (set! (array-ref keep index) 1)
-                  unit)
-                (match decl
-                  [(Module next-module) (set! module-id next-module)]
-                  [_ unit])
-                (set! index (+ index 1)))))
-          (LowerDeclKeepPlan keep source-count)))]))
+        (while (and (< index count) (< index source-count))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+            (if (lower-decl-required-by-clone-roots?
+              roots
+              module-id
+              (lower-global-shared-view decl))
+              (set! (array-ref keep index) 1)
+              unit)
+            (match decl
+              [(Module next-module) (set! module-id next-module)]
+              [_ unit])
+            (set! index (+ index 1))))
+        (LowerDeclKeepPlan keep source-count))]))
 
 (define (lower-decl-keep-plan-copy-into-pools
   [plan : LowerDeclKeepPlan]
@@ -14972,12 +14696,10 @@
         [count : i64 plan.source-count]
         [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (set! (array-ref keep index) (array-ref source index))
-              (set! index (+ index 1))))
-          (LowerDeclKeepPlan keep count))))))
+        (while (< index count)
+          (set! (array-ref keep index) (array-ref source index))
+          (set! index (+ index 1)))
+        (LowerDeclKeepPlan keep count)))))
 
 (define (lower-decl-keep-plan-apply
   [plan : (& plan LowerDeclKeepPlan)]
@@ -14994,21 +14716,14 @@
         [keep : (__tl_dyn-array i64) plan.keep]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (if (or
-                (>= index source-count)
-                (not (= (array-ref keep index) 0)))
-                (ast.ast-decl-list-push
-                  (&mut out)
-                  (ast.ast-decl-list-get
-                    (& decls)
-                    index
-                    (ast.ast-decl-fallback)))
-                unit)
-              (set! index (+ index 1))))
-          (ast.ast-program out)))]))
+        (while (< index count)
+          (if (or (>= index source-count) (not (= (array-ref keep index) 0)))
+            (ast.ast-decl-list-push
+              (&mut out)
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+            unit)
+          (set! index (+ index 1)))
+        (ast.ast-program out))]))
 
 (define (lower-decl-keep-plan-apply-paths
   [plan : LowerDeclKeepPlan]
@@ -15023,24 +14738,22 @@
         count)]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity limit)]
     [index : i64 0]
-    (begin
-      (while (< index limit)
-        (begin
-          (when
-            (not (= (array-ref keep index) 0))
-            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-              (&mut out)
-              (ast.ast-decl-path-list-get (& paths) index "")
-              (ast.ast-decl-path-list-owner-id
-                (& paths)
-                index
-                cbi.compiler-builtin-id-fix-empty)
-              (ast.ast-decl-path-list-provenance-id
-                (& paths)
-                index
-                cbi.compiler-builtin-id-fix-empty)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index limit)
+      (when
+        (not (= (array-ref keep index) 0))
+        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+          (&mut out)
+          (ast.ast-decl-path-list-get (& paths) index "")
+          (ast.ast-decl-path-list-owner-id
+            (& paths)
+            index
+            cbi.compiler-builtin-id-fix-empty)
+          (ast.ast-decl-path-list-provenance-id
+            (& paths)
+            index
+            cbi.compiler-builtin-id-fix-empty)))
+      (set! index (+ index 1)))
+    out))
 
 (defenum LowerReachStateCell
   (Occupied LowerReachState))
@@ -15054,24 +14767,23 @@
     [cell : LowerReachStateCell (Occupied state)]
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
-    (begin
-      (while (< index count)
-        (match cell
-          [(Occupied current)
-            (set!
-              cell
-              (Occupied
-                (lower-reach-add-source-id
-                  all-functions
-                  names
-                  current
-                  (clone_support.clone-root-entries-helper-id-at-or
-                    roots
-                    index
-                    -1))))])
-        (set! index (+ index 1)))
+    (while (< index count)
       (match cell
-        [(Occupied result) result]))))
+        [(Occupied current)
+          (set!
+            cell
+            (Occupied
+              (lower-reach-add-source-id
+                all-functions
+                names
+                current
+                (clone_support.clone-root-entries-helper-id-at-or
+                  roots
+                  index
+                  -1))))])
+      (set! index (+ index 1)))
+    (match cell
+      [(Occupied result) result])))
 
 ;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
@@ -15212,200 +14924,194 @@
         ;; scratch+escape pattern in lower-function-escaping).
         [prev-arena : i64 (arena.tl_arena_current)]
         [scratch : i64 (lower-scratch-arena-get)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set scratch))
-          (let
-            [mark : i64 (arena.tl_region_mark)]
-            [all-functions : lower_i64_i64_map.Map
-              (lower-function-set-from-decls
-                lower-state
-                (lower-global-shared-view decls)
-                paths
-                (lower-global-shared-view entry-path))]
-            [body-index : LowerFunctionBodyIndex
-              (lower-function-body-index-from-decls
-                lower-state
-                pools
-                (lower-global-shared-view decls)
-                (lower-global-shared-view paths)
-                (lower-global-shared-view entry-path)
-                (lower-global-shared-view names)
-                (lower-function-decl-count (lower-global-shared-view decls)))]
-            [name-cache : LowerNameCache
-              (lower-name-cache-from-env lower-state names)]
-            [dispatch-variants : lower_i64_i64_map.Map
-              (lower-dispatch-variant-set-from-decls
-                (lower-global-shared-view decls)
-                paths
-                (lower-global-shared-view entry-path)
-                name-cache)]
-            [main-id : i64 (lower-entry-main-logical-id all-functions)]
-            [result : LowerPrunedProgramWithPlan
-              (if (>= main-id 0)
-                (begin
-                  (compiler-lower-state-write!
-                    lower-state
-                    lower_i64_i64_map.Map
-                    reach-active-runtime-paths
-                    (lower_i64_i64_map.with-capacity 1024))
-                  (compiler-lower-state-write!
-                    lower-state
-                    lower_i64_i64_map.Map
-                    reach-active-body-used-types
-                    (lower-used-types-precise-empty))
-                  (let
-                    [main-state : LowerReachState
-                      (lower-reach-add-logical
-                        all-functions
-                        (LowerReachState.State
-                          (lower_i64_i64_map.with-capacity 8192)
-                          (lower-id-set-empty)
-                          lower-state)
-                        main-id)]
-                    [export-state : LowerReachState
-                      (lower-reach-add-export-roots-in-module
-                        (lower-global-shared-view decls)
-                        (lower-global-shared-view paths)
-                        (lower-global-shared-view entry-path)
-                        ""
-                        cbi.compiler-builtin-id-fix-empty
-                        all-functions
-                        main-state)]
-                    [cleanup-state : LowerReachState
-                      (lower-reach-cleanup-metadata-roots-in-module
-                        all-functions
-                        (lower-global-shared-view decls)
-                        (lower-global-shared-view paths)
-                        (lower-global-shared-view entry-path)
-                        ""
-                        cbi.compiler-builtin-id-fix-empty
-                        name-cache
-                        export-state)]
-                    [clone-state : LowerReachState
-                      (lower-reach-add-clone-root-helpers
-                        all-functions
-                        name-cache
-                        clone-roots
-                        cleanup-state)]
-                    [dispatch-state : LowerReachState
-                      (lower-reach-add-dispatch-variant-roots
-                        all-functions
-                        (lower-global-shared-view decls)
-                        name-cache
-                        clone-state)]
-                    [global-state : LowerReachState
-                      (lower-reach-global-decls
-                        pools
-                        all-functions
-                        (lower-global-shared-view name-cache)
-                        dispatch-state
-                        (lower-global-shared-view decls)
-                        (lower-global-shared-view paths)
-                        (lower-global-shared-view entry-path)
-                        cbi.compiler-builtin-id-fix-empty)]
-                    [reached-state : LowerReachState
-                      (lower-reach-process
-                        pools
-                        all-functions
-                        name-cache
-                        body-index
-                        global-state)]
-                    (match reached-state
-                      [(State reachable _ _)
-                        (let
-                          [runtime-paths : lower_i64_i64_map.Map
-                            (compiler-lower-state-read
-                              lower-state
-                              lower_i64_i64_map.Map
-                              reach-active-runtime-paths)]
-                          [body-used-types : lower_i64_i64_map.Map
-                            (compiler-lower-state-read
-                              lower-state
-                              lower_i64_i64_map.Map
-                              reach-active-body-used-types)]
-                          [type-path-seed : LowerUsedTypePathSeed
-                            (lower-used-types-path-seed-in-module
-                              (compiler-lower-state-structural-session
-                                lower-state)
-                              pools
-                              (lower-global-shared-view decls)
-                              (lower-global-shared-view paths)
-                              entry-path
-                              ""
-                              runtime-paths
-                              body-used-types
-                              true)]
-                          [used-types : lower_i64_i64_map.Map
-                            (match type-path-seed
-                              [(Seed
-                                  reachable-path-type-names
-                                  type-paths-covered)
-                                (if type-paths-covered
-                                  (lower_i64_i64_map.with-capacity 8)
-                                  (lower-used-types-expand-fixed
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [mark : i64 (arena.tl_region_mark)]
+          [all-functions : lower_i64_i64_map.Map
+            (lower-function-set-from-decls
+              lower-state
+              (lower-global-shared-view decls)
+              paths
+              (lower-global-shared-view entry-path))]
+          [body-index : LowerFunctionBodyIndex
+            (lower-function-body-index-from-decls
+              lower-state
+              pools
+              (lower-global-shared-view decls)
+              (lower-global-shared-view paths)
+              (lower-global-shared-view entry-path)
+              (lower-global-shared-view names)
+              (lower-function-decl-count (lower-global-shared-view decls)))]
+          [name-cache : LowerNameCache
+            (lower-name-cache-from-env lower-state names)]
+          [dispatch-variants : lower_i64_i64_map.Map
+            (lower-dispatch-variant-set-from-decls
+              (lower-global-shared-view decls)
+              paths
+              (lower-global-shared-view entry-path)
+              name-cache)]
+          [main-id : i64 (lower-entry-main-logical-id all-functions)]
+          [result : LowerPrunedProgramWithPlan
+            (if (>= main-id 0)
+              (begin
+                (compiler-lower-state-write!
+                  lower-state
+                  lower_i64_i64_map.Map
+                  reach-active-runtime-paths
+                  (lower_i64_i64_map.with-capacity 1024))
+                (compiler-lower-state-write!
+                  lower-state
+                  lower_i64_i64_map.Map
+                  reach-active-body-used-types
+                  (lower-used-types-precise-empty))
+                (let
+                  [main-state : LowerReachState
+                    (lower-reach-add-logical
+                      all-functions
+                      (LowerReachState.State
+                        (lower_i64_i64_map.with-capacity 8192)
+                        (lower-id-set-empty)
+                        lower-state)
+                      main-id)]
+                  [export-state : LowerReachState
+                    (lower-reach-add-export-roots-in-module
+                      (lower-global-shared-view decls)
+                      (lower-global-shared-view paths)
+                      (lower-global-shared-view entry-path)
+                      ""
+                      cbi.compiler-builtin-id-fix-empty
+                      all-functions
+                      main-state)]
+                  [cleanup-state : LowerReachState
+                    (lower-reach-cleanup-metadata-roots-in-module
+                      all-functions
+                      (lower-global-shared-view decls)
+                      (lower-global-shared-view paths)
+                      (lower-global-shared-view entry-path)
+                      ""
+                      cbi.compiler-builtin-id-fix-empty
+                      name-cache
+                      export-state)]
+                  [clone-state : LowerReachState
+                    (lower-reach-add-clone-root-helpers
+                      all-functions
+                      name-cache
+                      clone-roots
+                      cleanup-state)]
+                  [dispatch-state : LowerReachState
+                    (lower-reach-add-dispatch-variant-roots
+                      all-functions
+                      (lower-global-shared-view decls)
+                      name-cache
+                      clone-state)]
+                  [global-state : LowerReachState
+                    (lower-reach-global-decls
+                      pools
+                      all-functions
+                      (lower-global-shared-view name-cache)
+                      dispatch-state
+                      (lower-global-shared-view decls)
+                      (lower-global-shared-view paths)
+                      (lower-global-shared-view entry-path)
+                      cbi.compiler-builtin-id-fix-empty)]
+                  [reached-state : LowerReachState
+                    (lower-reach-process
+                      pools
+                      all-functions
+                      name-cache
+                      body-index
+                      global-state)]
+                  (match reached-state
+                    [(State reachable _ _)
+                      (let
+                        [runtime-paths : lower_i64_i64_map.Map
+                          (compiler-lower-state-read
+                            lower-state
+                            lower_i64_i64_map.Map
+                            reach-active-runtime-paths)]
+                        [body-used-types : lower_i64_i64_map.Map
+                          (compiler-lower-state-read
+                            lower-state
+                            lower_i64_i64_map.Map
+                            reach-active-body-used-types)]
+                        [type-path-seed : LowerUsedTypePathSeed
+                          (lower-used-types-path-seed-in-module
+                            (compiler-lower-state-structural-session
+                              lower-state)
+                            pools
+                            (lower-global-shared-view decls)
+                            (lower-global-shared-view paths)
+                            entry-path
+                            ""
+                            runtime-paths
+                            body-used-types
+                            true)]
+                        [used-types : lower_i64_i64_map.Map
+                          (match type-path-seed
+                            [(Seed reachable-path-type-names type-paths-covered)
+                              (if type-paths-covered
+                                (lower_i64_i64_map.with-capacity 8)
+                                (lower-used-types-expand-fixed
+                                  (compiler-lower-state-structural-session
+                                    lower-state)
+                                  pools
+                                  decls
+                                  (lower-used-types-from-kept-decls-in-module
                                     (compiler-lower-state-structural-session
                                       lower-state)
+                                    lower-state
                                     pools
-                                    decls
-                                    (lower-used-types-from-kept-decls-in-module
-                                      (compiler-lower-state-structural-session
-                                        lower-state)
-                                      lower-state
-                                      pools
-                                      (lower-global-shared-view decls)
-                                      (lower-global-shared-view paths)
-                                      (lower-global-shared-view entry-path)
-                                      ""
-                                      cbi.compiler-builtin-id-fix-empty
-                                      all-functions
-                                      reachable
-                                      dispatch-variants
-                                      reachable-path-type-names)))])]
-                          (begin
-                            ;; Materialize the pruned program back in the persistent
-                            ;; arena before rewinding the scratch arena.
-                            (unsafe
-                              (arena.tl_arena_set prev-arena))
-                            (let
-                              [filtered : LowerFilteredReachableWithPlan
-                                (lower-filter-reachable-decls-paths-and-plan
-                                  lower-state
-                                  decls
-                                  paths
-                                  entry-path
-                                  all-functions
-                                  reachable
-                                  dispatch-variants
-                                  used-types)]
-                              [pruned : LowerPrunedProgramWithPlan
-                                (match filtered
-                                  [(Filtered
-                                      filtered-decls
-                                      filtered-paths
-                                      keep-plan)
-                                    (Program
-                                      (ast.ast-program filtered-decls)
-                                      filtered-paths
-                                      keep-plan)])]
-                              (begin
-                                (unsafe
-                                  (arena.tl_arena_set scratch)
-                                  (arena.tl_region_reset mark)
-                                  (arena.tl_arena_set prev-arena))
-                                pruned))))])))
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set scratch)
-                    (arena.tl_region_reset mark)
-                    (arena.tl_arena_set prev-arena))
-                  (Program
-                    program
-                    paths
-                    (lower-decl-keep-plan-all (ast.ast-decl-list-len (& decls))))))]
-            (begin
-              (lower-reach-scratch-state-reset! lower-state)
-              result))))]))
+                                    (lower-global-shared-view decls)
+                                    (lower-global-shared-view paths)
+                                    (lower-global-shared-view entry-path)
+                                    ""
+                                    cbi.compiler-builtin-id-fix-empty
+                                    all-functions
+                                    reachable
+                                    dispatch-variants
+                                    reachable-path-type-names)))])]
+                        ;; Materialize the pruned program back in the persistent
+                        ;; arena before rewinding the scratch arena.
+                        (unsafe
+                          (arena.tl_arena_set prev-arena))
+                        (let
+                          [filtered : LowerFilteredReachableWithPlan
+                            (lower-filter-reachable-decls-paths-and-plan
+                              lower-state
+                              decls
+                              paths
+                              entry-path
+                              all-functions
+                              reachable
+                              dispatch-variants
+                              used-types)]
+                          [pruned : LowerPrunedProgramWithPlan
+                            (match filtered
+                              [(Filtered
+                                  filtered-decls
+                                  filtered-paths
+                                  keep-plan)
+                                (Program
+                                  (ast.ast-program filtered-decls)
+                                  filtered-paths
+                                  keep-plan)])]
+                          (unsafe
+                            (arena.tl_arena_set scratch)
+                            (arena.tl_region_reset mark)
+                            (arena.tl_arena_set prev-arena))
+                          pruned))])))
+              (begin
+                (unsafe
+                  (arena.tl_arena_set scratch)
+                  (arena.tl_region_reset mark)
+                  (arena.tl_arena_set prev-arena))
+                (Program
+                  program
+                  paths
+                  (lower-decl-keep-plan-all (ast.ast-decl-list-len (& decls))))))]
+          (lower-reach-scratch-state-reset! lower-state)
+          result))]))
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (let
@@ -15531,26 +15237,20 @@
           cache-data.uniform-vectors]
         [index : i64 0]
         [count : i64 cache-data.uniform-count]
-        (begin
-          (while (< index count)
-            (begin
-              (when
-                (and
-                  (lower-vector-map-ir-value-eq?
-                    (lower-global-shared-view value)
-                    (lower-global-array-element-shared-view
-                      uniform-values
-                      index))
-                  (tc_core.tc-type-eq
-                    (lower-global-shared-view elem-ty)
-                    (lower-global-array-element-shared-view uniform-types index)))
-                (return
-                  (Some
-                    (lower-global-array-element-shared-view
-                      uniform-vectors
-                      index))))
-              (set! index (+ index 1))))
-          (No)))]))
+        (while (< index count)
+          (when
+            (and
+              (lower-vector-map-ir-value-eq?
+                (lower-global-shared-view value)
+                (lower-global-array-element-shared-view uniform-values index))
+              (tc_core.tc-type-eq
+                (lower-global-shared-view elem-ty)
+                (lower-global-array-element-shared-view uniform-types index)))
+            (return
+              (Some
+                (lower-global-array-element-shared-view uniform-vectors index))))
+          (set! index (+ index 1)))
+        (No))]))
 
 (define (lower-masked-preheader-uniform-add!
   [state : LowerState]
@@ -15568,14 +15268,13 @@
         [types : (__tl_dyn-array ast.AstType) cache-data.uniform-types]
         [vectors : (__tl_dyn-array ir.CompilerIrValue)
           cache-data.uniform-vectors]
-        (begin
-          (__tl_array-push! values value)
-          (__tl_array-push! types elem-ty)
-          (__tl_array-push! vectors vector)
-          (__tl-project-set-field
-            (__tl-box-place cache)
-            uniform-count
-            (+ count 1))))]))
+        (__tl_array-push! values value)
+        (__tl_array-push! types elem-ty)
+        (__tl_array-push! vectors vector)
+        (__tl-project-set-field
+          (__tl-box-place cache)
+          uniform-count
+          (+ count 1)))]))
 
 (define (lower-masked-preheader-uniform-can-add? [state : LowerState]) : bool
   (match (lower-state-masked-preheader-cache state)
@@ -15594,16 +15293,13 @@
         [array-data : (__tl_dyn-array ir.CompilerIrValue) cache-data.array-data]
         [index : i64 0]
         [count : i64 cache-data.array-count]
-        (begin
-          (while (< index count)
-            (begin
-              (when
-                (= array-var (array-ref array-vars index))
-                (return
-                  (Some
-                    (lower-global-array-element-shared-view array-data index))))
-              (set! index (+ index 1))))
-          (No)))]))
+        (while (< index count)
+          (when
+            (= array-var (array-ref array-vars index))
+            (return
+              (Some (lower-global-array-element-shared-view array-data index))))
+          (set! index (+ index 1)))
+        (No))]))
 
 (define (lower-masked-preheader-array-data-add!
   [state : LowerState]
@@ -15618,13 +15314,9 @@
         [count : i64 cache-data.array-count]
         [vars : (__tl_dyn-array i64) cache-data.array-vars]
         [values : (__tl_dyn-array ir.CompilerIrValue) cache-data.array-data]
-        (begin
-          (__tl_array-push! vars array-var)
-          (__tl_array-push! values data)
-          (__tl-project-set-field
-            (__tl-box-place cache)
-            array-count
-            (+ count 1))))]))
+        (__tl_array-push! vars array-var)
+        (__tl_array-push! values data)
+        (__tl-project-set-field (__tl-box-place cache) array-count (+ count 1)))]))
 
 (define (lower-masked-load-cache-entry-capacity) : i64
   32)
@@ -15668,9 +15360,8 @@
                 (__tl_make-array i64 (lower-masked-load-cache-mask-capacity))
                 0))))]
       [(Some cache)
-        (begin
-          (__tl-project-set-field (__tl-box-place cache) count 0)
-          (__tl-project-set-field (__tl-box-place cache) mask-count 0))])))
+        (__tl-project-set-field (__tl-box-place cache) count 0)
+        (__tl-project-set-field (__tl-box-place cache) mask-count 0)])))
 
 ;; Memory effects retire values but keep the mask ancestry: the control-flow
 ;; proof remains true and can classify loads emitted after the effect.
@@ -15746,25 +15437,25 @@
         [(Some cache)
           (let
             [count : i64 (__tl-project-field (__tl-box-place cache) mask-count)]
-            (if (or
-              (not (= (lower-masked-load-mask-parent-at state child-key 0) -2))
-              (>= count (lower-masked-load-cache-mask-capacity)))
-              unit
-              (begin
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) mask-vars)
-                    count)
-                  child-key)
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) mask-parents)
-                    count)
-                  parent-key)
-                (__tl-project-set-field
-                  (__tl-box-place cache)
-                  mask-count
-                  (+ count 1)))))]))))
+            (unless
+              (or
+                (not
+                  (= (lower-masked-load-mask-parent-at state child-key 0) -2))
+                (>= count (lower-masked-load-cache-mask-capacity)))
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) mask-vars)
+                  count)
+                child-key)
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) mask-parents)
+                  count)
+                parent-key)
+              (__tl-project-set-field
+                (__tl-box-place cache)
+                mask-count
+                (+ count 1))))]))))
 
 (define (lower-masked-load-cache-get-at
   [state : LowerState]
@@ -15833,42 +15524,37 @@
         [(Some cache)
           (let
             [count : i64 (__tl-project-field (__tl-box-place cache) count)]
-            (if (>= count (lower-masked-load-cache-entry-capacity))
-              unit
-              (begin
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) array-vars)
-                    count)
-                  array-var)
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) offsets)
-                    count)
-                  offset)
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) masks)
-                    count)
-                  mask)
-                (set!
-                  (array-ref
-                    (__tl-project-field (__tl-box-place cache) values)
-                    count)
-                  value)
-                (__tl-project-set-field
-                  (__tl-box-place cache)
-                  count
-                  (+ count 1)))))]))))
+            (unless
+              (>= count (lower-masked-load-cache-entry-capacity))
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) array-vars)
+                  count)
+                array-var)
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) offsets)
+                  count)
+                offset)
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) masks)
+                  count)
+                mask)
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place cache) values)
+                  count)
+                value)
+              (__tl-project-set-field (__tl-box-place cache) count (+ count 1))))]))))
 
 (define (lower-masked-load-cache-invalidate-result [result : ResultLowerExpr]) : ResultLowerExpr
   (match (lower-global-shared-view result)
     [(Ok lowered)
       (match lowered
         [(Expr state _ _)
-          (begin
-            (lower-masked-load-cache-invalidate! state)
-            result)])]
+          (lower-masked-load-cache-invalidate! state)
+          result])]
     [(Err _) result]))
 
 (define (lower-state-register-address-taken-var?
@@ -15885,12 +15571,11 @@
   [var-id : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (lower_i64_i64_map.insert-ref!
-        (&mut (__tl-project-field (__tl-box-place data) address-taken))
-        var-id
-        1)
-      state)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut (__tl-project-field (__tl-box-place data) address-taken))
+      var-id
+      1)
+    state))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (let
@@ -15912,18 +15597,16 @@
 (define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (__tl-project-set-field (__tl-box-place data) tail-param-start 0)
-      (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
-      state)))
+    (__tl-project-set-field (__tl-box-place data) tail-param-start 0)
+    (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
+    state))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     [next-var : i64 (__tl-project-field (__tl-box-place data) next-var)]
-    (begin
-      (__tl-project-set-field (__tl-box-place data) next-var (+ next-var 1))
-      (Alloc state next-var))))
+    (__tl-project-set-field (__tl-box-place data) next-var (+ next-var 1))
+    (Alloc state next-var)))
 
 (define (lower-state-next-label-number [state : LowerState]) : i64
   (let
@@ -15934,12 +15617,11 @@
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     [next-label : i64 (__tl-project-field (__tl-box-place data) next-label)]
-    (begin
-      (__tl-project-set-field (__tl-box-place data) next-label (+ next-label 1))
-      (Label
-        state
-        (ir.compiler-ir-label
-          (str_cat.str-cat prefix "." (string.int->string next-label)))))))
+    (__tl-project-set-field (__tl-box-place data) next-label (+ next-label 1))
+    (Label
+      state
+      (ir.compiler-ir-label
+        (str_cat.str-cat prefix "." (string.int->string next-label))))))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (let
@@ -15960,21 +15642,16 @@
         (&mut intern-state)
         (ci.intern-generated-symbol-role-lambda)
         components)]
-    (begin
-      (__tl-project-set-field
-        (__tl-box-place data)
-        next-lambda
-        (+ next-lambda 1))
-      (Name state lambda-id))))
+    (__tl-project-set-field (__tl-box-place data) next-lambda (+ next-lambda 1))
+    (Name state lambda-id)))
 
 (define (lower-state-emit [state : LowerState] [instr : ir.CompilerIrInstr]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (ir.compiler-ir-instr-builder-push!
-        (&mut (__tl-project-field (__tl-box-place data) current-instrs))
-        instr)
-      state)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut (__tl-project-field (__tl-box-place data) current-instrs))
+      instr)
+    state))
 
 (define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -16014,12 +15691,11 @@
               (lower-state-current-source-path-id state)
               span)]
           [(No) (lower-boxed-box-field-shared-view data spans)])]
-      (begin
-        (ir.compiler-ir-instr-builder-push!
-          (&mut (__tl-project-field (__tl-box-place data) current-instrs))
-          instr)
-        (__tl-project-set-field (__tl-box-place data) spans (box next-spans))
-        state))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut (__tl-project-field (__tl-box-place data) current-instrs))
+        instr)
+      (__tl-project-set-field (__tl-box-place data) spans (box next-spans))
+      state)
     (lower-state-emit state instr)))
 
 ;; Bounds-check helpers emit their BoundsCheck before the final GEP/load and do
@@ -16057,12 +15733,11 @@
                 (BoundsCheck Unit Unit bounds-label)
                 (lower-state-current-source-path-id state)
                 span)]
-            (begin
-              (__tl-project-set-field
-                (__tl-box-place data)
-                spans
-                (box next-spans))
-              state))]))))
+            (__tl-project-set-field
+              (__tl-box-place data)
+              spans
+              (box next-spans))
+            state)]))))
 
 (define (lower-state-record-latest-bounds-check-at-expr
   [ctx : (& ctx tc_core.TcContext)]
@@ -16080,18 +15755,17 @@
     [current-label : i64 (lower-box-field-shared-view data current-label)]
     [current-instrs : ir.CompilerIrInstrBuilder
       (lower-box-field-shared-view data current-instrs)]
-    (begin
-      (ir.compiler-ir-block-builder-push!
-        (&mut (__tl-project-field (__tl-box-place data) blocks))
-        (ir.CompilerIrBlock.Block
-          current-label
-          (ir.compiler-ir-instr-builder-to-seq current-instrs)))
-      (__tl-project-set-field (__tl-box-place data) current-label next-label)
-      (__tl-project-set-field
-        (__tl-box-place data)
-        current-instrs
-        (ir.compiler-ir-instr-builder-new))
-      state)))
+    (ir.compiler-ir-block-builder-push!
+      (&mut (__tl-project-field (__tl-box-place data) blocks))
+      (ir.CompilerIrBlock.Block
+        current-label
+        (ir.compiler-ir-instr-builder-to-seq current-instrs)))
+    (__tl-project-set-field (__tl-box-place data) current-label next-label)
+    (__tl-project-set-field
+      (__tl-box-place data)
+      current-instrs
+      (ir.compiler-ir-instr-builder-new))
+    state))
 
 (define (lower-state-build-blocks [state : LowerState]) : ir.CompilerIrBlockList
   (let
@@ -16105,9 +15779,8 @@
       (lower-box-field-shared-view data blocks)]
     [next-blocks : ir.CompilerIrBlockBuilder
       (ir.CompilerIrBlockBuilder blocks.slots blocks.len)]
-    (begin
-      (ir.compiler-ir-block-builder-push! (&mut next-blocks) current-block)
-      (ir.compiler-ir-block-builder-to-list next-blocks))))
+    (ir.compiler-ir-block-builder-push! (&mut next-blocks) current-block)
+    (ir.compiler-ir-block-builder-to-list next-blocks)))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : ir.CompilerIrBlockList
   (lower-state-build-blocks state))
@@ -16121,9 +15794,8 @@
       (lower-box-field-shared-view data functions)]
     [out : ir.CompilerIrFunctionBuilder
       (ir.CompilerIrFunctionBuilder functions.slots functions.len)]
-    (begin
-      (ir.compiler-ir-function-builder-push! (&mut out) func)
-      (ir.compiler-ir-function-builder-to-seq out))))
+    (ir.compiler-ir-function-builder-push! (&mut out) func)
+    (ir.compiler-ir-function-builder-to-seq out)))
 
 (define (lower-state-add-functions
   [state : LowerState]
@@ -16131,12 +15803,11 @@
   [new-spans : ir.CompilerSourceSpans]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (ir.compiler-ir-function-builder-append-seq!
-        (&mut (__tl-project-field (__tl-box-place data) functions))
-        new-functions)
-      (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
-      state)))
+    (ir.compiler-ir-function-builder-append-seq!
+      (&mut (__tl-project-field (__tl-box-place data) functions))
+      new-functions)
+    (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
+    state))
 
 (define (lower-materialize
   [state : LowerState]
@@ -16449,25 +16120,24 @@
       tag
       (ast.ast-variant-def-fallback))
       [(Def variant-name fields _)
-        (begin
-          (when
-            (ast.ast-type-list-empty? (& fields))
-            (let
-              [object-name : i64
-                (lower-nullary-variant-object-symbol
-                  (lower-global-shared-view intern-state)
-                  enum-name-id
-                  variant-name)]
-              (ir.compiler-ir-global-builder-push!
-                globals
-                (ir.CompilerIrGlobal.Global object-name (I64) (I64 tag)))))
-          (lower-nullary-variant-globals
-            intern-state
-            enum-name-id
-            enum-name
-            variants
-            (+ tag 1)
-            globals))])))
+        (when
+          (ast.ast-type-list-empty? (& fields))
+          (let
+            [object-name : i64
+              (lower-nullary-variant-object-symbol
+                (lower-global-shared-view intern-state)
+                enum-name-id
+                variant-name)]
+            (ir.compiler-ir-global-builder-push!
+              globals
+              (ir.CompilerIrGlobal.Global object-name (I64) (I64 tag)))))
+        (lower-nullary-variant-globals
+          intern-state
+          enum-name-id
+          enum-name
+          variants
+          (+ tag 1)
+          globals)])))
 
 (define (lower-enum-variants-storage-size
   [ctx : tc_core.TcContext]
@@ -18455,9 +18125,8 @@
   [pending : (&mut pending ast.AstExprList)]) : i64
   (let
     [index : i64 (- pending.len 1)]
-    (begin
-      (set! pending.len index)
-      (array-ref pending.slots index))))
+    (set! pending.len index)
+    (array-ref pending.slots index)))
 
 ;; Flatten the complete binary concat tree without recursively lowering its
 ;; children. The explicit LIFO worklist pushes right before left, preserving
@@ -18472,35 +18141,31 @@
   (let
     [pending : ast.AstExprList (ast.ast-expr-list-with-capacity 16)]
     [out : ast.AstExprList (ast.ast-expr-list-with-capacity 16)]
-    (begin
-      (ast.ast-expr-list-push
-        (&mut pending)
-        (ast.ast-expr-list-get (& exprs) 1 0))
-      (ast.ast-expr-list-push
-        (&mut pending)
-        (ast.ast-expr-list-get (& exprs) 0 0))
-      (while (not (ast.ast-expr-list-empty? (& pending)))
-        (let
-          [expr-id : i64 (lower-string-concat-work-pop (&mut pending))]
-          [expr : ast.AstExpr (tc_core.tc-context-expr-get ctx expr-id)]
-          (begin
-            (match (lower-string-concat-call-parts ctx env state type-env expr)
-              [(Some nested-left nested-right)
-                (begin
-                  (ast.ast-expr-list-push (&mut pending) nested-right)
-                  (ast.ast-expr-list-push (&mut pending) nested-left))]
-              [(No) (ast.ast-expr-list-push (&mut out) expr-id)])
-            unit)))
-      out)))
+    (ast.ast-expr-list-push
+      (&mut pending)
+      (ast.ast-expr-list-get (& exprs) 1 0))
+    (ast.ast-expr-list-push
+      (&mut pending)
+      (ast.ast-expr-list-get (& exprs) 0 0))
+    (while (not (ast.ast-expr-list-empty? (& pending)))
+      (let
+        [expr-id : i64 (lower-string-concat-work-pop (&mut pending))]
+        [expr : ast.AstExpr (tc_core.tc-context-expr-get ctx expr-id)]
+        (match (lower-string-concat-call-parts ctx env state type-env expr)
+          [(Some nested-left nested-right)
+            (ast.ast-expr-list-push (&mut pending) nested-right)
+            (ast.ast-expr-list-push (&mut pending) nested-left)]
+          [(No) (ast.ast-expr-list-push (&mut out) expr-id)])
+        unit))
+    out))
 
 (define (lower-string-concat-runtime-name [count : i64]) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (cond
-      [(= count 3) cbi.compiler-builtin-id-tl-string-concat3]
-      [(= count 4) cbi.compiler-builtin-id-tl-string-concat4]
-      [(= count 5) cbi.compiler-builtin-id-tl-string-concat5]
-      [else cbi.compiler-builtin-id-tl-string-concat])))
+  (cbi.compiler-builtin-refresh!)
+  (cond
+    [(= count 3) cbi.compiler-builtin-id-tl-string-concat3]
+    [(= count 4) cbi.compiler-builtin-id-tl-string-concat4]
+    [(= count 5) cbi.compiler-builtin-id-tl-string-concat5]
+    [else cbi.compiler-builtin-id-tl-string-concat]))
 
 (define (lower-string-concat-values-at!
   [ctx : tc_core.TcContext]
@@ -18524,19 +18189,18 @@
               (if (lower-string-handle-type? ctx expr-ty)
                 (match (lower-string-fields expr-state value)
                   [(Fields field-state ptr len)
-                    (begin
-                      (ir.compiler-ir-value-builder-push! builder ptr)
-                      (ir.compiler-ir-value-builder-push! builder len)
-                      (lower-string-concat-values-at!
-                        ctx
-                        field-state
-                        env
-                        type-env
-                        exprs
-                        (+ index 1)
-                        end
-                        builder
-                        (+ count 1)))])
+                    (ir.compiler-ir-value-builder-push! builder ptr)
+                    (ir.compiler-ir-value-builder-push! builder len)
+                    (lower-string-concat-values-at!
+                      ctx
+                      field-state
+                      env
+                      type-env
+                      exprs
+                      (+ index 1)
+                      end
+                      builder
+                      (+ count 1))])
                 (Err
                   (box
                     (lower-diagnostic-at-expr
@@ -20245,16 +19909,14 @@
     [i : i64 0]
     [last-dot : i64 -1]
     [n : i64 (string.string-length source)]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref source i) '.')
-            (set! last-dot i)
-            unit)
-          (set! i (+ i 1))))
-      (if (and (>= last-dot 0) (< last-dot (- n 1)))
-        (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
-        source))))
+    (while (< i n)
+      (if (string.char-eq (string.string-ref source i) '.')
+        (set! last-dot i)
+        unit)
+      (set! i (+ i 1)))
+    (if (and (>= last-dot 0) (< last-dot (- n 1)))
+      (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
+      source)))
 
 (define (lower-variant-payload-offset
   [ctx : tc_core.TcContext]
@@ -21187,14 +20849,12 @@
   (let
     [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (ast.ast-pattern-list-push
-            (&mut out)
-            (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (ast.ast-pattern-list-push
+        (&mut out)
+        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
+      (set! index (+ index 1)))
+    out))
 
 ;; Binds a name to the address of element `index`, typed `ref-ty`.
 (define (lower-bind-slice-element-address
@@ -21392,31 +21052,29 @@
             (lower-global-shared-view elem-ty))]
         [types : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (ast.ast-type-list-push (&mut types) elem-id)
-              (set! index (+ index 1))))
-          (lower-bind-variant-payloads
-            ctx
-            state
-            env
-            type-env
-            (if copyable
-              (Owned)
-              (Borrowed lifetime))
-            data-ptr
-            (lower-slice-pattern-elements items count)
-            types
-            mode
-            -1
-            ""
-            "slice"
-            -1
-            0
-            0
-            fail-label
-            false))))))
+        (while (< index count)
+          (ast.ast-type-list-push (&mut types) elem-id)
+          (set! index (+ index 1)))
+        (lower-bind-variant-payloads
+          ctx
+          state
+          env
+          type-env
+          (if copyable
+            (Owned)
+            (Borrowed lifetime))
+          data-ptr
+          (lower-slice-pattern-elements items count)
+          types
+          mode
+          -1
+          ""
+          "slice"
+          -1
+          0
+          0
+          fail-label
+          false)))))
 
 ;; Tests and binds `(slice p1 ... pk [& rest])` against a borrowed view
 ;; (SPEC 5.13): one length comparison, then the element loads, and `rest` as a
@@ -22150,14 +21808,13 @@
     [count : i64 captures.count]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (array-ref items index)
-          [(Capture capture-name-id _ _ _)
-            (if (= capture-name-id name-id)
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (array-ref items index)
+        [(Capture capture-name-id _ _ _)
+          (if (= capture-name-id name-id)
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (lower-capture-list-empty) : LowerCaptureList
   (LowerCaptureList (__tl_make-array LowerCapture 0) 0))
@@ -22168,9 +21825,8 @@
   (let
     [items : (__tl_dyn-array LowerCapture) captures.items]
     [count : i64 captures.count]
-    (begin
-      (__tl_array-push! items capture)
-      (LowerCaptureList items (+ count 1)))))
+    (__tl_array-push! items capture)
+    (LowerCaptureList items (+ count 1))))
 
 (define (lower-unsupported-capture-message) : String
   "lower: unsupported lambda capture type")
@@ -23723,15 +23379,14 @@
     [cleanup-name-ids : (__tl_dyn-array i64) cleanups.cleanup-name-ids]
     [live-name-ids : (__tl_dyn-array i64) cleanups.live-name-ids]
     [count : i64 cleanups.count]
-    (begin
-      (__tl_array-push! hidden-name-ids hidden-name-id)
-      (__tl_array-push! cleanup-name-ids cleanup-name-id)
-      (__tl_array-push! live-name-ids 0)
-      (LowerCleanupStack
-        hidden-name-ids
-        cleanup-name-ids
-        live-name-ids
-        (+ count 1)))))
+    (__tl_array-push! hidden-name-ids hidden-name-id)
+    (__tl_array-push! cleanup-name-ids cleanup-name-id)
+    (__tl_array-push! live-name-ids 0)
+    (LowerCleanupStack
+      hidden-name-ids
+      cleanup-name-ids
+      live-name-ids
+      (+ count 1))))
 
 (define (lower-cleanup-stack-push-move-aware
   [cleanups : LowerCleanupStack]
@@ -23743,15 +23398,14 @@
     [cleanup-name-ids : (__tl_dyn-array i64) cleanups.cleanup-name-ids]
     [live-name-ids : (__tl_dyn-array i64) cleanups.live-name-ids]
     [count : i64 cleanups.count]
-    (begin
-      (__tl_array-push! hidden-name-ids hidden-name-id)
-      (__tl_array-push! cleanup-name-ids cleanup-name-id)
-      (__tl_array-push! live-name-ids live-name-id)
-      (LowerCleanupStack
-        hidden-name-ids
-        cleanup-name-ids
-        live-name-ids
-        (+ count 1)))))
+    (__tl_array-push! hidden-name-ids hidden-name-id)
+    (__tl_array-push! cleanup-name-ids cleanup-name-id)
+    (__tl_array-push! live-name-ids live-name-id)
+    (LowerCleanupStack
+      hidden-name-ids
+      cleanup-name-ids
+      live-name-ids
+      (+ count 1))))
 
 (define (lower-emit-cleanup-stack-at
   [state : LowerState]
@@ -23870,71 +23524,62 @@
     [result : ResultLowerState
       (Err (box (lower-diagnostic "lower: internal active-exits walk")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (tc_core.tc-type-env-spine-step cur-env)
-          [(Done)
+    (while (not done)
+      (match (tc_core.tc-type-env-spine-step cur-env)
+        [(Done)
+          (set! result (Ok cur-state))
+          (set! done true)]
+        [(Cache rest-env) (set! cur-env rest-env)]
+        [(Bind key ty rest-env)
+          ;; A return stops at the hygiene global boundary, which closes
+          ;; the function-local scope: cleanup/region-reset markers are
+          ;; only ever bound above it by body forms (with-resource/
+          ;; with-arena), never in the module or top env below. Stopping
+          ;; there avoids walking the whole program spine on every
+          ;; return. A break or continue stops at the
+          ;; innermost loop target.
+          ;; lint-allow: nested-if-ladder
+          (if (= key stop-id)
             (begin
               (set! result (Ok cur-state))
-              (set! done true))]
-          [(Cache rest-env) (set! cur-env rest-env)]
-          [(Bind key ty rest-env)
-            (begin
-              ;; A return stops at the hygiene global boundary, which closes
-              ;; the function-local scope: cleanup/region-reset markers are
-              ;; only ever bound above it by body forms (with-resource/
-              ;; with-arena), never in the module or top env below. Stopping
-              ;; there avoids walking the whole program spine on every
-              ;; return. A break or continue stops at the
-              ;; innermost loop target.
-              ;; lint-allow: nested-if-ladder
-              (if (= key stop-id)
-                (begin
-                  (set! result (Ok cur-state))
-                  (set! done true))
-                (if (= key cleanup-marker-id)
-                  (match ty
-                    [(Tuple types)
-                      (match (lower-emit-cleanup-marker-tuple
-                        ctx
-                        cur-state
-                        env
-                        (deref types))
-                        [(Ok next-state) (set! cur-state next-state)]
-                        [(Err message)
-                          (begin
-                            (set! result (Err message))
-                            (set! done true))])]
-                    [_ unit])
-                  (if (= key region-reset-marker-id)
-                    (match ty
-                      [(Var hidden-name)
-                        (match (lower-emit-region-reset
-                          cur-state
-                          env
-                          hidden-name)
-                          [(Ok next-state) (set! cur-state next-state)]
-                          [(Err message)
-                            (begin
-                              (set! result (Err message))
-                              (set! done true))])]
-                      [(Tuple types)
-                        (match (lower-emit-arena-restore-marker-tuple
-                          ctx
-                          cur-state
-                          env
-                          (deref types))
-                          [(Ok next-state) (set! cur-state next-state)]
-                          [(Err message)
-                            (begin
-                              (set! result (Err message))
-                              (set! done true))])]
-                      [_ unit])
-                    unit)))
-              (if done
-                unit
-                (set! cur-env rest-env)))]))
-      result)))
+              (set! done true))
+            (if (= key cleanup-marker-id)
+              (match ty
+                [(Tuple types)
+                  (match (lower-emit-cleanup-marker-tuple
+                    ctx
+                    cur-state
+                    env
+                    (deref types))
+                    [(Ok next-state) (set! cur-state next-state)]
+                    [(Err message)
+                      (set! result (Err message))
+                      (set! done true)])]
+                [_ unit])
+              (if (= key region-reset-marker-id)
+                (match ty
+                  [(Var hidden-name)
+                    (match (lower-emit-region-reset cur-state env hidden-name)
+                      [(Ok next-state) (set! cur-state next-state)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])]
+                  [(Tuple types)
+                    (match (lower-emit-arena-restore-marker-tuple
+                      ctx
+                      cur-state
+                      env
+                      (deref types))
+                      [(Ok next-state) (set! cur-state next-state)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])]
+                  [_ unit])
+                unit)))
+          (if done
+            unit
+            (set! cur-env rest-env))]))
+    result))
 
 (define (lower-emit-active-exits
   [ctx : tc_core.TcContext]
@@ -24666,22 +24311,21 @@
   (cbi.compiler-builtin-lower-arena-nullary-id? name-id))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (cond
-      [(cbi.compiler-builtin-lower-arena-make-id? name-id)
-        cbi.compiler-builtin-id-tl-arena-make]
-      [(cbi.compiler-builtin-lower-arena-make-atomic-id? name-id)
-        cbi.compiler-builtin-id-tl-arena-make-atomic]
-      [(cbi.compiler-builtin-lower-arena-current-id? name-id)
-        (lower-tl-arena-current-symbol)]
-      [(cbi.compiler-builtin-lower-arena-mark-id? name-id)
-        (lower-tl-region-mark-symbol)]
-      [(cbi.compiler-builtin-lower-arena-set-id? name-id)
-        (lower-tl-arena-set-symbol)]
-      [(cbi.compiler-builtin-lower-arena-destroy-id? name-id)
-        cbi.compiler-builtin-id-tl-arena-destroy]
-      [else (lower-tl-region-reset-symbol)])))
+  (cbi.compiler-builtin-refresh!)
+  (cond
+    [(cbi.compiler-builtin-lower-arena-make-id? name-id)
+      cbi.compiler-builtin-id-tl-arena-make]
+    [(cbi.compiler-builtin-lower-arena-make-atomic-id? name-id)
+      cbi.compiler-builtin-id-tl-arena-make-atomic]
+    [(cbi.compiler-builtin-lower-arena-current-id? name-id)
+      (lower-tl-arena-current-symbol)]
+    [(cbi.compiler-builtin-lower-arena-mark-id? name-id)
+      (lower-tl-region-mark-symbol)]
+    [(cbi.compiler-builtin-lower-arena-set-id? name-id)
+      (lower-tl-arena-set-symbol)]
+    [(cbi.compiler-builtin-lower-arena-destroy-id? name-id)
+      cbi.compiler-builtin-id-tl-arena-destroy]
+    [else (lower-tl-region-reset-symbol)]))
 
 (define (lower-arena-builtin-call
   [ctx : tc_core.TcContext]
@@ -25818,25 +25462,24 @@
               [(Arg arg-state value maybe-writeback)
                 (let
                   [next-writebacks : lower_arg_writeback_vec.Vec writebacks]
-                  (begin
-                    (lower-call-arg-writebacks-push-maybe
-                      (&mut next-writebacks)
-                      maybe-writeback)
-                    (match (lower-call-args-as-at
-                      ctx
-                      arg-state
-                      env
-                      type-env
-                      args
-                      types
-                      (+ index 1)
-                      next-writebacks)
-                      [(Ok rest-state rest-values rest-writebacks)
-                        (Ok
-                          rest-state
-                          (ir.compiler-ir-value-seq-prepend value rest-values)
-                          rest-writebacks)]
-                      [(Err message) (Err message)])))])]
+                  (lower-call-arg-writebacks-push-maybe
+                    (&mut next-writebacks)
+                    maybe-writeback)
+                  (match (lower-call-args-as-at
+                    ctx
+                    arg-state
+                    env
+                    type-env
+                    args
+                    types
+                    (+ index 1)
+                    next-writebacks)
+                    [(Ok rest-state rest-values rest-writebacks)
+                      (Ok
+                        rest-state
+                        (ir.compiler-ir-value-seq-prepend value rest-values)
+                        rest-writebacks)]
+                    [(Err message) (Err message)]))])]
           [(Err message) (Err message)])))))
 
 (define (lower-apply-arg-writeback
@@ -25871,20 +25514,18 @@
         [count : i64 (lower_arg_writeback_vec.len (& items))]
         [index : i64 0]
         [out : LowerState state]
-        (begin
-          (while (< index count)
-            (begin
-              (set!
-                out
-                (lower-apply-arg-writeback
-                  ctx
-                  out
-                  (lower_arg_writeback_vec.get
-                    (& items)
-                    index
-                    (lower-global-shared-view lower-arg-writeback-fallback))))
-              (set! index (+ index 1))))
-          out))]))
+        (while (< index count)
+          (set!
+            out
+            (lower-apply-arg-writeback
+              ctx
+              out
+              (lower_arg_writeback_vec.get
+                (& items)
+                index
+                (lower-global-shared-view lower-arg-writeback-fallback))))
+          (set! index (+ index 1)))
+        out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
@@ -28042,11 +27683,10 @@
             function-state
             (lower-context-expr-get ctx inner-box))
             [(Ok ty)
-              (begin
-                (set! (array-ref storage.rtf-generations slot) generation)
-                (set! (array-ref storage.rtf-ids slot) inner-box)
-                (set! (array-ref storage.rtf-types slot) ty)
-                (Ok ty))]
+              (set! (array-ref storage.rtf-generations slot) generation)
+              (set! (array-ref storage.rtf-ids slot) inner-box)
+              (set! (array-ref storage.rtf-types slot) ty)
+              (Ok ty)]
             [(Err message) (Err message)])))]
     [(MacroExpansion inner-box _ _)
       (lower-expr-result-type-fast
@@ -28502,20 +28142,19 @@
     [item-body-items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
     [item-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity 1)]
-    (begin
-      (ast.ast-expr-list-push (&mut item-body-items) set-index-id)
-      (ast.ast-expr-list-push (&mut item-body-items) body-id)
-      (ast.ast-let-binding-list-push
-        (&mut item-bindings)
-        (ast.ast-let-binding-id binding-name (No) item-id))
-      (ast.ast-expr-if-with-pools
+    (ast.ast-expr-list-push (&mut item-body-items) set-index-id)
+    (ast.ast-expr-list-push (&mut item-body-items) body-id)
+    (ast.ast-let-binding-list-push
+      (&mut item-bindings)
+      (ast.ast-let-binding-id binding-name (No) item-id))
+    (ast.ast-expr-if-with-pools
+      pools
+      (ast.ast-expr-binary-with-pools pools (Lt) index-id length-id)
+      (ast.ast-expr-let-with-pools
         pools
-        (ast.ast-expr-binary-with-pools pools (Lt) index-id length-id)
-        (ast.ast-expr-let-with-pools
-          pools
-          item-bindings
-          (ast.ast-node-pool-context-expr-push pools (Begin item-body-items)))
-        (ast.ast-expr-set-id-with-pools pools done-name true-id)))))
+        item-bindings
+        (ast.ast-node-pool-context-expr-push pools (Begin item-body-items)))
+      (ast.ast-expr-set-id-with-pools pools done-name true-id))))
 
 (define (lower-for-owned-step
   [ctx : tc_core.TcContext]
@@ -28825,23 +28464,22 @@
                               fail-label)]
                           (match (lower-state-alloc-var fail-start)
                             [(Alloc allocated ignored)
-                              (begin
-                                (cbi.compiler-builtin-refresh!)
-                                (Ok
-                                  (Expr
-                                    (lower-state-finish-block
+                              (cbi.compiler-builtin-refresh!)
+                              (Ok
+                                (Expr
+                                  (lower-state-finish-block
+                                    (lower-state-emit
                                       (lower-state-emit
-                                        (lower-state-emit
-                                          allocated
-                                          (Call
-                                            ignored
-                                            cbi.compiler-builtin-id-tl-c-fn-null-abort
-                                            (Nil)
-                                            (Never)))
-                                        (Jump checked-label))
-                                      checked-label)
-                                    value
-                                    result-ty)))]))])])])])])
+                                        allocated
+                                        (Call
+                                          ignored
+                                          cbi.compiler-builtin-id-tl-c-fn-null-abort
+                                          (Nil)
+                                          (Never)))
+                                      (Jump checked-label))
+                                    checked-label)
+                                  value
+                                  result-ty))]))])])])])])
     (Err
       (box (lower-diagnostic "lower: c-fn-check expects exactly one argument")))))
 
@@ -32861,19 +32499,17 @@
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
     [items : (__tl_dyn-array LowerCAbiSlot) (__tl_make-array LowerCAbiSlot 1)]
-    (begin
-      (set! (array-ref items 0) slot)
-      (LowerCAbiSlotList items 1))))
+    (set! (array-ref items 0) slot)
+    (LowerCAbiSlotList items 1)))
 
 (define (lower-c-abi-slot-list-pair
   [first : LowerCAbiSlot]
   [second : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
     [items : (__tl_dyn-array LowerCAbiSlot) (__tl_make-array LowerCAbiSlot 2)]
-    (begin
-      (set! (array-ref items 0) first)
-      (set! (array-ref items 1) second)
-      (LowerCAbiSlotList items 2))))
+    (set! (array-ref items 0) first)
+    (set! (array-ref items 1) second)
+    (LowerCAbiSlotList items 2)))
 
 (define (lower-sysv-register-aggregate-from-slots
   [size : i64]
@@ -33911,20 +33547,18 @@
     unit
     (match (lower-c-abi-slot-list-ref slots index)
       [(Slot scalar-ty offset)
-        (begin
-          (set!
-            (array-ref out index)
-            (ir.CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
-          (lower-c-abi-ir-return-slots-from slots out (+ index 1) count))])))
+        (set!
+          (array-ref out index)
+          (ir.CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
+        (lower-c-abi-ir-return-slots-from slots out (+ index 1) count)])))
 
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
-    (begin
-      (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
-      (ir.CompilerIrCAbiReturnSlotSeq out count))))
+    (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
+    (ir.CompilerIrCAbiReturnSlotSeq out count)))
 
 (define (lower-c-abi-materialize-stored-register-result
   [ctx : tc_core.TcContext]
@@ -36636,19 +36270,18 @@
     [builder : ir.CompilerIrSpmdCallArgBuilder
       (ir.compiler-ir-spmd-call-arg-builder-with-capacity
         (ast.ast-param-list-len (& params)))]
-    (begin
-      (lower-spmd-call-args-from-values-at
-        ctx
-        function-state
-        env
-        type-env
-        index
-        (& args)
-        (& params)
-        values
-        0
-        (&mut builder))
-      (ir.compiler-ir-spmd-call-arg-builder-to-seq builder))))
+    (lower-spmd-call-args-from-values-at
+      ctx
+      function-state
+      env
+      type-env
+      index
+      (& args)
+      (& params)
+      values
+      0
+      (&mut builder))
+    (ir.compiler-ir-spmd-call-arg-builder-to-seq builder)))
 
 (define (lower-spmd-call-args-from-values-at
   [ctx : tc_core.TcContext]
@@ -36684,26 +36317,25 @@
               type-env
               (lower-global-shared-view index)
               arg)]
-          (begin
-            (ir.compiler-ir-spmd-call-arg-builder-push!
-              builder
-              (ir.CompilerIrSpmdCallArg.Arg
-                (lower-spmd-ir-value-class
-                  (lower-global-shared-view resolved-ty)
-                  varying)
-                (ir.compiler-ir-value-seq-ref values arg-index)
-                resolved-ty))
-            (lower-spmd-call-args-from-values-at
-              ctx
-              function-state
-              env
-              type-env
-              index
-              args
-              params
-              values
-              (+ arg-index 1)
-              builder)))])))
+          (ir.compiler-ir-spmd-call-arg-builder-push!
+            builder
+            (ir.CompilerIrSpmdCallArg.Arg
+              (lower-spmd-ir-value-class
+                (lower-global-shared-view resolved-ty)
+                varying)
+              (ir.compiler-ir-value-seq-ref values arg-index)
+              resolved-ty))
+          (lower-spmd-call-args-from-values-at
+            ctx
+            function-state
+            env
+            type-env
+            index
+            args
+            params
+            values
+            (+ arg-index 1)
+            builder))])))
 
 (define (lower-imported-spmd-scalar-call
   [ctx : tc_core.TcContext]
@@ -43229,32 +42861,30 @@
     [lower-state : CompilerLowerState (lower-state-owner state)]
     [previous-function : i64 (lower-state-active-loop-function state)]
     [previous-var-limit : i64 (lower-state-active-loop-entry-var-limit state)]
-    (begin
+    (compiler-lower-state-write!
+      lower-state
+      i64
+      active-loop-function
+      (lower-state-current-function-id state))
+    (compiler-lower-state-write!
+      lower-state
+      i64
+      active-loop-entry-var-limit
+      (lower-state-next-var state))
+    (let
+      [result : ResultLowerExpr
+        (lower-while-active ctx state env type-env cond body)]
       (compiler-lower-state-write!
         lower-state
         i64
         active-loop-function
-        (lower-state-current-function-id state))
+        previous-function)
       (compiler-lower-state-write!
         lower-state
         i64
         active-loop-entry-var-limit
-        (lower-state-next-var state))
-      (let
-        [result : ResultLowerExpr
-          (lower-while-active ctx state env type-env cond body)]
-        (begin
-          (compiler-lower-state-write!
-            lower-state
-            i64
-            active-loop-function
-            previous-function)
-          (compiler-lower-state-write!
-            lower-state
-            i64
-            active-loop-entry-var-limit
-            previous-var-limit)
-          result)))))
+        previous-var-limit)
+      result)))
 
 ;; Per-iteration accumulator update for an associative binop fold
 ;; (`sum`/`all`/`any`): `(set! acc (<op> acc value))`. `value` appears once so it
@@ -44607,21 +44237,20 @@
     [count : i64 set.count]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (if (= (array-ref vars index) var)
-          (begin
-            (if (> offset (array-ref offsets index))
-              (set! (array-ref offsets index) offset)
-              unit)
-            (set! found true))
-          (set! index (+ index 1))))
-      (if found
-        (LowerArrayVarSet vars offsets count)
+    (while (and (not found) (< index count))
+      (if (= (array-ref vars index) var)
         (begin
-          (__tl_array-push! vars var)
-          (__tl_array-push! offsets offset)
-          (LowerArrayVarSet vars offsets (+ count 1)))))))
+          (if (> offset (array-ref offsets index))
+            (set! (array-ref offsets index) offset)
+            unit)
+          (set! found true))
+        (set! index (+ index 1))))
+    (if found
+      (LowerArrayVarSet vars offsets count)
+      (begin
+        (__tl_array-push! vars var)
+        (__tl_array-push! offsets offset)
+        (LowerArrayVarSet vars offsets (+ count 1))))))
 
 (define (lower-array-var-set-merge
   [left : LowerArrayVarSet]
@@ -44632,17 +44261,15 @@
     [count : i64 right.count]
     [index : i64 0]
     [out : LowerArrayVarSet left]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (lower-array-var-set-add
-              out
-              (array-ref vars index)
-              (array-ref offsets index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (lower-array-var-set-add
+          out
+          (array-ref vars index)
+          (array-ref offsets index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (lower-array-var-set-max-offset [set : (& set LowerArrayVarSet)]) : i64
   (let
@@ -44650,16 +44277,14 @@
     [count : i64 set.count]
     [index : i64 0]
     [max-offset : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [offset : i64 (array-ref offsets index)]
-          (begin
-            (if (> offset max-offset)
-              (set! max-offset offset)
-              unit)
-            (set! index (+ index 1)))))
-      max-offset)))
+    (while (< index count)
+      (let
+        [offset : i64 (array-ref offsets index)]
+        (if (> offset max-offset)
+          (set! max-offset offset)
+          unit)
+        (set! index (+ index 1))))
+    max-offset))
 
 (define (lower-masked-vector-index-literal-offset
   [ctx : tc_core.TcContext]
@@ -44912,15 +44537,13 @@
   (let
     [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
     [index : i64 items.len]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (lower_i64_i64_map.insert-ref!
-            (&mut out)
-            (array-ref items.slots index)
-            lanes)))
-      out)))
+    (while (> index 0)
+      (set! index (- index 1))
+      (lower_i64_i64_map.insert-ref!
+        (&mut out)
+        (array-ref items.slots index)
+        lanes))
+    out))
 
 (define (lower-masked-vector-lane-locals-bind-if-varying
   [lane-locals : lower_i64_i64_map.Map]
@@ -44929,9 +44552,8 @@
   (if (> lanes 0)
     (let
       [out : lower_i64_i64_map.Map lane-locals]
-      (begin
-        (lower_i64_i64_map.insert-ref! (&mut out) name lanes)
-        out))
+      (lower_i64_i64_map.insert-ref! (&mut out) name lanes)
+      out)
     lane-locals))
 
 (define (lower-spmd-numeric-let-type-env-at
@@ -45577,41 +45199,40 @@
                           (compiler-lower-function-state-inline-helper-stack
                             function-state)]
                         [result : i64 -1]
-                        (begin
-                          (compiler-lower-function-state-inline-helper-stack-set!
-                            function-state
-                            (lower-id-set-insert
-                              (lower-global-shared-view previous)
-                              name))
-                          (set!
-                            result
-                            (let
-                              [lane-locals-arg
-                                (lower-spmd-helper-param-locals
-                                  ctx
-                                  function-state
-                                  mode
-                                  env
-                                  type-env
-                                  index
-                                  lane-locals
-                                  params
-                                  args)]
-                              (lower-masked-vector-expr-lanes-with-locals
+                        (compiler-lower-function-state-inline-helper-stack-set!
+                          function-state
+                          (lower-id-set-insert
+                            (lower-global-shared-view previous)
+                            name))
+                        (set!
+                          result
+                          (let
+                            [lane-locals-arg
+                              (lower-spmd-helper-param-locals
                                 ctx
                                 function-state
                                 mode
                                 env
                                 type-env
-                                ""
-                                lane-locals-arg
-                                body)))
-                          (compiler-lower-function-state-inline-helper-stack-set!
-                            function-state
-                            previous)
-                          (if (< result 0)
-                            arg-lanes
-                            result)))))]
+                                index
+                                lane-locals
+                                params
+                                args)]
+                            (lower-masked-vector-expr-lanes-with-locals
+                              ctx
+                              function-state
+                              mode
+                              env
+                              type-env
+                              ""
+                              lane-locals-arg
+                              body)))
+                        (compiler-lower-function-state-inline-helper-stack-set!
+                          function-state
+                          previous)
+                        (if (< result 0)
+                          arg-lanes
+                          result))))]
                 [(Imported _ _ canonical-name fn-ty callables)
                   (lower-imported-spmd-direct-call-result-lanes
                     ctx
@@ -48142,23 +47763,22 @@
                 (compiler-lower-function-state-inline-helper-stack
                   function-state)]
               [result : bool false]
-              (begin
-                (compiler-lower-function-state-inline-helper-stack-set!
+              (compiler-lower-function-state-inline-helper-stack-set!
+                function-state
+                (lower-id-set-insert (lower-global-shared-view previous) name))
+              (set!
+                result
+                (lower-spmd-expr-has-call?
+                  ctx
                   function-state
-                  (lower-id-set-insert (lower-global-shared-view previous) name))
-                (set!
-                  result
-                  (lower-spmd-expr-has-call?
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    (Atomic)
-                    body))
-                (compiler-lower-function-state-inline-helper-stack-set!
-                  function-state
-                  previous)
-                result)))]
+                  env
+                  type-env
+                  (Atomic)
+                  body))
+              (compiler-lower-function-state-inline-helper-stack-set!
+                function-state
+                previous)
+              result))]
         [(Imported _ _ _ _ _) false]
         [(No) false])]
     [(Err _) false]))
@@ -48573,36 +48193,35 @@
                         (PrivateHelper)
                         (InlineHelper))]
                     [result : LowerMaybeSpmdNumericFailure (No)]
-                    (begin
-                      (compiler-lower-function-state-inline-helper-stack-set!
+                    (compiler-lower-function-state-inline-helper-stack-set!
+                      function-state
+                      (lower-id-set-insert
+                        (lower-global-shared-view previous)
+                        name))
+                    (set!
+                      result
+                      (lower-spmd-numeric-failure
+                        ctx
                         function-state
-                        (lower-id-set-insert
-                          (lower-global-shared-view previous)
-                          name))
-                      (set!
-                        result
-                        (lower-spmd-numeric-failure
+                        mode
+                        env
+                        (tc_core.tc-bind-params ctx type-env params)
+                        helper-context
+                        body))
+                    (compiler-lower-function-state-inline-helper-stack-set!
+                      function-state
+                      previous)
+                    (match result
+                      [(Some found decision) (Some found decision)]
+                      [(No)
+                        (lower-spmd-numeric-failure-in-expr-list
                           ctx
                           function-state
                           mode
                           env
-                          (tc_core.tc-bind-params ctx type-env params)
-                          helper-context
-                          body))
-                      (compiler-lower-function-state-inline-helper-stack-set!
-                        function-state
-                        previous)
-                      (match result
-                        [(Some found decision) (Some found decision)]
-                        [(No)
-                          (lower-spmd-numeric-failure-in-expr-list
-                            ctx
-                            function-state
-                            mode
-                            env
-                            type-env
-                            numeric-context
-                            args)]))))]
+                          type-env
+                          numeric-context
+                          args)])))]
               [(Imported _ _ _ _ _)
                 (lower-spmd-numeric-failure-in-expr-list
                   ctx
@@ -49627,9 +49246,8 @@
   (let
     [items : (__tl_dyn-array LowerVectorMapStore) stores.items]
     [count : i64 stores.count]
-    (begin
-      (__tl_array-push! items store)
-      (LowerVectorMapStoreList items (+ count 1)))))
+    (__tl_array-push! items store)
+    (LowerVectorMapStoreList items (+ count 1))))
 
 (define (lower-vector-map-store-list-ref
   [stores : (& stores LowerVectorMapStoreList)]
@@ -49646,14 +49264,13 @@
     [count : i64 stores.count]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore array-var-found _)
-            (if (= array-var-found array-var)
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore array-var-found _)
+          (if (= array-var-found array-var)
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (lower-vector-map-store-list-input-uses-destination?
   [stores : LowerVectorMapStoreList]) : bool
@@ -49661,23 +49278,21 @@
     [count : i64 stores.count]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore _ value-plan)
-            (let
-              [dst-index : i64 0]
-              (begin
-                (while (and (not found) (< dst-index count))
-                  (match (lower-vector-map-store-list-ref stores dst-index)
-                    [(LowerVectorMapStore dst-array _)
-                      (if (lower-vector-map-value-uses-array?
-                        (lower-global-shared-view value-plan)
-                        dst-array)
-                        (set! found true)
-                        (set! dst-index (+ dst-index 1)))]))
-                (set! index (+ index 1))))]))
-      found)))
+    (while (and (not found) (< index count))
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore _ value-plan)
+          (let
+            [dst-index : i64 0]
+            (while (and (not found) (< dst-index count))
+              (match (lower-vector-map-store-list-ref stores dst-index)
+                [(LowerVectorMapStore dst-array _)
+                  (if (lower-vector-map-value-uses-array?
+                    (lower-global-shared-view value-plan)
+                    dst-array)
+                    (set! found true)
+                    (set! dst-index (+ dst-index 1)))]))
+            (set! index (+ index 1)))]))
+    found))
 
 (define (lower-vector-map-store-list-array-vars
   [stores : LowerVectorMapStoreList]) : LowerArrayVarSet
@@ -49685,19 +49300,17 @@
     [count : i64 stores.count]
     [index : i64 0]
     [arrays : LowerArrayVarSet (lower-array-var-set-empty)]
-    (begin
-      (while (< index count)
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore dst-array value-plan)
-            (begin
-              (set!
-                arrays
-                (lower-array-var-set-merge
-                  arrays
-                  (lower-vector-map-value-array-vars value-plan)))
-              (set! arrays (lower-array-var-set-add arrays dst-array 0))
-              (set! index (+ index 1)))]))
-      arrays)))
+    (while (< index count)
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore dst-array value-plan)
+          (set!
+            arrays
+            (lower-array-var-set-merge
+              arrays
+              (lower-vector-map-value-array-vars value-plan)))
+          (set! arrays (lower-array-var-set-add arrays dst-array 0))
+          (set! index (+ index 1))]))
+    arrays))
 
 (define (lower-simple-vector-map-store
   [ctx : tc_core.TcContext]
@@ -50408,26 +50021,23 @@
           [(Alloc next-state vector-var)
             (let
               [vector : ir.CompilerIrValue (Var vector-var)]
-              (begin
-                (match (lower-state-masked-preheader-cache next-state)
-                  [(Some cache)
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut
-                        (__tl-project-field
-                          (__tl-box-place cache)
-                          uniform-instrs))
-                      (ir.CompilerIrInstr.Splat
-                        vector-var
-                        (lower-global-shared-view value)
-                        lanes
-                        (lower-global-shared-view elem-ty)))]
-                  [(No) unit])
-                (lower-masked-preheader-uniform-add!
-                  next-state
-                  value
-                  (lower-global-shared-view elem-ty)
-                  (lower-global-shared-view vector))
-                (Expr next-state vector elem-ty)))])
+              (match (lower-state-masked-preheader-cache next-state)
+                [(Some cache)
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut
+                      (__tl-project-field (__tl-box-place cache) uniform-instrs))
+                    (ir.CompilerIrInstr.Splat
+                      vector-var
+                      (lower-global-shared-view value)
+                      lanes
+                      (lower-global-shared-view elem-ty)))]
+                [(No) unit])
+              (lower-masked-preheader-uniform-add!
+                next-state
+                value
+                (lower-global-shared-view elem-ty)
+                (lower-global-shared-view vector))
+              (Expr next-state vector elem-ty))])
         (lower-emit-splat state value lanes elem-ty))]))
 
 (define (lower-emit-lane-id
@@ -50526,96 +50136,86 @@
     [any-invalid : ir.CompilerIrValue Unit]
     [abort-label : i64 (ir.compiler-ir-label-none)]
     [continue-label : i64 (ir.compiler-ir-label-none)]
-    (begin
-      (match (lower-emit-splat
+    (match (lower-emit-splat
+      s
+      (I64 0)
+      lanes
+      (lower-global-shared-view count-ty))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! zero value)])
+    (match (lower-emit-splat
+      s
+      (I64 (lower-spmd-shift-width (lower-global-shared-view lane-ty)))
+      lanes
+      (lower-global-shared-view count-ty))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! width value)])
+    (match (if (lower-type-signed? (lower-global-shared-view count-ty))
+      (lower-emit-vector-compare
         s
-        (I64 0)
-        lanes
-        (lower-global-shared-view count-ty))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! zero value))])
-      (match (lower-emit-splat
-        s
-        (I64 (lower-spmd-shift-width (lower-global-shared-view lane-ty)))
-        lanes
-        (lower-global-shared-view count-ty))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! width value))])
-      (match (if (lower-type-signed? (lower-global-shared-view count-ty))
-        (lower-emit-vector-compare
-          s
-          (Lt)
-          (lower-global-shared-view right-value)
-          zero
-          lanes
-          (lower-global-shared-view count-ty))
-        ;; Unsigned counts cannot be negative. Materialize an all-false mask
-        ;; without relying on the backend's signed/unsigned compare expansion.
-        (lower-emit-vector-compare
-          s
-          (Ne)
-          (lower-global-shared-view zero)
-          zero
-          lanes
-          (lower-global-shared-view count-ty)))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! negative value))])
-      (match (lower-emit-vector-compare
-        s
-        (Ge)
+        (Lt)
         (lower-global-shared-view right-value)
-        width
+        zero
         lanes
-        count-ty)
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! too-large value))])
-      (match (lower-emit-mask-binop s (Or) negative too-large lanes)
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! invalid value))])
-      (match active-mask
-        [(Some mask)
-          (match (lower-emit-mask-binop s (And) invalid mask lanes)
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! active-invalid value))])]
-        [(No) (set! active-invalid invalid)])
-      (match (lower-emit-mask-reduce s (Any) active-invalid lanes)
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! any-invalid value))])
-      (match (lower-state-fresh-label s "spmd_shift_abort")
-        [(Label next-s label)
-          (begin
-            (set! s next-s)
-            (set! abort-label label))])
-      (match (lower-state-fresh-label s "spmd_shift_continue")
-        [(Label next-s label)
-          (begin
-            (set! s next-s)
-            (set! continue-label label))])
-      (set!
+        (lower-global-shared-view count-ty))
+      ;; Unsigned counts cannot be negative. Materialize an all-false mask
+      ;; without relying on the backend's signed/unsigned compare expansion.
+      (lower-emit-vector-compare
         s
-        (lower-state-finish-block
-          (lower-state-emit s (Branch any-invalid abort-label continue-label))
-          abort-label))
-      (set!
-        s
-        (lower-state-finish-block
-          (lower-state-emit (lower-shift-abort s) (Jump continue-label))
-          continue-label))
-      (lower-emit-vector-binop s op left-value right-value lanes lane-ty))))
+        (Ne)
+        (lower-global-shared-view zero)
+        zero
+        lanes
+        (lower-global-shared-view count-ty)))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! negative value)])
+    (match (lower-emit-vector-compare
+      s
+      (Ge)
+      (lower-global-shared-view right-value)
+      width
+      lanes
+      count-ty)
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! too-large value)])
+    (match (lower-emit-mask-binop s (Or) negative too-large lanes)
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! invalid value)])
+    (match active-mask
+      [(Some mask)
+        (match (lower-emit-mask-binop s (And) invalid mask lanes)
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! active-invalid value)])]
+      [(No) (set! active-invalid invalid)])
+    (match (lower-emit-mask-reduce s (Any) active-invalid lanes)
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! any-invalid value)])
+    (match (lower-state-fresh-label s "spmd_shift_abort")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! abort-label label)])
+    (match (lower-state-fresh-label s "spmd_shift_continue")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! continue-label label)])
+    (set!
+      s
+      (lower-state-finish-block
+        (lower-state-emit s (Branch any-invalid abort-label continue-label))
+        abort-label))
+    (set!
+      s
+      (lower-state-finish-block
+        (lower-state-emit (lower-shift-abort s) (Jump continue-label))
+        continue-label))
+    (lower-emit-vector-binop s op left-value right-value lanes lane-ty)))
 
 (define (lower-emit-vector-map-binop
   [state : LowerState]
@@ -50650,18 +50250,15 @@
     [s : LowerState state]
     [then-bits : ir.CompilerIrValue Unit]
     [else-bits : ir.CompilerIrValue Unit]
-    (begin
-      (match (lower-emit-mask-binop s (And) then-mask then-value lanes)
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! then-bits value))])
-      (match (lower-emit-mask-binop s (And) else-mask else-value lanes)
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! else-bits value))])
-      (lower-emit-mask-binop s (Or) then-bits else-bits lanes))))
+    (match (lower-emit-mask-binop s (And) then-mask then-value lanes)
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! then-bits value)])
+    (match (lower-emit-mask-binop s (And) else-mask else-value lanes)
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! else-bits value)])
+    (lower-emit-mask-binop s (Or) then-bits else-bits lanes)))
 
 (define (lower-emit-select
   [state : LowerState]
@@ -50709,33 +50306,28 @@
     [mask : ir.CompilerIrValue Unit]
     [different-bits : ir.CompilerIrValue Unit]
     [selected-bits : ir.CompilerIrValue Unit]
-    (begin
-      (match (lower-emit-cast s condition (Bool) (I64))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! condition-i64 value))])
-      (match (lower-emit-binop s (Sub) (I64 0) condition-i64 (I64))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! mask value))])
-      (match (lower-emit-binop
-        s
-        (BitXor)
-        on-true
-        (lower-global-shared-view on-false)
-        (I64))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! different-bits value))])
-      (match (lower-emit-binop s (BitAnd) different-bits mask (I64))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! selected-bits value))])
-      (lower-emit-binop s (BitXor) on-false selected-bits (I64)))))
+    (match (lower-emit-cast s condition (Bool) (I64))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! condition-i64 value)])
+    (match (lower-emit-binop s (Sub) (I64 0) condition-i64 (I64))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! mask value)])
+    (match (lower-emit-binop
+      s
+      (BitXor)
+      on-true
+      (lower-global-shared-view on-false)
+      (I64))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! different-bits value)])
+    (match (lower-emit-binop s (BitAnd) different-bits mask (I64))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! selected-bits value)])
+    (lower-emit-binop s (BitXor) on-false selected-bits (I64))))
 
 (define (lower-vector-loop-min
   [state : LowerState]
@@ -50780,24 +50372,21 @@
           [s : LowerState len-state]
           [offset-valid : ir.CompilerIrValue Unit]
           [candidate : ir.CompilerIrValue Unit]
-          (begin
-            (match (lower-vector-loop-i64-compare
-              s
-              (Ge)
-              (lower-global-shared-view array-len)
-              (I64 offset))
-              [(Expr next-s value _)
-                (begin
-                  (set! s next-s)
-                  (set! offset-valid value))])
-            (match (lower-emit-binop s (Sub) array-len (I64 offset) (I64))
-              [(Expr next-s value _)
-                (begin
-                  (set! s next-s)
-                  (set! candidate value))])
-            ;; A too-short array cannot admit a vector gang. Avoid exposing the
-            ;; wrapped subtraction as a large positive bound.
-            (lower-vector-loop-select s offset-valid candidate (I64 -1))))
+          (match (lower-vector-loop-i64-compare
+            s
+            (Ge)
+            (lower-global-shared-view array-len)
+            (I64 offset))
+            [(Expr next-s value _)
+              (set! s next-s)
+              (set! offset-valid value)])
+          (match (lower-emit-binop s (Sub) array-len (I64 offset) (I64))
+            [(Expr next-s value _)
+              (set! s next-s)
+              (set! candidate value)])
+          ;; A too-short array cannot admit a vector gang. Avoid exposing the
+          ;; wrapped subtraction as a large positive bound.
+          (lower-vector-loop-select s offset-valid candidate (I64 -1)))
         (Expr len-state array-len (I64)))]))
 
 (define (lower-vector-loop-limit
@@ -50813,38 +50402,34 @@
         [limit : ir.CompilerIrValue Unit]
         [index : i64 0]
         [count : i64 arrays.count]
-        (begin
-          ;; Materialize the end bound before comparing it: direct literal
-          ;; endpoints do not retain their width through scalar min selection.
-          ;;
-          ;; Besides bounding the first gang, this clamp ensures the next
-          ;; header's index + lanes calculation cannot overflow after a
-          ;; successful gang.
-          (match (lower-vector-loop-min
+        ;; Materialize the end bound before comparing it: direct literal
+        ;; endpoints do not retain their width through scalar min selection.
+        ;;
+        ;; Besides bounding the first gang, this clamp ensures the next
+        ;; header's index + lanes calculation cannot overflow after a
+        ;; successful gang.
+        (match (lower-vector-loop-min
+          s
+          (Var end-var)
+          (I64 (- 9223372036854775807 lanes)))
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! limit value)])
+        (while (< index count)
+          (match (lower-vector-loop-array-limit
             s
-            (Var end-var)
-            (I64 (- 9223372036854775807 lanes)))
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! limit value))])
-          (while (< index count)
-            (begin
-              (match (lower-vector-loop-array-limit
-                s
-                (array-ref arrays.vars index)
-                (array-ref arrays.offsets index))
-                [(Expr array-state array-limit _)
-                  (match (lower-vector-loop-min
-                    array-state
-                    (lower-global-shared-view limit)
-                    array-limit)
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! limit value))])])
-              (set! index (+ index 1))))
-          (Expr s limit (I64))))]))
+            (array-ref arrays.vars index)
+            (array-ref arrays.offsets index))
+            [(Expr array-state array-limit _)
+              (match (lower-vector-loop-min
+                array-state
+                (lower-global-shared-view limit)
+                array-limit)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! limit value)])])
+          (set! index (+ index 1)))
+        (Expr s limit (I64)))]))
 
 (define (lower-vector-loop-next-ok
   [state : LowerState]
@@ -51268,52 +50853,50 @@
       (let
         [s : LowerState value-state]
         [value-var : i64 0]
-        (begin
-          (match (lower-global-shared-view scalar-value)
-            [(Var var) (set! value-var var)]
-            [_
-              (match (lower-state-alloc-var s)
-                [(Alloc alloc-state tmp-var)
-                  (begin
-                    (set!
-                      s
-                      (lower-state-emit
-                        alloc-state
-                        (Mov
-                          tmp-var
-                          scalar-value
-                          (lower-global-shared-view elem-ty))))
-                    (set! value-var tmp-var))])])
-          (let
-            [update-lowered : LowerExpr
-              (try
-                (lower-spmd-reduce-apply-update
-                  ctx
+        (match (lower-global-shared-view scalar-value)
+          [(Var var) (set! value-var var)]
+          [_
+            (match (lower-state-alloc-var s)
+              [(Alloc alloc-state tmp-var)
+                (set!
                   s
-                  env
-                  type-env
-                  op
-                  acc-var
-                  elem-ty
-                  value-var))]
-            (match update-lowered
-              [(Expr update-state _ _)
-                (match (lower-state-alloc-var update-state)
-                  [(Alloc inc-alloc inc-var)
-                    (Ok
-                      (Expr
+                  (lower-state-emit
+                    alloc-state
+                    (Mov
+                      tmp-var
+                      scalar-value
+                      (lower-global-shared-view elem-ty))))
+                (set! value-var tmp-var)])])
+        (let
+          [update-lowered : LowerExpr
+            (try
+              (lower-spmd-reduce-apply-update
+                ctx
+                s
+                env
+                type-env
+                op
+                acc-var
+                elem-ty
+                value-var))]
+          (match update-lowered
+            [(Expr update-state _ _)
+              (match (lower-state-alloc-var update-state)
+                [(Alloc inc-alloc inc-var)
+                  (Ok
+                    (Expr
+                      (lower-state-emit
                         (lower-state-emit
-                          (lower-state-emit
-                            inc-alloc
-                            (BinOp
-                              inc-var
-                              Add
-                              (Var current-index-var)
-                              (I64 1)
-                              (lower-global-shared-view index-ty)))
-                          (Mov current-index-var (Var inc-var) index-ty))
-                        Unit
-                        (Unit)))])]))))]))
+                          inc-alloc
+                          (BinOp
+                            inc-var
+                            Add
+                            (Var current-index-var)
+                            (I64 1)
+                            (lower-global-shared-view index-ty)))
+                        (Mov current-index-var (Var inc-var) index-ty))
+                      Unit
+                      (Unit)))])])))]))
 
 (define (lower-spmd-scan-vector-body
   [ctx : tc_core.TcContext]
@@ -51332,107 +50915,99 @@
     [full-mask : ir.CompilerIrValue Unit]
     [prefix-value : ir.CompilerIrValue Unit]
     [last-index : ir.CompilerIrValue Unit]
-    (begin
-      (if (lower-type-bool? elem-ty)
-        (begin
-          (match (lower-emit-tail-mask
-            s
-            (Var index-var)
-            (lower-global-shared-view next-index)
-            lanes)
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! full-mask value))])
-          (match (lower-emit-sequence-predicated-load
-            s
-            input-var
-            (Var index-var)
-            (lower-global-shared-view full-mask)
-            lanes
-            (lower-global-shared-view elem-ty))
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! chunk value))]))
-        (match (lower-emit-sequence-vector-load
+    (if (lower-type-bool? elem-ty)
+      (begin
+        (match (lower-emit-tail-mask
+          s
+          (Var index-var)
+          (lower-global-shared-view next-index)
+          lanes)
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! full-mask value)])
+        (match (lower-emit-sequence-predicated-load
           s
           input-var
           (Var index-var)
+          (lower-global-shared-view full-mask)
           lanes
           (lower-global-shared-view elem-ty))
           [(Expr next-s value _)
-            (begin
-              (set! s next-s)
-              (set! chunk value))]))
-      (match (lower-state-alloc-var s)
-        [(Alloc next-s prefix-var)
-          (begin
-            (set!
-              s
-              (lower-state-emit
-                next-s
-                (ir.ir-instr-vector-prefix
-                  prefix-var
-                  prefix-op
-                  chunk
-                  (Var acc-var)
-                  lanes
-                  (lower-global-shared-view elem-ty))))
-            (set! prefix-value (Var prefix-var)))])
-      (if (lower-type-bool? elem-ty)
-        (set!
-          s
-          (lower-emit-sequence-predicated-store
-            s
-            output-var
-            (Var index-var)
-            prefix-value
-            full-mask
-            lanes
-            (lower-global-shared-view elem-ty)))
-        (set!
-          s
-          (lower-emit-sequence-vector-store
-            s
-            output-var
-            (Var index-var)
-            prefix-value
-            lanes
-            (lower-global-shared-view elem-ty))))
-      (match (lower-emit-binop
-        s
-        Sub
-        (lower-global-shared-view next-index)
-        (I64 1)
-        (I64))
-        [(Expr next-s value _)
-          (begin
             (set! s next-s)
-            (set! last-index value))])
-      ;; `vector-limit` already proves the whole output gang is in bounds.
-      ;; Reload the stored final lane through its raw data pointer so carry
-      ;; handoff does not add a redundant scalar bounds-check block.
-      (match (lower-sequence-data-pointer-value s output-var)
-        [(Expr data-state data-ptr _)
-          (match (lower-emit-elem-addr-gep
-            ctx
-            data-state
-            data-ptr
-            last-index
-            (lower-global-shared-view elem-ty))
-            [(Expr addr-state last-addr _)
-              (match (lower-emit-load
-                addr-state
-                last-addr
-                (lower-global-shared-view elem-ty))
-                [(Expr load-state last-value _)
-                  (set!
-                    s
-                    (lower-state-emit
-                      load-state
-                      (Mov acc-var last-value elem-ty)))])])])
-      (Expr (lower-state-emit s (Mov index-var next-index (I64))) Unit (Unit)))))
+            (set! chunk value)]))
+      (match (lower-emit-sequence-vector-load
+        s
+        input-var
+        (Var index-var)
+        lanes
+        (lower-global-shared-view elem-ty))
+        [(Expr next-s value _)
+          (set! s next-s)
+          (set! chunk value)]))
+    (match (lower-state-alloc-var s)
+      [(Alloc next-s prefix-var)
+        (set!
+          s
+          (lower-state-emit
+            next-s
+            (ir.ir-instr-vector-prefix
+              prefix-var
+              prefix-op
+              chunk
+              (Var acc-var)
+              lanes
+              (lower-global-shared-view elem-ty))))
+        (set! prefix-value (Var prefix-var))])
+    (if (lower-type-bool? elem-ty)
+      (set!
+        s
+        (lower-emit-sequence-predicated-store
+          s
+          output-var
+          (Var index-var)
+          prefix-value
+          full-mask
+          lanes
+          (lower-global-shared-view elem-ty)))
+      (set!
+        s
+        (lower-emit-sequence-vector-store
+          s
+          output-var
+          (Var index-var)
+          prefix-value
+          lanes
+          (lower-global-shared-view elem-ty))))
+    (match (lower-emit-binop
+      s
+      Sub
+      (lower-global-shared-view next-index)
+      (I64 1)
+      (I64))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! last-index value)])
+    ;; `vector-limit` already proves the whole output gang is in bounds.
+    ;; Reload the stored final lane through its raw data pointer so carry
+    ;; handoff does not add a redundant scalar bounds-check block.
+    (match (lower-sequence-data-pointer-value s output-var)
+      [(Expr data-state data-ptr _)
+        (match (lower-emit-elem-addr-gep
+          ctx
+          data-state
+          data-ptr
+          last-index
+          (lower-global-shared-view elem-ty))
+          [(Expr addr-state last-addr _)
+            (match (lower-emit-load
+              addr-state
+              last-addr
+              (lower-global-shared-view elem-ty))
+              [(Expr load-state last-value _)
+                (set!
+                  s
+                  (lower-state-emit load-state (Mov acc-var last-value elem-ty)))])])])
+    (Expr (lower-state-emit s (Mov index-var next-index (I64))) Unit (Unit))))
 
 (define (lower-spmd-scan-scalar-tail-body
   [ctx : tc_core.TcContext]
@@ -51474,63 +51049,58 @@
             (let
               [s : LowerState value-state]
               [value-var : i64 0]
-              (begin
-                (match (lower-global-shared-view value-ir)
-                  [(Var var) (set! value-var var)]
-                  [_
-                    (match (lower-state-alloc-var s)
-                      [(Alloc alloc-state var)
-                        (begin
-                          (set! value-var var)
-                          (set!
-                            s
-                            (lower-state-emit
-                              alloc-state
-                              (Mov
-                                var
-                                value-ir
-                                (lower-global-shared-view elem-ty)))))])])
-                (let
-                  [update-lowered : LowerExpr
-                    (try
-                      (lower-spmd-reduce-apply-update
-                        ctx
+              (match (lower-global-shared-view value-ir)
+                [(Var var) (set! value-var var)]
+                [_
+                  (match (lower-state-alloc-var s)
+                    [(Alloc alloc-state var)
+                      (set! value-var var)
+                      (set!
                         s
-                        index-env
-                        index-type-env
-                        op
-                        acc-var
-                        elem-ty
-                        value-var))]
-                  (match update-lowered
-                    [(Expr update-state _ _)
-                      (let
-                        [body-lowered : LowerExpr
-                          (try
-                            (lower-expr
-                              ctx
-                              update-state
-                              body-env
-                              body-type-env
-                              body))]
-                        (match body-lowered
-                          [(Expr body-state _ _)
-                            (match (lower-state-alloc-var body-state)
-                              [(Alloc inc-state inc-var)
-                                (Ok
-                                  (Expr
+                        (lower-state-emit
+                          alloc-state
+                          (Mov var value-ir (lower-global-shared-view elem-ty))))])])
+              (let
+                [update-lowered : LowerExpr
+                  (try
+                    (lower-spmd-reduce-apply-update
+                      ctx
+                      s
+                      index-env
+                      index-type-env
+                      op
+                      acc-var
+                      elem-ty
+                      value-var))]
+                (match update-lowered
+                  [(Expr update-state _ _)
+                    (let
+                      [body-lowered : LowerExpr
+                        (try
+                          (lower-expr
+                            ctx
+                            update-state
+                            body-env
+                            body-type-env
+                            body))]
+                      (match body-lowered
+                        [(Expr body-state _ _)
+                          (match (lower-state-alloc-var body-state)
+                            [(Alloc inc-state inc-var)
+                              (Ok
+                                (Expr
+                                  (lower-state-emit
                                     (lower-state-emit
-                                      (lower-state-emit
-                                        inc-state
-                                        (BinOp
-                                          inc-var
-                                          Add
-                                          (Var index-var)
-                                          (I64 1)
-                                          (lower-global-shared-view index-ty)))
-                                      (Mov index-var (Var inc-var) index-ty))
-                                    Unit
-                                    (Unit)))])]))]))))])]
+                                      inc-state
+                                      (BinOp
+                                        inc-var
+                                        Add
+                                        (Var index-var)
+                                        (I64 1)
+                                        (lower-global-shared-view index-ty)))
+                                    (Mov index-var (Var inc-var) index-ty))
+                                  Unit
+                                  (Unit)))])]))])))])]
       [(Err message) (Err message)])))
 
 (define (lower-spmd-scan-vector-label [state : LowerState] [suffix : String]) : String
@@ -51590,141 +51160,130 @@
             [next-index : ir.CompilerIrValue Unit]
             [vector-ok : ir.CompilerIrValue Unit]
             [tail-cond : ir.CompilerIrValue Unit]
-            (begin
-              (match (lower-state-fresh-label
-                s
-                (lower-spmd-scan-vector-label s "header"))
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! header-label label))])
-              (match (lower-state-fresh-label
-                s
-                (lower-spmd-scan-vector-label s "body"))
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! body-label label))])
-              (match (lower-state-fresh-label s "spmd_scan_tail_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-header-label label))])
-              (match (lower-state-fresh-label s "spmd_scan_tail_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-body-label label))])
-              (match (lower-state-fresh-label s "spmd_scan_exit")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! exit-label label))])
-              (match (lower-vector-loop-limit
-                s
-                (lower-global-shared-view end-value)
-                arrays
-                lanes)
-                [(Expr next-s limit _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-limit limit))])
-              (match (lower-vector-loop-start-ok s index-var lanes)
-                [(Expr next-s ok _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-start-ok ok))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
+            (match (lower-state-fresh-label
+              s
+              (lower-spmd-scan-vector-label s "header"))
+              [(Label next-s label)
+                (set! s next-s)
+                (set! header-label label)])
+            (match (lower-state-fresh-label
+              s
+              (lower-spmd-scan-vector-label s "body"))
+              [(Label next-s label)
+                (set! s next-s)
+                (set! body-label label)])
+            (match (lower-state-fresh-label s "spmd_scan_tail_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-header-label label)])
+            (match (lower-state-fresh-label s "spmd_scan_tail_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-body-label label)])
+            (match (lower-state-fresh-label s "spmd_scan_exit")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! exit-label label)])
+            (match (lower-vector-loop-limit
+              s
+              (lower-global-shared-view end-value)
+              arrays
+              lanes)
+              [(Expr next-s limit _)
+                (set! s next-s)
+                (set! vector-limit limit)])
+            (match (lower-vector-loop-start-ok s index-var lanes)
+              [(Expr next-s ok _)
+                (set! s next-s)
+                (set! vector-start-ok ok)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch vector-start-ok header-label tail-header-label))
+                header-label))
+            (match (lower-emit-binop
+              s
+              Add
+              (Var index-var)
+              (I64 lanes)
+              (lower-global-shared-view index-ty))
+              [(Expr next-s value-ir _)
+                (set! s next-s)
+                (set! next-index value-ir)])
+            (match (lower-vector-loop-next-ok
+              s
+              (lower-global-shared-view next-index)
+              vector-limit)
+              [(Expr next-s ok _)
+                (set! s next-s)
+                (set! vector-ok ok)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch vector-ok body-label tail-header-label))
+                body-label))
+            (match (lower-spmd-scan-vector-body
+              ctx
+              s
+              index-var
+              next-index
+              acc-var
+              input-var
+              output-var
+              prefix-op
+              (lower-global-shared-view elem-ty)
+              lanes)
+              [(Expr body-state _ _)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit body-state (Jump header-label))
+                    tail-header-label))])
+            (match (lower-vector-loop-i64-compare
+              s
+              Lt
+              (Var index-var)
+              end-value)
+              [(Expr next-s condition _)
+                (set! s next-s)
+                (set! tail-cond condition)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch tail-cond tail-body-label exit-label))
+                tail-body-label))
+            (let
+              [tail-lowered : LowerExpr
+                (try
+                  (lower-spmd-scan-scalar-tail-body
+                    ctx
                     s
-                    (Branch vector-start-ok header-label tail-header-label))
-                  header-label))
-              (match (lower-emit-binop
-                s
-                Add
-                (Var index-var)
-                (I64 lanes)
-                (lower-global-shared-view index-ty))
-                [(Expr next-s value-ir _)
-                  (begin
-                    (set! s next-s)
-                    (set! next-index value-ir))])
-              (match (lower-vector-loop-next-ok
-                s
-                (lower-global-shared-view next-index)
-                vector-limit)
-                [(Expr next-s ok _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-ok ok))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-ok body-label tail-header-label))
-                  body-label))
-              (match (lower-spmd-scan-vector-body
-                ctx
-                s
-                index-var
-                next-index
-                acc-var
-                input-var
-                output-var
-                prefix-op
-                (lower-global-shared-view elem-ty)
-                lanes)
-                [(Expr body-state _ _)
-                  (set!
-                    s
-                    (lower-state-finish-block
-                      (lower-state-emit body-state (Jump header-label))
-                      tail-header-label))])
-              (match (lower-vector-loop-i64-compare
-                s
-                Lt
-                (Var index-var)
-                end-value)
-                [(Expr next-s condition _)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-cond condition))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch tail-cond tail-body-label exit-label))
-                  tail-body-label))
-              (let
-                [tail-lowered : LowerExpr
-                  (try
-                    (lower-spmd-scan-scalar-tail-body
-                      ctx
-                      s
-                      env
-                      type-env
-                      op
-                      index-id
-                      index-var
-                      index-ty
-                      prefix-id
-                      acc-var
-                      elem-ty
-                      value
-                      body))]
-                (match tail-lowered
-                  [(Expr tail-state _ _)
-                    (Ok
-                      (Expr
-                        (lower-state-finish-block
-                          (lower-state-emit tail-state (Jump tail-header-label))
-                          exit-label)
-                        Unit
-                        (Unit)))]))))])]))
+                    env
+                    type-env
+                    op
+                    index-id
+                    index-var
+                    index-ty
+                    prefix-id
+                    acc-var
+                    elem-ty
+                    value
+                    body))]
+              (match tail-lowered
+                [(Expr tail-state _ _)
+                  (Ok
+                    (Expr
+                      (lower-state-finish-block
+                        (lower-state-emit tail-state (Jump tail-header-label))
+                        exit-label)
+                      Unit
+                      (Unit)))])))])]))
 
 (define (lower-simd-spmd-scan-lowered
   [ctx : tc_core.TcContext]
@@ -51828,218 +51387,200 @@
             [tail-cond : ir.CompilerIrValue Unit]
             [vector-acc-var : i64 0]
             [data-ptr : ir.CompilerIrValue Unit]
-            (begin
-              (if (lower-spmd-reduce-vector-accumulator?
-                (lower-global-shared-view elem-ty))
-                (match (lower-state-alloc-var s)
-                  [(Alloc next-s var)
-                    (begin
-                      (set! vector-acc-var var)
+            (if (lower-spmd-reduce-vector-accumulator?
+              (lower-global-shared-view elem-ty))
+              (match (lower-state-alloc-var s)
+                [(Alloc next-s var)
+                  (set! vector-acc-var var)
+                  (set!
+                    s
+                    (lower-state-emit
+                      next-s
+                      (Splat
+                        vector-acc-var
+                        (lower-spmd-reduce-vector-accumulator-init op acc-var)
+                        lanes
+                        (lower-global-shared-view elem-ty))))])
+              unit)
+            (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! header-label label)])
+            (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! body-label label)])
+            (match (lower-state-fresh-label s "spmd_reduce_tail_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-header-label label)])
+            (if (lower-spmd-reduce-vector-accumulator?
+              (lower-global-shared-view elem-ty))
+              (match (lower-state-fresh-label s "spmd_reduce_tail_init")
+                [(Label next-s label)
+                  (set! s next-s)
+                  (set! tail-init-label label)])
+              unit)
+            (match (lower-state-fresh-label s "spmd_reduce_tail_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-body-label label)])
+            (match (lower-state-fresh-label s "spmd_reduce_exit")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! exit-label label)])
+            (match (lower-vector-loop-limit
+              s
+              (lower-global-shared-view end-value)
+              arrays
+              lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-limit value)])
+            (match (lower-vector-loop-start-ok s index-var lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-start-ok value)])
+            (match (lower-sequence-data-pointer-value s array-var)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! data-ptr value)])
+            (if (lower-spmd-reduce-vector-accumulator?
+              (lower-global-shared-view elem-ty))
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch vector-start-ok header-label tail-init-label))
+                  header-label))
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch vector-start-ok header-label tail-header-label))
+                  header-label)))
+            (match (lower-emit-binop
+              s
+              (Add)
+              (Var index-var)
+              (I64 lanes)
+              (lower-global-shared-view index-ty))
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! next-index value)])
+            (match (lower-vector-loop-next-ok
+              s
+              (lower-global-shared-view next-index)
+              vector-limit)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-ok value)])
+            (if (lower-spmd-reduce-vector-accumulator?
+              (lower-global-shared-view elem-ty))
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch vector-ok body-label tail-init-label))
+                  body-label))
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch vector-ok body-label tail-header-label))
+                  body-label)))
+            (match (lower-avx2-reduce-vector-body
+              ctx
+              s
+              env
+              type-env
+              op
+              index-var
+              next-index
+              acc-var
+              vector-acc-var
+              data-ptr
+              vector-op
+              (lower-global-shared-view elem-ty)
+              lanes)
+              [(Ok body-lowered)
+                (match body-lowered
+                  [(Expr body-state _ _)
+                    (set! s body-state)
+                    (if (lower-spmd-reduce-vector-accumulator?
+                      (lower-global-shared-view elem-ty))
                       (set!
                         s
-                        (lower-state-emit
-                          next-s
-                          (Splat
-                            vector-acc-var
-                            (lower-spmd-reduce-vector-accumulator-init
-                              op
-                              acc-var)
-                            lanes
-                            (lower-global-shared-view elem-ty)))))])
-                unit)
-              (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! header-label label))])
-              (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! body-label label))])
-              (match (lower-state-fresh-label s "spmd_reduce_tail_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-header-label label))])
-              (if (lower-spmd-reduce-vector-accumulator?
-                (lower-global-shared-view elem-ty))
-                (match (lower-state-fresh-label s "spmd_reduce_tail_init")
-                  [(Label next-s label)
-                    (begin
-                      (set! s next-s)
-                      (set! tail-init-label label))])
-                unit)
-              (match (lower-state-fresh-label s "spmd_reduce_tail_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-body-label label))])
-              (match (lower-state-fresh-label s "spmd_reduce_exit")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! exit-label label))])
-              (match (lower-vector-loop-limit
-                s
-                (lower-global-shared-view end-value)
-                arrays
-                lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok s index-var lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-start-ok value))])
-              (match (lower-sequence-data-pointer-value s array-var)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! data-ptr value))])
-              (if (lower-spmd-reduce-vector-accumulator?
-                (lower-global-shared-view elem-ty))
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-start-ok header-label tail-init-label))
-                    header-label))
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-start-ok header-label tail-header-label))
-                    header-label)))
-              (match (lower-emit-binop
-                s
-                (Add)
-                (Var index-var)
-                (I64 lanes)
-                (lower-global-shared-view index-ty))
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! next-index value))])
-              (match (lower-vector-loop-next-ok
-                s
-                (lower-global-shared-view next-index)
-                vector-limit)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-ok value))])
-              (if (lower-spmd-reduce-vector-accumulator?
-                (lower-global-shared-view elem-ty))
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-ok body-label tail-init-label))
-                    body-label))
-                (set!
-                  s
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch vector-ok body-label tail-header-label))
-                    body-label)))
-              (match (lower-avx2-reduce-vector-body
-                ctx
-                s
-                env
-                type-env
-                op
-                index-var
-                next-index
-                acc-var
-                vector-acc-var
-                data-ptr
-                vector-op
-                (lower-global-shared-view elem-ty)
-                lanes)
-                [(Ok body-lowered)
-                  (match body-lowered
-                    [(Expr body-state _ _)
-                      (begin
-                        (set! s body-state)
-                        (if (lower-spmd-reduce-vector-accumulator?
-                          (lower-global-shared-view elem-ty))
-                          (set!
-                            s
-                            (lower-state-finish-block
-                              (lower-state-emit s (Jump header-label))
-                              tail-init-label))
-                          (set!
-                            s
-                            (lower-state-finish-block
-                              (lower-state-emit s (Jump header-label))
-                              tail-header-label)))
-                        (if (lower-spmd-reduce-vector-accumulator?
-                          (lower-global-shared-view elem-ty))
-                          (begin
-                            (set!
-                              s
-                              (lower-spmd-reduce-finish-vector-accumulator
-                                s
-                                op
-                                acc-var
-                                vector-acc-var
-                                vector-op
-                                lanes
-                                (lower-global-shared-view elem-ty)))
-                            (set!
-                              s
-                              (lower-state-finish-block
-                                (lower-state-emit s (Jump tail-header-label))
-                                tail-header-label)))
-                          unit)
-                        (match (lower-vector-loop-i64-compare
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump header-label))
+                          tail-init-label))
+                      (set!
+                        s
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump header-label))
+                          tail-header-label)))
+                    (when
+                      (lower-spmd-reduce-vector-accumulator?
+                        (lower-global-shared-view elem-ty))
+                      (set!
+                        s
+                        (lower-spmd-reduce-finish-vector-accumulator
                           s
-                          (Lt)
-                          (Var index-var)
-                          end-value)
-                          [(Expr next-s value _)
-                            (begin
-                              (set! s next-s)
-                              (set! tail-cond value))])
-                        (set!
-                          s
-                          (lower-state-finish-block
-                            (lower-state-emit
-                              s
-                              (Branch tail-cond tail-body-label exit-label))
-                            tail-body-label))
-                        (match (lower-spmd-reduce-scalar-tail-body
-                          ctx
-                          s
-                          env
-                          type-env
                           op
-                          index-var
-                          index-ty
                           acc-var
-                          array-var
-                          (lower-global-shared-view elem-ty))
-                          [(Ok tail-lowered)
-                            (match tail-lowered
-                              [(Expr tail-state _ _)
-                                (Ok
-                                  (Expr
-                                    (lower-state-finish-block
-                                      (lower-state-emit
-                                        tail-state
-                                        (Jump tail-header-label))
-                                      exit-label)
-                                    (Var acc-var)
-                                    elem-ty))])]
-                          [(Err message) (Err message)]))])]
-                [(Err message) (Err message)])))])]))
+                          vector-acc-var
+                          vector-op
+                          lanes
+                          (lower-global-shared-view elem-ty)))
+                      (set!
+                        s
+                        (lower-state-finish-block
+                          (lower-state-emit s (Jump tail-header-label))
+                          tail-header-label)))
+                    (match (lower-vector-loop-i64-compare
+                      s
+                      (Lt)
+                      (Var index-var)
+                      end-value)
+                      [(Expr next-s value _)
+                        (set! s next-s)
+                        (set! tail-cond value)])
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          s
+                          (Branch tail-cond tail-body-label exit-label))
+                        tail-body-label))
+                    (match (lower-spmd-reduce-scalar-tail-body
+                      ctx
+                      s
+                      env
+                      type-env
+                      op
+                      index-var
+                      index-ty
+                      acc-var
+                      array-var
+                      (lower-global-shared-view elem-ty))
+                      [(Ok tail-lowered)
+                        (match tail-lowered
+                          [(Expr tail-state _ _)
+                            (Ok
+                              (Expr
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    tail-state
+                                    (Jump tail-header-label))
+                                  exit-label)
+                                (Var acc-var)
+                                elem-ty))])]
+                      [(Err message) (Err message)])])]
+              [(Err message) (Err message)]))])]))
 
 (define (lower-avx2-spmd-reduce-value-build
   [ctx : tc_core.TcContext]
@@ -52087,222 +51628,202 @@
                 [vector-acc-var : i64 0]
                 [preheader-cache : LowerVectorMapValueCache
                   (lower-vector-map-value-cache-empty)]
-                (begin
-                  (if (lower-spmd-reduce-vector-accumulator?
-                    (lower-global-shared-view elem-ty))
-                    (match (lower-state-alloc-var s)
-                      [(Alloc next-s var)
-                        (begin
-                          (set! vector-acc-var var)
+                (if (lower-spmd-reduce-vector-accumulator?
+                  (lower-global-shared-view elem-ty))
+                  (match (lower-state-alloc-var s)
+                    [(Alloc next-s var)
+                      (set! vector-acc-var var)
+                      (set!
+                        s
+                        (lower-state-emit
+                          next-s
+                          (Splat
+                            vector-acc-var
+                            (lower-spmd-reduce-vector-accumulator-init
+                              op
+                              acc-var)
+                            lanes
+                            (lower-global-shared-view elem-ty))))])
+                  unit)
+                (match (lower-state-fresh-label s "spmd_reduce_value_header")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! header-label label)])
+                (match (lower-state-fresh-label s "spmd_reduce_value_body")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! body-label label)])
+                (match (lower-state-fresh-label s "spmd_reduce_value_tail_init")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! tail-init-label label)])
+                (match (lower-state-fresh-label
+                  s
+                  "spmd_reduce_value_tail_check")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! tail-check-label label)])
+                (match (lower-state-fresh-label s "spmd_reduce_value_tail_body")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! tail-body-label label)])
+                (match (lower-state-fresh-label s "spmd_reduce_value_exit")
+                  [(Label next-s label)
+                    (set! s next-s)
+                    (set! exit-label label)])
+                (match (lower-vector-loop-limit
+                  s
+                  (lower-global-shared-view end-value)
+                  arrays
+                  lanes)
+                  [(Expr next-s value _)
+                    (set! s next-s)
+                    (set! vector-limit value)])
+                (match (lower-vector-loop-start-ok s index-var lanes)
+                  [(Expr next-s value _)
+                    (set! s next-s)
+                    (set! vector-start-ok value)])
+                (match (lower-vector-map-preheader-cache-plan
+                  s
+                  arrays
+                  lanes
+                  (lower-global-shared-view elem-ty)
+                  (lower-global-shared-view value-plan))
+                  [(Emit next-s _ next-cache)
+                    (set! s next-s)
+                    (set! preheader-cache next-cache)])
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (Branch vector-start-ok header-label tail-init-label))
+                    header-label))
+                (match (lower-emit-binop
+                  s
+                  (Add)
+                  (Var index-var)
+                  (I64 lanes)
+                  (lower-global-shared-view index-ty))
+                  [(Expr next-s value _)
+                    (set! s next-s)
+                    (set! next-index value)])
+                (match (lower-vector-loop-next-ok
+                  s
+                  (lower-global-shared-view next-index)
+                  vector-limit)
+                  [(Expr next-s value _)
+                    (set! s next-s)
+                    (set! vector-ok value)])
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (Branch vector-ok body-label tail-init-label))
+                    body-label))
+                (match (lower-avx2-reduce-vector-value-body
+                  ctx
+                  s
+                  env
+                  type-env
+                  op
+                  index-var
+                  next-index
+                  acc-var
+                  vector-acc-var
+                  (lower-global-shared-view value-plan)
+                  preheader-cache
+                  vector-op
+                  (lower-global-shared-view elem-ty)
+                  lanes)
+                  [(Ok body-lowered)
+                    (match body-lowered
+                      [(Expr body-state _ _)
+                        (set! s body-state)
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit s (Jump header-label))
+                            tail-init-label))
+                        (if (lower-spmd-reduce-vector-accumulator?
+                          (lower-global-shared-view elem-ty))
                           (set!
                             s
-                            (lower-state-emit
-                              next-s
-                              (Splat
-                                vector-acc-var
-                                (lower-spmd-reduce-vector-accumulator-init
-                                  op
-                                  acc-var)
-                                lanes
-                                (lower-global-shared-view elem-ty)))))])
-                    unit)
-                  (match (lower-state-fresh-label s "spmd_reduce_value_header")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! header-label label))])
-                  (match (lower-state-fresh-label s "spmd_reduce_value_body")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! body-label label))])
-                  (match (lower-state-fresh-label
-                    s
-                    "spmd_reduce_value_tail_init")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! tail-init-label label))])
-                  (match (lower-state-fresh-label
-                    s
-                    "spmd_reduce_value_tail_check")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! tail-check-label label))])
-                  (match (lower-state-fresh-label
-                    s
-                    "spmd_reduce_value_tail_body")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! tail-body-label label))])
-                  (match (lower-state-fresh-label s "spmd_reduce_value_exit")
-                    [(Label next-s label)
-                      (begin
-                        (set! s next-s)
-                        (set! exit-label label))])
-                  (match (lower-vector-loop-limit
-                    s
-                    (lower-global-shared-view end-value)
-                    arrays
-                    lanes)
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! vector-limit value))])
-                  (match (lower-vector-loop-start-ok s index-var lanes)
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! vector-start-ok value))])
-                  (match (lower-vector-map-preheader-cache-plan
-                    s
-                    arrays
-                    lanes
-                    (lower-global-shared-view elem-ty)
-                    (lower-global-shared-view value-plan))
-                    [(Emit next-s _ next-cache)
-                      (begin
-                        (set! s next-s)
-                        (set! preheader-cache next-cache))])
-                  (set!
-                    s
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        s
-                        (Branch vector-start-ok header-label tail-init-label))
-                      header-label))
-                  (match (lower-emit-binop
-                    s
-                    (Add)
-                    (Var index-var)
-                    (I64 lanes)
-                    (lower-global-shared-view index-ty))
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! next-index value))])
-                  (match (lower-vector-loop-next-ok
-                    s
-                    (lower-global-shared-view next-index)
-                    vector-limit)
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! vector-ok value))])
-                  (set!
-                    s
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        s
-                        (Branch vector-ok body-label tail-init-label))
-                      body-label))
-                  (match (lower-avx2-reduce-vector-value-body
-                    ctx
-                    s
-                    env
-                    type-env
-                    op
-                    index-var
-                    next-index
-                    acc-var
-                    vector-acc-var
-                    (lower-global-shared-view value-plan)
-                    preheader-cache
-                    vector-op
-                    (lower-global-shared-view elem-ty)
-                    lanes)
-                    [(Ok body-lowered)
-                      (match body-lowered
-                        [(Expr body-state _ _)
-                          (begin
-                            (set! s body-state)
-                            (set!
+                            (lower-spmd-reduce-finish-vector-accumulator
                               s
-                              (lower-state-finish-block
-                                (lower-state-emit s (Jump header-label))
-                                tail-init-label))
-                            (if (lower-spmd-reduce-vector-accumulator?
-                              (lower-global-shared-view elem-ty))
-                              (set!
-                                s
-                                (lower-spmd-reduce-finish-vector-accumulator
-                                  s
-                                  op
-                                  acc-var
-                                  vector-acc-var
-                                  vector-op
-                                  lanes
-                                  (lower-global-shared-view elem-ty)))
-                              unit)
-                            (set!
-                              s
-                              (lower-state-emit
-                                s
-                                (Mov
-                                  tail-base-var
-                                  (Var index-var)
-                                  (lower-global-shared-view index-ty))))
-                            (match (lower-emit-binop
-                              s
-                              Sub
-                              (lower-global-shared-view end-value)
-                              (Var index-var)
-                              (I64))
-                              [(Expr next-s value _)
-                                (begin
-                                  (set! s next-s)
-                                  (set! active-lanes value))])
-                            (set!
-                              s
-                              (lower-state-finish-block
-                                (lower-state-emit s (Jump tail-check-label))
-                                tail-check-label))
-                            (match (lower-vector-loop-i64-compare
-                              s
-                              (Lt)
-                              (Var index-var)
-                              end-value)
-                              [(Expr next-s value _)
-                                (begin
-                                  (set! s next-s)
-                                  (set! tail-cond value))])
-                            (set!
-                              s
-                              (lower-state-finish-block
-                                (lower-state-emit
-                                  s
-                                  (Branch tail-cond tail-body-label exit-label))
-                                tail-body-label))
-                            (match (lower-spmd-reduce-scalar-tail-value-body
-                              ctx
-                              s
-                              env
-                              type-env
                               op
-                              tail-base-var
-                              index-var
-                              active-lanes
-                              index-ty
                               acc-var
-                              value-plan
-                              (lower-global-shared-view elem-ty)
-                              lanes)
-                              [(Ok tail-lowered)
-                                (match tail-lowered
-                                  [(Expr tail-state _ _)
-                                    (Ok
-                                      (Expr
-                                        (lower-state-finish-block
-                                          (lower-state-emit
-                                            tail-state
-                                            (Jump tail-check-label))
-                                          exit-label)
-                                        (Var acc-var)
-                                        elem-ty))])]
-                              [(Err message) (Err message)]))])]
-                    [(Err message) (Err message)])))])])]))
+                              vector-acc-var
+                              vector-op
+                              lanes
+                              (lower-global-shared-view elem-ty)))
+                          unit)
+                        (set!
+                          s
+                          (lower-state-emit
+                            s
+                            (Mov
+                              tail-base-var
+                              (Var index-var)
+                              (lower-global-shared-view index-ty))))
+                        (match (lower-emit-binop
+                          s
+                          Sub
+                          (lower-global-shared-view end-value)
+                          (Var index-var)
+                          (I64))
+                          [(Expr next-s value _)
+                            (set! s next-s)
+                            (set! active-lanes value)])
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit s (Jump tail-check-label))
+                            tail-check-label))
+                        (match (lower-vector-loop-i64-compare
+                          s
+                          (Lt)
+                          (Var index-var)
+                          end-value)
+                          [(Expr next-s value _)
+                            (set! s next-s)
+                            (set! tail-cond value)])
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              s
+                              (Branch tail-cond tail-body-label exit-label))
+                            tail-body-label))
+                        (match (lower-spmd-reduce-scalar-tail-value-body
+                          ctx
+                          s
+                          env
+                          type-env
+                          op
+                          tail-base-var
+                          index-var
+                          active-lanes
+                          index-ty
+                          acc-var
+                          value-plan
+                          (lower-global-shared-view elem-ty)
+                          lanes)
+                          [(Ok tail-lowered)
+                            (match tail-lowered
+                              [(Expr tail-state _ _)
+                                (Ok
+                                  (Expr
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        tail-state
+                                        (Jump tail-check-label))
+                                      exit-label)
+                                    (Var acc-var)
+                                    elem-ty))])]
+                          [(Err message) (Err message)])])]
+                  [(Err message) (Err message)]))])])]))
 
 (define (lower-avx2-spmd-reduce-lowered
   [ctx : tc_core.TcContext]
@@ -52645,20 +52166,19 @@
   (let
     [index : i64 0]
     [found : LowerMaybeIrValue (No)]
-    (begin
-      (while (and
-        (< index cache.count)
-        (match (lower-global-shared-view found)
-          [(No) true]
-          [(Some _) false]))
-        (if (lower-vector-map-value-key-eq?
-          (lower-global-shared-view key)
-          (lower-global-array-element-shared-view cache.keys index))
-          (set!
-            found
-            (Some (lower-global-array-element-shared-view cache.values index)))
-          (set! index (+ index 1))))
-      found)))
+    (while (and
+      (< index cache.count)
+      (match (lower-global-shared-view found)
+        [(No) true]
+        [(Some _) false]))
+      (if (lower-vector-map-value-key-eq?
+        (lower-global-shared-view key)
+        (lower-global-array-element-shared-view cache.keys index))
+        (set!
+          found
+          (Some (lower-global-array-element-shared-view cache.values index)))
+        (set! index (+ index 1))))
+    found))
 
 (define (lower-vector-map-value-cache-add
   [cache : LowerVectorMapValueCache]
@@ -52668,10 +52188,9 @@
     [keys : (__tl_dyn-array LowerVectorMapValueKey) cache.keys]
     [values : (__tl_dyn-array ir.CompilerIrValue) cache.values]
     [count : i64 cache.count]
-    (begin
-      (__tl_array-push! keys key)
-      (__tl_array-push! values value)
-      (LowerVectorMapValueCache keys values (+ count 1)))))
+    (__tl_array-push! keys key)
+    (__tl_array-push! values value)
+    (LowerVectorMapValueCache keys values (+ count 1))))
 
 ;; Populate the vector-map cache in the entry block with values whose source
 ;; operands cannot change between gangs. The simple-map planner accepts only
@@ -52757,23 +52276,20 @@
     [s : LowerState state]
     [next-cache : LowerVectorMapValueCache cache]
     [index : i64 0]
-    (begin
-      (while (< index arrays.count)
-        (let
-          [array-var : i64 (array-ref arrays.vars index)]
-          (begin
-            (match (lower-sequence-data-pointer-value s array-var)
-              [(Expr next-s data-ptr _)
-                (begin
-                  (set! s next-s)
-                  (set!
-                    next-cache
-                    (lower-vector-map-value-cache-add
-                      next-cache
-                      (ArrayData array-var)
-                      data-ptr)))])
-            (set! index (+ index 1)))))
-      (Emit s Unit next-cache))))
+    (while (< index arrays.count)
+      (let
+        [array-var : i64 (array-ref arrays.vars index)]
+        (match (lower-sequence-data-pointer-value s array-var)
+          [(Expr next-s data-ptr _)
+            (set! s next-s)
+            (set!
+              next-cache
+              (lower-vector-map-value-cache-add
+                next-cache
+                (ArrayData array-var)
+                data-ptr))])
+        (set! index (+ index 1))))
+    (Emit s Unit next-cache)))
 
 (define (lower-vector-map-preheader-cache-plan
   [state : LowerState]
@@ -52808,22 +52324,20 @@
         [s : LowerState data-state]
         [cache : LowerVectorMapValueCache data-cache]
         [index : i64 0]
-        (begin
-          (while (< index stores.count)
-            (match (lower-vector-map-store-list-ref stores index)
-              [(LowerVectorMapStore _ value-plan)
-                (match (lower-vector-map-preheader-cache-leaves
-                  s
-                  lanes
-                  (lower-global-shared-view elem-ty)
-                  value-plan
-                  (lower-global-shared-view cache))
-                  [(Emit next-s _ next-cache)
-                    (begin
-                      (set! s next-s)
-                      (set! cache next-cache))])])
-            (set! index (+ index 1)))
-          (Emit s Unit cache)))]))
+        (while (< index stores.count)
+          (match (lower-vector-map-store-list-ref stores index)
+            [(LowerVectorMapStore _ value-plan)
+              (match (lower-vector-map-preheader-cache-leaves
+                s
+                lanes
+                (lower-global-shared-view elem-ty)
+                value-plan
+                (lower-global-shared-view cache))
+                [(Emit next-s _ next-cache)
+                  (set! s next-s)
+                  (set! cache next-cache)])])
+          (set! index (+ index 1)))
+        (Emit s Unit cache))]))
 
 (define (lower-emit-shuffle-selector-plan
   [state : LowerState]
@@ -53684,14 +53198,13 @@
     [count : i64 stores.count]
     [index : i64 0]
     [needs-tail : bool false]
-    (begin
-      (while (and (not needs-tail) (< index count))
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore _ value-plan)
-            (if (lower-vector-map-value-needs-scalar-tail? value-plan)
-              (set! needs-tail true)
-              (set! index (+ index 1)))]))
-      needs-tail)))
+    (while (and (not needs-tail) (< index count))
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore _ value-plan)
+          (if (lower-vector-map-value-needs-scalar-tail? value-plan)
+            (set! needs-tail true)
+            (set! index (+ index 1)))]))
+    needs-tail))
 
 (define (lower-vector-map-store-list-has-gather?
   [stores : LowerVectorMapStoreList]) : bool
@@ -53699,14 +53212,13 @@
     [count : i64 stores.count]
     [index : i64 0]
     [has-gather : bool false]
-    (begin
-      (while (and (not has-gather) (< index count))
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore _ value-plan)
-            (if (lower-vector-map-value-has-gather? value-plan)
-              (set! has-gather true)
-              (set! index (+ index 1)))]))
-      has-gather)))
+    (while (and (not has-gather) (< index count))
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore _ value-plan)
+          (if (lower-vector-map-value-has-gather? value-plan)
+            (set! has-gather true)
+            (set! index (+ index 1)))]))
+    has-gather))
 
 (define (lower-vector-map-store-list-has-shuffle?
   [stores : LowerVectorMapStoreList]) : bool
@@ -53714,14 +53226,13 @@
     [count : i64 stores.count]
     [index : i64 0]
     [has-shuffle : bool false]
-    (begin
-      (while (and (not has-shuffle) (< index count))
-        (match (lower-vector-map-store-list-ref stores index)
-          [(LowerVectorMapStore _ value-plan)
-            (if (lower-vector-map-value-has-shuffle? value-plan)
-              (set! has-shuffle true)
-              (set! index (+ index 1)))]))
-      has-shuffle)))
+    (while (and (not has-shuffle) (< index count))
+      (match (lower-vector-map-store-list-ref stores index)
+        [(LowerVectorMapStore _ value-plan)
+          (if (lower-vector-map-value-has-shuffle? value-plan)
+            (set! has-shuffle true)
+            (set! index (+ index 1)))]))
+    has-shuffle))
 
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
@@ -53982,117 +53493,103 @@
         [scalar-value : ir.CompilerIrValue Unit]
         [elem-ptr : ir.CompilerIrValue Unit]
         [store-index : i64 0]
-        (begin
-          (match (lower-state-alloc-var s)
-            [(Alloc next-s var)
-              (begin
-                (set! s next-s)
-                (set! tail-lane-var var))])
-          (set! s (lower-state-emit s (Mov tail-lane-var (I64 0) (I64))))
-          (match (lower-state-fresh-label s "foreach_broadcast_tail_header")
-            [(Label next-s label)
-              (begin
-                (set! s next-s)
-                (set! header-label label))])
-          (match (lower-state-fresh-label s "foreach_broadcast_tail_body")
-            [(Label next-s label)
-              (begin
-                (set! s next-s)
-                (set! body-label label))])
-          (match (lower-emit-binop
-            s
-            Sub
-            (lower-global-shared-view end-value)
-            (Var index-var)
-            (I64))
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! active-lanes value))])
-          (set!
-            s
-            (lower-state-finish-block
-              (lower-state-emit s (Jump header-label))
-              header-label))
-          (match (lower-emit-binop s Lt (Var tail-var) end-value (I64))
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! tail-cond value))])
-          (set!
-            s
-            (lower-state-finish-block
-              (lower-state-emit s (Branch tail-cond body-label exit-label))
-              body-label))
-          (while (< store-index stores.count)
-            (match (lower-vector-map-store-list-ref stores store-index)
-              [(LowerVectorMapStore dst-array value-plan)
-                (begin
-                  (match (lower-emit-scalar-vector-map-value
-                    ctx
-                    s
-                    index-var
-                    tail-var
-                    (Var tail-lane-var)
-                    (lower-global-shared-view active-lanes)
-                    lanes
-                    (lower-global-shared-view elem-ty)
-                    value-plan)
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! scalar-value value))])
-                  (match (lower-sequence-element-addr
-                    ctx
-                    s
-                    dst-array
-                    (Var tail-var)
-                    (I64)
-                    (lower-global-shared-view elem-ty))
-                    [(Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! elem-ptr value))])
-                  (set!
-                    s
-                    (lower-array-elem-store-state
-                      ctx
-                      s
-                      (lower-global-shared-view elem-ptr)
-                      (lower-global-shared-view scalar-value)
-                      (lower-global-shared-view elem-ty)))
-                  (set! store-index (+ store-index 1)))]))
-          (match (lower-state-alloc-var s)
-            [(Alloc inc-alloc inc-var)
-              (match (lower-state-alloc-var inc-alloc)
-                [(Alloc lane-inc-alloc lane-inc-var)
-                  (Ok
-                    (Expr
-                      (lower-state-finish-block
+        (match (lower-state-alloc-var s)
+          [(Alloc next-s var)
+            (set! s next-s)
+            (set! tail-lane-var var)])
+        (set! s (lower-state-emit s (Mov tail-lane-var (I64 0) (I64))))
+        (match (lower-state-fresh-label s "foreach_broadcast_tail_header")
+          [(Label next-s label)
+            (set! s next-s)
+            (set! header-label label)])
+        (match (lower-state-fresh-label s "foreach_broadcast_tail_body")
+          [(Label next-s label)
+            (set! s next-s)
+            (set! body-label label)])
+        (match (lower-emit-binop
+          s
+          Sub
+          (lower-global-shared-view end-value)
+          (Var index-var)
+          (I64))
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! active-lanes value)])
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit s (Jump header-label))
+            header-label))
+        (match (lower-emit-binop s Lt (Var tail-var) end-value (I64))
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! tail-cond value)])
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit s (Branch tail-cond body-label exit-label))
+            body-label))
+        (while (< store-index stores.count)
+          (match (lower-vector-map-store-list-ref stores store-index)
+            [(LowerVectorMapStore dst-array value-plan)
+              (match (lower-emit-scalar-vector-map-value
+                ctx
+                s
+                index-var
+                tail-var
+                (Var tail-lane-var)
+                (lower-global-shared-view active-lanes)
+                lanes
+                (lower-global-shared-view elem-ty)
+                value-plan)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! scalar-value value)])
+              (match (lower-sequence-element-addr
+                ctx
+                s
+                dst-array
+                (Var tail-var)
+                (I64)
+                (lower-global-shared-view elem-ty))
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! elem-ptr value)])
+              (set!
+                s
+                (lower-array-elem-store-state
+                  ctx
+                  s
+                  (lower-global-shared-view elem-ptr)
+                  (lower-global-shared-view scalar-value)
+                  (lower-global-shared-view elem-ty)))
+              (set! store-index (+ store-index 1))]))
+        (match (lower-state-alloc-var s)
+          [(Alloc inc-alloc inc-var)
+            (match (lower-state-alloc-var inc-alloc)
+              [(Alloc lane-inc-alloc lane-inc-var)
+                (Ok
+                  (Expr
+                    (lower-state-finish-block
+                      (lower-state-emit
                         (lower-state-emit
                           (lower-state-emit
                             (lower-state-emit
                               (lower-state-emit
-                                (lower-state-emit
-                                  lane-inc-alloc
-                                  (BinOp
-                                    inc-var
-                                    Add
-                                    (Var tail-var)
-                                    (I64 1)
-                                    (I64)))
-                                (Mov tail-var (Var inc-var) (I64)))
-                              (BinOp
-                                lane-inc-var
-                                Add
-                                (Var tail-lane-var)
-                                (I64 1)
-                                (I64)))
-                            (Mov tail-lane-var (Var lane-inc-var) (I64)))
-                          (Jump header-label))
-                        exit-label)
-                      Unit
-                      (Unit)))])])))]))
+                                lane-inc-alloc
+                                (BinOp inc-var Add (Var tail-var) (I64 1) (I64)))
+                              (Mov tail-var (Var inc-var) (I64)))
+                            (BinOp
+                              lane-inc-var
+                              Add
+                              (Var tail-lane-var)
+                              (I64 1)
+                              (I64)))
+                          (Mov tail-lane-var (Var lane-inc-var) (I64)))
+                        (Jump header-label))
+                      exit-label)
+                    Unit
+                    (Unit)))])]))]))
 
 (define (lower-avx2-vector-map-body
   [ctx : tc_core.TcContext]
@@ -54111,63 +53608,59 @@
         [store-index : i64 0]
         [cache : LowerVectorMapValueCache preheader-cache]
         [result-vec : ir.CompilerIrValue Unit]
-        (begin
-          ;; Evaluate all values before the first store so common loads and
-          ;; products stay in one side-effect-free region for normal CSE.
-          (while (< store-index count)
-            (match (lower-vector-map-store-list-ref stores store-index)
-              [(LowerVectorMapStore _ value-plan)
-                (begin
-                  (match (lower-emit-vector-map-value-cached
-                    ctx
+        ;; Evaluate all values before the first store so common loads and
+        ;; products stay in one side-effect-free region for normal CSE.
+        (while (< store-index count)
+          (match (lower-vector-map-store-list-ref stores store-index)
+            [(LowerVectorMapStore _ value-plan)
+              (match (lower-emit-vector-map-value-cached
+                ctx
+                s
+                index-var
+                lanes
+                (lower-global-shared-view elem-ty)
+                value-plan
+                (Full)
+                (lower-global-shared-view cache))
+                [(Emit next-s value next-cache)
+                  (set! s next-s)
+                  (set! result-vec value)
+                  (set! cache next-cache)])
+              (set! (array-ref results store-index) result-vec)
+              (set! store-index (+ store-index 1))]))
+        (set! store-index 0)
+        (while (< store-index count)
+          (match (lower-vector-map-store-list-ref stores store-index)
+            [(LowerVectorMapStore dst-array _)
+              (match (lower-vector-map-value-cache-lookup
+                cache
+                (ArrayData dst-array))
+                [(Some data-ptr)
+                  (set!
                     s
-                    index-var
-                    lanes
-                    (lower-global-shared-view elem-ty)
-                    value-plan
-                    (Full)
-                    (lower-global-shared-view cache))
-                    [(Emit next-s value next-cache)
-                      (begin
-                        (set! s next-s)
-                        (set! result-vec value)
-                        (set! cache next-cache))])
-                  (set! (array-ref results store-index) result-vec)
-                  (set! store-index (+ store-index 1)))]))
-          (set! store-index 0)
-          (while (< store-index count)
-            (match (lower-vector-map-store-list-ref stores store-index)
-              [(LowerVectorMapStore dst-array _)
-                (begin
-                  (match (lower-vector-map-value-cache-lookup
-                    cache
-                    (ArrayData dst-array))
-                    [(Some data-ptr)
-                      (set!
-                        s
-                        (lower-emit-vector-store-data
-                          s
-                          data-ptr
-                          (Var index-var)
-                          (lower-global-array-element-shared-view
-                            results
-                            store-index)
-                          lanes
-                          (lower-global-shared-view elem-ty)))]
-                    [(No)
-                      (set!
-                        s
-                        (lower-emit-sequence-vector-store
-                          s
-                          dst-array
-                          (Var index-var)
-                          (lower-global-array-element-shared-view
-                            results
-                            store-index)
-                          lanes
-                          (lower-global-shared-view elem-ty)))])
-                  (set! store-index (+ store-index 1)))]))
-          (lower-state-emit s (Mov index-var next-index (I64)))))]
+                    (lower-emit-vector-store-data
+                      s
+                      data-ptr
+                      (Var index-var)
+                      (lower-global-array-element-shared-view
+                        results
+                        store-index)
+                      lanes
+                      (lower-global-shared-view elem-ty)))]
+                [(No)
+                  (set!
+                    s
+                    (lower-emit-sequence-vector-store
+                      s
+                      dst-array
+                      (Var index-var)
+                      (lower-global-array-element-shared-view
+                        results
+                        store-index)
+                      lanes
+                      (lower-global-shared-view elem-ty)))])
+              (set! store-index (+ store-index 1))]))
+        (lower-state-emit s (Mov index-var next-index (I64))))]
     [(No) state]))
 
 (define (lower-predicated-index-plus-offset
@@ -54188,37 +53681,34 @@
     [next-ok : ir.CompilerIrValue ok]
     [index : i64 0]
     [count : i64 arrays.count]
-    (begin
-      (while (< index count)
-        (let
-          [array-var : i64 (array-ref arrays.vars index)]
-          [offset : i64 (array-ref arrays.offsets index)]
-          (begin
-            (match (lower-predicated-index-plus-offset
-              s
-              (lower-global-shared-view end-value)
-              offset)
-              [(Expr index-state limit-index _)
-                (match (lower-sequence-len-value index-state array-var)
-                  [(Expr len-state array-len _)
-                    (match (lower-vector-loop-i64-compare
-                      len-state
-                      (Le)
-                      limit-index
-                      array-len)
-                      [(Expr cmp-state within _)
-                        (match (lower-emit-binop
-                          cmp-state
-                          (And)
-                          (lower-global-shared-view next-ok)
-                          within
-                          (Bool))
-                          [(Expr next-state value _)
-                            (begin
-                              (set! s next-state)
-                              (set! next-ok value))])])])])
-            (set! index (+ index 1)))))
-      (Expr s next-ok (Bool)))))
+    (while (< index count)
+      (let
+        [array-var : i64 (array-ref arrays.vars index)]
+        [offset : i64 (array-ref arrays.offsets index)]
+        (match (lower-predicated-index-plus-offset
+          s
+          (lower-global-shared-view end-value)
+          offset)
+          [(Expr index-state limit-index _)
+            (match (lower-sequence-len-value index-state array-var)
+              [(Expr len-state array-len _)
+                (match (lower-vector-loop-i64-compare
+                  len-state
+                  (Le)
+                  limit-index
+                  array-len)
+                  [(Expr cmp-state within _)
+                    (match (lower-emit-binop
+                      cmp-state
+                      (And)
+                      (lower-global-shared-view next-ok)
+                      within
+                      (Bool))
+                      [(Expr next-state value _)
+                        (set! s next-state)
+                        (set! next-ok value)])])])])
+        (set! index (+ index 1))))
+    (Expr s next-ok (Bool))))
 
 (define (lower-predicated-tail-limit [offset : i64]) : i64
   (- 9223372036854775807 offset))
@@ -54233,43 +53723,38 @@
     [max-offset : i64 (lower-array-var-set-max-offset arrays)]
     [ok : ir.CompilerIrValue Unit]
     [within : ir.CompilerIrValue Unit]
-    (begin
-      (match (lower-vector-loop-i64-compare s (Ge) (Var index-var) (I64 0))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-vector-loop-i64-compare
-        s
-        (Le)
-        (lower-global-shared-view end-value)
-        (I64 (lower-predicated-tail-limit max-offset)))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop
-        s
-        (And)
-        (lower-global-shared-view ok)
-        (lower-global-shared-view within)
-        (Bool))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-vector-loop-i64-compare
-        s
-        (Le)
-        (Var index-var)
-        (lower-global-shared-view end-value))
-        [(Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (And) ok within (Bool))
-        [(Expr next-s value _)
-          (lower-predicated-array-set-end-ok next-s value end-value arrays)]))))
+    (match (lower-vector-loop-i64-compare s (Ge) (Var index-var) (I64 0))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! ok value)])
+    (match (lower-vector-loop-i64-compare
+      s
+      (Le)
+      (lower-global-shared-view end-value)
+      (I64 (lower-predicated-tail-limit max-offset)))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! within value)])
+    (match (lower-emit-binop
+      s
+      (And)
+      (lower-global-shared-view ok)
+      (lower-global-shared-view within)
+      (Bool))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! ok value)])
+    (match (lower-vector-loop-i64-compare
+      s
+      (Le)
+      (Var index-var)
+      (lower-global-shared-view end-value))
+      [(Expr next-s value _)
+        (set! s next-s)
+        (set! within value)])
+    (match (lower-emit-binop s (And) ok within (Bool))
+      [(Expr next-s value _)
+        (lower-predicated-array-set-end-ok next-s value end-value arrays)])))
 
 (define (lower-avx512-masked-unsupported
   [ctx : tc_core.TcContext]
@@ -54304,12 +53789,11 @@
     [(Some parent-mask)
       (lower-emit-mask-binop state (And) parent-mask mask lanes)])
     [(Expr child-state child-mask child-ty)
-      (begin
-        (lower-masked-load-register-mask!
-          child-state
-          active-mask
-          (lower-global-shared-view child-mask))
-        (Expr child-state child-mask child-ty))]))
+      (lower-masked-load-register-mask!
+        child-state
+        active-mask
+        (lower-global-shared-view child-mask))
+      (Expr child-state child-mask child-ty)]))
 
 (define (lower-emit-active-load
   [state : LowerState]
@@ -54534,14 +54018,13 @@
                         lanes
                         lane-ty)
                         [(Expr load-state load-value load-ty)
-                          (begin
-                            (lower-masked-load-cache-put!
-                              load-state
-                              array-var
-                              offset
-                              active-mask
-                              (lower-global-shared-view load-value))
-                            (Ok (Expr load-state load-value load-ty)))])]))]))))]
+                          (lower-masked-load-cache-put!
+                            load-state
+                            array-var
+                            offset
+                            active-mask
+                            (lower-global-shared-view load-value))
+                          (Ok (Expr load-state load-value load-ty))])]))]))))]
     [(No)
       (lower-avx512-masked-unsupported
         ctx
@@ -55004,105 +54487,98 @@
             [exit-label : i64 (ir.compiler-ir-label-none)]
             [cond-active : ir.CompilerIrValue Unit]
             [any-active : ir.CompilerIrValue Unit]
-            (begin
-              (match (lower-state-fresh-label s "spmd_vwhile_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! header-label label))])
-              (match (lower-state-fresh-label s "spmd_vwhile_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! body-label label))])
-              (match (lower-state-fresh-label s "spmd_vwhile_exit")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! exit-label label))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit s (Jump header-label))
-                  header-label))
-              (match (lower-avx512-masked-expr
+            (match (lower-state-fresh-label s "spmd_vwhile_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! header-label label)])
+            (match (lower-state-fresh-label s "spmd_vwhile_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! body-label label)])
+            (match (lower-state-fresh-label s "spmd_vwhile_exit")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! exit-label label)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit s (Jump header-label))
+                header-label))
+            (match (lower-avx512-masked-expr
+              ctx
+              s
+              env
+              type-env
+              lane-locals
+              (lower-global-shared-view index)
+              index-var
+              (Some (Var loop-mask-var))
+              lanes
+              cond)
+              [(Ok cond-lowered)
+                (match cond-lowered
+                  [(Expr cond-state cond-mask _)
+                    (match (lower-emit-mask-binop
+                      cond-state
+                      (And)
+                      (Var loop-mask-var)
+                      cond-mask
+                      lanes)
+                      [(Expr next-s value _)
+                        (set! s next-s)
+                        (set! cond-active value)])
+                    (match (lower-emit-mask-reduce
+                      s
+                      (Any)
+                      (lower-global-shared-view cond-active)
+                      lanes)
+                      [(Expr next-s value _)
+                        (set! s next-s)
+                        (set! any-active value)])])]
+              [(Err message) (return (Err message))])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit s (Branch any-active body-label exit-label))
+                body-label))
+            (match (let
+              [active-mask
+                (ir.CompilerIrMaybeValue.Some
+                  (lower-global-shared-view cond-active))]
+              [expected-ty (ast.AstType.Unit)]
+              (lower-avx512-masked-expr-expected
                 ctx
                 s
                 env
                 type-env
                 lane-locals
-                (lower-global-shared-view index)
+                index
                 index-var
-                (Some (Var loop-mask-var))
+                active-mask
                 lanes
-                cond)
-                [(Ok cond-lowered)
-                  (match cond-lowered
-                    [(Expr cond-state cond-mask _)
-                      (begin
-                        (match (lower-emit-mask-binop
-                          cond-state
-                          (And)
-                          (Var loop-mask-var)
-                          cond-mask
-                          lanes)
-                          [(Expr next-s value _)
-                            (begin
-                              (set! s next-s)
-                              (set! cond-active value))])
-                        (match (lower-emit-mask-reduce
-                          s
-                          (Any)
+                body
+                expected-ty))
+              [(Ok body-lowered)
+                (match body-lowered
+                  [(Expr body-state _ _)
+                    (set!
+                      s
+                      (lower-state-emit
+                        body-state
+                        (MaskBinOp
+                          loop-mask-var
+                          (Or)
                           (lower-global-shared-view cond-active)
-                          lanes)
-                          [(Expr next-s value _)
-                            (begin
-                              (set! s next-s)
-                              (set! any-active value))]))])]
-                [(Err message) (return (Err message))])
-              (set!
-                s
+                          cond-active
+                          lanes)))])]
+              [(Err message) (return (Err message))])
+            (Ok
+              (Expr
                 (lower-state-finish-block
-                  (lower-state-emit s (Branch any-active body-label exit-label))
-                  body-label))
-              (match (let
-                [active-mask
-                  (ir.CompilerIrMaybeValue.Some
-                    (lower-global-shared-view cond-active))]
-                [expected-ty (ast.AstType.Unit)]
-                (lower-avx512-masked-expr-expected
-                  ctx
-                  s
-                  env
-                  type-env
-                  lane-locals
-                  index
-                  index-var
-                  active-mask
-                  lanes
-                  body
-                  expected-ty))
-                [(Ok body-lowered)
-                  (match body-lowered
-                    [(Expr body-state _ _)
-                      (set!
-                        s
-                        (lower-state-emit
-                          body-state
-                          (MaskBinOp
-                            loop-mask-var
-                            (Or)
-                            (lower-global-shared-view cond-active)
-                            cond-active
-                            lanes)))])]
-                [(Err message) (return (Err message))])
-              (Ok
-                (Expr
-                  (lower-state-finish-block
-                    (lower-state-emit s (Jump header-label))
-                    exit-label)
-                  Unit
-                  (Unit)))))])]))
+                  (lower-state-emit s (Jump header-label))
+                  exit-label)
+                Unit
+                (Unit))))])]))
 
 (define (lower-avx512-masked-if
   [ctx : tc_core.TcContext]
@@ -55233,66 +54709,58 @@
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
     [lane : i64 0]
-    (begin
-      (match (lower-emit-lane-id s lanes (I64))
-        [(Expr next-state value _)
-          (begin
-            (set! s next-state)
-            (set! lane-id value))])
-      (match (lower-emit-splat s (I64 0) lanes (I64))
-        [(Expr next-state value _)
-          (begin
-            (set! s next-state)
-            (set! result value))])
-      (while (< lane lanes)
-        (let
-          [one-lane : ir.CompilerIrValue Unit]
-          [lane-value : ir.CompilerIrValue Unit]
-          [lane-remainder : ir.CompilerIrValue Unit]
-          (begin
-            (match (lower-emit-splat s (I64 lane) lanes (I64))
-              [(Expr lane-state lane-splat _)
-                (match (lower-emit-vector-compare
-                  lane-state
-                  (Eq)
-                  (lower-global-shared-view lane-id)
-                  lane-splat
-                  lanes
-                  (I64))
-                  [(Expr next-state value _)
-                    (begin
-                      (set! s next-state)
-                      (set! one-lane value))])])
-            (match (lower-emit-binop
-              s
-              (Add)
-              (Var index-var)
-              (I64 (+ index-offset lane))
+    (match (lower-emit-lane-id s lanes (I64))
+      [(Expr next-state value _)
+        (set! s next-state)
+        (set! lane-id value)])
+    (match (lower-emit-splat s (I64 0) lanes (I64))
+      [(Expr next-state value _)
+        (set! s next-state)
+        (set! result value)])
+    (while (< lane lanes)
+      (let
+        [one-lane : ir.CompilerIrValue Unit]
+        [lane-value : ir.CompilerIrValue Unit]
+        [lane-remainder : ir.CompilerIrValue Unit]
+        (match (lower-emit-splat s (I64 lane) lanes (I64))
+          [(Expr lane-state lane-splat _)
+            (match (lower-emit-vector-compare
+              lane-state
+              (Eq)
+              (lower-global-shared-view lane-id)
+              lane-splat
+              lanes
               (I64))
               [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-value value))])
-            (match (lower-emit-binop s (Mod) lane-value (I64 divisor) (I64))
+                (set! s next-state)
+                (set! one-lane value)])])
+        (match (lower-emit-binop
+          s
+          (Add)
+          (Var index-var)
+          (I64 (+ index-offset lane))
+          (I64))
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-value value)])
+        (match (lower-emit-binop s (Mod) lane-value (I64 divisor) (I64))
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-remainder value)])
+        (match (lower-emit-splat s lane-remainder lanes (I64))
+          [(Expr splat-state lane-vector _)
+            (match (lower-emit-select
+              splat-state
+              one-lane
+              lane-vector
+              (lower-global-shared-view result)
+              lanes
+              (I64))
               [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-remainder value))])
-            (match (lower-emit-splat s lane-remainder lanes (I64))
-              [(Expr splat-state lane-vector _)
-                (match (lower-emit-select
-                  splat-state
-                  one-lane
-                  lane-vector
-                  (lower-global-shared-view result)
-                  lanes
-                  (I64))
-                  [(Expr next-state value _)
-                    (begin
-                      (set! s next-state)
-                      (set! result value))])])
-            (set! lane (+ lane 1)))))
-      (Ok (Expr s result (I64))))))
+                (set! s next-state)
+                (set! result value)])])
+        (set! lane (+ lane 1))))
+    (Ok (Expr s result (I64)))))
 
 (define (lower-avx512-masked-vector-binop
   [ctx : tc_core.TcContext]
@@ -56166,106 +55634,96 @@
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
     [lane : i64 0]
-    (begin
-      (match (lower-emit-lane-id s lanes (lower-global-shared-view lane-ty))
-        [(Expr next-state value _)
-          (begin
-            (set! s next-state)
-            (set! lane-id value))])
-      (match (if (lower-type-bool? field-ty)
-        (lower-avx2-enum-zero-mask
+    (match (lower-emit-lane-id s lanes (lower-global-shared-view lane-ty))
+      [(Expr next-state value _)
+        (set! s next-state)
+        (set! lane-id value)])
+    (match (if (lower-type-bool? field-ty)
+      (lower-avx2-enum-zero-mask
+        s
+        (lower-global-shared-view lane-id)
+        lanes
+        (lower-global-shared-view lane-ty))
+      (lower-emit-splat
+        s
+        (lower-avx2-enum-zero-value (lower-global-shared-view field-ty))
+        lanes
+        (lower-global-shared-view field-ty)))
+      [(Expr next-state value _)
+        (set! s next-state)
+        (set! result value)])
+    (while (< lane lanes)
+      (let
+        [one-lane : ir.CompilerIrValue Unit]
+        [lane-active-mask : ir.CompilerIrValue Unit]
+        [lane-active : ir.CompilerIrValue Unit]
+        [loaded : ir.CompilerIrValue Unit]
+        (match (lower-avx2-enum-one-lane-mask
           s
           (lower-global-shared-view lane-id)
+          lane
           lanes
           (lower-global-shared-view lane-ty))
-        (lower-emit-splat
-          s
-          (lower-avx2-enum-zero-value (lower-global-shared-view field-ty))
-          lanes
-          (lower-global-shared-view field-ty)))
-        [(Expr next-state value _)
-          (begin
+          [(Expr next-state value _)
             (set! s next-state)
-            (set! result value))])
-      (while (< lane lanes)
-        (let
-          [one-lane : ir.CompilerIrValue Unit]
-          [lane-active-mask : ir.CompilerIrValue Unit]
-          [lane-active : ir.CompilerIrValue Unit]
-          [loaded : ir.CompilerIrValue Unit]
-          (begin
-            (match (lower-avx2-enum-one-lane-mask
-              s
-              (lower-global-shared-view lane-id)
-              lane
-              lanes
-              (lower-global-shared-view lane-ty))
-              [(Expr next-state value _)
-                (begin
+            (set! one-lane value)])
+        (match (lower-emit-mask-binop
+          s
+          (And)
+          (lower-global-shared-view active-mask)
+          (lower-global-shared-view one-lane)
+          lanes)
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-active-mask value)])
+        (match (lower-emit-mask-reduce s (Any) lane-active-mask lanes)
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-active value)])
+        (match (lower-avx2-enum-load-active-lane
+          s
+          (lower-global-shared-view base)
+          (+ field-offset (* lane stride))
+          lane-active
+          (lower-global-shared-view field-ty))
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! loaded value)])
+        (if (lower-type-bool? field-ty)
+          (match (lower-avx2-enum-scalar-bool-lane-mask
+            s
+            loaded
+            one-lane
+            lanes
+            (lower-global-shared-view lane-ty))
+            [(Expr lane-state lane-value _)
+              (match (lower-emit-mask-binop
+                lane-state
+                (Or)
+                (lower-global-shared-view result)
+                lane-value
+                lanes)
+                [(Expr next-state value _)
                   (set! s next-state)
-                  (set! one-lane value))])
-            (match (lower-emit-mask-binop
-              s
-              (And)
-              (lower-global-shared-view active-mask)
-              (lower-global-shared-view one-lane)
-              lanes)
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-active-mask value))])
-            (match (lower-emit-mask-reduce s (Any) lane-active-mask lanes)
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-active value))])
-            (match (lower-avx2-enum-load-active-lane
-              s
-              (lower-global-shared-view base)
-              (+ field-offset (* lane stride))
-              lane-active
-              (lower-global-shared-view field-ty))
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! loaded value))])
-            (if (lower-type-bool? field-ty)
-              (match (lower-avx2-enum-scalar-bool-lane-mask
-                s
-                loaded
+                  (set! result value)])])
+          (match (lower-emit-splat
+            s
+            loaded
+            lanes
+            (lower-global-shared-view field-ty))
+            [(Expr lane-state lane-value _)
+              (match (lower-emit-select
+                lane-state
                 one-lane
-                lanes
-                (lower-global-shared-view lane-ty))
-                [(Expr lane-state lane-value _)
-                  (match (lower-emit-mask-binop
-                    lane-state
-                    (Or)
-                    (lower-global-shared-view result)
-                    lane-value
-                    lanes)
-                    [(Expr next-state value _)
-                      (begin
-                        (set! s next-state)
-                        (set! result value))])])
-              (match (lower-emit-splat
-                s
-                loaded
+                lane-value
+                (lower-global-shared-view result)
                 lanes
                 (lower-global-shared-view field-ty))
-                [(Expr lane-state lane-value _)
-                  (match (lower-emit-select
-                    lane-state
-                    one-lane
-                    lane-value
-                    (lower-global-shared-view result)
-                    lanes
-                    (lower-global-shared-view field-ty))
-                    [(Expr next-state value _)
-                      (begin
-                        (set! s next-state)
-                        (set! result value))])]))
-            (set! lane (+ lane 1)))))
-      (Expr s result field-ty))))
+                [(Expr next-state value _)
+                  (set! s next-state)
+                  (set! result value)])]))
+        (set! lane (+ lane 1))))
+    (Expr s result field-ty)))
 
 (define (lower-avx2-enum-tag-arm-masks
   [state : LowerState]
@@ -56280,102 +55738,93 @@
     [s : LowerState state]
     [arm-mask : ir.CompilerIrValue Unit]
     [lane : i64 0]
-    (begin
-      (match (lower-avx2-enum-zero-mask
-        s
-        (lower-global-shared-view lane-id)
-        lanes
-        (lower-global-shared-view lane-ty))
-        [(Expr next-state value _)
-          (begin
+    (match (lower-avx2-enum-zero-mask
+      s
+      (lower-global-shared-view lane-id)
+      lanes
+      (lower-global-shared-view lane-ty))
+      [(Expr next-state value _)
+        (set! s next-state)
+        (set! arm-mask value)])
+    (while (< lane lanes)
+      (let
+        [one-lane : ir.CompilerIrValue Unit]
+        [lane-active-mask : ir.CompilerIrValue Unit]
+        [lane-active : ir.CompilerIrValue Unit]
+        [loaded-tag : ir.CompilerIrValue Unit]
+        [tag-eq : ir.CompilerIrValue Unit]
+        (match (lower-avx2-enum-one-lane-mask
+          s
+          (lower-global-shared-view lane-id)
+          lane
+          lanes
+          (lower-global-shared-view lane-ty))
+          [(Expr next-state value _)
             (set! s next-state)
-            (set! arm-mask value))])
-      (while (< lane lanes)
-        (let
-          [one-lane : ir.CompilerIrValue Unit]
-          [lane-active-mask : ir.CompilerIrValue Unit]
-          [lane-active : ir.CompilerIrValue Unit]
-          [loaded-tag : ir.CompilerIrValue Unit]
-          [tag-eq : ir.CompilerIrValue Unit]
-          (begin
-            (match (lower-avx2-enum-one-lane-mask
-              s
-              (lower-global-shared-view lane-id)
-              lane
-              lanes
-              (lower-global-shared-view lane-ty))
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! one-lane value))])
+            (set! one-lane value)])
+        (match (lower-emit-mask-binop
+          s
+          (And)
+          (lower-global-shared-view active-mask)
+          (lower-global-shared-view one-lane)
+          lanes)
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-active-mask value)])
+        (match (lower-emit-mask-reduce s (Any) lane-active-mask lanes)
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! lane-active value)])
+        (match (lower-avx2-enum-load-active-lane
+          s
+          (lower-global-shared-view base)
+          (* lane stride)
+          lane-active
+          (I64))
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! loaded-tag value)])
+        (match (lower-emit-binop s (Eq) loaded-tag (I64 tag) (I64))
+          [(Expr next-state value _)
+            (set! s next-state)
+            (set! tag-eq value)])
+        (match (lower-avx2-enum-scalar-bool-lane-mask
+          s
+          tag-eq
+          one-lane
+          lanes
+          (lower-global-shared-view lane-ty))
+          [(Expr lane-state lane-match _)
             (match (lower-emit-mask-binop
-              s
-              (And)
-              (lower-global-shared-view active-mask)
-              (lower-global-shared-view one-lane)
+              lane-state
+              (Or)
+              (lower-global-shared-view arm-mask)
+              lane-match
               lanes)
               [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-active-mask value))])
-            (match (lower-emit-mask-reduce s (Any) lane-active-mask lanes)
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! lane-active value))])
-            (match (lower-avx2-enum-load-active-lane
-              s
-              (lower-global-shared-view base)
-              (* lane stride)
-              lane-active
-              (I64))
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! loaded-tag value))])
-            (match (lower-emit-binop s (Eq) loaded-tag (I64 tag) (I64))
-              [(Expr next-state value _)
-                (begin
-                  (set! s next-state)
-                  (set! tag-eq value))])
-            (match (lower-avx2-enum-scalar-bool-lane-mask
-              s
-              tag-eq
-              one-lane
-              lanes
-              (lower-global-shared-view lane-ty))
-              [(Expr lane-state lane-match _)
-                (match (lower-emit-mask-binop
-                  lane-state
-                  (Or)
-                  (lower-global-shared-view arm-mask)
-                  lane-match
-                  lanes)
-                  [(Expr next-state value _)
-                    (begin
-                      (set! s next-state)
-                      (set! arm-mask value))])])
-            (set! lane (+ lane 1)))))
-      (match (lower-emit-mask-binop
-        s
-        (And)
-        (lower-global-shared-view active-mask)
-        arm-mask
-        lanes)
-        [(Expr active-arm-state active-arm-mask _)
-          (match (lower-emit-mask-not
-            active-arm-state
-            (lower-global-shared-view active-arm-mask)
-            lanes)
-            [(Expr not-state not-mask _)
-              (match (lower-emit-mask-binop
-                not-state
-                (And)
-                active-mask
-                not-mask
-                lanes)
-                [(Expr rest-state rest-mask _)
-                  (Ok (Masks rest-state active-arm-mask rest-mask))])])]))))
+                (set! s next-state)
+                (set! arm-mask value)])])
+        (set! lane (+ lane 1))))
+    (match (lower-emit-mask-binop
+      s
+      (And)
+      (lower-global-shared-view active-mask)
+      arm-mask
+      lanes)
+      [(Expr active-arm-state active-arm-mask _)
+        (match (lower-emit-mask-not
+          active-arm-state
+          (lower-global-shared-view active-arm-mask)
+          lanes)
+          [(Expr not-state not-mask _)
+            (match (lower-emit-mask-binop
+              not-state
+              (And)
+              active-mask
+              not-mask
+              lanes)
+              [(Expr rest-state rest-mask _)
+                (Ok (Masks rest-state active-arm-mask rest-mask))])])])))
 
 (define (lower-avx2-enum-final-arm-masks
   [state : LowerState]
@@ -56957,16 +56406,15 @@
                   not-mask
                   lanes)
                   [(Expr rest-mask-state rest-mask _)
-                    (begin
-                      (lower-masked-load-register-mask!
-                        rest-mask-state
-                        (Some (lower-global-shared-view active-mask))
-                        (lower-global-shared-view arm-mask))
-                      (lower-masked-load-register-mask!
-                        rest-mask-state
-                        (Some active-mask)
-                        (lower-global-shared-view rest-mask))
-                      (Ok (Masks rest-mask-state arm-mask rest-mask)))])])])])))
+                    (lower-masked-load-register-mask!
+                      rest-mask-state
+                      (Some (lower-global-shared-view active-mask))
+                      (lower-global-shared-view arm-mask))
+                    (lower-masked-load-register-mask!
+                      rest-mask-state
+                      (Some active-mask)
+                      (lower-global-shared-view rest-mask))
+                    (Ok (Masks rest-mask-state arm-mask rest-mask))])])])])))
 
 (define (lower-avx512-masked-match-select
   [ctx : tc_core.TcContext]
@@ -57447,34 +56895,33 @@
                 [(Ok lowered)
                   (match lowered
                     [(Expr arg-state arg-value _)
-                      (begin
-                        (ir.compiler-ir-spmd-call-arg-builder-push!
-                          builder
-                          (ir.CompilerIrSpmdCallArg.Arg
-                            (lower-spmd-ir-value-class
-                              (lower-global-shared-view resolved-ty)
-                              varying)
-                            arg-value
-                            resolved-ty))
-                        (match (lower-avx512-spmd-call-args-at
-                          ctx
-                          function-state
-                          arg-state
-                          env
-                          type-env
-                          lane-locals
-                          analysis-locals
-                          index
-                          index-var
-                          active-mask
-                          lanes
-                          params
-                          args
-                          (+ arg-index 1)
-                          builder)
-                          [(Ok rest-state rest-args rest-varying)
-                            (Ok rest-state rest-args (or varying rest-varying))]
-                          [(Err message) (Err message)]))])]
+                      (ir.compiler-ir-spmd-call-arg-builder-push!
+                        builder
+                        (ir.CompilerIrSpmdCallArg.Arg
+                          (lower-spmd-ir-value-class
+                            (lower-global-shared-view resolved-ty)
+                            varying)
+                          arg-value
+                          resolved-ty))
+                      (match (lower-avx512-spmd-call-args-at
+                        ctx
+                        function-state
+                        arg-state
+                        env
+                        type-env
+                        lane-locals
+                        analysis-locals
+                        index
+                        index-var
+                        active-mask
+                        lanes
+                        params
+                        args
+                        (+ arg-index 1)
+                        builder)
+                        [(Ok rest-state rest-args rest-varying)
+                          (Ok rest-state rest-args (or varying rest-varying))]
+                        [(Err message) (Err message)])])]
                 [(Err message) (Err message)])))])]))
 
 (define (lower-spmd-call-lane-locals
@@ -57512,13 +56959,12 @@
   [params : (& params ast.AstParamList)]
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
-    (begin
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param _ ty _)
-          (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
-      (lower-spmd-source-param-types-at params (+ index 1) out))))
+  (unless
+    (>= index (ast.ast-param-list-len params))
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(Param _ ty _)
+        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
+    (lower-spmd-source-param-types-at params (+ index 1) out)))
 
 (define (lower-spmd-source-signature
   [params : ast.AstParamList]
@@ -57526,9 +56972,8 @@
   (let
     [types : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (begin
-      (lower-spmd-source-param-types-at (& params) 0 (&mut types))
-      (tc_core.tc-type-render (ast.ast-ty-func types ret)))))
+    (lower-spmd-source-param-types-at (& params) 0 (&mut types))
+    (tc_core.tc-type-render (ast.ast-ty-func types ret))))
 
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
@@ -57542,11 +56987,10 @@
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (begin
-        (ast.ast-param-list-push
-          out
-          (ast.AstParam.Param cbi.compiler-builtin-id-fix-empty ty false))
-        (lower-imported-spmd-params-at ctx types (+ index 1) out)))))
+      (ast.ast-param-list-push
+        out
+        (ast.AstParam.Param cbi.compiler-builtin-id-fix-empty ty false))
+      (lower-imported-spmd-params-at ctx types (+ index 1) out))))
 
 (define (lower-imported-spmd-params
   [ctx : tc_core.TcContext]
@@ -57554,9 +56998,8 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-type-list-len (& types)))]
-    (begin
-      (lower-imported-spmd-params-at ctx (& types) 0 (&mut out))
-      out)))
+    (lower-imported-spmd-params-at ctx (& types) 0 (&mut out))
+    out))
 
 (define (lower-imported-spmd-call-arg-code [arg : ir.CompilerIrSpmdCallArg]) : String
   (match arg
@@ -58117,44 +57560,40 @@
   [lower-state : CompilerLowerState]
   [identity : i64]
   [identity-components : i64]) : i64
-  (begin
-    (compiler-lower-state-ensure-spmd-package! lower-state)
-    (let
-      [package : CompilerLowerSpmdPackageState
-        (compiler-lower-state-spmd-package lower-state)]
-      (match (lower_i64_i64_map.get (& package.identity-stable-hashes) identity)
-        [(LookupFound hash)
+  (compiler-lower-state-ensure-spmd-package! lower-state)
+  (let
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package lower-state)]
+    (match (lower_i64_i64_map.get (& package.identity-stable-hashes) identity)
+      [(LookupFound hash)
+        ;; Record the cached serialization lookup as a render-cache hit.
+        (lower-spmd-package-identity-render lower-state identity-components)
+        hash]
+      [(LookupMissing)
+        (let
+          [serialized : String
+            (lower-spmd-package-identity-render lower-state identity-components)]
+          [hash : i64 (stdlib.hash.string-key (& serialized))]
           (begin
-            ;; Record the cached serialization lookup as a render-cache hit.
-            (lower-spmd-package-identity-render lower-state identity-components)
-            hash)]
-        [(LookupMissing)
-          (let
-            [serialized : String
-              (lower-spmd-package-identity-render
+            (cfg
+              (any compile-profile test)
+              (compiler-lower-profile-add!
                 lower-state
-                identity-components)]
-            [hash : i64 (stdlib.hash.string-key (& serialized))]
-            (begin
-              (cfg
-                (any compile-profile test)
-                (compiler-lower-profile-add!
-                  lower-state
-                  compiler-lower-profile-spmd-stable-hash-computations-metric
-                  1)
-                unit)
-              (in-arena
-                (arena.Arena package.arena)
-                (lower_i64_i64_map.insert-ref!
-                  (&mut package.identity-stable-hashes)
-                  identity
-                  hash))
-              (compiler-lower-state-write!
-                lower-state
-                CompilerLowerSpmdPackageState
-                spmd-package-state
-                package)
-              hash))]))))
+                compiler-lower-profile-spmd-stable-hash-computations-metric
+                1)
+              unit)
+            (in-arena
+              (arena.Arena package.arena)
+              (lower_i64_i64_map.insert-ref!
+                (&mut package.identity-stable-hashes)
+                identity
+                hash))
+            (compiler-lower-state-write!
+              lower-state
+              CompilerLowerSpmdPackageState
+              spmd-package-state
+              package)
+            hash))])))
 
 (define (lower-spmd-package-structural-symbol
   [lower-state : CompilerLowerState]
@@ -58295,41 +57734,39 @@
   [symbol : i64]
   [registration-key : i64]
   [identity : i64]) : LowerSpmdPackageSymbolRegistration
-  (begin
-    (compiler-lower-state-ensure-spmd-package! lower-state)
-    (let
-      [package : CompilerLowerSpmdPackageState
-        (compiler-lower-state-spmd-package lower-state)]
-      (match (lower_i64_i64_map.get
-        (& package.symbol-identities)
-        registration-key)
-        [(LookupFound existing-identity)
-          (if (= existing-identity identity)
-            Existing
-            (begin
-              ;; A collision is a diagnostic boundary. Materialize the exact
-              ;; linker spelling only on this exceptional path.
-              (lower-materialize-generated-role-symbols! lower-state)
-              (Collision
-                (str_cat.str-cat
-                  "lower: :spmd-callable stable symbol collision for "
-                  (ci.intern-compat-state-str
-                    (compiler-lower-state-interns lower-state)
-                    symbol)))))]
-        [(LookupMissing)
-          (in-arena
-            (arena.Arena package.arena)
-            (begin
-              (lower_i64_i64_map.insert-ref!
-                (&mut package.symbol-identities)
-                registration-key
-                identity)
-              (compiler-lower-state-write!
-                lower-state
-                CompilerLowerSpmdPackageState
-                spmd-package-state
-                package)
-              New))]))))
+  (compiler-lower-state-ensure-spmd-package! lower-state)
+  (let
+    [package : CompilerLowerSpmdPackageState
+      (compiler-lower-state-spmd-package lower-state)]
+    (match (lower_i64_i64_map.get
+      (& package.symbol-identities)
+      registration-key)
+      [(LookupFound existing-identity)
+        (if (= existing-identity identity)
+          Existing
+          (begin
+            ;; A collision is a diagnostic boundary. Materialize the exact
+            ;; linker spelling only on this exceptional path.
+            (lower-materialize-generated-role-symbols! lower-state)
+            (Collision
+              (str_cat.str-cat
+                "lower: :spmd-callable stable symbol collision for "
+                (ci.intern-compat-state-str
+                  (compiler-lower-state-interns lower-state)
+                  symbol)))))]
+      [(LookupMissing)
+        (in-arena
+          (arena.Arena package.arena)
+          (lower_i64_i64_map.insert-ref!
+            (&mut package.symbol-identities)
+            registration-key
+            identity)
+          (compiler-lower-state-write!
+            lower-state
+            CompilerLowerSpmdPackageState
+            spmd-package-state
+            package)
+          New)])))
 
 (define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
   (or (= lanes 8) (= lanes 16) (= lanes 32) (= lanes 64)))
@@ -58346,33 +57783,28 @@
       [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
         (__tl_make-array ir.CompilerIrSpmdCallArg count)]
       [cursor : i64 index]
-      (begin
-        (while (< cursor (ast.ast-param-list-len params))
-          (begin
-            (match (ast.ast-param-list-get
-              params
-              cursor
-              (ast.ast-param-fallback))
-              [(Param _ ty _)
-                (let
-                  [resolved : ast.AstType
-                    (tc_core.tc-type-without-regions
-                      (tc_core.tc-resolve-type ctx ty))]
-                  [class : ir.CompilerIrSpmdValueClass
-                    (match (ast.ast-spmd-param-class-list-get
-                      classes
-                      cursor
-                      Uniform)
-                      [(Uniform) Uniform]
-                      [(Varying)
-                        (if (lower-type-bool? resolved)
-                          Mask
-                          Varying)])]
-                  (set!
-                    (array-ref slots (- cursor index))
-                    (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))])
-            (set! cursor (+ cursor 1))))
-        (ir.CompilerIrSpmdCallArgSeq slots count)))))
+      (while (< cursor (ast.ast-param-list-len params))
+        (match (ast.ast-param-list-get params cursor (ast.ast-param-fallback))
+          [(Param _ ty _)
+            (let
+              [resolved : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type ctx ty))]
+              [class : ir.CompilerIrSpmdValueClass
+                (match (ast.ast-spmd-param-class-list-get
+                  classes
+                  cursor
+                  Uniform)
+                  [(Uniform) Uniform]
+                  [(Varying)
+                    (if (lower-type-bool? resolved)
+                      Mask
+                      Varying)])]
+              (set!
+                (array-ref slots (- cursor index))
+                (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))])
+        (set! cursor (+ cursor 1)))
+      (ir.CompilerIrSpmdCallArgSeq slots count))))
 
 (define (lower-spmd-package-index-name
   [ctx : tc_core.TcContext]
@@ -58639,17 +58071,16 @@
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (ast.ast-param-list-len (& params)))]
-    (begin
-      (lower-spmd-private-param-list-into!
-        lower-state
-        ctx
-        (& params)
-        args
-        mode
-        0
-        idx
-        (&mut builder))
-      (ir.compiler-ir-param-builder-to-seq builder))))
+    (lower-spmd-private-param-list-into!
+      lower-state
+      ctx
+      (& params)
+      args
+      mode
+      0
+      idx
+      (&mut builder))
+    (ir.compiler-ir-param-builder-to-seq builder)))
 
 (define (lower-spmd-private-param-list-into!
   [lower-state : CompilerLowerState]
@@ -58666,27 +58097,26 @@
       [(Param name ty _)
         (match (lower-spmd-call-arg-at args index)
           [(Arg class _ _)
-            (begin
-              (ir.compiler-ir-param-builder-push!
-                builder
-                (ir.CompilerIrParam.Param
-                  (lower-spmd-private-param-name lower-state name class mode)
-                  (let
-                    [ty-arg
-                      (tc_core.tc-type-without-regions
-                        (tc_core.tc-type-strip-invalidate
-                          (tc_core.tc-resolve-type ctx ty)))]
-                    (lower-one-word-register-storage-type ctx ty-arg))
-                  idx))
-              (lower-spmd-private-param-list-into!
-                lower-state
-                ctx
-                params
-                args
-                mode
-                (+ index 1)
-                (+ idx 1)
-                builder))])])))
+            (ir.compiler-ir-param-builder-push!
+              builder
+              (ir.CompilerIrParam.Param
+                (lower-spmd-private-param-name lower-state name class mode)
+                (let
+                  [ty-arg
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-type-strip-invalidate
+                        (tc_core.tc-resolve-type ctx ty)))]
+                  (lower-one-word-register-storage-type ctx ty-arg))
+                idx))
+            (lower-spmd-private-param-list-into!
+              lower-state
+              ctx
+              params
+              args
+              mode
+              (+ index 1)
+              (+ idx 1)
+              builder)])])))
 
 (define (lower-spmd-private-helper-name
   [names : LowerNameCache]
@@ -58780,39 +58210,37 @@
         [(Appended _) true]
         [_ false])]
     [ordinal : i64 0]
-    (begin
-      (while (< ordinal physical-params.len)
-        (begin
-          (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
-            [(Param _ ty _)
-              (ir.compiler-ir-spmd-private-param-seq-push!
-                (&mut params)
-                (ir.CompilerIrSpmdPrivateParam.Param
-                  ordinal
-                  (cond
-                    [(= ordinal 0) (ActiveMask)]
-                    [(and appended (= ordinal (- physical-params.len 1)))
-                      (IndexBase)]
-                    [else
-                      (match (lower-spmd-call-arg-at call-args (- ordinal 1))
-                        [(Arg class _ source-ty)
-                          (Source (- ordinal 1) class source-ty)])])
-                  ty))])
-          (set! ordinal (+ ordinal 1))))
-      (ir.CompilerIrSpmdPrivateAbi
-        (V1)
-        callee
-        backend
-        lanes
-        params
-        index
-        (if (tc_core.tc-type-eq (lower-global-shared-view ret-ty) (Unit))
-          (Unit)
-          (Value
-            (lower-spmd-ir-value-class
-              (lower-global-shared-view ret-ty)
-              result-varying)
-            ret-ty))))))
+    (while (< ordinal physical-params.len)
+      (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
+        [(Param _ ty _)
+          (ir.compiler-ir-spmd-private-param-seq-push!
+            (&mut params)
+            (ir.CompilerIrSpmdPrivateParam.Param
+              ordinal
+              (cond
+                [(= ordinal 0) (ActiveMask)]
+                [(and appended (= ordinal (- physical-params.len 1)))
+                  (IndexBase)]
+                [else
+                  (match (lower-spmd-call-arg-at call-args (- ordinal 1))
+                    [(Arg class _ source-ty)
+                      (Source (- ordinal 1) class source-ty)])])
+              ty))])
+      (set! ordinal (+ ordinal 1)))
+    (ir.CompilerIrSpmdPrivateAbi
+      (V1)
+      callee
+      backend
+      lanes
+      params
+      index
+      (if (tc_core.tc-type-eq (lower-global-shared-view ret-ty) (Unit))
+        (Unit)
+        (Value
+          (lower-spmd-ir-value-class
+            (lower-global-shared-view ret-ty)
+            result-varying)
+          ret-ty)))))
 
 ;; The ABI of the generated helper named `helper` among the functions its
 ;; lowering produced. The helper itself is pushed last, after any functions its
@@ -58823,16 +58251,15 @@
   (let
     [index : i64 (- functions.len 1)]
     [found : ir.CompilerIrFunctionAbi Ordinary]
-    (begin
-      (while (>= index 0)
-        (match (ir.compiler-ir-function-seq-ref functions index)
-          [(Function name _ _ _ _ function-abi)
-            (if (ir.compiler-ir-symbol-eq? name helper)
-              (begin
-                (set! found (clone function-abi))
-                (set! index -1))
-              (set! index (- index 1)))]))
-      found)))
+    (while (>= index 0)
+      (match (ir.compiler-ir-function-seq-ref functions index)
+        [(Function name _ _ _ _ function-abi)
+          (if (ir.compiler-ir-symbol-eq? name helper)
+            (begin
+              (set! found (clone function-abi))
+              (set! index -1))
+            (set! index (- index 1)))]))
+    found))
 
 (define (lower-spmd-private-param-list-append-index
   [params : ir.CompilerIrParamSeq]
@@ -59358,27 +58785,26 @@
         [(Ok lowered next-spans)
           (let
             [next-functions : ir.CompilerIrFunctionBuilder functions]
-            (begin
-              (ir.compiler-ir-function-builder-append-seq!
-                (&mut next-functions)
-                lowered)
-              (lower-spmd-package-specializations-from
-                ctx
-                top-env
-                type-cache
-                canonical-name
-                canonical-handle
-                params
-                ret
-                body
-                specializations
-                (+ index 1)
-                limit
-                backend
-                next-spans
-                names
-                mode
-                next-functions)))]))))
+            (ir.compiler-ir-function-builder-append-seq!
+              (&mut next-functions)
+              lowered)
+            (lower-spmd-package-specializations-from
+              ctx
+              top-env
+              type-cache
+              canonical-name
+              canonical-handle
+              params
+              ret
+              body
+              specializations
+              (+ index 1)
+              limit
+              backend
+              next-spans
+              names
+              mode
+              next-functions))]))))
 
 (define (lower-spmd-package-callable-functions
   [ctx : tc_core.TcContext]
@@ -60292,21 +59718,20 @@
               [(Err message)
                 (Err (box (lower-diagnostic-at-expr ctx expr message)))])])]
       [(While cond-box body-box)
-        (begin
-          (lower-masked-load-cache-invalidate! state)
-          (lower-masked-load-cache-invalidate-result
-            (lower-avx512-masked-while
-              ctx
-              state
-              env
-              type-env
-              lane-locals
-              index
-              index-var
-              active-mask
-              lanes
-              (lower-context-expr-get ctx cond-box)
-              (lower-context-expr-get ctx body-box))))]
+        (lower-masked-load-cache-invalidate! state)
+        (lower-masked-load-cache-invalidate-result
+          (lower-avx512-masked-while
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            (lower-context-expr-get ctx cond-box)
+            (lower-context-expr-get ctx body-box)))]
       [(Begin exprs)
         (lower-avx512-masked-begin
           ctx
@@ -60550,57 +59975,50 @@
         [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [mask : ir.CompilerIrValue Unit]
         [result-vec : ir.CompilerIrValue Unit]
-        (begin
-          (match (lower-emit-tail-mask
-            s
-            (Var index-var)
-            (lower-global-shared-view end-value)
-            lanes)
-            [(Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! mask value))])
-          (while (< store-index count)
-            (match (lower-vector-map-store-list-ref stores store-index)
-              [(LowerVectorMapStore _ value-plan)
-                (begin
-                  (match (lower-emit-vector-map-value-cached
-                    ctx
-                    s
-                    index-var
-                    lanes
-                    (lower-global-shared-view elem-ty)
-                    value-plan
-                    (Predicated
-                      (lower-global-shared-view end-value)
-                      (lower-global-shared-view mask))
-                    (lower-global-shared-view cache))
-                    [(Emit next-s value next-cache)
-                      (begin
-                        (set! s next-s)
-                        (set! result-vec value)
-                        (set! cache next-cache))])
-                  (set! (array-ref results store-index) result-vec)
-                  (set! store-index (+ store-index 1)))]))
-          (set! store-index 0)
-          (while (< store-index count)
-            (match (lower-vector-map-store-list-ref stores store-index)
-              [(LowerVectorMapStore dst-array _)
-                (begin
-                  (set!
-                    s
-                    (lower-emit-sequence-predicated-store
-                      s
-                      dst-array
-                      (Var index-var)
-                      (lower-global-array-element-shared-view
-                        results
-                        store-index)
-                      (lower-global-shared-view mask)
-                      lanes
-                      (lower-global-shared-view elem-ty)))
-                  (set! store-index (+ store-index 1)))]))
-          s))]
+        (match (lower-emit-tail-mask
+          s
+          (Var index-var)
+          (lower-global-shared-view end-value)
+          lanes)
+          [(Expr next-s value _)
+            (set! s next-s)
+            (set! mask value)])
+        (while (< store-index count)
+          (match (lower-vector-map-store-list-ref stores store-index)
+            [(LowerVectorMapStore _ value-plan)
+              (match (lower-emit-vector-map-value-cached
+                ctx
+                s
+                index-var
+                lanes
+                (lower-global-shared-view elem-ty)
+                value-plan
+                (Predicated
+                  (lower-global-shared-view end-value)
+                  (lower-global-shared-view mask))
+                (lower-global-shared-view cache))
+                [(Emit next-s value next-cache)
+                  (set! s next-s)
+                  (set! result-vec value)
+                  (set! cache next-cache)])
+              (set! (array-ref results store-index) result-vec)
+              (set! store-index (+ store-index 1))]))
+        (set! store-index 0)
+        (while (< store-index count)
+          (match (lower-vector-map-store-list-ref stores store-index)
+            [(LowerVectorMapStore dst-array _)
+              (set!
+                s
+                (lower-emit-sequence-predicated-store
+                  s
+                  dst-array
+                  (Var index-var)
+                  (lower-global-array-element-shared-view results store-index)
+                  (lower-global-shared-view mask)
+                  lanes
+                  (lower-global-shared-view elem-ty)))
+              (set! store-index (+ store-index 1))]))
+        s)]
     [(No) state]))
 
 (define (lower-masked-preheader-cache-array-data
@@ -60609,18 +60027,15 @@
   (let
     [s : LowerState state]
     [array-index : i64 0]
-    (begin
-      (while (< array-index arrays.count)
-        (let
-          [array-var : i64 (array-ref arrays.vars array-index)]
-          (begin
-            (match (lower-sequence-data-pointer-value s array-var)
-              [(Expr next-state data-ptr _)
-                (begin
-                  (set! s next-state)
-                  (lower-masked-preheader-array-data-add! s array-var data-ptr))])
-            (set! array-index (+ array-index 1)))))
-      s)))
+    (while (< array-index arrays.count)
+      (let
+        [array-var : i64 (array-ref arrays.vars array-index)]
+        (match (lower-sequence-data-pointer-value s array-var)
+          [(Expr next-state data-ptr _)
+            (set! s next-state)
+            (lower-masked-preheader-array-data-add! s array-var data-ptr)])
+        (set! array-index (+ array-index 1))))
+    s))
 
 (define (lower-avx512-masked-map-body
   [ctx : tc_core.TcContext]
@@ -60634,23 +60049,22 @@
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (begin
-    (lower-masked-load-cache-enable! state)
-    (let
-      [env-arg (sym_i64_env.sym-i64-bind-id env index-id index-var)]
-      [type-env-arg (tc_core.tc-bind-id type-env index-id index-ty)]
-      [lane-locals (lower-id-set-empty)]
-      (lower-avx512-masked-expr
-        ctx
-        state
-        env-arg
-        type-env-arg
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        body))))
+  (lower-masked-load-cache-enable! state)
+  (let
+    [env-arg (sym_i64_env.sym-i64-bind-id env index-id index-var)]
+    [type-env-arg (tc_core.tc-bind-id type-env index-id index-ty)]
+    [lane-locals (lower-id-set-empty)]
+    (lower-avx512-masked-expr
+      ctx
+      state
+      env-arg
+      type-env-arg
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      body)))
 
 (define (lower-avx512-masked-foreach-lowered
   [ctx : tc_core.TcContext]
@@ -60705,244 +60119,225 @@
             [tail-cond : ir.CompilerIrValue Unit]
             [tail-safe : ir.CompilerIrValue Unit]
             [active-mask : ir.CompilerIrValue Unit]
-            (begin
-              (match (lower-state-fresh-label s "foreach_avx512_mask_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! header-label label))])
-              (match (lower-state-fresh-label s "foreach_avx512_mask_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! body-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-header-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_check")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-check-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_mask")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-mask-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-body-label label))])
-              (match (lower-state-fresh-label s "foreach_exit")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! exit-label label))])
-              (match (lower-state-fresh-label s "foreach_mask_preheader")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! preheader-label label))])
-              (match (lower-vector-loop-limit
-                s
-                (lower-global-shared-view end-value)
-                arrays
-                lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok s index-var lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-start-ok value))])
-              (lower-masked-preheader-cache-set! s preheader-cache)
-              (set! s (lower-masked-preheader-cache-array-data s arrays))
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit s (Jump preheader-label))
-                  preheader-label))
-              (let
-                [data : (Box LowerStateData) (lower-state-box s)]
-                [blocks : ir.CompilerIrBlockBuilder
-                  (lower-box-field-shared-view data blocks)]
-                (set! preheader-block-index blocks.len))
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch
-                      (lower-global-shared-view vector-start-ok)
-                      header-label
-                      tail-header-label))
-                  header-label))
-              (match (lower-emit-binop
-                s
-                (Add)
-                (Var index-var)
-                (I64 lanes)
-                (lower-global-shared-view index-ty))
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! next-index value))])
-              (match (lower-vector-loop-next-ok
-                s
-                (lower-global-shared-view next-index)
-                vector-limit)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-ok value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-ok body-label tail-header-label))
-                  body-label))
-              (match (lower-avx512-masked-map-body
-                ctx
-                s
-                env
-                type-env
-                index-id
-                (lower-global-shared-view index)
-                (lower-global-shared-view index-ty)
-                index-var
-                (No)
-                lanes
-                (lower-global-shared-view body))
-                [(Ok lowered-body)
-                  (match lowered-body
-                    [(Expr body-state _ _)
-                      (set!
-                        s
-                        (lower-state-emit
-                          body-state
-                          (Mov
-                            index-var
-                            next-index
-                            (lower-global-shared-view index-ty))))])]
-                [(Err message) (return (Err message))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit s (Jump header-label))
-                  tail-header-label))
-              (match (lower-vector-loop-i64-compare
-                s
-                (Lt)
-                (Var index-var)
-                (lower-global-shared-view end-value))
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-cond value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch tail-cond tail-check-label exit-label))
-                  tail-check-label))
-              (match (lower-predicated-tail-ok
-                s
-                index-var
-                (lower-global-shared-view end-value)
-                arrays)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-safe value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch tail-safe tail-mask-label tail-body-label))
-                  tail-mask-label))
-              (match (lower-emit-tail-mask s (Var index-var) end-value lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! active-mask value))])
-              (match (lower-avx512-masked-map-body
-                ctx
-                s
-                env
-                type-env
-                index-id
-                index
-                (lower-global-shared-view index-ty)
-                index-var
-                (Some active-mask)
-                lanes
-                (lower-global-shared-view body))
-                [(Ok lowered-tail)
-                  (match lowered-tail
-                    [(Expr tail-state _ _)
-                      (set!
-                        s
-                        (lower-state-finish-block
-                          (lower-state-emit tail-state (Jump exit-label))
-                          tail-body-label))])]
-                [(Err message) (return (Err message))])
-              (match (lower-state-masked-preheader-cache s)
-                [(Some cache)
-                  (begin
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut
-                        (__tl-project-field
-                          (__tl-box-place cache)
-                          uniform-instrs))
-                      (ir.CompilerIrInstr.Branch
-                        vector-start-ok
-                        header-label
-                        tail-header-label))
-                    (let
-                      [data : (Box LowerStateData) (lower-state-box s)]
-                      [blocks : ir.CompilerIrBlockBuilder
-                        (lower-box-field-shared-view data blocks)]
-                      (set!
-                        (array-ref blocks.slots preheader-block-index)
-                        (ir.CompilerIrBlock.Block
-                          preheader-label
-                          (ir.compiler-ir-instr-builder-to-seq
-                            (lower-box-field-shared-view cache uniform-instrs))))))]
-                [(No) unit])
-              (lower-masked-preheader-cache-disable! s)
-              (let
-                [scalar-tail-lowered : LowerExpr
-                  (try (lower-expr ctx s body-env body-type-env body))]
-                (match scalar-tail-lowered
-                  [(Expr post-body-state _ _)
-                    (match (lower-state-alloc-var post-body-state)
-                      [(Alloc inc-alloc inc-var)
-                        (Ok
-                          (Expr
-                            (lower-state-finish-block
+            (match (lower-state-fresh-label s "foreach_avx512_mask_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! header-label label)])
+            (match (lower-state-fresh-label s "foreach_avx512_mask_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! body-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-header-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_check")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-check-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_mask")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-mask-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-body-label label)])
+            (match (lower-state-fresh-label s "foreach_exit")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! exit-label label)])
+            (match (lower-state-fresh-label s "foreach_mask_preheader")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! preheader-label label)])
+            (match (lower-vector-loop-limit
+              s
+              (lower-global-shared-view end-value)
+              arrays
+              lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-limit value)])
+            (match (lower-vector-loop-start-ok s index-var lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-start-ok value)])
+            (lower-masked-preheader-cache-set! s preheader-cache)
+            (set! s (lower-masked-preheader-cache-array-data s arrays))
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit s (Jump preheader-label))
+                preheader-label))
+            (let
+              [data : (Box LowerStateData) (lower-state-box s)]
+              [blocks : ir.CompilerIrBlockBuilder
+                (lower-box-field-shared-view data blocks)]
+              (set! preheader-block-index blocks.len))
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch
+                    (lower-global-shared-view vector-start-ok)
+                    header-label
+                    tail-header-label))
+                header-label))
+            (match (lower-emit-binop
+              s
+              (Add)
+              (Var index-var)
+              (I64 lanes)
+              (lower-global-shared-view index-ty))
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! next-index value)])
+            (match (lower-vector-loop-next-ok
+              s
+              (lower-global-shared-view next-index)
+              vector-limit)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-ok value)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch vector-ok body-label tail-header-label))
+                body-label))
+            (match (lower-avx512-masked-map-body
+              ctx
+              s
+              env
+              type-env
+              index-id
+              (lower-global-shared-view index)
+              (lower-global-shared-view index-ty)
+              index-var
+              (No)
+              lanes
+              (lower-global-shared-view body))
+              [(Ok lowered-body)
+                (match lowered-body
+                  [(Expr body-state _ _)
+                    (set!
+                      s
+                      (lower-state-emit
+                        body-state
+                        (Mov
+                          index-var
+                          next-index
+                          (lower-global-shared-view index-ty))))])]
+              [(Err message) (return (Err message))])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit s (Jump header-label))
+                tail-header-label))
+            (match (lower-vector-loop-i64-compare
+              s
+              (Lt)
+              (Var index-var)
+              (lower-global-shared-view end-value))
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! tail-cond value)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch tail-cond tail-check-label exit-label))
+                tail-check-label))
+            (match (lower-predicated-tail-ok
+              s
+              index-var
+              (lower-global-shared-view end-value)
+              arrays)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! tail-safe value)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch tail-safe tail-mask-label tail-body-label))
+                tail-mask-label))
+            (match (lower-emit-tail-mask s (Var index-var) end-value lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! active-mask value)])
+            (match (lower-avx512-masked-map-body
+              ctx
+              s
+              env
+              type-env
+              index-id
+              index
+              (lower-global-shared-view index-ty)
+              index-var
+              (Some active-mask)
+              lanes
+              (lower-global-shared-view body))
+              [(Ok lowered-tail)
+                (match lowered-tail
+                  [(Expr tail-state _ _)
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit tail-state (Jump exit-label))
+                        tail-body-label))])]
+              [(Err message) (return (Err message))])
+            (match (lower-state-masked-preheader-cache s)
+              [(Some cache)
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut
+                    (__tl-project-field (__tl-box-place cache) uniform-instrs))
+                  (ir.CompilerIrInstr.Branch
+                    vector-start-ok
+                    header-label
+                    tail-header-label))
+                (let
+                  [data : (Box LowerStateData) (lower-state-box s)]
+                  [blocks : ir.CompilerIrBlockBuilder
+                    (lower-box-field-shared-view data blocks)]
+                  (set!
+                    (array-ref blocks.slots preheader-block-index)
+                    (ir.CompilerIrBlock.Block
+                      preheader-label
+                      (ir.compiler-ir-instr-builder-to-seq
+                        (lower-box-field-shared-view cache uniform-instrs)))))]
+              [(No) unit])
+            (lower-masked-preheader-cache-disable! s)
+            (let
+              [scalar-tail-lowered : LowerExpr
+                (try (lower-expr ctx s body-env body-type-env body))]
+              (match scalar-tail-lowered
+                [(Expr post-body-state _ _)
+                  (match (lower-state-alloc-var post-body-state)
+                    [(Alloc inc-alloc inc-var)
+                      (Ok
+                        (Expr
+                          (lower-state-finish-block
+                            (lower-state-emit
                               (lower-state-emit
                                 (lower-state-emit
-                                  (lower-state-emit
-                                    inc-alloc
-                                    (BinOp
-                                      inc-var
-                                      Add
-                                      (Var index-var)
-                                      (I64 1)
-                                      (lower-global-shared-view index-ty)))
-                                  (Mov index-var (Var inc-var) index-ty))
-                                (Jump tail-header-label))
-                              exit-label)
-                            Unit
-                            (Unit)))])]))))])]
+                                  inc-alloc
+                                  (BinOp
+                                    inc-var
+                                    Add
+                                    (Var index-var)
+                                    (I64 1)
+                                    (lower-global-shared-view index-ty)))
+                                (Mov index-var (Var inc-var) index-ty))
+                              (Jump tail-header-label))
+                            exit-label)
+                          Unit
+                          (Unit)))])])))])]
     [(No)
       (lower-scalar-foreach-lowered
         ctx
@@ -60975,15 +60370,14 @@
       (compiler-lower-function-state-scalar-call-context function-state)]
     [result : ResultLowerExpr
       (Err (box (lower-diagnostic "lower: SPMD scalar body lowering failed")))]
-    (begin
-      (compiler-lower-function-state-scalar-call-context-set!
-        function-state
-        (Some index))
-      (set! result (lower-expr ctx state env type-env body))
-      (compiler-lower-function-state-scalar-call-context-set!
-        function-state
-        previous)
-      result)))
+    (compiler-lower-function-state-scalar-call-context-set!
+      function-state
+      (Some index))
+    (set! result (lower-expr ctx state env type-env body))
+    (compiler-lower-function-state-scalar-call-context-set!
+      function-state
+      previous)
+    result))
 
 (define (lower-scalar-foreach-lowered
   [ctx : tc_core.TcContext]
@@ -61108,233 +60502,218 @@
                     (lower-global-shared-view plan))))]
             [preheader-cache : LowerVectorMapValueCache
               (lower-vector-map-value-cache-empty)]
-            (begin
-              (match (lower-state-fresh-label s "foreach_avx2_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! header-label label))])
-              (match (lower-state-fresh-label s "foreach_avx2_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! body-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_header")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-header-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_check")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-check-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_mask")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-mask-label label))])
-              (match (lower-state-fresh-label s "foreach_tail_body")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-body-label label))])
-              (match (lower-state-fresh-label s "foreach_exit")
-                [(Label next-s label)
-                  (begin
-                    (set! s next-s)
-                    (set! exit-label label))])
-              (match (lower-vector-loop-limit
-                s
-                (lower-global-shared-view end-value)
-                arrays
-                lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-limit value))])
-              (match (lower-vector-loop-start-ok s index-var lanes)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-start-ok value))])
-              (match (lower-vector-map-preheader-cache-stores
-                s
-                arrays
-                stores
-                lanes
-                elem-ty)
-                [(Emit next-s _ next-cache)
-                  (begin
-                    (set! s next-s)
-                    (set! preheader-cache next-cache))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-start-ok header-label tail-header-label))
-                  header-label))
-              (match (lower-emit-binop
-                s
-                (Add)
-                (Var index-var)
-                (I64 lanes)
-                (lower-global-shared-view index-ty))
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! next-index value))])
-              (match (lower-vector-loop-next-ok
-                s
-                (lower-global-shared-view next-index)
-                vector-limit)
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! vector-ok value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (Branch vector-ok body-label tail-header-label))
-                  body-label))
-              (set!
-                s
-                (lower-avx2-vector-map-body
-                  ctx
+            (match (lower-state-fresh-label s "foreach_avx2_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! header-label label)])
+            (match (lower-state-fresh-label s "foreach_avx2_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! body-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_header")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-header-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_check")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-check-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_mask")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-mask-label label)])
+            (match (lower-state-fresh-label s "foreach_tail_body")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-body-label label)])
+            (match (lower-state-fresh-label s "foreach_exit")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! exit-label label)])
+            (match (lower-vector-loop-limit
+              s
+              (lower-global-shared-view end-value)
+              arrays
+              lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-limit value)])
+            (match (lower-vector-loop-start-ok s index-var lanes)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-start-ok value)])
+            (match (lower-vector-map-preheader-cache-stores
+              s
+              arrays
+              stores
+              lanes
+              elem-ty)
+              [(Emit next-s _ next-cache)
+                (set! s next-s)
+                (set! preheader-cache next-cache)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
                   s
-                  index-var
-                  next-index
-                  (lower-global-shared-view plan)
-                  preheader-cache))
-              (set!
+                  (Branch vector-start-ok header-label tail-header-label))
+                header-label))
+            (match (lower-emit-binop
+              s
+              (Add)
+              (Var index-var)
+              (I64 lanes)
+              (lower-global-shared-view index-ty))
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! next-index value)])
+            (match (lower-vector-loop-next-ok
+              s
+              (lower-global-shared-view next-index)
+              vector-limit)
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! vector-ok value)])
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit
+                  s
+                  (Branch vector-ok body-label tail-header-label))
+                body-label))
+            (set!
+              s
+              (lower-avx2-vector-map-body
+                ctx
                 s
-                (lower-state-finish-block
-                  (lower-state-emit s (Jump header-label))
-                  tail-header-label))
-              (match (lower-vector-loop-i64-compare
-                s
-                (Lt)
-                (Var index-var)
-                (lower-global-shared-view end-value))
-                [(Expr next-s value _)
-                  (begin
-                    (set! s next-s)
-                    (set! tail-cond value))])
-              (set!
-                s
-                (if predicated-tail?
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch tail-cond tail-check-label exit-label))
-                    tail-check-label)
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      s
-                      (Branch tail-cond tail-body-label exit-label))
-                    tail-body-label)))
+                index-var
+                next-index
+                (lower-global-shared-view plan)
+                preheader-cache))
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit s (Jump header-label))
+                tail-header-label))
+            (match (lower-vector-loop-i64-compare
+              s
+              (Lt)
+              (Var index-var)
+              (lower-global-shared-view end-value))
+              [(Expr next-s value _)
+                (set! s next-s)
+                (set! tail-cond value)])
+            (set!
+              s
               (if predicated-tail?
-                (if (lower-maybe-vector-map-has-gather?
-                  (lower-global-shared-view plan))
-                  ;; Gather sources require per-lane scalar tail semantics.
-                  ;; Enter the ordinary one-iteration tail body directly
-                  ;; instead of materializing a predicated vector value that
-                  ;; cannot represent those source checks.
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch tail-cond tail-check-label exit-label))
+                  tail-check-label)
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (Branch tail-cond tail-body-label exit-label))
+                  tail-body-label)))
+            (if predicated-tail?
+              (if (lower-maybe-vector-map-has-gather?
+                (lower-global-shared-view plan))
+                ;; Gather sources require per-lane scalar tail semantics.
+                ;; Enter the ordinary one-iteration tail body directly
+                ;; instead of materializing a predicated vector value that
+                ;; cannot represent those source checks.
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit s (Jump tail-body-label))
+                    tail-body-label))
+                (begin
+                  (match (lower-predicated-tail-ok
+                    s
+                    index-var
+                    (lower-global-shared-view end-value)
+                    arrays)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! tail-safe value)])
                   (set!
                     s
                     (lower-state-finish-block
-                      (lower-state-emit s (Jump tail-body-label))
-                      tail-body-label))
-                  (begin
-                    (match (lower-predicated-tail-ok
-                      s
-                      index-var
-                      (lower-global-shared-view end-value)
-                      arrays)
-                      [(Expr next-s value _)
-                        (begin
-                          (set! s next-s)
-                          (set! tail-safe value))])
-                    (set!
-                      s
-                      (lower-state-finish-block
-                        (lower-state-emit
-                          s
-                          (Branch tail-safe tail-mask-label tail-body-label))
-                        tail-mask-label))
-                    (set!
-                      s
-                      (lower-predicated-tail-map-body
-                        ctx
+                      (lower-state-emit
                         s
-                        index-var
-                        (lower-global-shared-view end-value)
-                        (lower-global-shared-view plan)))
-                    (set!
-                      s
-                      (lower-state-finish-block
-                        (lower-state-emit s (Jump exit-label))
-                        tail-body-label))))
-                unit)
-              (if (and
-                (lower-maybe-vector-map-needs-scalar-tail?
-                  (lower-global-shared-view plan))
-                (or
-                  (not (lower-mode-avx512? (lower-state-mode s)))
-                  (lower-maybe-vector-map-has-gather?
-                    (lower-global-shared-view plan))
-                  (lower-maybe-vector-map-has-shuffle?
-                    (lower-global-shared-view plan))))
-                (match plan
-                  [(Some stores elem-ty store-lanes)
-                    (lower-avx2-broadcast-tail-map-body
+                        (Branch tail-safe tail-mask-label tail-body-label))
+                      tail-mask-label))
+                  (set!
+                    s
+                    (lower-predicated-tail-map-body
                       ctx
                       s
                       index-var
-                      end-value
-                      stores
-                      elem-ty
-                      store-lanes
-                      exit-label)]
-                  [(No)
-                    (Err
-                      (box (lower-diagnostic "lower: missing vector map plan")))])
-                (match (lower-expr
-                  ctx
-                  s
-                  (sym_i64_env.sym-i64-bind-id env index-id index-var)
-                  (tc_core.tc-bind-id
-                    type-env
-                    index-id
-                    (lower-global-shared-view index-ty))
-                  body)
-                  [(Ok body-lowered)
-                    (match body-lowered
-                      [(Expr post-body-state _ _)
-                        (match (lower-state-alloc-var post-body-state)
-                          [(Alloc inc-alloc inc-var)
-                            (Ok
-                              (Expr
-                                (lower-state-finish-block
+                      (lower-global-shared-view end-value)
+                      (lower-global-shared-view plan)))
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit s (Jump exit-label))
+                      tail-body-label))))
+              unit)
+            (if (and
+              (lower-maybe-vector-map-needs-scalar-tail?
+                (lower-global-shared-view plan))
+              (or
+                (not (lower-mode-avx512? (lower-state-mode s)))
+                (lower-maybe-vector-map-has-gather?
+                  (lower-global-shared-view plan))
+                (lower-maybe-vector-map-has-shuffle?
+                  (lower-global-shared-view plan))))
+              (match plan
+                [(Some stores elem-ty store-lanes)
+                  (lower-avx2-broadcast-tail-map-body
+                    ctx
+                    s
+                    index-var
+                    end-value
+                    stores
+                    elem-ty
+                    store-lanes
+                    exit-label)]
+                [(No)
+                  (Err
+                    (box (lower-diagnostic "lower: missing vector map plan")))])
+              (match (lower-expr
+                ctx
+                s
+                (sym_i64_env.sym-i64-bind-id env index-id index-var)
+                (tc_core.tc-bind-id
+                  type-env
+                  index-id
+                  (lower-global-shared-view index-ty))
+                body)
+                [(Ok body-lowered)
+                  (match body-lowered
+                    [(Expr post-body-state _ _)
+                      (match (lower-state-alloc-var post-body-state)
+                        [(Alloc inc-alloc inc-var)
+                          (Ok
+                            (Expr
+                              (lower-state-finish-block
+                                (lower-state-emit
                                   (lower-state-emit
                                     (lower-state-emit
-                                      (lower-state-emit
-                                        inc-alloc
-                                        (BinOp
-                                          inc-var
-                                          Add
-                                          (Var index-var)
-                                          (I64 1)
-                                          (lower-global-shared-view index-ty)))
-                                      (Mov index-var (Var inc-var) index-ty))
-                                    (Jump tail-header-label))
-                                  exit-label)
-                                Unit
-                                (Unit)))])])]
-                  [(Err message) (Err message)]))))])]
+                                      inc-alloc
+                                      (BinOp
+                                        inc-var
+                                        Add
+                                        (Var index-var)
+                                        (I64 1)
+                                        (lower-global-shared-view index-ty)))
+                                    (Mov index-var (Var inc-var) index-ty))
+                                  (Jump tail-header-label))
+                                exit-label)
+                              Unit
+                              (Unit)))])])]
+                [(Err message) (Err message)])))])]
     [(No)
       (lower-scalar-foreach-lowered
         ctx
@@ -61658,14 +61037,10 @@
   (let
     [index : i64 0]
     (while (< index patterns.len)
-      (begin
-        (lower-spmd-array-view-note-pattern!
-          flags
-          (ast.ast-pattern-list-get
-            (& patterns)
-            index
-            (ast.ast-pattern-fallback)))
-        (set! index (+ index 1))))))
+      (lower-spmd-array-view-note-pattern!
+        flags
+        (ast.ast-pattern-list-get (& patterns) index (ast.ast-pattern-fallback)))
+      (set! index (+ index 1)))))
 
 ;; Names a node carries as payload rather than as a `Var` child: binders and
 ;; the whole-variable `set!` target. Each counts as an "other" use.
@@ -61682,22 +61057,20 @@
             (let
               [index : i64 0]
               (while (< index bindings.len)
-                (begin
-                  (match (array-ref bindings.slots index)
-                    [(Binding name _ _)
-                      (lower-spmd-array-view-note! flags name other)])
-                  (set! index (+ index 1)))))])]
+                (match (array-ref bindings.slots index)
+                  [(Binding name _ _)
+                    (lower-spmd-array-view-note! flags name other)])
+                (set! index (+ index 1))))])]
       [(Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(Lambda params _ _)
             (let
               [index : i64 0]
               (while (< index params.len)
-                (begin
-                  (match (array-ref params.slots index)
-                    [(Param name _ _)
-                      (lower-spmd-array-view-note! flags name other)])
-                  (set! index (+ index 1)))))])]
+                (match (array-ref params.slots index)
+                  [(Param name _ _)
+                    (lower-spmd-array-view-note! flags name other)])
+                (set! index (+ index 1))))])]
       [(Foreach foreach-box)
         (match (__tl-box-place foreach-box)
           [(Foreach name _ _ _ _)
@@ -61709,26 +61082,23 @@
       [(SpmdScan scan-box)
         (match (__tl-box-place scan-box)
           [(Scan _ name _ _ _ result _ _ _ _)
-            (begin
-              (lower-spmd-array-view-note! flags name other)
-              (lower-spmd-array-view-note! flags result other))])]
+            (lower-spmd-array-view-note! flags name other)
+            (lower-spmd-array-view-note! flags result other)])]
       [(SpmdCompact compact-box)
         (match (__tl-box-place compact-box)
           [(Compact name _ _ _ result _ _ _ _)
-            (begin
-              (lower-spmd-array-view-note! flags name other)
-              (lower-spmd-array-view-note! flags result other))])]
+            (lower-spmd-array-view-note! flags name other)
+            (lower-spmd-array-view-note! flags result other)])]
       [(WithResource resource-box)
         (match (__tl-box-place resource-box)
           [(WithResource bindings _)
             (let
               [index : i64 0]
               (while (< index bindings.len)
-                (begin
-                  (match (array-ref bindings.slots index)
-                    [(Binding name _ _ _)
-                      (lower-spmd-array-view-note! flags name other)])
-                  (set! index (+ index 1)))))])]
+                (match (array-ref bindings.slots index)
+                  [(Binding name _ _ _)
+                    (lower-spmd-array-view-note! flags name other)])
+                (set! index (+ index 1))))])]
       [(ForeachActive lane _) (lower-spmd-array-view-note! flags lane other)]
       [_ unit])))
 
@@ -61740,55 +61110,51 @@
     [(Var name)
       (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
     [(ArrayRef array-box index-box)
-      (begin
-        (lower-spmd-array-view-note-base!
-          ctx
-          flags
-          array-box
-          lower-spmd-array-view-read)
-        (lower-spmd-array-view-scan!
-          ctx
-          flags
-          (lower-context-expr-get ctx index-box)))]
+      (lower-spmd-array-view-note-base!
+        ctx
+        flags
+        array-box
+        lower-spmd-array-view-read)
+      (lower-spmd-array-view-scan!
+        ctx
+        flags
+        (lower-context-expr-get ctx index-box))]
     [(ArraySet array-box index-box value-box)
-      (begin
-        (lower-spmd-array-view-note-base!
-          ctx
-          flags
-          array-box
-          lower-spmd-array-view-write)
-        (lower-spmd-array-view-scan!
-          ctx
-          flags
-          (lower-context-expr-get ctx index-box))
-        (lower-spmd-array-view-scan!
-          ctx
-          flags
-          (lower-context-expr-get ctx value-box)))]
+      (lower-spmd-array-view-note-base!
+        ctx
+        flags
+        array-box
+        lower-spmd-array-view-write)
+      (lower-spmd-array-view-scan!
+        ctx
+        flags
+        (lower-context-expr-get ctx index-box))
+      (lower-spmd-array-view-scan!
+        ctx
+        flags
+        (lower-context-expr-get ctx value-box))]
     [_
       (let
         [children : ast.AstExprChildList
           (ast.ast-expr-children (lower-global-shared-view expr))]
         [index : i64 0]
-        (begin
-          (lower-spmd-array-view-note-payload-names!
-            flags
-            (lower-global-shared-view expr))
-          (while (< index children.len)
-            (begin
-              (match (ast.ast-expr-child-list-get
-                (& children)
-                index
-                (ast.ast-expr-child-fallback))
-                [(Expr child-id)
-                  (lower-spmd-array-view-scan!
-                    ctx
-                    flags
-                    (lower-context-expr-get ctx child-id))]
-                [(Pattern pattern)
-                  (lower-spmd-array-view-note-pattern! flags pattern)]
-                [_ unit])
-              (set! index (+ index 1))))))]))
+        (lower-spmd-array-view-note-payload-names!
+          flags
+          (lower-global-shared-view expr))
+        (while (< index children.len)
+          (match (ast.ast-expr-child-list-get
+            (& children)
+            index
+            (ast.ast-expr-child-fallback))
+            [(Expr child-id)
+              (lower-spmd-array-view-scan!
+                ctx
+                flags
+                (lower-context-expr-get ctx child-id))]
+            [(Pattern pattern)
+              (lower-spmd-array-view-note-pattern! flags pattern)]
+            [_ unit])
+          (set! index (+ index 1))))]))
 
 (define (lower-spmd-array-view-elem? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
@@ -61914,30 +61280,27 @@
       [views : LowerSpmdArrayViews (Views state env type-env)]
       [failed : ResultLowerSpmdArrayViews (Ok (Views state env type-env))]
       [ok : bool true]
-      (begin
-        (while (and ok (< slot capacity))
-          (begin
-            (match (lower_i64_i64_map.entry-at (& flags) slot)
-              [(EntrySome name bits)
-                (if (and
-                  (= (bit-and bits lower-spmd-array-view-other) 0)
-                  (> bits 0))
-                  (match (lower-spmd-array-view-bind
-                    ctx
-                    views
-                    name
-                    (> (bit-and bits lower-spmd-array-view-write) 0))
-                    [(Ok next) (set! views next)]
-                    [(Err diag)
-                      (begin
-                        (set! failed (Err diag))
-                        (set! ok false))])
-                  unit)]
-              [(EntryNone) unit])
-            (set! slot (lower_i64_i64_map.next-occupied (& flags) (+ slot 1)))))
-        (if ok
-          (Ok views)
-          failed)))
+      (while (and ok (< slot capacity))
+        (match (lower_i64_i64_map.entry-at (& flags) slot)
+          [(EntrySome name bits)
+            (if (and
+              (= (bit-and bits lower-spmd-array-view-other) 0)
+              (> bits 0))
+              (match (lower-spmd-array-view-bind
+                ctx
+                views
+                name
+                (> (bit-and bits lower-spmd-array-view-write) 0))
+                [(Ok next) (set! views next)]
+                [(Err diag)
+                  (set! failed (Err diag))
+                  (set! ok false)])
+              unit)]
+          [(EntryNone) unit])
+        (set! slot (lower_i64_i64_map.next-occupied (& flags) (+ slot 1))))
+      (if ok
+        (Ok views)
+        failed))
     (Ok (Views state env type-env))))
 
 (define (lower-foreach-lowered-after-numeric-admission
@@ -65487,18 +64850,16 @@
             symbols
             (lower-global-shared-view scrut-ty)
             variant-name-id)]
-        (begin
-          (match (lower-global-shared-view result)
-            ;; Error results stay recomputed: diagnostics are cold paths and
-            ;; must not pin a stale message across scrutinee types.
-            [(FieldsErr _) unit]
-            [_
-              (begin
-                (set! (array-ref storage.variant-stamps slot) generation)
-                (set! (array-ref storage.variant-keys slot) variant-name-id)
-                (set! (array-ref storage.variant-scrutinee-types slot) scrut-ty)
-                (set! (array-ref storage.variant-outcomes slot) result))])
-          result)))))
+        (match (lower-global-shared-view result)
+          ;; Error results stay recomputed: diagnostics are cold paths and
+          ;; must not pin a stale message across scrutinee types.
+          [(FieldsErr _) unit]
+          [_
+            (set! (array-ref storage.variant-stamps slot) generation)
+            (set! (array-ref storage.variant-keys slot) variant-name-id)
+            (set! (array-ref storage.variant-scrutinee-types slot) scrut-ty)
+            (set! (array-ref storage.variant-outcomes slot) result)])
+        result))))
 
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : tc_core.TcContext]
@@ -65736,9 +65097,8 @@
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (ast.ast-param-list-len (& params)))]
-    (begin
-      (lower-param-list-into! ctx (& params) 0 idx (&mut builder))
-      (ir.compiler-ir-param-builder-to-seq builder))))
+    (lower-param-list-into! ctx (& params) 0 idx (&mut builder))
+    (ir.compiler-ir-param-builder-to-seq builder)))
 
 ;; Internal functions keep one physical IR argument per source parameter. A
 ;; structural sret pointer, when present, is the first physical argument; the
@@ -65756,15 +65116,14 @@
         [builder : ir.CompilerIrParamBuilder
           (ir.compiler-ir-param-builder-with-capacity
             (ast.ast-param-list-len (& params)))]
-        (begin
-          (lower-internal-param-list-into!
-            ctx
-            mode
-            (& params)
-            0
-            source-start
-            (&mut builder))
-          (ir.compiler-ir-param-builder-to-seq builder)))]
+        (lower-internal-param-list-into!
+          ctx
+          mode
+          (& params)
+          0
+          source-start
+          (&mut builder))
+        (ir.compiler-ir-param-builder-to-seq builder))]
     (if leading-sret?
       (ir.compiler-ir-param-seq-prepend
         (Param (ir.compiler-ir-hidden-sret-param-name) (U64) (- source-start 1))
@@ -65782,20 +65141,19 @@
     unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
-        (begin
-          (ir.compiler-ir-param-builder-push!
-            builder
-            (ir.CompilerIrParam.Param
-              (tc_core.tc-env-key-name-text name)
-              (lower-internal-param-physical-type ctx mode ty)
-              idx))
-          (lower-internal-param-list-into!
-            ctx
-            mode
-            params
-            (+ index 1)
-            (+ idx 1)
-            builder))])))
+        (ir.compiler-ir-param-builder-push!
+          builder
+          (ir.CompilerIrParam.Param
+            (tc_core.tc-env-key-name-text name)
+            (lower-internal-param-physical-type ctx mode ty)
+            idx))
+        (lower-internal-param-list-into!
+          ctx
+          mode
+          params
+          (+ index 1)
+          (+ idx 1)
+          builder)])))
 
 (define (lower-internal-param-storage-two
   [physical : ir.CompilerIrValue]
@@ -66145,146 +65503,140 @@
           (ir.compiler-ir-symbol-typed-id
             (lower-state-current-function-id state))]
         [path : String (lower-pointer-proof-source-path input state)]
-        (begin
-          (match operation
-            [(Unsupported)
+        (match operation
+          [(Unsupported)
+            (pointer_proof.pointer-proof-input-fail-at!
+              input
+              "pointer proof: unsupported semantic pointer operation"
+              (lower-global-shared-view path)
+              span)]
+          [(Assignment binding)
+            (when
+              (< binding 0)
               (pointer_proof.pointer-proof-input-fail-at!
                 input
-                "pointer proof: unsupported semantic pointer operation"
+                "pointer proof: assignment has no semantic binding"
                 (lower-global-shared-view path)
-                span)]
-            [(Assignment binding)
-              (when
-                (< binding 0)
-                (pointer_proof.pointer-proof-input-fail-at!
-                  input
-                  "pointer proof: assignment has no semantic binding"
-                  (lower-global-shared-view path)
-                  span))]
-            [_ unit])
-          (match (lower-global-shared-view expr)
-            [(Let payload)
-              (match (__tl-box-place payload)
-                [(Let lets body)
-                  (let
-                    [local-bindings : sym_i64_env.SymI64Env bindings]
-                    [local-types : tc_core.TcTypeEnv type-env]
-                    [index : i64 0]
-                    (begin
-                      (while (< index (ast.ast-let-binding-list-len (& lets)))
-                        (match (ast.ast-let-binding-list-get
-                          (& lets)
-                          index
-                          (ast.ast-let-binding-fallback))
-                          [(Binding name maybe-ty init)
-                            (let
-                              [value : pointer_proof.PointerProofRef
-                                (lower-pointer-proof-capture-id
-                                  input
-                                  ctx
-                                  state
-                                  local-bindings
-                                  local-types
-                                  init
-                                  span)]
-                              [edges : proof_refs.Vec
-                                (pointer_proof.pointer-proof-input-operands
-                                  input)]
-                              [binding-type : tc_core.ResultTcType
-                                (tc_core.tc-let-binding-plain-type
-                                  ctx
-                                  local-types
-                                  (tc_core.tc-let-binding-resolve-maybe-type
-                                    ctx
-                                    maybe-ty)
-                                  (lower-context-expr-get ctx init))]
-                              (begin
+                span))]
+          [_ unit])
+        (match (lower-global-shared-view expr)
+          [(Let payload)
+            (match (__tl-box-place payload)
+              [(Let lets body)
+                (let
+                  [local-bindings : sym_i64_env.SymI64Env bindings]
+                  [local-types : tc_core.TcTypeEnv type-env]
+                  [index : i64 0]
+                  (while (< index (ast.ast-let-binding-list-len (& lets)))
+                    (match (ast.ast-let-binding-list-get
+                      (& lets)
+                      index
+                      (ast.ast-let-binding-fallback))
+                      [(Binding name maybe-ty init)
+                        (let
+                          [value : pointer_proof.PointerProofRef
+                            (lower-pointer-proof-capture-id
+                              input
+                              ctx
+                              state
+                              local-bindings
+                              local-types
+                              init
+                              span)]
+                          [edges : proof_refs.Vec
+                            (pointer_proof.pointer-proof-input-operands input)]
+                          [binding-type : tc_core.ResultTcType
+                            (tc_core.tc-let-binding-plain-type
+                              ctx
+                              local-types
+                              (tc_core.tc-let-binding-resolve-maybe-type
+                                ctx
+                                maybe-ty)
+                              (lower-context-expr-get ctx init))]
+                          (pointer_proof.pointer-proof-input-push-operand!
+                            input
+                            (&mut edges)
+                            value)
+                          (match binding-type
+                            [(Ok source-ty)
+                              (let
+                                [binding : pointer_proof.PointerProofRef
+                                  (pointer_proof.pointer-proof-input-push!
+                                    input
+                                    function
+                                    Binding
+                                    (lower-pointer-proof-type
+                                      ctx
+                                      (lower-global-shared-view source-ty))
+                                    edges
+                                    (lower-global-shared-view path)
+                                    span)]
                                 (pointer_proof.pointer-proof-input-push-operand!
                                   input
-                                  (&mut edges)
-                                  value)
-                                (match binding-type
-                                  [(Ok source-ty)
-                                    (let
-                                      [binding : pointer_proof.PointerProofRef
-                                        (pointer_proof.pointer-proof-input-push!
-                                          input
-                                          function
-                                          Binding
-                                          (lower-pointer-proof-type
-                                            ctx
-                                            (lower-global-shared-view source-ty))
-                                          edges
-                                          (lower-global-shared-view path)
-                                          span)]
-                                      (begin
-                                        (pointer_proof.pointer-proof-input-push-operand!
-                                          input
-                                          (&mut operands)
-                                          binding)
-                                        (set!
-                                          local-bindings
-                                          (sym_i64_env.sym-i64-bind-id
-                                            local-bindings
-                                            name
-                                            binding.index))
-                                        (set!
-                                          local-types
-                                          (tc_core.tc-bind-id
-                                            local-types
-                                            name
-                                            source-ty))))]
-                                  [(Err _)
-                                    (pointer_proof.pointer-proof-input-fail!
-                                      input
-                                      "pointer proof: missing binding type")])
-                                (set! index (+ index 1))))]))
-                      (pointer_proof.pointer-proof-input-push-operand!
-                        input
-                        (&mut operands)
-                        (lower-pointer-proof-capture-id
-                          input
-                          ctx
-                          state
-                          local-bindings
-                          local-types
-                          body
-                          span))))])]
-            [_
-              (let
-                [children : ast.AstExprList
-                  (ast.ast-expr-child-ids (lower-global-shared-view expr))]
-                [child-env : tc_core.TcTypeEnv
-                  (match (lower-global-shared-view expr)
-                    [(Unsafe _) (tc_core.tc-enter-unsafe type-env)]
-                    [_ type-env])]
-                [start : i64
-                  (match (lower-global-shared-view expr)
-                    [(Call _ _) 1]
-                    [_ 0])]
-                [index : i64 start]
-                (while (< index children.len)
-                  (begin
-                    (pointer_proof.pointer-proof-input-push-operand!
+                                  (&mut operands)
+                                  binding)
+                                (set!
+                                  local-bindings
+                                  (sym_i64_env.sym-i64-bind-id
+                                    local-bindings
+                                    name
+                                    binding.index))
+                                (set!
+                                  local-types
+                                  (tc_core.tc-bind-id
+                                    local-types
+                                    name
+                                    source-ty)))]
+                            [(Err _)
+                              (pointer_proof.pointer-proof-input-fail!
+                                input
+                                "pointer proof: missing binding type")])
+                          (set! index (+ index 1)))]))
+                  (pointer_proof.pointer-proof-input-push-operand!
+                    input
+                    (&mut operands)
+                    (lower-pointer-proof-capture-id
                       input
-                      (&mut operands)
-                      (lower-pointer-proof-capture-id
-                        input
-                        ctx
-                        state
-                        bindings
-                        child-env
-                        (ast.ast-expr-list-get (& children) index -1)
-                        span))
-                    (set! index (+ index 1)))))])
-          (pointer_proof.pointer-proof-input-push!
-            input
-            function
-            operation
-            ty
-            operands
-            path
-            span)))]))
+                      ctx
+                      state
+                      local-bindings
+                      local-types
+                      body
+                      span)))])]
+          [_
+            (let
+              [children : ast.AstExprList
+                (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+              [child-env : tc_core.TcTypeEnv
+                (match (lower-global-shared-view expr)
+                  [(Unsafe _) (tc_core.tc-enter-unsafe type-env)]
+                  [_ type-env])]
+              [start : i64
+                (match (lower-global-shared-view expr)
+                  [(Call _ _) 1]
+                  [_ 0])]
+              [index : i64 start]
+              (while (< index children.len)
+                (pointer_proof.pointer-proof-input-push-operand!
+                  input
+                  (&mut operands)
+                  (lower-pointer-proof-capture-id
+                    input
+                    ctx
+                    state
+                    bindings
+                    child-env
+                    (ast.ast-expr-list-get (& children) index -1)
+                    span))
+                (set! index (+ index 1))))])
+        (pointer_proof.pointer-proof-input-push!
+          input
+          function
+          operation
+          ty
+          operands
+          path
+          span))]))
 
 (define (lower-pointer-proof-capture-function!
   [ctx : tc_core.TcContext]
@@ -66310,49 +65662,44 @@
         [span : ir.CompilerMaybeSourceSpan
           (lower-ast-expr-span (& pools) (lower-global-shared-view body))]
         [index : i64 0]
-        (begin
-          (while (< index (ast.ast-param-list-len (& params)))
-            (match (ast.ast-param-list-get
-              (& params)
-              index
-              (ast.ast-param-fallback))
-              [(Param name source-ty _)
-                (let
-                  [reference : pointer_proof.PointerProofRef
-                    (pointer_proof.pointer-proof-input-push!
-                      input
-                      symbol
-                      (Parameter index)
-                      (lower-pointer-proof-type ctx source-ty)
-                      (pointer_proof.pointer-proof-input-operands input)
-                      (lower-pointer-proof-source-path input state)
-                      span)]
-                  (begin
-                    (set!
-                      bindings
-                      (sym_i64_env.sym-i64-bind-id
-                        bindings
-                        name
-                        reference.index))
-                    (pointer_proof.pointer-proof-input-push-operand!
-                      input
-                      (&mut references)
-                      reference)
-                    (set! index (+ index 1))))]))
-          (pointer_proof.pointer-proof-input-add-function!
-            input
-            (pointer_proof.PointerProofFunction
-              symbol
-              references
-              (lower-pointer-proof-capture-expr
-                input
-                ctx
-                state
-                bindings
-                type-env
-                body
-                span)
-              (lower-pointer-proof-type ctx ret)))))]))
+        (while (< index (ast.ast-param-list-len (& params)))
+          (match (ast.ast-param-list-get
+            (& params)
+            index
+            (ast.ast-param-fallback))
+            [(Param name source-ty _)
+              (let
+                [reference : pointer_proof.PointerProofRef
+                  (pointer_proof.pointer-proof-input-push!
+                    input
+                    symbol
+                    (Parameter index)
+                    (lower-pointer-proof-type ctx source-ty)
+                    (pointer_proof.pointer-proof-input-operands input)
+                    (lower-pointer-proof-source-path input state)
+                    span)]
+                (set!
+                  bindings
+                  (sym_i64_env.sym-i64-bind-id bindings name reference.index))
+                (pointer_proof.pointer-proof-input-push-operand!
+                  input
+                  (&mut references)
+                  reference)
+                (set! index (+ index 1)))]))
+        (pointer_proof.pointer-proof-input-add-function!
+          input
+          (pointer_proof.PointerProofFunction
+            symbol
+            references
+            (lower-pointer-proof-capture-expr
+              input
+              ctx
+              state
+              bindings
+              type-env
+              body
+              span)
+            (lower-pointer-proof-type ctx ret))))]))
 
 (define (lower-param-list-into!
   [ctx : tc_core.TcContext]
@@ -66364,19 +65711,18 @@
     unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
-        (begin
-          (ir.compiler-ir-param-builder-push!
-            builder
-            (ir.CompilerIrParam.Param
-              (tc_core.tc-env-key-name-text name)
-              (let
-                [ty-arg
-                  (tc_core.tc-type-without-regions
-                    (tc_core.tc-type-strip-invalidate
-                      (tc_core.tc-resolve-type ctx ty)))]
-                (lower-one-word-register-storage-type ctx ty-arg))
-              idx))
-          (lower-param-list-into! ctx params (+ index 1) (+ idx 1) builder))])))
+        (ir.compiler-ir-param-builder-push!
+          builder
+          (ir.CompilerIrParam.Param
+            (tc_core.tc-env-key-name-text name)
+            (let
+              [ty-arg
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-type-strip-invalidate
+                    (tc_core.tc-resolve-type ctx ty)))]
+              (lower-one-word-register-storage-type ctx ty-arg))
+            idx))
+        (lower-param-list-into! ctx params (+ index 1) (+ idx 1) builder)])))
 
 ;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
@@ -66780,33 +66126,28 @@
         [elem-size : i64 (lower-type-size ctx (& elem-ty))]
         [index : i64 0]
         [ok : bool (= values.len count)]
-        (begin
-          (while (and ok (< index values.len))
-            (begin
-              (match (lower-global-value
-                ctx
-                (lower-global-shared-view names)
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-list-get values index 0))
+        (while (and ok (< index values.len))
+          (match (lower-global-value
+            ctx
+            (lower-global-shared-view names)
+            (lower-context-expr-get ctx (ast.ast-expr-list-get values index 0))
+            (lower-global-shared-view elem-ty))
+            [(Ok value)
+              (if (lower-static-array-element-kind?
+                (lower-global-shared-view value)
                 (lower-global-shared-view elem-ty))
-                [(Ok value)
-                  (if (lower-static-array-element-kind?
-                    (lower-global-shared-view value)
-                    (lower-global-shared-view elem-ty))
-                    (let
-                      [bits : i64 (lower-static-array-element-bits value)]
-                      [byte : i64 0]
-                      (while (< byte elem-size)
-                        (begin
-                          (byte_buf_core.byte-buf-builder-push
-                            bytes
-                            (cast (bit-and (shr bits (* 8 byte)) 255) : u8))
-                          (set! byte (+ byte 1)))))
-                    (set! ok false))]
-                [(Err _) (set! ok false)])
-              (set! index (+ index 1))))
-          ok))]
+                (let
+                  [bits : i64 (lower-static-array-element-bits value)]
+                  [byte : i64 0]
+                  (while (< byte elem-size)
+                    (byte_buf_core.byte-buf-builder-push
+                      bytes
+                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))
+                    (set! byte (+ byte 1))))
+                (set! ok false))]
+            [(Err _) (set! ok false)])
+          (set! index (+ index 1)))
+        ok)]
     [_ false]))
 
 ;; Whether constant `value` is data of scalar type `ty`: integer literals only
@@ -66917,18 +66258,16 @@
   (if (= lower-scratch-arena 0)
     (let
       [scratch : i64 (arena.tl_arena_make)]
-      (begin
-        (set! lower-scratch-arena scratch)
-        scratch))
+      (set! lower-scratch-arena scratch)
+      scratch)
     lower-scratch-arena))
 
 (define (lower-scratch-arena-release!) : unit
-  (if (= lower-scratch-arena 0)
-    unit
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy lower-scratch-arena))
-      (set! lower-scratch-arena 0))))
+  (unless
+    (= lower-scratch-arena 0)
+    (unsafe
+      (arena.tl_arena_destroy lower-scratch-arena))
+    (set! lower-scratch-arena 0)))
 
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
@@ -66948,32 +66287,28 @@
   (if (= lower-ir-arena 0)
     (let
       [arena : i64 (arena.tl_arena_make)]
-      (begin
-        (set! lower-ir-arena arena)
-        arena))
+      (set! lower-ir-arena arena)
+      arena)
     lower-ir-arena))
 
 (define (lower-ir-arena-release!) : unit
-  (if (= lower-ir-arena 0)
-    unit
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy lower-ir-arena))
-      (set! lower-ir-arena 0))))
+  (unless
+    (= lower-ir-arena 0)
+    (unsafe
+      (arena.tl_arena_destroy lower-ir-arena))
+    (set! lower-ir-arena 0)))
 
 (define (lower-arenas-release!) : unit
-  (begin
-    (lower-scratch-arena-release!)
-    (lower-ir-arena-release!)))
+  (lower-scratch-arena-release!)
+  (lower-ir-arena-release!))
 
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [ir : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref scratch 0) 0)
-      (set! (array-ref ir 0) 0)
-      (CompilerLowerArenaState scratch ir))))
+    (set! (array-ref scratch 0) 0)
+    (set! (array-ref ir 0) 0)
+    (CompilerLowerArenaState scratch ir)))
 
 (define (compiler-lower-arena-state-scratch-arena
   [state : (& state CompilerLowerArenaState)]) : i64
@@ -66987,18 +66322,16 @@
   [state : (& state CompilerLowerArenaState)]
   [scratch : i64]
   [ir : i64]) : unit
-  (begin
-    (set! (array-ref state.scratch-arena 0) scratch)
-    (set! (array-ref state.ir-arena 0) ir)))
+  (set! (array-ref state.scratch-arena 0) scratch)
+  (set! (array-ref state.ir-arena 0) ir))
 
 (define (compiler-lower-arena-state-capture-from-globals!
   [state : CompilerLowerArenaState]) : unit
   (compiler-lower-arena-state-set! state lower-scratch-arena lower-ir-arena))
 
 (define (compiler-lower-arena-state-install! [state : CompilerLowerArenaState]) : unit
-  (begin
-    (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
-    (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state))))
+  (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
+  (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state)))
 
 ;; State-owned release: destroy the arenas named by the state's own cells and
 ;; zero them. The compatibility-global selectors are zeroed only when they
@@ -67013,34 +66346,31 @@
   [state : (& state CompilerLowerArenaState)]) : unit
   (let
     [scratch : i64 (compiler-lower-arena-state-scratch-arena state)]
-    (if (= scratch 0)
-      unit
-      (begin
-        (set! (array-ref state.scratch-arena 0) 0)
-        (if (= lower-scratch-arena scratch)
-          (set! lower-scratch-arena 0)
-          unit)
-        (unsafe
-          (arena.tl_arena_destroy scratch))))))
+    (unless
+      (= scratch 0)
+      (set! (array-ref state.scratch-arena 0) 0)
+      (if (= lower-scratch-arena scratch)
+        (set! lower-scratch-arena 0)
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy scratch)))))
 
 (define (compiler-lower-arena-state-release-ir!
   [state : (& state CompilerLowerArenaState)]) : unit
   (let
     [ir : i64 (compiler-lower-arena-state-ir-arena state)]
-    (if (= ir 0)
-      unit
-      (begin
-        (set! (array-ref state.ir-arena 0) 0)
-        (if (= lower-ir-arena ir)
-          (set! lower-ir-arena 0)
-          unit)
-        (unsafe
-          (arena.tl_arena_destroy ir))))))
+    (unless
+      (= ir 0)
+      (set! (array-ref state.ir-arena 0) 0)
+      (if (= lower-ir-arena ir)
+        (set! lower-ir-arena 0)
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy ir)))))
 
 (define (compiler-lower-arena-state-release! [state : CompilerLowerArenaState]) : unit
-  (begin
-    (compiler-lower-arena-state-release-scratch! state)
-    (compiler-lower-arena-state-release-ir! state)))
+  (compiler-lower-arena-state-release-scratch! state)
+  (compiler-lower-arena-state-release-ir! state))
 
 (define (lower-function-seq-escape-to-ir-arena
   [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
@@ -67065,66 +66395,60 @@
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (lower-scratch-arena-get)]
     [job-state : tc_core.TcJobState (tc_core.tc-context-job-state ctx)]
-    (begin
-      ;; Type-name/owner caches may contain keys allocated by earlier
-      ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
-      ;; pass and invalidate them before rewinding this function's scratch arena.
-      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [mark : i64 (arena.tl_region_mark)]
-        [function-state : CompilerLowerFunctionState
-          (compiler-lower-function-state-new
-            (compiler-lower-state-from-name-cache names))]
-        (match (lower-function
-          ctx
-          top-env
-          type-cache
-          function-state
-          logical-name
-          params
-          ret
-          body
-          (lower-global-shared-view spans)
-          names
-          mode)
-          [(Ok fns function-spans)
+    ;; Type-name/owner caches may contain keys allocated by earlier
+    ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
+    ;; pass and invalidate them before rewinding this function's scratch arena.
+    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+    (unsafe
+      (arena.tl_arena_set scratch))
+    (let
+      [mark : i64 (arena.tl_region_mark)]
+      [function-state : CompilerLowerFunctionState
+        (compiler-lower-function-state-new
+          (compiler-lower-state-from-name-cache names))]
+      (match (lower-function
+        ctx
+        top-env
+        type-cache
+        function-state
+        logical-name
+        params
+        ret
+        body
+        (lower-global-shared-view spans)
+        names
+        mode)
+        [(Ok fns function-spans)
+          (let
+            [escaped-fns : ir.CompilerIrFunctionSeq
+              (lower-function-seq-escape-to-ir-arena fns)]
+            ;; The IR function clones go to the dedicated lowered-IR
+            ;; arena (released by the driver after optimization); the
+            ;; spans side-table is rebuilt in the enclosing arena since
+            ;; it outlives the lowered IR. Stable-root arena handles preserve
+            ;; both owners across any segment growth during those clones.
+            (unsafe
+              (arena.tl_arena_set enclosing))
             (let
-              [escaped-fns : ir.CompilerIrFunctionSeq
-                (lower-function-seq-escape-to-ir-arena fns)]
-              ;; The IR function clones go to the dedicated lowered-IR
-              ;; arena (released by the driver after optimization); the
-              ;; spans side-table is rebuilt in the enclosing arena since
-              ;; it outlives the lowered IR. Stable-root arena handles preserve
-              ;; both owners across any segment growth during those clones.
-              (begin
-                (unsafe
-                  (arena.tl_arena_set enclosing))
-                (let
-                  [escaped-spans : ir.CompilerSourceSpans
-                    (ir.compiler-source-spans-append-new spans function-spans)]
-                  (begin
-                    (unsafe
-                      (arena.tl_arena_set scratch)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set enclosing))
-                    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
-                    (Ok escaped-fns escaped-spans)))))]
-          [(Err message)
-            (begin
+              [escaped-spans : ir.CompilerSourceSpans
+                (ir.compiler-source-spans-append-new spans function-spans)]
               (unsafe
+                (arena.tl_arena_set scratch)
+                (arena.tl_region_reset mark)
                 (arena.tl_arena_set enclosing))
-              (let
-                [escaped-message : (Box cdiag.CompilerDiagnostic)
-                  (clone message)]
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set scratch)
-                    (arena.tl_region_reset mark)
-                    (arena.tl_arena_set enclosing))
-                  (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
-                  (Err escaped-message))))])))))
+              (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+              (Ok escaped-fns escaped-spans)))]
+        [(Err message)
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (let
+            [escaped-message : (Box cdiag.CompilerDiagnostic) (clone message)]
+            (unsafe
+              (arena.tl_arena_set scratch)
+              (arena.tl_region_reset mark)
+              (arena.tl_arena_set enclosing))
+            (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+            (Err escaped-message))]))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
   (let
@@ -67135,15 +66459,14 @@
         (&mut intern-state)
         (ci.intern-generated-symbol-role-cleanup-parameter)
         0)]
-    (begin
-      ;; This identity enters a synthetic AST immediately, so construction of
-      ;; that AST is the text boundary for the local parameter spelling.
-      (ci.intern-compat-state-generated-role-symbol-materialize!
-        (&mut intern-state)
-        (ci.intern-generated-symbol-role-cleanup-parameter)
-        id
-        "__tl_cleanup_value")
-      id)))
+    ;; This identity enters a synthetic AST immediately, so construction of
+    ;; that AST is the text boundary for the local parameter spelling.
+    (ci.intern-compat-state-generated-role-symbol-materialize!
+      (&mut intern-state)
+      (ci.intern-generated-symbol-role-cleanup-parameter)
+      id
+      "__tl_cleanup_value")
+    id))
 
 (define (lower-struct-cleanup-qualified-id
   [lower-state : CompilerLowerState]
@@ -67199,15 +66522,14 @@
               (csym.compiler-symbol-module-key
                 (ci.intern-compat-state-str intern-state module-id)
                 (ci.intern-compat-state-str intern-state cleanup-id))]
-            (begin
-              ;; Synthetic cleanup calls resolve this qualified name during
-              ;; their immediate typecheck/lowering boundary.
-              (ci.intern-compat-state-generated-role-symbol-materialize!
-                (&mut intern-state)
-                (ci.intern-generated-symbol-role-cleanup-helper)
-                id
-                display)
-              id)))))))
+            ;; Synthetic cleanup calls resolve this qualified name during
+            ;; their immediate typecheck/lowering boundary.
+            (ci.intern-compat-state-generated-role-symbol-materialize!
+              (&mut intern-state)
+              (ci.intern-generated-symbol-role-cleanup-helper)
+              id
+              display)
+            id))))))
 
 (define (lower-struct-cleanup-id-for-struct
   [lower-state : CompilerLowerState]
@@ -67451,13 +66773,12 @@
         (&mut intern-state)
         (ci.intern-generated-symbol-role-cleanup-payload)
         index)]
-    (begin
-      (ci.intern-compat-state-generated-role-symbol-materialize!
-        (&mut intern-state)
-        (ci.intern-generated-symbol-role-cleanup-payload)
-        id
-        (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index)))
-      id)))
+    (ci.intern-compat-state-generated-role-symbol-materialize!
+      (&mut intern-state)
+      (ci.intern-generated-symbol-role-cleanup-payload)
+      id
+      (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index)))
+    id))
 
 (define (lower-enum-cleanup-call-expr
   [pools : ast.AstNodePoolContext]
@@ -67488,16 +66809,15 @@
     out
     (let
       [next : ast.AstPatternList out]
-      (begin
-        (ast.ast-pattern-list-push
-          (&mut next)
-          (ast.ast-pat-binding-id
-            (lower-enum-cleanup-payload-id lower-state index)))
-        (lower-enum-cleanup-payload-patterns-at
-          lower-state
-          count
-          (+ index 1)
-          next)))))
+      (ast.ast-pattern-list-push
+        (&mut next)
+        (ast.ast-pat-binding-id
+          (lower-enum-cleanup-payload-id lower-state index)))
+      (lower-enum-cleanup-payload-patterns-at
+        lower-state
+        count
+        (+ index 1)
+        next))))
 
 (define (lower-enum-cleanup-payload-exprs
   [lower-state : CompilerLowerState]
@@ -67646,15 +66966,14 @@
               index
               (ast.ast-variant-def-fallback))))]
       [next : ast.AstMatchArmList out]
-      (begin
-        (ast.ast-match-arm-list-push (&mut next) arm)
-        (lower-enum-cleanup-arms-at
-          lower-state
-          pools
-          ctx
-          variants
-          (+ index 1)
-          next)))))
+      (ast.ast-match-arm-list-push (&mut next) arm)
+      (lower-enum-cleanup-arms-at
+        lower-state
+        pools
+        ctx
+        variants
+        (+ index 1)
+        next))))
 
 (define (lower-enum-cleanup-function
   [ctx : tc_core.TcContext]
@@ -68020,39 +67339,38 @@
           (ci.intern-compat-state-generated-role-record-handle-at
             intern-state
             index)]
-        (begin
-          (when
-            (and
-              (> handle 0)
-              (=
-                (string.string-length
-                  (ci.intern-compat-state-str intern-state handle))
-                0))
-            (let
-              [role : i64
-                (ci.intern-compat-state-generated-role-record-role-at
+        (when
+          (and
+            (> handle 0)
+            (=
+              (string.string-length
+                (ci.intern-compat-state-str intern-state handle))
+              0))
+          (let
+            [role : i64
+              (ci.intern-compat-state-generated-role-record-role-at
+                intern-state
+                index)]
+            [rendered : String
+              (lower-generated-role-render
+                lower-state
+                role
+                (ci.intern-compat-state-generated-role-record-qualification-at
                   intern-state
-                  index)]
-              [rendered : String
-                (lower-generated-role-render
-                  lower-state
+                  index)
+                (ci.intern-compat-state-generated-role-record-components-at
+                  intern-state
+                  index))]
+            (when
+              (> (string.string-length rendered) 0)
+              (begin
+                (ci.intern-compat-state-generated-role-symbol-materialize!
+                  (&mut intern-state)
                   role
-                  (ci.intern-compat-state-generated-role-record-qualification-at
-                    intern-state
-                    index)
-                  (ci.intern-compat-state-generated-role-record-components-at
-                    intern-state
-                    index))]
-              (when
-                (> (string.string-length rendered) 0)
-                (begin
-                  (ci.intern-compat-state-generated-role-symbol-materialize!
-                    (&mut intern-state)
-                    role
-                    handle
-                    rendered)
-                  unit))))
-          (set! index (+ index 1)))))))
+                  handle
+                  rendered)
+                unit))))
+        (set! index (+ index 1))))))
 
 (define (lower-dispatch-isa-role-tag [isa : ast.AstDispatchIsa]) : i64
   (match isa
@@ -68140,23 +67458,22 @@
           (if leading-sret?
             1
             0)))]
-    (begin
-      (if leading-sret?
-        (ir.compiler-ir-param-builder-push!
-          (&mut builder)
-          (ir.CompilerIrParam.Param
-            (ir.compiler-ir-hidden-sret-param-name)
-            (U64)
-            0))
-        unit)
-      (lower-dispatch-physical-param-list-into!
-        ctx
-        mode
-        (& types)
-        0
-        source-start
-        (&mut builder))
-      (ir.compiler-ir-param-builder-to-seq builder))))
+    (if leading-sret?
+      (ir.compiler-ir-param-builder-push!
+        (&mut builder)
+        (ir.CompilerIrParam.Param
+          (ir.compiler-ir-hidden-sret-param-name)
+          (U64)
+          0))
+      unit)
+    (lower-dispatch-physical-param-list-into!
+      ctx
+      mode
+      (& types)
+      0
+      source-start
+      (&mut builder))
+    (ir.compiler-ir-param-builder-to-seq builder)))
 
 (define (lower-dispatch-physical-param-list-into!
   [ctx : tc_core.TcContext]
@@ -68172,20 +67489,19 @@
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (begin
-        (ir.compiler-ir-param-builder-push!
-          builder
-          (ir.CompilerIrParam.Param
-            (str_cat.str-cat "arg" (string.int->string index))
-            (lower-internal-param-physical-type ctx mode source-ty)
-            idx))
-        (lower-dispatch-physical-param-list-into!
-          ctx
-          mode
-          types
-          (+ index 1)
-          (+ idx 1)
-          builder)))))
+      (ir.compiler-ir-param-builder-push!
+        builder
+        (ir.CompilerIrParam.Param
+          (str_cat.str-cat "arg" (string.int->string index))
+          (lower-internal-param-physical-type ctx mode source-ty)
+          idx))
+      (lower-dispatch-physical-param-list-into!
+        ctx
+        mode
+        types
+        (+ index 1)
+        (+ idx 1)
+        builder))))
 
 (define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
   (let
@@ -68196,14 +67512,10 @@
     [slots : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue len)]
     [cursor : i64 0]
-    (begin
-      (while (< cursor len)
-        (begin
-          (set!
-            (array-ref slots cursor)
-            (ir.CompilerIrValue.Var (+ idx cursor)))
-          (set! cursor (+ cursor 1))))
-      (ir.CompilerIrValueSeq slots len))))
+    (while (< cursor len)
+      (set! (array-ref slots cursor) (ir.CompilerIrValue.Var (+ idx cursor)))
+      (set! cursor (+ cursor 1)))
+    (ir.CompilerIrValueSeq slots len)))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
@@ -68285,48 +67597,47 @@
   (let
     [instrs : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 6)]
-    (begin
-      ;; The cache is a private pointer-width word. Sequentially consistent CAS
-      ;; publishes exactly once: zero means this thread won; otherwise the old
-      ;; nonzero word is the winner another resolver already published.
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (ir.CompilerIrInstr.Call
-          base
-          cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr
-          (ir.compiler-ir-call-args-from-seq
-            (ir.compiler-ir-value-seq3
-              (GlobalAddr cache-name)
-              (I64 0)
-              (Function fn-name)))
-          (I64)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (ir.CompilerIrInstr.BinOp (+ base 1) Ne (Var base) (I64 0) (I64)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (ir.ir-instr-select
-          (+ base 2)
-          (Var (+ base 1))
-          (Var base)
-          (Function fn-name)
-          0
-          (I64)))
-      ;; Retype the winning machine word only after zero has been excluded.
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (ir.CompilerIrInstr.Cast (+ base 3) (Var (+ base 2)) (I64) fn-ty))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (ir.CompilerIrInstr.CallIndirect
-          (+ base 4)
-          (Var (+ base 3))
-          args
-          (lower-global-shared-view ret-ty)))
-      (ir.compiler-ir-instr-builder-push!
-        (&mut instrs)
-        (lower-dispatch-call-return-instr (+ base 4) ret-ty))
-      (Block label (ir.compiler-ir-instr-builder-to-seq instrs)))))
+    ;; The cache is a private pointer-width word. Sequentially consistent CAS
+    ;; publishes exactly once: zero means this thread won; otherwise the old
+    ;; nonzero word is the winner another resolver already published.
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (ir.CompilerIrInstr.Call
+        base
+        cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr
+        (ir.compiler-ir-call-args-from-seq
+          (ir.compiler-ir-value-seq3
+            (GlobalAddr cache-name)
+            (I64 0)
+            (Function fn-name)))
+        (I64)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (ir.CompilerIrInstr.BinOp (+ base 1) Ne (Var base) (I64 0) (I64)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (ir.ir-instr-select
+        (+ base 2)
+        (Var (+ base 1))
+        (Var base)
+        (Function fn-name)
+        0
+        (I64)))
+    ;; Retype the winning machine word only after zero has been excluded.
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (ir.CompilerIrInstr.Cast (+ base 3) (Var (+ base 2)) (I64) fn-ty))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (ir.CompilerIrInstr.CallIndirect
+        (+ base 4)
+        (Var (+ base 3))
+        args
+        (lower-global-shared-view ret-ty)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut instrs)
+      (lower-dispatch-call-return-instr (+ base 4) ret-ty))
+    (Block label (ir.compiler-ir-instr-builder-to-seq instrs))))
 
 (define (lower-dispatch-entry-block
   [cache-name : i64]
@@ -68380,59 +67691,58 @@
     [blocks : ir.CompilerIrBlockBuilder
       (ir.compiler-ir-block-builder-with-capacity
         (+ 4 (ir.compiler-ir-block-list-count tail)))]
-    (begin
-      (ir.compiler-ir-block-builder-push!
-        (&mut blocks)
-        (ir.CompilerIrBlock.Block
-          check-label
-          (ir.compiler-ir-instr-seq3
-            (CpuId max-leaf-var (I64 0) (I64 0) 0)
-            (BinOp max-ok-var Ge (Var max-leaf-var) (I64 7) (I64))
-            (Branch (Var max-ok-var) osxsave-label fallback-label))))
-      (ir.compiler-ir-block-builder-push!
-        (&mut blocks)
-        (ir.CompilerIrBlock.Block
-          osxsave-label
-          (ir.compiler-ir-instr-seq4
-            (CpuId leaf1-ecx-var (I64 1) (I64 0) 2)
-            (BinOp
-              osxsave-mask-var
-              BitAnd
-              (Var leaf1-ecx-var)
-              (I64 134217728)
-              (I64))
-            (BinOp osxsave-ok-var Ne (Var osxsave-mask-var) (I64 0) (I64))
-            (Branch (Var osxsave-ok-var) xcr0-label fallback-label))))
-      (ir.compiler-ir-block-builder-push!
-        (&mut blocks)
-        (ir.CompilerIrBlock.Block
-          xcr0-label
-          (ir.compiler-ir-instr-seq4
-            (Xgetbv xcr0-var (I64 0))
-            (BinOp xcr0-mask-var BitAnd (Var xcr0-var) (I64 xcr0-mask) (I64))
-            (BinOp xcr0-ok-var Eq (Var xcr0-mask-var) (I64 xcr0-mask) (I64))
-            (Branch (Var xcr0-ok-var) leaf7-label fallback-label))))
-      (ir.compiler-ir-block-builder-push!
-        (&mut blocks)
-        (ir.CompilerIrBlock.Block
-          leaf7-label
-          (ir.compiler-ir-instr-seq4
-            (CpuId leaf7-ebx-var (I64 7) (I64 0) 1)
-            (BinOp
-              feature-mask-var
-              BitAnd
-              (Var leaf7-ebx-var)
-              (I64 feature-mask)
-              (I64))
-            (BinOp
-              feature-ok-var
-              Eq
-              (Var feature-mask-var)
-              (I64 feature-mask)
-              (I64))
-            (Branch (Var feature-ok-var) select-label fallback-label))))
-      (ir.compiler-ir-block-builder-append-list! (&mut blocks) tail)
-      (ir.compiler-ir-block-builder-to-list blocks))))
+    (ir.compiler-ir-block-builder-push!
+      (&mut blocks)
+      (ir.CompilerIrBlock.Block
+        check-label
+        (ir.compiler-ir-instr-seq3
+          (CpuId max-leaf-var (I64 0) (I64 0) 0)
+          (BinOp max-ok-var Ge (Var max-leaf-var) (I64 7) (I64))
+          (Branch (Var max-ok-var) osxsave-label fallback-label))))
+    (ir.compiler-ir-block-builder-push!
+      (&mut blocks)
+      (ir.CompilerIrBlock.Block
+        osxsave-label
+        (ir.compiler-ir-instr-seq4
+          (CpuId leaf1-ecx-var (I64 1) (I64 0) 2)
+          (BinOp
+            osxsave-mask-var
+            BitAnd
+            (Var leaf1-ecx-var)
+            (I64 134217728)
+            (I64))
+          (BinOp osxsave-ok-var Ne (Var osxsave-mask-var) (I64 0) (I64))
+          (Branch (Var osxsave-ok-var) xcr0-label fallback-label))))
+    (ir.compiler-ir-block-builder-push!
+      (&mut blocks)
+      (ir.CompilerIrBlock.Block
+        xcr0-label
+        (ir.compiler-ir-instr-seq4
+          (Xgetbv xcr0-var (I64 0))
+          (BinOp xcr0-mask-var BitAnd (Var xcr0-var) (I64 xcr0-mask) (I64))
+          (BinOp xcr0-ok-var Eq (Var xcr0-mask-var) (I64 xcr0-mask) (I64))
+          (Branch (Var xcr0-ok-var) leaf7-label fallback-label))))
+    (ir.compiler-ir-block-builder-push!
+      (&mut blocks)
+      (ir.CompilerIrBlock.Block
+        leaf7-label
+        (ir.compiler-ir-instr-seq4
+          (CpuId leaf7-ebx-var (I64 7) (I64 0) 1)
+          (BinOp
+            feature-mask-var
+            BitAnd
+            (Var leaf7-ebx-var)
+            (I64 feature-mask)
+            (I64))
+          (BinOp
+            feature-ok-var
+            Eq
+            (Var feature-mask-var)
+            (I64 feature-mask)
+            (I64))
+          (Branch (Var feature-ok-var) select-label fallback-label))))
+    (ir.compiler-ir-block-builder-append-list! (&mut blocks) tail)
+    (ir.compiler-ir-block-builder-to-list blocks)))
 
 (define (lower-dispatch-select-blocks
   [cache-name : i64]
@@ -68446,44 +67756,43 @@
   (let
     [blocks : ir.CompilerIrBlockBuilder
       (ir.compiler-ir-block-builder-with-capacity 3)]
-    (begin
-      (match maybe-avx512
-        [(Some avx512-name)
-          (ir.compiler-ir-block-builder-push!
-            (&mut blocks)
-            (lower-dispatch-select-block
-              (ir.compiler-ir-label "select_avx512")
-              cache-name
-              avx512-name
-              (lower-global-shared-view fn-ty)
-              (lower-global-shared-view args)
-              (lower-global-shared-view ret-ty)
-              (+ base 36)))]
-        [(No) unit])
-      (match maybe-avx2
-        [(Some avx2-name)
-          (ir.compiler-ir-block-builder-push!
-            (&mut blocks)
-            (lower-dispatch-select-block
-              (ir.compiler-ir-label "select_avx2")
-              cache-name
-              avx2-name
-              (lower-global-shared-view fn-ty)
-              (lower-global-shared-view args)
-              (lower-global-shared-view ret-ty)
-              (+ base 31)))]
-        [(No) unit])
-      (ir.compiler-ir-block-builder-push!
-        (&mut blocks)
-        (lower-dispatch-select-block
-          (ir.compiler-ir-label "select_scalar")
-          cache-name
-          scalar-name
-          fn-ty
-          args
-          ret-ty
-          (+ base 26)))
-      (ir.compiler-ir-block-builder-to-list blocks))))
+    (match maybe-avx512
+      [(Some avx512-name)
+        (ir.compiler-ir-block-builder-push!
+          (&mut blocks)
+          (lower-dispatch-select-block
+            (ir.compiler-ir-label "select_avx512")
+            cache-name
+            avx512-name
+            (lower-global-shared-view fn-ty)
+            (lower-global-shared-view args)
+            (lower-global-shared-view ret-ty)
+            (+ base 36)))]
+      [(No) unit])
+    (match maybe-avx2
+      [(Some avx2-name)
+        (ir.compiler-ir-block-builder-push!
+          (&mut blocks)
+          (lower-dispatch-select-block
+            (ir.compiler-ir-label "select_avx2")
+            cache-name
+            avx2-name
+            (lower-global-shared-view fn-ty)
+            (lower-global-shared-view args)
+            (lower-global-shared-view ret-ty)
+            (+ base 31)))]
+      [(No) unit])
+    (ir.compiler-ir-block-builder-push!
+      (&mut blocks)
+      (lower-dispatch-select-block
+        (ir.compiler-ir-label "select_scalar")
+        cache-name
+        scalar-name
+        fn-ty
+        args
+        ret-ty
+        (+ base 26)))
+    (ir.compiler-ir-block-builder-to-list blocks)))
 
 (define (lower-dispatch-resolve-label
   [maybe-avx2 : LowerMaybeIrSymbol]
@@ -68604,40 +67913,39 @@
               [blocks : ir.CompilerIrBlockBuilder
                 (ir.compiler-ir-block-builder-with-capacity
                   (+ 2 (ir.compiler-ir-block-list-count tail-blocks)))]
-              (begin
-                (ir.compiler-ir-block-builder-push!
-                  (&mut blocks)
-                  (lower-dispatch-entry-block
-                    cache-name
-                    param-count
-                    (+ param-count 1)
-                    (lower-dispatch-resolve-label maybe-avx2 maybe-avx512)))
-                (ir.compiler-ir-block-builder-push!
-                  (&mut blocks)
-                  (lower-dispatch-cached-block
-                    param-count
-                    fn-ty
-                    args
-                    (lower-global-shared-view physical-ret-ty)
-                    (+ param-count 24)))
-                (ir.compiler-ir-block-builder-append-list!
-                  (&mut blocks)
-                  tail-blocks)
-                (Ok
-                  (ir.compiler-ir-function-seq1
-                    (Function
-                      logical-name
-                      (lower-dispatch-physical-param-list
-                        ctx
-                        mode
-                        clean-param-types
-                        source-start
-                        leading-sret?)
-                      physical-ret-ty
-                      (+ param-count 41)
-                      (ir.compiler-ir-block-builder-to-list blocks)
-                      Ordinary))
-                  spans)))]
+              (ir.compiler-ir-block-builder-push!
+                (&mut blocks)
+                (lower-dispatch-entry-block
+                  cache-name
+                  param-count
+                  (+ param-count 1)
+                  (lower-dispatch-resolve-label maybe-avx2 maybe-avx512)))
+              (ir.compiler-ir-block-builder-push!
+                (&mut blocks)
+                (lower-dispatch-cached-block
+                  param-count
+                  fn-ty
+                  args
+                  (lower-global-shared-view physical-ret-ty)
+                  (+ param-count 24)))
+              (ir.compiler-ir-block-builder-append-list!
+                (&mut blocks)
+                tail-blocks)
+              (Ok
+                (ir.compiler-ir-function-seq1
+                  (Function
+                    logical-name
+                    (lower-dispatch-physical-param-list
+                      ctx
+                      mode
+                      clean-param-types
+                      source-start
+                      leading-sret?)
+                    physical-ret-ty
+                    (+ param-count 41)
+                    (ir.compiler-ir-block-builder-to-list blocks)
+                    Ordinary))
+                spans))]
           [(No)
             (Err
               (box
@@ -68781,22 +68089,21 @@
       [(Ok lowered-functions function-spans)
         (let
           [next-functions : ir.CompilerIrFunctionBuilder functions]
-          (begin
-            (ir.compiler-ir-function-builder-append-seq!
-              (&mut next-functions)
-              lowered-functions)
-            (lower-dispatch-lower-variants-from
-              ctx
-              top-env
-              type-cache
-              dispatch-symbol
-              variants
-              (+ index 1)
-              module-id
-              function-spans
-              names
-              mode
-              next-functions)))]
+          (ir.compiler-ir-function-builder-append-seq!
+            (&mut next-functions)
+            lowered-functions)
+          (lower-dispatch-lower-variants-from
+            ctx
+            top-env
+            type-cache
+            dispatch-symbol
+            variants
+            (+ index 1)
+            module-id
+            function-spans
+            names
+            mode
+            next-functions))]
       [(Err message) (Err message)])))
 
 (define (lower-dispatch-lower-variants
@@ -68903,26 +68210,25 @@
                           (ir.compiler-ir-function-seq-count variant-functions)
                           (ir.compiler-ir-function-seq-count
                             escaped-thunk-functions)))]
-                    (begin
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut functions)
-                        variant-functions)
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut functions)
-                        escaped-thunk-functions)
-                      (Ok
-                        (box
-                          (Decl
-                            (Global
-                              cache-symbol
-                              (I64)
-                              ;; A non-unit typed Unit initializer is the IR's
-                              ;; zero-filled static-cell form. The backend emits
-                              ;; this pointer-width cache as an 8-byte-aligned
-                              ;; common symbol on Linux and Windows.
-                              (Unit))
-                            (ir.compiler-ir-function-builder-to-seq functions)
-                            thunk-spans)))))]
+                    (ir.compiler-ir-function-builder-append-seq!
+                      (&mut functions)
+                      variant-functions)
+                    (ir.compiler-ir-function-builder-append-seq!
+                      (&mut functions)
+                      escaped-thunk-functions)
+                    (Ok
+                      (box
+                        (Decl
+                          (Global
+                            cache-symbol
+                            (I64)
+                            ;; A non-unit typed Unit initializer is the IR's
+                            ;; zero-filled static-cell form. The backend emits
+                            ;; this pointer-width cache as an 8-byte-aligned
+                            ;; common symbol on Linux and Windows.
+                            (Unit))
+                          (ir.compiler-ir-function-builder-to-seq functions)
+                          thunk-spans))))]
                 [(Err message) (Err message)])]
             [(Err message) (Err message)]))]
       [(Err message) (Err (box (lower-diagnostic message)))])))
@@ -68947,40 +68253,38 @@
     ;; projection costs nothing.
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (begin
-      (while (< index count)
-        (begin
-          (match (ast.ast-decl-unwrapped
-            (lower-global-array-element-shared-view
-              decl-slots
-              (+ decl-offset index)))
-            [(Module next-module) (set! cur-module-id next-module)]
-            [(DefFn decl-meta name _ _ body-box _)
-              ;; The early-exit fact lookup takes the per-body typecheck state
-              ;; (#6056); the walk itself reads the backing slot instead of a
-              ;; stepped-out row.
+    (while (< index count)
+      (match (ast.ast-decl-unwrapped
+        (lower-global-array-element-shared-view
+          decl-slots
+          (+ decl-offset index)))
+        [(Module next-module) (set! cur-module-id next-module)]
+        [(DefFn decl-meta name _ _ body-box _)
+          ;; The early-exit fact lookup takes the per-body typecheck state
+          ;; (#6056); the walk itself reads the backing slot instead of a
+          ;; stepped-out row.
+          (let
+            [has-early-return : bool
+              (match (tc_core.tc-body-early-exit-fact
+                (tc_core.tc-context-body-state ctx)
+                body-box)
+                [(Known value) value]
+                [(Unknown) (lower-rvo-node-has-early-return? ctx body-box)])]
+            (if has-early-return
               (let
-                [has-early-return : bool
-                  (match (tc_core.tc-body-early-exit-fact
-                    (tc_core.tc-context-body-state ctx)
-                    body-box)
-                    [(Known value) value]
-                    [(Unknown) (lower-rvo-node-has-early-return? ctx body-box)])]
-                (if has-early-return
-                  (let
-                    [key-id : i64
-                      (lower-module-name-key-id-by-id cur-module-id name)]
-                    (lower_i64_i64_map.insert-ref!
-                      (&mut cur-out)
-                      (lower-name-cache-lookup-logical-id
-                        (& name-cache)
-                        key-id
-                        key-id)
-                      1))
-                  unit))]
-            [_ unit])
-          (set! index (+ index 1))))
-      cur-out)))
+                [key-id : i64
+                  (lower-module-name-key-id-by-id cur-module-id name)]
+                (lower_i64_i64_map.insert-ref!
+                  (&mut cur-out)
+                  (lower-name-cache-lookup-logical-id
+                    (& name-cache)
+                    key-id
+                    key-id)
+                  1))
+              unit))]
+        [_ unit])
+      (set! index (+ index 1)))
+    cur-out))
 
 (define (lower-rvo-early-return-functions-from-decls
   [lower-state : CompilerLowerState]
@@ -69010,72 +68314,68 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
-  (begin
+  (compiler-lower-state-write!
+    lower-state
+    csym.CompilerSymbols
+    active-symbols
+    (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))
+  (compiler-lower-state-write! lower-state bool active-symbols-ready true)
+  (let
+    [dispatch-name-cache : LowerNameCache
+      (lower-name-cache-with-clone-roots
+        (lower-name-cache-from-env lower-state (lower-global-shared-view names))
+        clone-roots)]
+    [dispatch-variants : lower_i64_i64_map.Map
+      (lower-dispatch-variant-set-from-decls
+        (lower-global-shared-view decls)
+        paths
+        (lower-global-shared-view entry-path)
+        dispatch-name-cache)]
+    ;; Build the shared global name/type caches once; per-module caches
+    ;; are small overlays that fall through to them. The initial cur caches are
+    ;; empty overlays (everything resolves via the global caches) for decls in
+    ;; the leading "" module before the first (module ...) marker.
+    (lower-active-global-name-cache-set! lower-state dispatch-name-cache)
     (compiler-lower-state-write!
       lower-state
-      csym.CompilerSymbols
-      active-symbols
-      (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))
-    (compiler-lower-state-write! lower-state bool active-symbols-ready true)
-    (let
-      [dispatch-name-cache : LowerNameCache
-        (lower-name-cache-with-clone-roots
-          (lower-name-cache-from-env
-            lower-state
-            (lower-global-shared-view names))
-          clone-roots)]
-      [dispatch-variants : lower_i64_i64_map.Map
-        (lower-dispatch-variant-set-from-decls
-          (lower-global-shared-view decls)
-          paths
-          (lower-global-shared-view entry-path)
-          dispatch-name-cache)]
-      (begin
-        ;; Build the shared global name/type caches once; per-module caches
-        ;; are small overlays that fall through to them. The initial cur caches are
-        ;; empty overlays (everything resolves via the global caches) for decls in
-        ;; the leading "" module before the first (module ...) marker.
-        (lower-active-global-name-cache-set! lower-state dispatch-name-cache)
-        (compiler-lower-state-write!
-          lower-state
-          LowerModuleLocalViewStore
-          active-module-local-views
-          (lower-module-local-view-store-empty))
-        (compiler-lower-state-write!
-          lower-state
-          LowerTypeCache
-          decls-global-type-cache
-          (lower-type-cache-from-env lower-state top-env))
-        (compiler-lower-state-write!
-          lower-state
-          lower_i64_i64_map.Map
-          rvo-early-return-functions
-          (lower-rvo-early-return-functions-from-decls
-            lower-state
-            ctx
-            decls
-            (lower-global-shared-view names)))
-        (lower-decls-in-module
-          ctx
-          top-env
-          top-env
-          decls
-          paths
-          entry-path
-          globals
-          functions
-          externs
-          spans
-          names
-          (lower-name-cache-overlay
-            lower-state
-            (Nil)
-            cbi.compiler-builtin-id-fix-empty)
-          (lower-type-cache-overlay lower-state (tc_core.tc-empty-env))
-          dispatch-variants
-          mode
-          ""
-          cbi.compiler-builtin-id-fix-empty)))))
+      LowerModuleLocalViewStore
+      active-module-local-views
+      (lower-module-local-view-store-empty))
+    (compiler-lower-state-write!
+      lower-state
+      LowerTypeCache
+      decls-global-type-cache
+      (lower-type-cache-from-env lower-state top-env))
+    (compiler-lower-state-write!
+      lower-state
+      lower_i64_i64_map.Map
+      rvo-early-return-functions
+      (lower-rvo-early-return-functions-from-decls
+        lower-state
+        ctx
+        decls
+        (lower-global-shared-view names)))
+    (lower-decls-in-module
+      ctx
+      top-env
+      top-env
+      decls
+      paths
+      entry-path
+      globals
+      functions
+      externs
+      spans
+      names
+      (lower-name-cache-overlay
+        lower-state
+        (Nil)
+        cbi.compiler-builtin-id-fix-empty)
+      (lower-type-cache-overlay lower-state (tc_core.tc-empty-env))
+      dispatch-variants
+      mode
+      ""
+      cbi.compiler-builtin-id-fix-empty)))
 
 (defenum LowerSkippedRuntimeWithPaths
   (Skipped ast.AstDeclList ast.AstDeclPathList))
@@ -69159,320 +68459,343 @@
     [result : ResultLowerDecls
       (Err (box (lower-diagnostic "lower: internal decls walk")))]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur-decls)
-          [(Nil)
-            (begin
-              (lower-module-view-epochs-release-before!
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil)
+          (lower-module-view-epochs-release-before!
+            lower-state
+            (&mut view-epochs)
+            view-epochs.marker-count)
+          (set!
+            result
+            (Ok
+              (box
+                (LowerDeclsSuccess
+                  (ir.compiler-ir-global-builder-snapshot-seq (& cur-globals))
+                  (ir.compiler-ir-function-builder-snapshot (& cur-functions))
+                  (ir.compiler-ir-extern-builder-snapshot-seq (& cur-externs))
+                  (lower-global-shared-view cur-spans)))))
+          (set! done true)]
+        [(Cons decl rest)
+          (let
+            [rest : ast.AstDeclList rest]
+            [decl-path : String
+              (ast.ast-decl-path-list-get
+                (& cur-paths)
+                0
+                (lower-global-shared-view entry-path))]
+            [logical-module-id : i64
+              (lower-decl-owner-module-id
                 lower-state
-                (&mut view-epochs)
-                view-epochs.marker-count)
-              (set!
-                result
-                (Ok
-                  (box
-                    (LowerDeclsSuccess
-                      (ir.compiler-ir-global-builder-snapshot-seq
-                        (& cur-globals))
-                      (ir.compiler-ir-function-builder-snapshot
-                        (& cur-functions))
-                      (ir.compiler-ir-extern-builder-snapshot-seq
-                        (& cur-externs))
-                      (lower-global-shared-view cur-spans)))))
-              (set! done true))]
-          [(Cons decl rest)
-            (let
-              [rest : ast.AstDeclList rest]
-              [decl-path : String
-                (ast.ast-decl-path-list-get
-                  (& cur-paths)
-                  0
-                  (lower-global-shared-view entry-path))]
-              [logical-module-id : i64
-                (lower-decl-owner-module-id
-                  lower-state
-                  (& cur-paths)
-                  0
-                  (lower-global-shared-view entry-path)
-                  (lower-global-shared-view decl-path)
-                  cur-module-id)]
-              [logical-module : String
-                (lower-decl-owner-module-name
-                  lower-state
-                  cur-module-id
-                  logical-module-id)]
-              [decl-name-cache : LowerNameCache
-                (lower-name-cache-with-module-id
-                  (lower-global-shared-view cur-name-cache)
-                  logical-module-id)]
-              [rest-paths : ast.AstDeclPathList
-                (ast.ast-decl-path-list-tail
-                  (lower-global-shared-view cur-paths))]
-              [_advance-paths : unit (set! cur-paths rest-paths)]
-              ;; Emitted locations (abort messages, line tables) name a
-              ;; root-resolved stdlib module by its canonical path, as the
-              ;; embedded payload does; compiler diagnostics keep the
-              ;; physical one.
-              [_source-path : unit
-                (compiler-lower-state-write!
-                  lower-state
-                  i64
-                  current-source-path-id
-                  (if (> (string.string-length decl-path) 0)
-                    (let
-                      [location-path : String
-                        (load.compiler-load-canonical-stdlib-path
-                          (lower-global-shared-view decl-path))]
-                      (load.compiler-load-source-path-id location-path))
-                    0))]
-              [_generated-decl : unit
-                (compiler-lower-state-write!
-                  lower-state
-                  bool
-                  current-decl-generated
-                  (match (ast.ast-decl-generated-meta decl)
-                    [(Some _ _ _ _) true]
-                    [(No) false]))]
-              (match (ast.ast-decl-unwrapped (lower-global-shared-view decl))
-                [(ModuleBody _ _) (set! cur-decls rest)]
-                [(Def decl-meta name _ expr-box)
+                (& cur-paths)
+                0
+                (lower-global-shared-view entry-path)
+                (lower-global-shared-view decl-path)
+                cur-module-id)]
+            [logical-module : String
+              (lower-decl-owner-module-name
+                lower-state
+                cur-module-id
+                logical-module-id)]
+            [decl-name-cache : LowerNameCache
+              (lower-name-cache-with-module-id
+                (lower-global-shared-view cur-name-cache)
+                logical-module-id)]
+            [rest-paths : ast.AstDeclPathList
+              (ast.ast-decl-path-list-tail (lower-global-shared-view cur-paths))]
+            [_advance-paths : unit (set! cur-paths rest-paths)]
+            ;; Emitted locations (abort messages, line tables) name a
+            ;; root-resolved stdlib module by its canonical path, as the
+            ;; embedded payload does; compiler diagnostics keep the
+            ;; physical one.
+            [_source-path : unit
+              (compiler-lower-state-write!
+                lower-state
+                i64
+                current-source-path-id
+                (if (> (string.string-length decl-path) 0)
                   (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [expr : ast.AstExpr
-                      (lower-context-expr-get decl-ctx expr-box)]
-                    (match (lower-top-decl-type-or-check
-                      decl-ctx
-                      cur-local-top-env
-                      decl)
-                      [(Ok ty)
-                        (let
-                          [global-ty : ast.AstType
-                            (tc_core.tc-type-without-regions ty)]
-                          [global-name : String
-                            (lower-current-decl-logical-name-cache-id
-                              decl-name-cache
-                              logical-module
-                              (lower-name-id-text lower-state name)
-                              name)]
-                          [global-key-id : i64
-                            (lower-module-name-key-id-by-id
-                              logical-module-id
-                              name)]
-                          [global-id : i64
-                            (lower-name-cache-lookup-logical-id
-                              (& decl-name-cache)
-                              global-key-id
-                              global-key-id)]
-                          [global-symbol : i64
-                            (lower-name-cache-ir-symbol
-                              decl-name-cache
-                              global-id
-                              name
-                              global-name)]
-                          (match (lower-global-value
-                            decl-ctx
-                            (lower-global-shared-view decl-name-cache)
-                            (lower-global-shared-view expr)
-                            (lower-global-shared-view global-ty))
-                            [(Ok value)
-                              (begin
-                                (ir.compiler-ir-global-builder-push!
-                                  (&mut cur-globals)
-                                  (ir.CompilerIrGlobal.Global
-                                    global-symbol
-                                    global-ty
-                                    value))
-                                (set! cur-decls rest))]
-                            ;; A global whose initializer is not a compile-time
-                            ;; constant is evaluated at startup by a hidden
-                            ;; `__global_init_<name>` function whose return
-                            ;; value the backend stores into the global before
-                            ;; `main`. This applies to any non-unit type
-                            ;; (scalars as well as aggregates), mirroring the
-                            ;; former Rust lowerer, which emits an init function
-                            ;; whenever `extract_const` yields no constant.
-                            [(Err _)
-                              (let
-                                [init-symbol : i64
-                                  (lower-global-init-function-name
-                                    lower-state
-                                    global-symbol)]
-                                (match (lower-function-escaping
-                                  decl-ctx
-                                  cur-local-top-env
-                                  (lower-global-shared-view cur-type-cache)
-                                  init-symbol
-                                  (ast.ast-param-list-new)
-                                  (lower-global-shared-view global-ty)
-                                  expr
-                                  (lower-global-shared-view cur-spans)
-                                  decl-name-cache
-                                  mode)
-                                  [(Ok init-funcs init-spans)
-                                    (begin
-                                      (ir.compiler-ir-global-builder-push!
-                                        (&mut cur-globals)
-                                        (ir.CompilerIrGlobal.Global
-                                          global-symbol
-                                          global-ty
-                                          (RuntimeGlobal init-symbol)))
-                                      (ir.compiler-ir-function-builder-append-seq!
-                                        (&mut cur-functions)
-                                        init-funcs)
-                                      (set! cur-spans init-spans)
-                                      (set! cur-decls rest))]
-                                  [(Err init-message)
-                                    (begin
-                                      (set! result (Err init-message))
-                                      (set! done true))]))]))]
-                      [(Err message)
-                        (begin
-                          (set! result (Err (box (lower-diagnostic message))))
-                          (set! done true))]))]
-                [(Extern decl-meta name _ metadata ty)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [resolved-ty : ast.AstType
-                      (tc_core.tc-resolve-type decl-ctx ty)]
-                    [logical-name : String
+                    [location-path : String
+                      (load.compiler-load-canonical-stdlib-path
+                        (lower-global-shared-view decl-path))]
+                    (load.compiler-load-source-path-id location-path))
+                  0))]
+            [_generated-decl : unit
+              (compiler-lower-state-write!
+                lower-state
+                bool
+                current-decl-generated
+                (match (ast.ast-decl-generated-meta decl)
+                  [(Some _ _ _ _) true]
+                  [(No) false]))]
+            (match (ast.ast-decl-unwrapped (lower-global-shared-view decl))
+              [(ModuleBody _ _) (set! cur-decls rest)]
+              [(Def decl-meta name _ expr-box)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [expr : ast.AstExpr
+                    (lower-context-expr-get decl-ctx expr-box)]
+                  (match (lower-top-decl-type-or-check
+                    decl-ctx
+                    cur-local-top-env
+                    decl)
+                    [(Ok ty)
+                      (let
+                        [global-ty : ast.AstType
+                          (tc_core.tc-type-without-regions ty)]
+                        [global-name : String
+                          (lower-current-decl-logical-name-cache-id
+                            decl-name-cache
+                            logical-module
+                            (lower-name-id-text lower-state name)
+                            name)]
+                        [global-key-id : i64
+                          (lower-module-name-key-id-by-id
+                            logical-module-id
+                            name)]
+                        [global-id : i64
+                          (lower-name-cache-lookup-logical-id
+                            (& decl-name-cache)
+                            global-key-id
+                            global-key-id)]
+                        [global-symbol : i64
+                          (lower-name-cache-ir-symbol
+                            decl-name-cache
+                            global-id
+                            name
+                            global-name)]
+                        (match (lower-global-value
+                          decl-ctx
+                          (lower-global-shared-view decl-name-cache)
+                          (lower-global-shared-view expr)
+                          (lower-global-shared-view global-ty))
+                          [(Ok value)
+                            (ir.compiler-ir-global-builder-push!
+                              (&mut cur-globals)
+                              (ir.CompilerIrGlobal.Global
+                                global-symbol
+                                global-ty
+                                value))
+                            (set! cur-decls rest)]
+                          ;; A global whose initializer is not a compile-time
+                          ;; constant is evaluated at startup by a hidden
+                          ;; `__global_init_<name>` function whose return
+                          ;; value the backend stores into the global before
+                          ;; `main`. This applies to any non-unit type
+                          ;; (scalars as well as aggregates), mirroring the
+                          ;; former Rust lowerer, which emits an init function
+                          ;; whenever `extract_const` yields no constant.
+                          [(Err _)
+                            (let
+                              [init-symbol : i64
+                                (lower-global-init-function-name
+                                  lower-state
+                                  global-symbol)]
+                              (match (lower-function-escaping
+                                decl-ctx
+                                cur-local-top-env
+                                (lower-global-shared-view cur-type-cache)
+                                init-symbol
+                                (ast.ast-param-list-new)
+                                (lower-global-shared-view global-ty)
+                                expr
+                                (lower-global-shared-view cur-spans)
+                                decl-name-cache
+                                mode)
+                                [(Ok init-funcs init-spans)
+                                  (ir.compiler-ir-global-builder-push!
+                                    (&mut cur-globals)
+                                    (ir.CompilerIrGlobal.Global
+                                      global-symbol
+                                      global-ty
+                                      (RuntimeGlobal init-symbol)))
+                                  (ir.compiler-ir-function-builder-append-seq!
+                                    (&mut cur-functions)
+                                    init-funcs)
+                                  (set! cur-spans init-spans)
+                                  (set! cur-decls rest)]
+                                [(Err init-message)
+                                  (set! result (Err init-message))
+                                  (set! done true)]))]))]
+                    [(Err message)
+                      (set! result (Err (box (lower-diagnostic message))))
+                      (set! done true)]))]
+              [(Extern decl-meta name _ metadata ty)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [resolved-ty : ast.AstType
+                    (tc_core.tc-resolve-type decl-ctx ty)]
+                  [logical-name : String
+                    (lower-current-decl-logical-name-cache-id
+                      decl-name-cache
+                      logical-module
+                      (lower-name-id-text lower-state name)
+                      name)]
+                  [logical-key-id : i64
+                    (lower-module-name-key-id-by-id logical-module-id name)]
+                  [logical-id : i64
+                    (lower-name-cache-lookup-logical-id
+                      (& decl-name-cache)
+                      logical-key-id
+                      logical-key-id)]
+                  (if (and
+                    (tc_core.tc-type-contains-reference?
+                      (lower-global-shared-view resolved-ty))
+                    (not
+                      (lower-supported-reference-extern?
+                        decl-ctx
+                        name
+                        (lower-global-shared-view resolved-ty))))
+                    (begin
+                      (set!
+                        result
+                        (Err
+                          (box
+                            (lower-diagnostic (lower-reference-support-message)))))
+                      (set! done true))
+                    (begin
+                      (ir.compiler-ir-extern-builder-push!
+                        (&mut cur-externs)
+                        (ir.CompilerIrExtern.Extern
+                          (lower-extern-logical-symbol-id
+                            lower-state
+                            logical-id
+                            (lower-global-shared-view logical-name)
+                            name
+                            (lower-box-shared-view metadata))
+                          name
+                          logical-name
+                          (tc_core.tc-type-without-regions resolved-ty)
+                          (ast.ast-extern-metadata-abi
+                            (lower-box-shared-view metadata))
+                          (ci.intern-id-value
+                            (ast.ast-extern-metadata-symbol-id
+                              (lower-box-shared-view metadata)))
+                          (ast.ast-extern-metadata-link-inputs (deref metadata))
+                          false))
+                      (set! cur-decls rest))))]
+              [(DefFn decl-meta name params ret body-box metadata)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [body : ast.AstExpr
+                    (lower-context-expr-get decl-ctx body-box)]
+                  [logical-id : i64
+                    (lower-decl-logical-id
+                      lower-state
+                      (lower-global-shared-view entry-path)
+                      decl-path
+                      (lower-global-shared-view logical-module)
+                      logical-module-id
+                      name
+                      (lower-name-id-text lower-state name))]
+                  [logical-name : String
+                    (if (= logical-id cbi.compiler-builtin-id-fix-main)
+                      "main"
                       (lower-current-decl-logical-name-cache-id
                         decl-name-cache
                         logical-module
                         (lower-name-id-text lower-state name)
-                        name)]
-                    [logical-key-id : i64
-                      (lower-module-name-key-id-by-id logical-module-id name)]
-                    [logical-id : i64
-                      (lower-name-cache-lookup-logical-id
-                        (& decl-name-cache)
-                        logical-key-id
-                        logical-key-id)]
-                    (if (and
-                      (tc_core.tc-type-contains-reference?
-                        (lower-global-shared-view resolved-ty))
-                      (not
-                        (lower-supported-reference-extern?
-                          decl-ctx
-                          name
-                          (lower-global-shared-view resolved-ty))))
-                      (begin
-                        (set!
-                          result
-                          (Err
-                            (box
-                              (lower-diagnostic
-                                (lower-reference-support-message)))))
-                        (set! done true))
-                      (begin
-                        (ir.compiler-ir-extern-builder-push!
-                          (&mut cur-externs)
-                          (ir.CompilerIrExtern.Extern
-                            (lower-extern-logical-symbol-id
-                              lower-state
-                              logical-id
-                              (lower-global-shared-view logical-name)
-                              name
-                              (lower-box-shared-view metadata))
-                            name
-                            logical-name
-                            (tc_core.tc-type-without-regions resolved-ty)
-                            (ast.ast-extern-metadata-abi
-                              (lower-box-shared-view metadata))
-                            (ci.intern-id-value
-                              (ast.ast-extern-metadata-symbol-id
-                                (lower-box-shared-view metadata)))
-                            (ast.ast-extern-metadata-link-inputs
-                              (deref metadata))
-                            false))
-                        (set! cur-decls rest))))]
-                [(DefFn decl-meta name params ret body-box metadata)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [body : ast.AstExpr
-                      (lower-context-expr-get decl-ctx body-box)]
-                    [logical-id : i64
-                      (lower-decl-logical-id
-                        lower-state
-                        (lower-global-shared-view entry-path)
-                        decl-path
-                        (lower-global-shared-view logical-module)
-                        logical-module-id
-                        name
-                        (lower-name-id-text lower-state name))]
-                    [logical-name : String
-                      (if (= logical-id cbi.compiler-builtin-id-fix-main)
-                        "main"
-                        (lower-current-decl-logical-name-cache-id
-                          decl-name-cache
-                          logical-module
-                          (lower-name-id-text lower-state name)
-                          name))]
-                    [function-symbol : i64
-                      (lower-decl-function-symbol-id
+                        name))]
+                  [function-symbol : i64
+                    (lower-decl-function-symbol-id
+                      decl-name-cache
+                      logical-id
+                      name
+                      (lower-global-shared-view logical-name))]
+                  (if (lower_i64_i64_map.contains?
+                    (& dispatch-variants)
+                    logical-id)
+                    (set! cur-decls rest)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-detail-start lower-state))
+                      (match (lower-function-escaping
+                        decl-ctx
+                        cur-local-top-env
+                        (lower-global-shared-view cur-type-cache)
+                        function-symbol
+                        (lower-global-shared-view params)
+                        (lower-global-shared-view ret)
+                        (lower-global-shared-view body)
+                        (lower-global-shared-view cur-spans)
                         decl-name-cache
-                        logical-id
-                        name
-                        (lower-global-shared-view logical-name))]
-                    (if (lower_i64_i64_map.contains?
-                      (& dispatch-variants)
-                      logical-id)
-                      (set! cur-decls rest)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-detail-start lower-state))
-                        (match (lower-function-escaping
-                          decl-ctx
-                          cur-local-top-env
-                          (lower-global-shared-view cur-type-cache)
-                          function-symbol
-                          (lower-global-shared-view params)
-                          (lower-global-shared-view ret)
-                          (lower-global-shared-view body)
-                          (lower-global-shared-view cur-spans)
-                          decl-name-cache
-                          mode)
-                          [(Ok lowered-functions function-spans)
-                            (match (lower-spmd-package-callable-functions
-                              decl-ctx
-                              cur-local-top-env
-                              (lower-global-shared-view cur-type-cache)
-                              (csym.compiler-symbol-module-key
-                                (if (= (string.string-length cur-module) 0)
-                                  (compiler-lower-state-spmd-package-name
-                                    lower-state)
-                                  (owned_view.compiler-owned-shared-view
-                                    cur-module))
-                                (lower-name-id-text lower-state name))
+                        mode)
+                        [(Ok lowered-functions function-spans)
+                          (match (lower-spmd-package-callable-functions
+                            decl-ctx
+                            cur-local-top-env
+                            (lower-global-shared-view cur-type-cache)
+                            (csym.compiler-symbol-module-key
+                              (if (= (string.string-length cur-module) 0)
+                                (compiler-lower-state-spmd-package-name
+                                  lower-state)
+                                (owned_view.compiler-owned-shared-view
+                                  cur-module))
+                              (lower-name-id-text lower-state name))
+                            (csym.compiler-symbols-lookup-value-id-or
+                              (tc_core.tc-context-symbols decl-ctx)
+                              logical-id
                               (csym.compiler-symbols-lookup-value-id-or
                                 (tc_core.tc-context-symbols decl-ctx)
-                                logical-id
-                                (csym.compiler-symbols-lookup-value-id-or
-                                  (tc_core.tc-context-symbols decl-ctx)
-                                  name
-                                  (csym.compiler-symbols-missing-handle)))
-                              (lower-global-shared-view params)
-                              (lower-global-shared-view ret)
-                              body
-                              (ast.ast-fn-metadata-spmd-callable
-                                (lower-global-shared-view metadata))
-                              function-spans
-                              (lower-global-shared-view cur-name-cache)
-                              mode)
-                              [(Err message)
+                                name
+                                (csym.compiler-symbols-missing-handle)))
+                            (lower-global-shared-view params)
+                            (lower-global-shared-view ret)
+                            body
+                            (ast.ast-fn-metadata-spmd-callable
+                              (lower-global-shared-view metadata))
+                            function-spans
+                            (lower-global-shared-view cur-name-cache)
+                            mode)
+                            [(Err message)
+                              (begin
+                                (cfg
+                                  compile-profile
+                                  (compiler-lower-profile-detail-finish
+                                    lower-state
+                                    "function"
+                                    logical-name))
+                                (set! result (Err message))
+                                (set! done true))]
+                            [(Ok callable-functions next-spans)
+                              (let
+                                [_export : unit
+                                  (match (ast.ast-fn-metadata-export metadata)
+                                    [(No) unit]
+                                    [(Export symbol)
+                                      (ir.compiler-ir-extern-builder-push!
+                                        (&mut cur-externs)
+                                        (ir.CompilerIrExtern.Extern
+                                          function-symbol
+                                          function-symbol
+                                          (lower-global-shared-view
+                                            logical-name)
+                                          (ast.ast-ty-func
+                                            (tc_core.tc-type-list-without-regions
+                                              (tc_core.tc-param-type-list
+                                                decl-ctx
+                                                params))
+                                            (tc_core.tc-type-without-regions
+                                              (tc_core.tc-resolve-type
+                                                decl-ctx
+                                                ret)))
+                                          (C)
+                                          (ci.intern-id-value symbol)
+                                          (ast.ast-extern-link-input-list-new)
+                                          true))])]
                                 (begin
                                   (cfg
                                     compile-profile
@@ -69480,408 +68803,350 @@
                                       lower-state
                                       "function"
                                       logical-name))
-                                  (set! result (Err message))
-                                  (set! done true))]
-                              [(Ok callable-functions next-spans)
-                                (let
-                                  [_export : unit
-                                    (match (ast.ast-fn-metadata-export metadata)
-                                      [(No) unit]
-                                      [(Export symbol)
-                                        (ir.compiler-ir-extern-builder-push!
-                                          (&mut cur-externs)
-                                          (ir.CompilerIrExtern.Extern
-                                            function-symbol
-                                            function-symbol
-                                            (lower-global-shared-view
-                                              logical-name)
-                                            (ast.ast-ty-func
-                                              (tc_core.tc-type-list-without-regions
-                                                (tc_core.tc-param-type-list
-                                                  decl-ctx
-                                                  params))
-                                              (tc_core.tc-type-without-regions
-                                                (tc_core.tc-resolve-type
-                                                  decl-ctx
-                                                  ret)))
-                                            (C)
-                                            (ci.intern-id-value symbol)
-                                            (ast.ast-extern-link-input-list-new)
-                                            true))])]
-                                  (begin
-                                    (cfg
-                                      compile-profile
-                                      (compiler-lower-profile-detail-finish
-                                        lower-state
-                                        "function"
-                                        logical-name))
-                                    (ir.compiler-ir-function-builder-append-seq!
-                                      (&mut cur-functions)
-                                      lowered-functions)
-                                    (ir.compiler-ir-function-builder-append-seq!
-                                      (&mut cur-functions)
-                                      callable-functions)
-                                    (set! cur-spans next-spans)
-                                    (set! cur-decls rest)))])]
-                          [(Err message)
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-detail-finish
-                                  lower-state
-                                  "function"
-                                  logical-name))
-                              (set! result (Err message))
-                              (set! done true))]))))]
-                [(DefMacro decl-meta _ _ _ _) (set! cur-decls rest)]
-                [(DefDispatch decl-meta name variants)
-                  (match (lower-dispatch-decl
+                                  (ir.compiler-ir-function-builder-append-seq!
+                                    (&mut cur-functions)
+                                    lowered-functions)
+                                  (ir.compiler-ir-function-builder-append-seq!
+                                    (&mut cur-functions)
+                                    callable-functions)
+                                  (set! cur-spans next-spans)
+                                  (set! cur-decls rest)))])]
+                        [(Err message)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-lower-profile-detail-finish
+                                lower-state
+                                "function"
+                                logical-name))
+                            (set! result (Err message))
+                            (set! done true))]))))]
+              [(DefMacro decl-meta _ _ _ _) (set! cur-decls rest)]
+              [(DefDispatch decl-meta name variants)
+                (match (lower-dispatch-decl
+                  ctx
+                  top-env
+                  cur-local-top-env
+                  (lower-global-shared-view cur-type-cache)
+                  name
+                  variants
+                  (lower-global-shared-view cur-spans)
+                  decl-name-cache
+                  mode
+                  (lower-global-shared-view cur-module)
+                  cur-module-id
+                  logical-module
+                  logical-module-id)
+                  [(Ok lowered)
+                    (match (deref lowered)
+                      [(Decl cache-global lowered-functions function-spans)
+                        (ir.compiler-ir-global-builder-push!
+                          (&mut cur-globals)
+                          cache-global)
+                        (ir.compiler-ir-function-builder-append-seq!
+                          (&mut cur-functions)
+                          lowered-functions)
+                        (set! cur-spans function-spans)
+                        (set! cur-decls rest)])]
+                  [(Err message)
+                    (set! result (Err message))
+                    (set! done true)])]
+              [(Import decl-meta _) (set! cur-decls rest)]
+              [(IncludeStr _ _) (set! cur-decls rest)]
+              [(IncludeStrComptime _ _) (set! cur-decls rest)]
+              [(IncludeStrLzss _ _) (set! cur-decls rest)]
+              [(IncludeBin _ _) (set! cur-decls rest)]
+              [(Module next-module)
+                (let
+                  [next-module-str : String
+                    (lower-name-id-text lower-state next-module)]
+                  [skip-runtime : bool
+                    (lower-comptime-runtime-skip-module? next-module-str)]
+                  [marker : i64 marker-index]
+                  [_next-marker : unit (set! marker-index (+ marker-index 1))]
+                  (match (lower-module-local-view-cached
+                    lower-state
                     ctx
                     top-env
+                    (lower-global-shared-view names)
+                    next-module-str
+                    next-module
+                    (&mut view-epochs))
+                    [(Ok view)
+                      (set! cur-local-top-env view.local-top-env)
+                      (set! cur-name-cache view.name-cache)
+                      (set! cur-type-cache view.type-cache)
+                      (set! cur-module next-module-str)
+                      (set! cur-module-id next-module)
+                      (lower-module-view-epochs-release-before!
+                        lower-state
+                        (&mut view-epochs)
+                        marker)
+                      (if skip-runtime
+                        (match (lower-skip-runtime-until-next-module-with-paths
+                          rest
+                          cur-paths)
+                          [(Skipped kept-decls kept-paths)
+                            (set! cur-decls kept-decls)
+                            (set! cur-paths kept-paths)])
+                        (set! cur-decls rest))]
+                    [(Err message)
+                      (set! result (Err (box (lower-diagnostic message))))
+                      (set! done true)]))]
+              [(Test _ _ _ _) (set! cur-decls rest)]
+              [(DefEnum decl-meta name cleanup variants)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [logical-name : i64
+                    (match cleanup
+                      [(No) -1]
+                      [(Fn cleanup-name)
+                        (let
+                          [cleanup-name-id : i64
+                            (ci.intern-syntax-id-value cleanup-name)]
+                          [key-id : i64
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
+                              cleanup-name-id)]
+                          (lower-name-cache-ir-symbol
+                            decl-name-cache
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              key-id
+                              key-id)
+                            cleanup-name-id
+                            (lower-current-decl-logical-name-cache-id
+                              decl-name-cache
+                              (lower-global-shared-view logical-module)
+                              (lower-name-id-text lower-state cleanup-name-id)
+                              cleanup-name-id)))])]
+                  [enum-id : i64
+                    (csym.compiler-symbol-module-key-id-by-id
+                      cur-module-id
+                      name)]
+                  (if (lower-comptime-runtime-skip-module? cur-module)
+                    unit
+                    (lower-nullary-variant-globals
+                      (compiler-lower-state-interns lower-state)
+                      (lower-name-cache-lookup-logical-id
+                        (& decl-name-cache)
+                        (lower-module-name-key-id-by-id logical-module-id name)
+                        (lower-module-name-key-id-by-id logical-module-id name))
+                      (lower-current-decl-logical-name-cache-id
+                        decl-name-cache
+                        logical-module
+                        (lower-name-id-text lower-state name)
+                        name)
+                      variants
+                      0
+                      (&mut cur-globals)))
+                  (match (lower-enum-cleanup-decl
+                    decl-ctx
                     cur-local-top-env
                     (lower-global-shared-view cur-type-cache)
-                    name
+                    logical-name
+                    cleanup
+                    (Enum enum-id)
                     variants
                     (lower-global-shared-view cur-spans)
                     decl-name-cache
-                    mode
-                    (lower-global-shared-view cur-module)
-                    cur-module-id
-                    logical-module
-                    logical-module-id)
-                    [(Ok lowered)
-                      (match (deref lowered)
-                        [(Decl cache-global lowered-functions function-spans)
-                          (begin
-                            (ir.compiler-ir-global-builder-push!
-                              (&mut cur-globals)
-                              cache-global)
-                            (ir.compiler-ir-function-builder-append-seq!
-                              (&mut cur-functions)
-                              lowered-functions)
-                            (set! cur-spans function-spans)
-                            (set! cur-decls rest))])]
+                    mode)
+                    [(Ok cleanup-functions cleanup-spans)
+                      (ir.compiler-ir-function-builder-append-seq!
+                        (&mut cur-functions)
+                        cleanup-functions)
+                      (set! cur-spans cleanup-spans)
+                      (set! cur-decls rest)]
                     [(Err message)
-                      (begin
-                        (set! result (Err message))
-                        (set! done true))])]
-                [(Import decl-meta _) (set! cur-decls rest)]
-                [(IncludeStr _ _) (set! cur-decls rest)]
-                [(IncludeStrComptime _ _) (set! cur-decls rest)]
-                [(IncludeStrLzss _ _) (set! cur-decls rest)]
-                [(IncludeBin _ _) (set! cur-decls rest)]
-                [(Module next-module)
-                  (let
-                    [next-module-str : String
-                      (lower-name-id-text lower-state next-module)]
-                    [skip-runtime : bool
-                      (lower-comptime-runtime-skip-module? next-module-str)]
-                    [marker : i64 marker-index]
-                    [_next-marker : unit (set! marker-index (+ marker-index 1))]
-                    (match (lower-module-local-view-cached
-                      lower-state
+                      (set! result (Err message))
+                      (set! done true)]))]
+              [(DefEnumLifetimes decl-meta name lifetimes cleanup variants)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
                       ctx
-                      top-env
-                      (lower-global-shared-view names)
-                      next-module-str
-                      next-module
-                      (&mut view-epochs))
-                      [(Ok view)
-                        (begin
-                          (set! cur-local-top-env view.local-top-env)
-                          (set! cur-name-cache view.name-cache)
-                          (set! cur-type-cache view.type-cache)
-                          (set! cur-module next-module-str)
-                          (set! cur-module-id next-module)
-                          (lower-module-view-epochs-release-before!
-                            lower-state
-                            (&mut view-epochs)
-                            marker)
-                          (if skip-runtime
-                            (match (lower-skip-runtime-until-next-module-with-paths
-                              rest
-                              cur-paths)
-                              [(Skipped kept-decls kept-paths)
-                                (begin
-                                  (set! cur-decls kept-decls)
-                                  (set! cur-paths kept-paths))])
-                            (set! cur-decls rest)))]
-                      [(Err message)
-                        (begin
-                          (set! result (Err (box (lower-diagnostic message))))
-                          (set! done true))]))]
-                [(Test _ _ _ _) (set! cur-decls rest)]
-                [(DefEnum decl-meta name cleanup variants)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [logical-name : i64
-                      (match cleanup
-                        [(No) -1]
-                        [(Fn cleanup-name)
-                          (let
-                            [cleanup-name-id : i64
-                              (ci.intern-syntax-id-value cleanup-name)]
-                            [key-id : i64
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                cleanup-name-id)]
-                            (lower-name-cache-ir-symbol
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [logical-name : i64
+                    (match cleanup
+                      [(No) -1]
+                      [(Fn cleanup-name)
+                        (let
+                          [cleanup-name-id : i64
+                            (ci.intern-syntax-id-value cleanup-name)]
+                          [key-id : i64
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
+                              cleanup-name-id)]
+                          (lower-name-cache-ir-symbol
+                            decl-name-cache
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              key-id
+                              key-id)
+                            cleanup-name-id
+                            (lower-current-decl-logical-name-cache-id
                               decl-name-cache
-                              (lower-name-cache-lookup-logical-id
-                                (& decl-name-cache)
-                                key-id
-                                key-id)
-                              cleanup-name-id
-                              (lower-current-decl-logical-name-cache-id
-                                decl-name-cache
-                                (lower-global-shared-view logical-module)
-                                (lower-name-id-text lower-state cleanup-name-id)
-                                cleanup-name-id)))])]
-                    [enum-id : i64
+                              (lower-global-shared-view logical-module)
+                              (lower-name-id-text lower-state cleanup-name-id)
+                              cleanup-name-id)))])]
+                  [enum-id : i64
+                    (csym.compiler-symbol-module-key-id-by-id
+                      cur-module-id
+                      name)]
+                  (if (lower-comptime-runtime-skip-module? cur-module)
+                    unit
+                    (lower-nullary-variant-globals
+                      (compiler-lower-state-interns lower-state)
+                      (lower-name-cache-lookup-logical-id
+                        (& decl-name-cache)
+                        (lower-module-name-key-id-by-id logical-module-id name)
+                        (lower-module-name-key-id-by-id logical-module-id name))
+                      (lower-current-decl-logical-name-cache-id
+                        decl-name-cache
+                        logical-module
+                        (lower-name-id-text lower-state name)
+                        name)
+                      variants
+                      0
+                      (&mut cur-globals)))
+                  (match (lower-enum-cleanup-decl
+                    decl-ctx
+                    cur-local-top-env
+                    (lower-global-shared-view cur-type-cache)
+                    logical-name
+                    cleanup
+                    (ast.ast-ty-enum-args enum-id lifetimes)
+                    variants
+                    (lower-global-shared-view cur-spans)
+                    decl-name-cache
+                    mode)
+                    [(Ok cleanup-functions cleanup-spans)
+                      (ir.compiler-ir-function-builder-append-seq!
+                        (&mut cur-functions)
+                        cleanup-functions)
+                      (set! cur-spans cleanup-spans)
+                      (set! cur-decls rest)]
+                    [(Err message)
+                      (set! result (Err message))
+                      (set! done true)]))]
+              [(DefStruct decl-meta name _ cleanup fields)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [logical-name : i64
+                    (match cleanup
+                      [(No) -1]
+                      [(Fn cleanup-name)
+                        (let
+                          [cleanup-name-id : i64
+                            (ci.intern-syntax-id-value cleanup-name)]
+                          [key-id : i64
+                            (lower-module-name-key-id-by-id
+                              logical-module-id
+                              cleanup-name-id)]
+                          (lower-name-cache-ir-symbol
+                            decl-name-cache
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              key-id
+                              key-id)
+                            cleanup-name-id
+                            (lower-current-decl-logical-name-cache-id
+                              decl-name-cache
+                              logical-module
+                              (lower-name-id-text lower-state cleanup-name-id)
+                              cleanup-name-id)))])]
+                  [struct-ty : ast.AstType
+                    (Struct
                       (csym.compiler-symbol-module-key-id-by-id
                         cur-module-id
-                        name)]
-                    (begin
-                      (if (lower-comptime-runtime-skip-module? cur-module)
-                        unit
-                        (lower-nullary-variant-globals
-                          (compiler-lower-state-interns lower-state)
-                          (lower-name-cache-lookup-logical-id
-                            (& decl-name-cache)
+                        name))]
+                  (match (lower-struct-cleanup-decl
+                    decl-ctx
+                    cur-local-top-env
+                    (lower-global-shared-view cur-type-cache)
+                    logical-name
+                    cleanup
+                    struct-ty
+                    fields
+                    (lower-global-shared-view cur-spans)
+                    decl-name-cache
+                    mode)
+                    [(Ok cleanup-functions cleanup-spans)
+                      (ir.compiler-ir-function-builder-append-seq!
+                        (&mut cur-functions)
+                        cleanup-functions)
+                      (set! cur-spans cleanup-spans)
+                      (set! cur-decls rest)]
+                    [(Err message)
+                      (set! result (Err message))
+                      (set! done true)]))]
+              [(DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
+                (let
+                  [decl-ctx : tc_core.TcContext
+                    (tc_core.tc-context-with-module-id
+                      ctx
+                      (lower-global-shared-view cur-module)
+                      cur-module-id)]
+                  [logical-name : i64
+                    (match cleanup
+                      [(No) -1]
+                      [(Fn cleanup-name)
+                        (let
+                          [cleanup-name-id : i64
+                            (ci.intern-syntax-id-value cleanup-name)]
+                          [key-id : i64
                             (lower-module-name-key-id-by-id
                               logical-module-id
-                              name)
-                            (lower-module-name-key-id-by-id
-                              logical-module-id
-                              name))
-                          (lower-current-decl-logical-name-cache-id
+                              cleanup-name-id)]
+                          (lower-name-cache-ir-symbol
                             decl-name-cache
-                            logical-module
-                            (lower-name-id-text lower-state name)
-                            name)
-                          variants
-                          0
-                          (&mut cur-globals)))
-                      (match (lower-enum-cleanup-decl
-                        decl-ctx
-                        cur-local-top-env
-                        (lower-global-shared-view cur-type-cache)
-                        logical-name
-                        cleanup
-                        (Enum enum-id)
-                        variants
-                        (lower-global-shared-view cur-spans)
-                        decl-name-cache
-                        mode)
-                        [(Ok cleanup-functions cleanup-spans)
-                          (begin
-                            (ir.compiler-ir-function-builder-append-seq!
-                              (&mut cur-functions)
-                              cleanup-functions)
-                            (set! cur-spans cleanup-spans)
-                            (set! cur-decls rest))]
-                        [(Err message)
-                          (begin
-                            (set! result (Err message))
-                            (set! done true))])))]
-                [(DefEnumLifetimes decl-meta name lifetimes cleanup variants)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [logical-name : i64
-                      (match cleanup
-                        [(No) -1]
-                        [(Fn cleanup-name)
-                          (let
-                            [cleanup-name-id : i64
-                              (ci.intern-syntax-id-value cleanup-name)]
-                            [key-id : i64
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                cleanup-name-id)]
-                            (lower-name-cache-ir-symbol
+                            (lower-name-cache-lookup-logical-id
+                              (& decl-name-cache)
+                              key-id
+                              key-id)
+                            cleanup-name-id
+                            (lower-current-decl-logical-name-cache-id
                               decl-name-cache
-                              (lower-name-cache-lookup-logical-id
-                                (& decl-name-cache)
-                                key-id
-                                key-id)
-                              cleanup-name-id
-                              (lower-current-decl-logical-name-cache-id
-                                decl-name-cache
-                                (lower-global-shared-view logical-module)
-                                (lower-name-id-text lower-state cleanup-name-id)
-                                cleanup-name-id)))])]
-                    [enum-id : i64
+                              logical-module
+                              (lower-name-id-text lower-state cleanup-name-id)
+                              cleanup-name-id)))])]
+                  [struct-ty : ast.AstType
+                    (ast.ast-ty-struct-args
                       (csym.compiler-symbol-module-key-id-by-id
                         cur-module-id
-                        name)]
-                    (begin
-                      (if (lower-comptime-runtime-skip-module? cur-module)
-                        unit
-                        (lower-nullary-variant-globals
-                          (compiler-lower-state-interns lower-state)
-                          (lower-name-cache-lookup-logical-id
-                            (& decl-name-cache)
-                            (lower-module-name-key-id-by-id
-                              logical-module-id
-                              name)
-                            (lower-module-name-key-id-by-id
-                              logical-module-id
-                              name))
-                          (lower-current-decl-logical-name-cache-id
-                            decl-name-cache
-                            logical-module
-                            (lower-name-id-text lower-state name)
-                            name)
-                          variants
-                          0
-                          (&mut cur-globals)))
-                      (match (lower-enum-cleanup-decl
-                        decl-ctx
-                        cur-local-top-env
-                        (lower-global-shared-view cur-type-cache)
-                        logical-name
-                        cleanup
-                        (ast.ast-ty-enum-args enum-id lifetimes)
-                        variants
-                        (lower-global-shared-view cur-spans)
-                        decl-name-cache
-                        mode)
-                        [(Ok cleanup-functions cleanup-spans)
-                          (begin
-                            (ir.compiler-ir-function-builder-append-seq!
-                              (&mut cur-functions)
-                              cleanup-functions)
-                            (set! cur-spans cleanup-spans)
-                            (set! cur-decls rest))]
-                        [(Err message)
-                          (begin
-                            (set! result (Err message))
-                            (set! done true))])))]
-                [(DefStruct decl-meta name _ cleanup fields)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [logical-name : i64
-                      (match cleanup
-                        [(No) -1]
-                        [(Fn cleanup-name)
-                          (let
-                            [cleanup-name-id : i64
-                              (ci.intern-syntax-id-value cleanup-name)]
-                            [key-id : i64
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                cleanup-name-id)]
-                            (lower-name-cache-ir-symbol
-                              decl-name-cache
-                              (lower-name-cache-lookup-logical-id
-                                (& decl-name-cache)
-                                key-id
-                                key-id)
-                              cleanup-name-id
-                              (lower-current-decl-logical-name-cache-id
-                                decl-name-cache
-                                logical-module
-                                (lower-name-id-text lower-state cleanup-name-id)
-                                cleanup-name-id)))])]
-                    [struct-ty : ast.AstType
-                      (Struct
-                        (csym.compiler-symbol-module-key-id-by-id
-                          cur-module-id
-                          name))]
-                    (match (lower-struct-cleanup-decl
-                      decl-ctx
-                      cur-local-top-env
-                      (lower-global-shared-view cur-type-cache)
-                      logical-name
-                      cleanup
-                      struct-ty
-                      fields
-                      (lower-global-shared-view cur-spans)
-                      decl-name-cache
-                      mode)
-                      [(Ok cleanup-functions cleanup-spans)
-                        (begin
-                          (ir.compiler-ir-function-builder-append-seq!
-                            (&mut cur-functions)
-                            cleanup-functions)
-                          (set! cur-spans cleanup-spans)
-                          (set! cur-decls rest))]
-                      [(Err message)
-                        (begin
-                          (set! result (Err message))
-                          (set! done true))]))]
-                [(DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
-                  (let
-                    [decl-ctx : tc_core.TcContext
-                      (tc_core.tc-context-with-module-id
-                        ctx
-                        (lower-global-shared-view cur-module)
-                        cur-module-id)]
-                    [logical-name : i64
-                      (match cleanup
-                        [(No) -1]
-                        [(Fn cleanup-name)
-                          (let
-                            [cleanup-name-id : i64
-                              (ci.intern-syntax-id-value cleanup-name)]
-                            [key-id : i64
-                              (lower-module-name-key-id-by-id
-                                logical-module-id
-                                cleanup-name-id)]
-                            (lower-name-cache-ir-symbol
-                              decl-name-cache
-                              (lower-name-cache-lookup-logical-id
-                                (& decl-name-cache)
-                                key-id
-                                key-id)
-                              cleanup-name-id
-                              (lower-current-decl-logical-name-cache-id
-                                decl-name-cache
-                                logical-module
-                                (lower-name-id-text lower-state cleanup-name-id)
-                                cleanup-name-id)))])]
-                    [struct-ty : ast.AstType
-                      (ast.ast-ty-struct-args
-                        (csym.compiler-symbol-module-key-id-by-id
-                          cur-module-id
-                          name)
-                        lifetimes)]
-                    (match (lower-struct-cleanup-decl
-                      decl-ctx
-                      cur-local-top-env
-                      (lower-global-shared-view cur-type-cache)
-                      logical-name
-                      cleanup
-                      struct-ty
-                      fields
-                      (lower-global-shared-view cur-spans)
-                      decl-name-cache
-                      mode)
-                      [(Ok cleanup-functions cleanup-spans)
-                        (begin
-                          (ir.compiler-ir-function-builder-append-seq!
-                            (&mut cur-functions)
-                            cleanup-functions)
-                          (set! cur-spans cleanup-spans)
-                          (set! cur-decls rest))]
-                      [(Err message)
-                        (begin
-                          (set! result (Err message))
-                          (set! done true))]))]
-                [(Unsafe _) (set! cur-decls rest)]))]))
-      result)))
+                        name)
+                      lifetimes)]
+                  (match (lower-struct-cleanup-decl
+                    decl-ctx
+                    cur-local-top-env
+                    (lower-global-shared-view cur-type-cache)
+                    logical-name
+                    cleanup
+                    struct-ty
+                    fields
+                    (lower-global-shared-view cur-spans)
+                    decl-name-cache
+                    mode)
+                    [(Ok cleanup-functions cleanup-spans)
+                      (ir.compiler-ir-function-builder-append-seq!
+                        (&mut cur-functions)
+                        cleanup-functions)
+                      (set! cur-spans cleanup-spans)
+                      (set! cur-decls rest)]
+                    [(Err message)
+                      (set! result (Err message))
+                      (set! done true)]))]
+              [(Unsafe _) (set! cur-decls rest)]))]))
+    result))
 
 ;; --- debug type graph (#8237) ----------------------------------------------
 ;; Job-owned under debug info. Every binding type lowering meets is interned
@@ -69915,11 +69180,10 @@
     (let
       [types : LowerDebugTypes
         (compiler-lower-state-read owner LowerDebugTypes debug-types)]
-      (begin
-        (in-arena
-          (arena.Arena types.arena)
-          (lower-debug-type-id! ctx (&mut types) ty))
-        (compiler-lower-state-write! owner LowerDebugTypes debug-types types)))))
+      (in-arena
+        (arena.Arena types.arena)
+        (lower-debug-type-id! ctx (&mut types) ty))
+      (compiler-lower-state-write! owner LowerDebugTypes debug-types types))))
 
 ;; Record a function's parameter and result types as debug type roots.
 (define (lower-debug-function-roots!
@@ -69931,17 +69195,14 @@
     (ir.compiler-debug-info-enabled?)
     (let
       [index : i64 0]
-      (begin
-        (while (< index (ast.ast-param-list-len (& params)))
-          (begin
-            (match (ast.ast-param-list-get
-              (& params)
-              index
-              (ast.ast-param-fallback))
-              [(ast.AstParam.Param _ ty _)
-                (lower-debug-type-root! owner ctx ty)])
-            (set! index (+ index 1))))
-        (lower-debug-type-root! owner ctx ret)))))
+      (while (< index (ast.ast-param-list-len (& params)))
+        (match (ast.ast-param-list-get
+          (& params)
+          index
+          (ast.ast-param-fallback))
+          [(ast.AstParam.Param _ ty _) (lower-debug-type-root! owner ctx ty)])
+        (set! index (+ index 1)))
+      (lower-debug-type-root! owner ctx ret))))
 
 (define (compiler-lower-state-debug-type-graph [owner : CompilerLowerState]) : ir.CompilerDebugTypeGraph
   (let
@@ -69975,14 +69236,13 @@
   (let
     [slot : i64 (stdlib.hash.string-key key)]
     [found : bool false]
-    (begin
-      (while (not found)
-        (let
-          [id : i64 (lower_i64_i64_map.get-value-or (& types.index) slot -1)]
-          (if (or (< id 0) (string.eq (& (array-ref types.keys id)) key))
-            (set! found true)
-            (set! slot (+ slot 1)))))
-      slot)))
+    (while (not found)
+      (let
+        [id : i64 (lower_i64_i64_map.get-value-or (& types.index) slot -1)]
+        (if (or (< id 0) (string.eq (& (array-ref types.keys id)) key))
+          (set! found true)
+          (set! slot (+ slot 1)))))
+    slot))
 
 (define (lower-debug-type-find
   [types : (& types LowerDebugTypes)]
@@ -69999,29 +69259,26 @@
   [node : ir.CompilerDebugTypeNode]) : i64
   (let
     [id : i64 (ir.compiler-debug-type-graph-push-node! (&mut types.graph) node)]
-    (begin
-      (when
-        (>= id (array-length types.keys))
-        (let
-          [keys : (__tl_dyn-array String)
-            (__tl_make-array String (+ 16 (* 2 id)))]
-          [index : i64 0]
-          (begin
-            (while (< index id)
-              (begin
-                (set!
-                  (array-ref keys index)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    types.keys
-                    index))
-                (set! index (+ index 1))))
-            (set! types.keys keys))))
-      (lower_i64_i64_map.insert-ref!
-        (&mut types.index)
-        (lower-debug-type-slot types (& key))
-        id)
-      (set! (array-ref types.keys id) key)
-      id)))
+    (when
+      (>= id (array-length types.keys))
+      (let
+        [keys : (__tl_dyn-array String)
+          (__tl_make-array String (+ 16 (* 2 id)))]
+        [index : i64 0]
+        (while (< index id)
+          (set!
+            (array-ref keys index)
+            (owned_view.compiler-owned-array-element-shared-view
+              types.keys
+              index))
+          (set! index (+ index 1)))
+        (set! types.keys keys)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut types.index)
+      (lower-debug-type-slot types (& key))
+      id)
+    (set! (array-ref types.keys id) key)
+    id))
 
 (define (lower-debug-member!
   [types : (&mut types LowerDebugTypes)]
@@ -70073,12 +69330,11 @@
         types
         (string.copy (& key))
         (lower-debug-node ir.compiler-debug-type-opaque key size align -1 -1))]
-    (begin
-      (ir.compiler-debug-type-graph-set-node!
-        (&mut types.graph)
-        id
-        (lower-debug-structural-node ctx types ty size align))
-      id)))
+    (ir.compiler-debug-type-graph-set-node!
+      (&mut types.graph)
+      id
+      (lower-debug-structural-node ctx types ty size align))
+    id))
 
 (define (lower-debug-structural-node
   [ctx : tc_core.TcContext]
@@ -70242,58 +69498,49 @@
     [index : i64 0]
     [cursor : i64 0]
     [checked : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [elem : ast.AstType
-            (lower-debug-type-resolve
-              ctx
-              (tc_core.tc-context-type-get
-                ctx
-                (ast.ast-type-list-get
-                  (& elems)
-                  index
-                  (ast.ast-type-id-fallback))))]
-          [offset : i64 (lower-align-up cursor (lower-type-align ctx (& elem)))]
-          [elem-layout : tc_core.TcLayoutInfo
-            (lower-debug-type-layout ctx (lower-global-shared-view elem))]
-          [expected : i64
-            (tc_core.tc-align-up
-              checked
-              (tc_core.tc-layout-info-align elem-layout))]
-          (begin
-            (lower-debug-check! types (& name) "element offset" offset expected)
-            (set!
-              checked
-              (+ expected (tc_core.tc-layout-info-size elem-layout)))
-            (set! (array-ref offsets index) offset)
-            (set! cursor (+ offset (lower-type-size ctx (& elem))))
-            (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))
-            (set! index (+ index 1)))))
+    (while (< index count)
       (let
-        [first : i64 types.graph.member-count]
-        (begin
-          (set! index 0)
-          (while (< index count)
-            (begin
-              (lower-debug-member!
-                types
-                -1
-                (string.int->string index)
-                index
-                (array-ref ids index)
-                (array-ref offsets index))
-              (set! index (+ index 1))))
-          (ir.CompilerDebugTypeNode
-            ir.compiler-debug-type-tuple
-            name
-            size
-            align
-            -1
-            -1
-            0
-            first
-            count))))))
+        [elem : ast.AstType
+          (lower-debug-type-resolve
+            ctx
+            (tc_core.tc-context-type-get
+              ctx
+              (ast.ast-type-list-get (& elems) index (ast.ast-type-id-fallback))))]
+        [offset : i64 (lower-align-up cursor (lower-type-align ctx (& elem)))]
+        [elem-layout : tc_core.TcLayoutInfo
+          (lower-debug-type-layout ctx (lower-global-shared-view elem))]
+        [expected : i64
+          (tc_core.tc-align-up
+            checked
+            (tc_core.tc-layout-info-align elem-layout))]
+        (lower-debug-check! types (& name) "element offset" offset expected)
+        (set! checked (+ expected (tc_core.tc-layout-info-size elem-layout)))
+        (set! (array-ref offsets index) offset)
+        (set! cursor (+ offset (lower-type-size ctx (& elem))))
+        (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))
+        (set! index (+ index 1))))
+    (let
+      [first : i64 types.graph.member-count]
+      (set! index 0)
+      (while (< index count)
+        (lower-debug-member!
+          types
+          -1
+          (string.int->string index)
+          index
+          (array-ref ids index)
+          (array-ref offsets index))
+        (set! index (+ index 1)))
+      (ir.CompilerDebugTypeNode
+        ir.compiler-debug-type-tuple
+        name
+        size
+        align
+        -1
+        -1
+        0
+        first
+        count))))
 
 ;; A nominal type reached again while its own layout is being built is
 ;; referenced through one forward node, so the graph stays acyclic.
@@ -70347,17 +69594,16 @@
           -1
           -1
           -1))]
-    (begin
-      (ir.compiler-debug-type-graph-set-node!
-        (&mut types.graph)
-        id
-        (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-          [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
-            (lower-debug-aggregate-node ctx types name layout)]
-          [(tc_core.ResultTcInlineAggregateLayout.Err _)
-            (lower-debug-node ir.compiler-debug-type-opaque name 0 1 -1 -1)]))
-      (lower-debug-nominal-check! ctx types id name-id ty)
-      id)))
+    (ir.compiler-debug-type-graph-set-node!
+      (&mut types.graph)
+      id
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+          (lower-debug-aggregate-node ctx types name layout)]
+        [(tc_core.ResultTcInlineAggregateLayout.Err _)
+          (lower-debug-node ir.compiler-debug-type-opaque name 0 1 -1 -1)]))
+    (lower-debug-nominal-check! ctx types id name-id ty)
+    id))
 
 (define (lower-debug-aggregate-node
   [ctx : tc_core.TcContext]
@@ -70374,47 +69620,39 @@
           [count : i64 (tc_core.tc-inline-field-layout-list-count (& fields))]
           [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           [index : i64 0]
-          (begin
+          (while (< index count)
+            (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
+              [(tc_core.TcInlineFieldLayout.Field _ field-ty _)
+                (set!
+                  (array-ref ids index)
+                  (lower-debug-type-id! ctx types field-ty))])
+            (set! index (+ index 1)))
+          (let
+            [first : i64 types.graph.member-count]
+            (set! index 0)
             (while (< index count)
-              (begin
-                (match (tc_core.tc-inline-field-layout-list-ref
-                  (& fields)
-                  index)
-                  [(tc_core.TcInlineFieldLayout.Field _ field-ty _)
-                    (set!
-                      (array-ref ids index)
-                      (lower-debug-type-id! ctx types field-ty))])
-                (set! index (+ index 1))))
-            (let
-              [first : i64 types.graph.member-count]
-              (begin
-                (set! index 0)
-                (while (< index count)
-                  (begin
-                    (match (tc_core.tc-inline-field-layout-list-ref
-                      (& fields)
-                      index)
-                      [(tc_core.TcInlineFieldLayout.Field field-id _ offset)
-                        (lower-debug-member!
-                          types
-                          -1
-                          (tc_core.tc-env-key-name-text field-id)
-                          field-id
-                          (array-ref ids index)
-                          offset)])
-                    (set! index (+ index 1))))
-                (ir.CompilerDebugTypeNode
-                  ir.compiler-debug-type-struct
-                  name
-                  size
-                  align
-                  -1
-                  -1
-                  (if resident
-                    (/ size 8)
-                    0)
-                  first
-                  count)))))]
+              (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
+                [(tc_core.TcInlineFieldLayout.Field field-id _ offset)
+                  (lower-debug-member!
+                    types
+                    -1
+                    (tc_core.tc-env-key-name-text field-id)
+                    field-id
+                    (array-ref ids index)
+                    offset)])
+              (set! index (+ index 1)))
+            (ir.CompilerDebugTypeNode
+              ir.compiler-debug-type-struct
+              name
+              size
+              align
+              -1
+              -1
+              (if resident
+                (/ size 8)
+                0)
+              first
+              count)))]
       [(tc_core.TcInlineAggregateLayout.Enum size align variants)
         (lower-debug-enum-node ctx types name size align variants resident)])))
 
@@ -70431,108 +69669,85 @@
     [count : i64 (tc_core.tc-inline-variant-layout-list-count (& variants))]
     [total : i64 0]
     [variant : i64 0]
-    (begin
+    (while (< variant count)
+      (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
+        [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
+          (set!
+            total
+            (+ total (tc_core.tc-inline-payload-layout-list-count (& payloads))))])
+      (set! variant (+ variant 1)))
+    (let
+      [ids : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+      [slot : i64 0]
+      (set! variant 0)
       (while (< variant count)
-        (begin
+        (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
+          [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
+            (let
+              [index : i64 0]
+              (while (<
+                index
+                (tc_core.tc-inline-payload-layout-list-count (& payloads)))
+                (match (tc_core.tc-inline-payload-layout-list-ref
+                  (& payloads)
+                  index)
+                  [(tc_core.TcInlinePayloadLayout.Payload _ payload-ty _)
+                    (set!
+                      (array-ref ids slot)
+                      (lower-debug-type-id! ctx types payload-ty))])
+                (set! slot (+ slot 1))
+                (set! index (+ index 1))))])
+        (set! variant (+ variant 1)))
+      (let
+        [first : i64 types.graph.member-count]
+        (set! variant 0)
+        (set! slot 0)
+        (while (< variant count)
           (match (tc_core.tc-inline-variant-layout-list-ref
             (& variants)
             variant)
-            [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-              (set!
-                total
-                (+
-                  total
-                  (tc_core.tc-inline-payload-layout-list-count (& payloads))))])
-          (set! variant (+ variant 1))))
-      (let
-        [ids : (__tl_dyn-array i64) (__tl_make-array i64 total)]
-        [slot : i64 0]
-        (begin
-          (set! variant 0)
-          (while (< variant count)
-            (begin
-              (match (tc_core.tc-inline-variant-layout-list-ref
-                (& variants)
-                variant)
-                [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-                  (let
-                    [index : i64 0]
-                    (while (<
-                      index
-                      (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                      (begin
-                        (match (tc_core.tc-inline-payload-layout-list-ref
-                          (& payloads)
-                          index)
-                          [(tc_core.TcInlinePayloadLayout.Payload
-                              _
-                              payload-ty
-                              _)
-                            (set!
-                              (array-ref ids slot)
-                              (lower-debug-type-id! ctx types payload-ty))])
-                        (set! slot (+ slot 1))
-                        (set! index (+ index 1)))))])
-              (set! variant (+ variant 1))))
-          (let
-            [first : i64 types.graph.member-count]
-            (begin
-              (set! variant 0)
-              (set! slot 0)
-              (while (< variant count)
-                (begin
-                  (match (tc_core.tc-inline-variant-layout-list-ref
-                    (& variants)
-                    variant)
-                    [(tc_core.TcInlineVariantLayout.Variant
-                        variant-id
+            [(tc_core.TcInlineVariantLayout.Variant variant-id _ _ payloads)
+              (let
+                [index : i64 0]
+                (lower-debug-member!
+                  types
+                  variant
+                  (tc_core.tc-env-key-name-text variant-id)
+                  variant-id
+                  -1
+                  -1)
+                (while (<
+                  index
+                  (tc_core.tc-inline-payload-layout-list-count (& payloads)))
+                  (match (tc_core.tc-inline-payload-layout-list-ref
+                    (& payloads)
+                    index)
+                    [(tc_core.TcInlinePayloadLayout.Payload
+                        payload-index
                         _
-                        _
-                        payloads)
-                      (let
-                        [index : i64 0]
-                        (begin
-                          (lower-debug-member!
-                            types
-                            variant
-                            (tc_core.tc-env-key-name-text variant-id)
-                            variant-id
-                            -1
-                            -1)
-                          (while (<
-                            index
-                            (tc_core.tc-inline-payload-layout-list-count
-                              (& payloads)))
-                            (begin
-                              (match (tc_core.tc-inline-payload-layout-list-ref
-                                (& payloads)
-                                index)
-                                [(tc_core.TcInlinePayloadLayout.Payload
-                                    payload-index
-                                    _
-                                    offset)
-                                  (lower-debug-member!
-                                    types
-                                    variant
-                                    (string.int->string payload-index)
-                                    payload-index
-                                    (array-ref ids slot)
-                                    offset)])
-                              (set! slot (+ slot 1))
-                              (set! index (+ index 1))))))])
-                  (set! variant (+ variant 1))))
-              (ir.CompilerDebugTypeNode
-                ir.compiler-debug-type-enum
-                name
-                size
-                align
-                tag
-                count
-                (if resident
-                  (/ size 8)
-                  0)
-                first
-                (- types.graph.member-count first)))))))))
+                        offset)
+                      (lower-debug-member!
+                        types
+                        variant
+                        (string.int->string payload-index)
+                        payload-index
+                        (array-ref ids slot)
+                        offset)])
+                  (set! slot (+ slot 1))
+                  (set! index (+ index 1))))])
+          (set! variant (+ variant 1)))
+        (ir.CompilerDebugTypeNode
+          ir.compiler-debug-type-enum
+          name
+          size
+          align
+          tag
+          count
+          (if resident
+            (/ size 8)
+            0)
+          first
+          (- types.graph.member-count first))))))
 
 ;; The first layout disagreement `--verify-ir` found, or "".
 (define (lower-debug-types-error [owner : CompilerLowerState]) : String
@@ -70586,45 +69801,43 @@
       [layout : tc_core.TcLayoutInfo (lower-debug-type-layout ctx ty)]
       [member : i64 node.first-member]
       [variant-id : i64 -1]
-      (begin
-        (lower-debug-check!
-          types
-          (& node.name)
-          "size"
-          node.size
-          (tc_core.tc-layout-info-size layout))
-        (lower-debug-check!
-          types
-          (& node.name)
-          "align"
-          node.align
-          (tc_core.tc-layout-info-align layout))
-        (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-          [(tc_core.ResultTcInlineAggregateLayout.Ok aggregate)
-            (while (< member (+ node.first-member node.member-count))
-              (let
-                [row : ir.CompilerDebugTypeMember
-                  (owned_view.compiler-owned-array-element-shared-view
-                    types.graph.members
-                    member)]
-                (begin
-                  (if (< row.type 0)
-                    (set! variant-id row.name-id)
-                    (lower-debug-check!
-                      types
-                      (& node.name)
-                      (str_cat.str-cat "member " row.name " offset")
-                      row.offset
-                      (if (< variant-id 0)
-                        (tc_core.tc-inline-aggregate-layout-field-offset-id
-                          (lower-global-shared-view aggregate)
-                          row.name-id)
-                        (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
-                          (lower-global-shared-view aggregate)
-                          variant-id
-                          row.name-id))))
-                  (set! member (+ member 1)))))]
-          [(tc_core.ResultTcInlineAggregateLayout.Err _) unit])))))
+      (lower-debug-check!
+        types
+        (& node.name)
+        "size"
+        node.size
+        (tc_core.tc-layout-info-size layout))
+      (lower-debug-check!
+        types
+        (& node.name)
+        "align"
+        node.align
+        (tc_core.tc-layout-info-align layout))
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(tc_core.ResultTcInlineAggregateLayout.Ok aggregate)
+          (while (< member (+ node.first-member node.member-count))
+            (let
+              [row : ir.CompilerDebugTypeMember
+                (owned_view.compiler-owned-array-element-shared-view
+                  types.graph.members
+                  member)]
+              (if (< row.type 0)
+                (set! variant-id row.name-id)
+                (lower-debug-check!
+                  types
+                  (& node.name)
+                  (str_cat.str-cat "member " row.name " offset")
+                  row.offset
+                  (if (< variant-id 0)
+                    (tc_core.tc-inline-aggregate-layout-field-offset-id
+                      (lower-global-shared-view aggregate)
+                      row.name-id)
+                    (tc_core.tc-inline-aggregate-layout-variant-payload-offset-id
+                      (lower-global-shared-view aggregate)
+                      variant-id
+                      row.name-id))))
+              (set! member (+ member 1))))]
+        [(tc_core.ResultTcInlineAggregateLayout.Err _) unit]))))
 
 (define (lower-compiler-program-checked-with-names-mode
   [lower-state : CompilerLowerState]
@@ -70636,87 +69849,84 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (begin
-    (match (compiler-lower-state-read
-      lower-state
-      pointer_proof.PointerProofRequest
-      pointer-proof-request)
-      [(Disabled) unit]
-      [(Requested input)
-        (let
-          [error : String (pointer_proof.pointer-proof-input-begin-error input)]
-          (when
-            (> (string.string-length (& error)) 0)
-            (return (Err (box (lower-diagnostic error)))))
-          (pointer_proof.pointer-proof-input-use-default-path!
-            input
-            (if (> (string.string-length (& entry-path)) 0)
-              (lower-global-shared-view entry-path)
-              "<source>")))])
-    ;; Clone-root discovery and checked typechecking can probe aggregate layout
-    ;; with helper contexts before final lowering. Emitted code must use one
-    ;; internally consistent layout view for all functions in this pass.
-    (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
-    (tc_core.tc-nominal-owner-cache-reset-for-job!
-      (tc_core.tc-context-job-state ctx))
-    (match program
-      [(Program decls-box)
-        (let
-          [decls : ast.AstDeclList (deref decls-box)]
-          (match (lower-decls
-            lower-state
-            ctx
-            top-env
-            decls
-            paths
-            entry-path
-            (ir.compiler-ir-global-seq-empty)
-            (ir.compiler-ir-function-seq-empty)
-            (ir.compiler-ir-extern-seq-empty)
-            (ir.compiler-source-spans-empty)
-            names
-            clone-roots
-            mode)
-            [(Ok payload)
+  (match (compiler-lower-state-read
+    lower-state
+    pointer_proof.PointerProofRequest
+    pointer-proof-request)
+    [(Disabled) unit]
+    [(Requested input)
+      (let
+        [error : String (pointer_proof.pointer-proof-input-begin-error input)]
+        (when
+          (> (string.string-length (& error)) 0)
+          (return (Err (box (lower-diagnostic error)))))
+        (pointer_proof.pointer-proof-input-use-default-path!
+          input
+          (if (> (string.string-length (& entry-path)) 0)
+            (lower-global-shared-view entry-path)
+            "<source>")))])
+  ;; Clone-root discovery and checked typechecking can probe aggregate layout
+  ;; with helper contexts before final lowering. Emitted code must use one
+  ;; internally consistent layout view for all functions in this pass.
+  (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
+  (tc_core.tc-nominal-owner-cache-reset-for-job!
+    (tc_core.tc-context-job-state ctx))
+  (match program
+    [(Program decls-box)
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        (match (lower-decls
+          lower-state
+          ctx
+          top-env
+          decls
+          paths
+          entry-path
+          (ir.compiler-ir-global-seq-empty)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty)
+          (ir.compiler-source-spans-empty)
+          names
+          clone-roots
+          mode)
+          [(Ok payload)
+            (let
+              [success : LowerDeclsSuccess (deref payload)]
+              [program : ir.CompilerIrProgram
+                (Program success.globals success.functions success.externs)]
+              ;; Returning the public IR is the explicit text boundary:
+              ;; diagnostics, optimizers, and backend emitters may inspect
+              ;; symbol spellings, while construction above uses handles.
+              (lower-materialize-generated-role-symbols! lower-state)
               (let
-                [success : LowerDeclsSuccess (deref payload)]
-                [program : ir.CompilerIrProgram
-                  (Program success.globals success.functions success.externs)]
-                (begin
-                  ;; Returning the public IR is the explicit text boundary:
-                  ;; diagnostics, optimizers, and backend emitters may inspect
-                  ;; symbol spellings, while construction above uses handles.
-                  (lower-materialize-generated-role-symbols! lower-state)
-                  (let
-                    [debug-error : String (lower-debug-types-error lower-state)]
-                    (when
-                      (> (string.string-length (& debug-error)) 0)
-                      (return
-                        (ResultCompilerLower.Err
-                          (box (lower-diagnostic debug-error))))))
-                  (match (compiler-lower-state-read
-                    lower-state
-                    pointer_proof.PointerProofRequest
-                    pointer-proof-request)
-                    [(Disabled) unit]
-                    [(Requested input)
-                      (pointer_proof.pointer-proof-input-bind!
-                        input
-                        (lower-global-shared-view program)
-                        (lower-global-shared-view success.spans))])
-                  (Ok program success.spans)))]
-            [(Err message)
-              (begin
-                (match (compiler-lower-state-read
-                  lower-state
-                  pointer_proof.PointerProofRequest
-                  pointer-proof-request)
-                  [(Requested input)
-                    (pointer_proof.pointer-proof-input-fail!
-                      input
-                      "pointer proof: requested lowering did not complete")]
-                  [_ unit])
-                (Err message))]))])))
+                [debug-error : String (lower-debug-types-error lower-state)]
+                (when
+                  (> (string.string-length (& debug-error)) 0)
+                  (return
+                    (ResultCompilerLower.Err
+                      (box (lower-diagnostic debug-error))))))
+              (match (compiler-lower-state-read
+                lower-state
+                pointer_proof.PointerProofRequest
+                pointer-proof-request)
+                [(Disabled) unit]
+                [(Requested input)
+                  (pointer_proof.pointer-proof-input-bind!
+                    input
+                    (lower-global-shared-view program)
+                    (lower-global-shared-view success.spans))])
+              (Ok program success.spans))]
+          [(Err message)
+            (match (compiler-lower-state-read
+              lower-state
+              pointer_proof.PointerProofRequest
+              pointer-proof-request)
+              [(Requested input)
+                (pointer_proof.pointer-proof-input-fail!
+                  input
+                  "pointer proof: requested lowering did not complete")]
+              [_ unit])
+            (Err message)]))]))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
 ;; public `-mode` wrappers below own the expand -> specialize -> typecheck
@@ -70747,48 +69957,46 @@
                 "<source>"
                 Nil
                 false)])]
-        (begin
-          (tc_core.tc-clone-root-collection-use!
-            (tc_core.tc-serial-job-state)
-            (lower-global-shared-view specialized))
-          (lower-typecheck-clone-and-lower
-            lower-state
-            "<source>"
-            specialized
-            paths
-            keep-plan
-            alias-names
-            true
-            mode
-            (svec.new)
-            (tc_core.tc-prefix-default-cache-scope)
-            pools)))]
+        (tc_core.tc-clone-root-collection-use!
+          (tc_core.tc-serial-job-state)
+          (lower-global-shared-view specialized))
+        (lower-typecheck-clone-and-lower
+          lower-state
+          "<source>"
+          specialized
+          paths
+          keep-plan
+          alias-names
+          true
+          mode
+          (svec.new)
+          (tc_core.tc-prefix-default-cache-scope)
+          pools))]
     [(Err diag) (Err diag)]))
 
 (define (lower-compiler-program-unlocated-mode
   [lower-state : CompilerLowerState]
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (begin
-    ;; A standalone source entry constructs its compatibility state before
-    ;; resetting and parsing the next source. Rebind to the active post-parse
-    ;; interner so structural name keys use the same owner as typechecking.
-    (compiler-lower-state-use-intern-state!
-      lower-state
-      (ci.intern-compat-state-capture-active))
-    (tc_core.tc-agg-caches-reset!)
-    ;; Generate declaration families before macro expansion (see
-    ;; typecheck-compiler-program-with-paths for why).
-    (match (spec.gen-normalize-program program)
-      [(Ok generated)
-        (match (tc_core.macro-expand-program generated)
-          [(Ok expanded _)
-            (lower-compiler-expanded-program-unlocated-mode
-              lower-state
-              expanded
-              mode)]
-          [(Err diag) (Err diag)])]
-      [(Err diag) (Err diag)])))
+  ;; A standalone source entry constructs its compatibility state before
+  ;; resetting and parsing the next source. Rebind to the active post-parse
+  ;; interner so structural name keys use the same owner as typechecking.
+  (compiler-lower-state-use-intern-state!
+    lower-state
+    (ci.intern-compat-state-capture-active))
+  (tc_core.tc-agg-caches-reset!)
+  ;; Generate declaration families before macro expansion (see
+  ;; typecheck-compiler-program-with-paths for why).
+  (match (spec.gen-normalize-program program)
+    [(Ok generated)
+      (match (tc_core.macro-expand-program generated)
+        [(Ok expanded _)
+          (lower-compiler-expanded-program-unlocated-mode
+            lower-state
+            expanded
+            mode)]
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (lower-compiler-program-with-path-mode-and-state
   [lower-state : CompilerLowerState]
@@ -71084,10 +70292,9 @@
               compile-profile
               (compiler-lower-profile-finish lower-state "typecheck"))
             (Err (box (cdiag.compiler-diagnostic-list-first (deref diag)))))])]
-    (begin
-      (ast.ast-node-pool-context-capture-active! pools)
-      (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
-      result)))
+    (ast.ast-node-pool-context-capture-active! pools)
+    (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+    result))
 
 ;; Serial/test compatibility adapter.  Production lower jobs pass the
 ;; compile-owned intern state through the explicit entry above.
@@ -71229,193 +70436,189 @@
                 pools
                 (lower-global-shared-view intern-state)))
             (Ok program paths)))]
-      (begin
-        ;; Explicit specialization mutates owner pool/interner cells; publish
-        ;; them before matching either result or entering legacy lowering.
-        (ast.ast-node-pool-context-install! pools)
-        (ci.intern-compat-state-install! intern-state)
-        (match specialized-result
-          [(Ok specialized specialized-paths)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-lower-profile-finish lower-state "specialize"))
-              (cfg
-                compile-profile
-                (compiler-lower-profile-specialization-counters
-                  (compiler-lower-state-profile lower-state)))
-              (cfg compile-profile (compiler-lower-profile-start lower-state))
-              (let
-                ;; The environment over the specialized declarations serves
-                ;; the reachability walk only: lowering keeps `names`, in which
-                ;; specialized instances stay private symbols. Its store grows
-                ;; in its owner arena, so give it one of its own and retire it
-                ;; as soon as the walk returns instead of carrying it to the
-                ;; end of lowering (#7882).
-                [prune-names-arena : i64
-                  (if needs-specialization
-                    (arena.tl_arena_make)
-                    0)]
-                [prune-names : LowerNameEnv
-                  (if needs-specialization
-                    (let
-                      [enclosing : i64 (arena.tl_arena_current)]
-                      [_enter : unit
-                        (unsafe
-                          (arena.tl_arena_set prune-names-arena))]
-                      [built : LowerNameEnv
-                        (match (lower-global-shared-view specialized)
-                          [(Program decls-box)
-                            (let
-                              [decls : ast.AstDeclList (deref decls-box)]
-                              (lower-name-env-from-decls-with-state
-                                lower-state
-                                decls
-                                (lower-global-shared-view specialized-paths)
-                                (lower-global-shared-view entry-path)
-                                Nil))])]
-                      [_leave : unit
-                        (unsafe
-                          (arena.tl_arena_set enclosing))]
-                      built)
-                    (owned_view.compiler-owned-shared-view names))]
-                ;; Typecheck remains complete and whole-program while lower,
-                ;; optimize, and codegen are gated on reachability. This up-front
-                ;; walk records the dense declaration selection consumed both by
-                ;; typecheck's clone-root observer and by the final linear prune.
-                (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
-                  lower-state
-                  pools
-                  (lower-global-shared-view entry-path)
-                  (lower-global-shared-view specialized)
-                  (lower-global-shared-view specialized-paths)
-                  prune-names
-                  (Empty))
-                  [(Program reach-program _reach-paths reach-keep-plan)
-                    (begin
-                      (if (= prune-names-arena 0)
-                        unit
-                        (unsafe
-                          (arena.tl_arena_destroy prune-names-arena)))
-                      ;; The lowering metric slots are a fixed range shared with
-                      ;; the interner's, so this one fact is reported directly.
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-counter
-                          "name_env.prune_arena_releases"
-                          (if (= prune-names-arena 0)
-                            0
-                            1)))
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-finish lower-state "prune"))
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-start lower-state))
-                      ;; Capture stable retained declaration keys before optional
-                      ;; pool compaction releases the reach-program AST.
-                      (tc_core.tc-clone-root-collection-use!
-                        job-state
-                        reach-program)
-                      (let
-                        [detach-source? : bool
-                          (compiler-lower-checked-dest-pools-active?
-                            lower-state)]
-                        [source-compaction : ast.AstProgramCompaction
-                          (if detach-source?
-                            (ast.ast-program-compact-with-pools
-                              pools
-                              (compiler-lower-checked-dest-pools-current
-                                lower-state)
-                              specialized)
-                            (AstProgramCompaction specialized pools))]
-                        [source-program : ast.AstProgram
-                          (match (lower-global-shared-view source-compaction)
-                            [(AstProgramCompaction out _) out])]
-                        [source-pools : ast.AstNodePoolContext
-                          (match source-compaction
-                            [(AstProgramCompaction _ out-pools) out-pools])]
-                        [source-entry-path : String
-                          (if detach-source?
-                            (lower-copy-string-into-pools
-                              entry-path
-                              source-pools)
-                            entry-path)]
-                        [source-cache-scope : String
-                          (if detach-source?
-                            (lower-copy-string-into-pools
-                              cache-scope
-                              source-pools)
-                            cache-scope)]
-                        [source-paths : ast.AstDeclPathList
-                          (if detach-source?
-                            (lower-copy-paths-into-pools
-                              specialized-paths
-                              source-pools)
-                            specialized-paths)]
-                        [source-keep-plan : LowerDeclKeepPlan
-                          (if detach-source?
-                            (lower-decl-keep-plan-copy-into-pools
-                              reach-keep-plan
-                              source-pools)
-                            reach-keep-plan)]
-                        [escaped-names : LowerNameEnv
-                          (if (and detach-source? needs-specialization)
-                            (lower-name-env-copy-into-pools-owned
+      ;; Explicit specialization mutates owner pool/interner cells; publish
+      ;; them before matching either result or entering legacy lowering.
+      (ast.ast-node-pool-context-install! pools)
+      (ci.intern-compat-state-install! intern-state)
+      (match specialized-result
+        [(Ok specialized specialized-paths)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-lower-profile-finish lower-state "specialize"))
+            (cfg
+              compile-profile
+              (compiler-lower-profile-specialization-counters
+                (compiler-lower-state-profile lower-state)))
+            (cfg compile-profile (compiler-lower-profile-start lower-state))
+            (let
+              ;; The environment over the specialized declarations serves
+              ;; the reachability walk only: lowering keeps `names`, in which
+              ;; specialized instances stay private symbols. Its store grows
+              ;; in its owner arena, so give it one of its own and retire it
+              ;; as soon as the walk returns instead of carrying it to the
+              ;; end of lowering (#7882).
+              [prune-names-arena : i64
+                (if needs-specialization
+                  (arena.tl_arena_make)
+                  0)]
+              [prune-names : LowerNameEnv
+                (if needs-specialization
+                  (let
+                    [enclosing : i64 (arena.tl_arena_current)]
+                    [_enter : unit
+                      (unsafe
+                        (arena.tl_arena_set prune-names-arena))]
+                    [built : LowerNameEnv
+                      (match (lower-global-shared-view specialized)
+                        [(Program decls-box)
+                          (let
+                            [decls : ast.AstDeclList (deref decls-box)]
+                            (lower-name-env-from-decls-with-state
                               lower-state
-                              names
-                              source-pools)
-                            names)]
-                        [_clear-source-derived-caches : unit
-                          (if detach-source?
-                            (lower-clear-macro-expanded-source-caches-into-pools!
-                              job-state
-                              source-pools)
-                            unit)]
-                        [_commit-dest : unit
-                          (lower-checked-dest-pools-commit!
+                              decls
+                              (lower-global-shared-view specialized-paths)
+                              (lower-global-shared-view entry-path)
+                              Nil))])]
+                    [_leave : unit
+                      (unsafe
+                        (arena.tl_arena_set enclosing))]
+                    built)
+                  (owned_view.compiler-owned-shared-view names))]
+              ;; Typecheck remains complete and whole-program while lower,
+              ;; optimize, and codegen are gated on reachability. This up-front
+              ;; walk records the dense declaration selection consumed both by
+              ;; typecheck's clone-root observer and by the final linear prune.
+              (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
+                lower-state
+                pools
+                (lower-global-shared-view entry-path)
+                (lower-global-shared-view specialized)
+                (lower-global-shared-view specialized-paths)
+                prune-names
+                (Empty))
+                [(Program reach-program _reach-paths reach-keep-plan)
+                  (begin
+                    (if (= prune-names-arena 0)
+                      unit
+                      (unsafe
+                        (arena.tl_arena_destroy prune-names-arena)))
+                    ;; The lowering metric slots are a fixed range shared with
+                    ;; the interner's, so this one fact is reported directly.
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-counter
+                        "name_env.prune_arena_releases"
+                        (if (= prune-names-arena 0)
+                          0
+                          1)))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish lower-state "prune"))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-start lower-state))
+                    ;; Capture stable retained declaration keys before optional
+                    ;; pool compaction releases the reach-program AST.
+                    (tc_core.tc-clone-root-collection-use!
+                      job-state
+                      reach-program)
+                    (let
+                      [detach-source? : bool
+                        (compiler-lower-checked-dest-pools-active? lower-state)]
+                      [source-compaction : ast.AstProgramCompaction
+                        (if detach-source?
+                          (ast.ast-program-compact-with-pools
+                            pools
+                            (compiler-lower-checked-dest-pools-current
+                              lower-state)
+                            specialized)
+                          (AstProgramCompaction specialized pools))]
+                      [source-program : ast.AstProgram
+                        (match (lower-global-shared-view source-compaction)
+                          [(AstProgramCompaction out _) out])]
+                      [source-pools : ast.AstNodePoolContext
+                        (match source-compaction
+                          [(AstProgramCompaction _ out-pools) out-pools])]
+                      [source-entry-path : String
+                        (if detach-source?
+                          (lower-copy-string-into-pools entry-path source-pools)
+                          entry-path)]
+                      [source-cache-scope : String
+                        (if detach-source?
+                          (lower-copy-string-into-pools
+                            cache-scope
+                            source-pools)
+                          cache-scope)]
+                      [source-paths : ast.AstDeclPathList
+                        (if detach-source?
+                          (lower-copy-paths-into-pools
+                            specialized-paths
+                            source-pools)
+                          specialized-paths)]
+                      [source-keep-plan : LowerDeclKeepPlan
+                        (if detach-source?
+                          (lower-decl-keep-plan-copy-into-pools
+                            reach-keep-plan
+                            source-pools)
+                          reach-keep-plan)]
+                      [escaped-names : LowerNameEnv
+                        (if (and detach-source? needs-specialization)
+                          (lower-name-env-copy-into-pools-owned
                             lower-state
-                            source-pools)]
-                        [_capture-before-typecheck : unit
-                          (ci.intern-compat-state-capture-from-globals!
-                            (&mut intern-state))]
-                        (lower-typecheck-clone-and-lower-with-source-names-and-intern-state
+                            names
+                            source-pools)
+                          names)]
+                      [_clear-source-derived-caches : unit
+                        (if detach-source?
+                          (lower-clear-macro-expanded-source-caches-into-pools!
+                            job-state
+                            source-pools)
+                          unit)]
+                      [_commit-dest : unit
+                        (lower-checked-dest-pools-commit!
                           lower-state
-                          load-state
-                          prefix-cache
-                          job-state
-                          source-entry-path
-                          source-program
-                          source-paths
-                          source-keep-plan
-                          escaped-names
-                          needs-specialization
-                          mode
-                          stdlib-roots
-                          source-cache-scope
-                          source-pools
-                          source-names
-                          intern-state)))])))]
-          [(Err diag)
-            (begin
-              (cfg
-                (any
-                  compiler-surface-producer
-                  compiler-build-identity
-                  embedded-stdlib-tlci)
-                (package_surface.package-surface-capture-abort!
-                  "package surface: specialization failed")
-                unit)
-              (cfg
-                compile-profile
-                (compiler-lower-profile-finish lower-state "specialize"))
-              (cfg
-                compile-profile
-                (compiler-lower-profile-specialization-counters
-                  (compiler-lower-state-profile lower-state)))
-              (Err
-                (box
-                  (lower-diagnostic-with-fallback-path (deref diag) entry-path))))])))))
+                          source-pools)]
+                      [_capture-before-typecheck : unit
+                        (ci.intern-compat-state-capture-from-globals!
+                          (&mut intern-state))]
+                      (lower-typecheck-clone-and-lower-with-source-names-and-intern-state
+                        lower-state
+                        load-state
+                        prefix-cache
+                        job-state
+                        source-entry-path
+                        source-program
+                        source-paths
+                        source-keep-plan
+                        escaped-names
+                        needs-specialization
+                        mode
+                        stdlib-roots
+                        source-cache-scope
+                        source-pools
+                        source-names
+                        intern-state)))])))]
+        [(Err diag)
+          (begin
+            (cfg
+              (any
+                compiler-surface-producer
+                compiler-build-identity
+                embedded-stdlib-tlci)
+              (package_surface.package-surface-capture-abort!
+                "package surface: specialization failed")
+              unit)
+            (cfg
+              compile-profile
+              (compiler-lower-profile-finish lower-state "specialize"))
+            (cfg
+              compile-profile
+              (compiler-lower-profile-specialization-counters
+                (compiler-lower-state-profile lower-state)))
+            (Err
+              (box
+                (lower-diagnostic-with-fallback-path (deref diag) entry-path))))]))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
   [lower-state : CompilerLowerState]
@@ -71441,31 +70644,29 @@
         (lower-global-shared-view entry-path)
         (lower-global-shared-view program)
         (lower-global-shared-view paths))]
-    (begin
-      (lower-entry-main-selection-install! lower-state selection)
-      (let
-        [result : ResultCompilerLower
-          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
-            lower-state
-            load-state
-            prefix-cache
-            job-state
-            entry-path
-            program
-            paths
-            mode
-            stdlib-roots
-            cache-scope
-            pools
-            source-names
-            intern-state)]
-        (begin
-          (lower-entry-main-selection-restore!
-            lower-state
-            prev-active
-            prev-module
-            prev-module-id)
-          result)))))
+    (lower-entry-main-selection-install! lower-state selection)
+    (let
+      [result : ResultCompilerLower
+        (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
+          lower-state
+          load-state
+          prefix-cache
+          job-state
+          entry-path
+          program
+          paths
+          mode
+          stdlib-roots
+          cache-scope
+          pools
+          source-names
+          intern-state)]
+      (lower-entry-main-selection-restore!
+        lower-state
+        prev-active
+        prev-module
+        prev-module-id)
+      result)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-state
   [lower-state : CompilerLowerState]
@@ -71558,253 +70759,246 @@
             paths
             (lower-global-shared-view entry-path)
             generation-owner)]
-        (begin
-          ;; Publish explicit generation mutations before matching either result
-          ;; or entering the legacy macro-expansion phase.
-          (ast.ast-node-pool-context-install! pools)
-          (ci.intern-compat-state-install! intern-state)
-          (match generated-result
-            [(Ok generated generated-paths)
-              (let
-                [detach-before-macro? : bool
-                  (compiler-lower-checked-dest-pools-active? lower-state)]
-                [generated-compaction : ast.AstProgramCompaction
-                  (if detach-before-macro?
-                    (ast.ast-program-compact-with-pools
-                      pools
-                      (compiler-lower-checked-dest-pools-current lower-state)
-                      generated)
-                    (AstProgramCompaction generated pools))]
-                [macro-program : ast.AstProgram
-                  (match (lower-global-shared-view generated-compaction)
-                    [(AstProgramCompaction out _) out])]
-                [macro-pools : ast.AstNodePoolContext
-                  (match generated-compaction
-                    [(AstProgramCompaction _ out-pools) out-pools])]
-                [macro-entry-path : String
-                  (if detach-before-macro?
-                    (lower-copy-string-into-pools entry-path macro-pools)
-                    entry-path)]
-                [macro-cache-scope : String
-                  (if detach-before-macro?
-                    (lower-copy-string-into-pools cache-scope macro-pools)
-                    cache-scope)]
-                [macro-paths : ast.AstDeclPathList
-                  (if detach-before-macro?
-                    (lower-copy-paths-into-pools generated-paths macro-pools)
-                    generated-paths)]
-                [_clear-source-derived-caches : unit
-                  (if detach-before-macro?
-                    (begin
-                      (lower-clear-macro-expanded-source-caches-into-pools!
-                        job-state
-                        macro-pools)
-                      (load.compiler-load-session-state-program-cache-clear!
-                        (lower-global-shared-view load-state))
-                      (load.compiler-load-session-state-runtime-prelude-cache-clear!
-                        (lower-global-shared-view load-state))
-                      (tc_core.tc-prefix-snapshot-cache-clear-for-state!
-                        prefix-cache))
-                    unit)]
-                [_commit-generated-pools : unit
-                  (if detach-before-macro?
-                    (lower-checked-dest-pools-commit! lower-state macro-pools)
-                    unit)]
-                [committed-macro-pools : ast.AstNodePoolContext
-                  (if detach-before-macro?
+        ;; Publish explicit generation mutations before matching either result
+        ;; or entering the legacy macro-expansion phase.
+        (ast.ast-node-pool-context-install! pools)
+        (ci.intern-compat-state-install! intern-state)
+        (match generated-result
+          [(Ok generated generated-paths)
+            (let
+              [detach-before-macro? : bool
+                (compiler-lower-checked-dest-pools-active? lower-state)]
+              [generated-compaction : ast.AstProgramCompaction
+                (if detach-before-macro?
+                  (ast.ast-program-compact-with-pools
+                    pools
                     (compiler-lower-checked-dest-pools-current lower-state)
-                    macro-pools)]
-                [_arm-post-macro-detach : unit
-                  (if detach-before-macro?
-                    (lower-checked-dest-pools-rollover-for-macro! lower-state)
-                    unit)]
-                [_macro-handoff-profile-finish : unit
-                  (cfg
-                    compile-profile
-                    (compiler-lower-profile-finish lower-state "macro_handoff"))]
-                (begin
-                  (cfg
-                    (any compile-profile test)
-                    (compiler-lower-profile-reset! lower-state)
-                    unit)
-                  (cfg
-                    compile-profile
-                    (compiler-lower-profile-start lower-state))
-                  (let
-                    [macro-intern-state : ci.InternCompatState
-                      (ci.intern-global-shared-view intern-state)]
-                    [macro-result : tc_core.ResultMacroExpand
-                      (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
-                        (lower-global-shared-view load-state)
-                        (lower-global-shared-view macro-program)
-                        (lower-global-shared-view macro-paths)
-                        committed-macro-pools
-                        source-names
-                        job-state
-                        (lower-global-shared-view stdlib-roots)
-                        cfgs
-                        macro-intern-state)]
-                    (begin
-                      (ci.intern-compat-state-capture-from-globals!
-                        (&mut intern-state))
-                      (match macro-result
-                        [(Ok expanded expanded-paths)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-finish
-                                lower-state
-                                "macro_expand"))
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-pools
-                                "macro_expand"
-                                committed-macro-pools))
-                            (let
-                              [checked-detach? : bool
-                                (compiler-lower-checked-dest-pools-active?
-                                  lower-state)]
-                              [macro-changed? : bool
-                                (tc_core.macro-expand-program-structurally-changed?
-                                  (tc_core.tc-job-state-macro-state job-state))]
-                              [retain-macro-source? : bool
-                                (and checked-detach? (not macro-changed?))]
-                              [detach-load-pools? : bool
-                                (and checked-detach? macro-changed?)]
-                              [_detach-profile-decision : unit
-                                (cfg
-                                  compile-profile
-                                  (begin
-                                    (compiler-lower-profile-counter
-                                      "macro_detach.fast_path_hits"
-                                      (if retain-macro-source?
-                                        1
-                                        0))
-                                    (compiler-lower-profile-counter
-                                      "macro_detach.fast_path_misses"
-                                      (if detach-load-pools?
-                                        1
-                                        0))
-                                    (compiler-lower-profile-counter
-                                      "macro_detach.change_reasons"
-                                      (tc_core.macro-expand-program-structural-change-reasons-value))))]
-                              [_finalize-profile-start : unit
-                                (if checked-detach?
-                                  (cfg
-                                    compile-profile
-                                    (compiler-lower-profile-start lower-state))
-                                  unit)]
-                              [detached-compaction : ast.AstProgramCompaction
-                                (if detach-load-pools?
-                                  (ast.ast-program-compact-with-pools
-                                    committed-macro-pools
-                                    (compiler-lower-checked-dest-pools-current
-                                      lower-state)
-                                    expanded)
-                                  (AstProgramCompaction
-                                    (if retain-macro-source?
-                                      macro-program
-                                      expanded)
-                                    committed-macro-pools))]
-                              [detached-program : ast.AstProgram
-                                (match (lower-global-shared-view
-                                  detached-compaction)
-                                  [(AstProgramCompaction out _) out])]
-                              [detached-pools : ast.AstNodePoolContext
-                                (match detached-compaction
-                                  [(AstProgramCompaction _ out-pools) out-pools])]
-                              [detached-entry-path : String
-                                (if detach-load-pools?
-                                  (lower-copy-string-into-pools
-                                    macro-entry-path
-                                    detached-pools)
-                                  macro-entry-path)]
-                              [detached-cache-scope : String
-                                (if detach-load-pools?
-                                  (lower-copy-string-into-pools
-                                    macro-cache-scope
-                                    detached-pools)
-                                  macro-cache-scope)]
-                              [detached-paths : ast.AstDeclPathList
-                                (if detach-load-pools?
-                                  (lower-copy-paths-into-pools
-                                    expanded-paths
-                                    detached-pools)
-                                  (if retain-macro-source?
-                                    macro-paths
-                                    expanded-paths))]
-                              [_clear-source-derived-caches : unit
-                                (if checked-detach?
-                                  (lower-clear-macro-expanded-source-caches-into-pools!
-                                    job-state
-                                    detached-pools)
-                                  unit)]
-                              [_commit-detached-pools : unit
-                                (cond
-                                  [detach-load-pools?
-                                    (lower-checked-dest-pools-commit!
-                                      lower-state
-                                      detached-pools)]
-                                  [retain-macro-source?
-                                    (lower-checked-dest-pools-retain-macro-source!
-                                      lower-state
-                                      detached-pools)]
-                                  [else unit])]
-                              [committed-pools : ast.AstNodePoolContext
-                                (if checked-detach?
-                                  (compiler-lower-checked-dest-pools-current
-                                    lower-state)
-                                  detached-pools)]
-                              [_disable-late-detach : unit
-                                (if checked-detach?
-                                  (lower-checked-dest-pools-deactivate-after-commit!
-                                    lower-state)
-                                  unit)]
-                              [_finalize-profile-finish : unit
-                                (if checked-detach?
-                                  (cfg
-                                    compile-profile
-                                    (compiler-lower-profile-finish
-                                      lower-state
-                                      "macro_finalize"))
-                                  unit)]
-                              (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
-                                lower-state
-                                load-state
-                                prefix-cache
-                                job-state
-                                detached-entry-path
-                                detached-program
-                                detached-paths
-                                mode
-                                stdlib-roots
-                                detached-cache-scope
-                                committed-pools
-                                source-names
-                                intern-state)))]
-                        [(Err diag)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-finish
-                                lower-state
-                                "macro_expand"))
-                            (Err
-                              (box
-                                (cdiag.compiler-diagnostic-copy
-                                  (lower-diagnostic-with-fallback-path
-                                    (deref diag)
-                                    macro-entry-path)))))])))))]
-            [(Err diag)
-              (begin
+                    generated)
+                  (AstProgramCompaction generated pools))]
+              [macro-program : ast.AstProgram
+                (match (lower-global-shared-view generated-compaction)
+                  [(AstProgramCompaction out _) out])]
+              [macro-pools : ast.AstNodePoolContext
+                (match generated-compaction
+                  [(AstProgramCompaction _ out-pools) out-pools])]
+              [macro-entry-path : String
+                (if detach-before-macro?
+                  (lower-copy-string-into-pools entry-path macro-pools)
+                  entry-path)]
+              [macro-cache-scope : String
+                (if detach-before-macro?
+                  (lower-copy-string-into-pools cache-scope macro-pools)
+                  cache-scope)]
+              [macro-paths : ast.AstDeclPathList
+                (if detach-before-macro?
+                  (lower-copy-paths-into-pools generated-paths macro-pools)
+                  generated-paths)]
+              [_clear-source-derived-caches : unit
+                (when
+                  detach-before-macro?
+                  (lower-clear-macro-expanded-source-caches-into-pools!
+                    job-state
+                    macro-pools)
+                  (load.compiler-load-session-state-program-cache-clear!
+                    (lower-global-shared-view load-state))
+                  (load.compiler-load-session-state-runtime-prelude-cache-clear!
+                    (lower-global-shared-view load-state))
+                  (tc_core.tc-prefix-snapshot-cache-clear-for-state!
+                    prefix-cache))]
+              [_commit-generated-pools : unit
+                (if detach-before-macro?
+                  (lower-checked-dest-pools-commit! lower-state macro-pools)
+                  unit)]
+              [committed-macro-pools : ast.AstNodePoolContext
+                (if detach-before-macro?
+                  (compiler-lower-checked-dest-pools-current lower-state)
+                  macro-pools)]
+              [_arm-post-macro-detach : unit
+                (if detach-before-macro?
+                  (lower-checked-dest-pools-rollover-for-macro! lower-state)
+                  unit)]
+              [_macro-handoff-profile-finish : unit
                 (cfg
                   compile-profile
-                  (compiler-lower-profile-finish lower-state "macro_handoff"))
-                (Err
-                  (box
-                    (lower-diagnostic-with-fallback-path
-                      (deref diag)
-                      entry-path))))]))))))
+                  (compiler-lower-profile-finish lower-state "macro_handoff"))]
+              (begin
+                (cfg
+                  (any compile-profile test)
+                  (compiler-lower-profile-reset! lower-state)
+                  unit)
+                (cfg compile-profile (compiler-lower-profile-start lower-state))
+                (let
+                  [macro-intern-state : ci.InternCompatState
+                    (ci.intern-global-shared-view intern-state)]
+                  [macro-result : tc_core.ResultMacroExpand
+                    (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+                      (lower-global-shared-view load-state)
+                      (lower-global-shared-view macro-program)
+                      (lower-global-shared-view macro-paths)
+                      committed-macro-pools
+                      source-names
+                      job-state
+                      (lower-global-shared-view stdlib-roots)
+                      cfgs
+                      macro-intern-state)]
+                  (ci.intern-compat-state-capture-from-globals!
+                    (&mut intern-state))
+                  (match macro-result
+                    [(Ok expanded expanded-paths)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish
+                            lower-state
+                            "macro_expand"))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-pools
+                            "macro_expand"
+                            committed-macro-pools))
+                        (let
+                          [checked-detach? : bool
+                            (compiler-lower-checked-dest-pools-active?
+                              lower-state)]
+                          [macro-changed? : bool
+                            (tc_core.macro-expand-program-structurally-changed?
+                              (tc_core.tc-job-state-macro-state job-state))]
+                          [retain-macro-source? : bool
+                            (and checked-detach? (not macro-changed?))]
+                          [detach-load-pools? : bool
+                            (and checked-detach? macro-changed?)]
+                          [_detach-profile-decision : unit
+                            (cfg
+                              compile-profile
+                              (begin
+                                (compiler-lower-profile-counter
+                                  "macro_detach.fast_path_hits"
+                                  (if retain-macro-source?
+                                    1
+                                    0))
+                                (compiler-lower-profile-counter
+                                  "macro_detach.fast_path_misses"
+                                  (if detach-load-pools?
+                                    1
+                                    0))
+                                (compiler-lower-profile-counter
+                                  "macro_detach.change_reasons"
+                                  (tc_core.macro-expand-program-structural-change-reasons-value))))]
+                          [_finalize-profile-start : unit
+                            (if checked-detach?
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-start lower-state))
+                              unit)]
+                          [detached-compaction : ast.AstProgramCompaction
+                            (if detach-load-pools?
+                              (ast.ast-program-compact-with-pools
+                                committed-macro-pools
+                                (compiler-lower-checked-dest-pools-current
+                                  lower-state)
+                                expanded)
+                              (AstProgramCompaction
+                                (if retain-macro-source?
+                                  macro-program
+                                  expanded)
+                                committed-macro-pools))]
+                          [detached-program : ast.AstProgram
+                            (match (lower-global-shared-view
+                              detached-compaction)
+                              [(AstProgramCompaction out _) out])]
+                          [detached-pools : ast.AstNodePoolContext
+                            (match detached-compaction
+                              [(AstProgramCompaction _ out-pools) out-pools])]
+                          [detached-entry-path : String
+                            (if detach-load-pools?
+                              (lower-copy-string-into-pools
+                                macro-entry-path
+                                detached-pools)
+                              macro-entry-path)]
+                          [detached-cache-scope : String
+                            (if detach-load-pools?
+                              (lower-copy-string-into-pools
+                                macro-cache-scope
+                                detached-pools)
+                              macro-cache-scope)]
+                          [detached-paths : ast.AstDeclPathList
+                            (if detach-load-pools?
+                              (lower-copy-paths-into-pools
+                                expanded-paths
+                                detached-pools)
+                              (if retain-macro-source?
+                                macro-paths
+                                expanded-paths))]
+                          [_clear-source-derived-caches : unit
+                            (if checked-detach?
+                              (lower-clear-macro-expanded-source-caches-into-pools!
+                                job-state
+                                detached-pools)
+                              unit)]
+                          [_commit-detached-pools : unit
+                            (cond
+                              [detach-load-pools?
+                                (lower-checked-dest-pools-commit!
+                                  lower-state
+                                  detached-pools)]
+                              [retain-macro-source?
+                                (lower-checked-dest-pools-retain-macro-source!
+                                  lower-state
+                                  detached-pools)]
+                              [else unit])]
+                          [committed-pools : ast.AstNodePoolContext
+                            (if checked-detach?
+                              (compiler-lower-checked-dest-pools-current
+                                lower-state)
+                              detached-pools)]
+                          [_disable-late-detach : unit
+                            (if checked-detach?
+                              (lower-checked-dest-pools-deactivate-after-commit!
+                                lower-state)
+                              unit)]
+                          [_finalize-profile-finish : unit
+                            (if checked-detach?
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish
+                                  lower-state
+                                  "macro_finalize"))
+                              unit)]
+                          (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+                            lower-state
+                            load-state
+                            prefix-cache
+                            job-state
+                            detached-entry-path
+                            detached-program
+                            detached-paths
+                            mode
+                            stdlib-roots
+                            detached-cache-scope
+                            committed-pools
+                            source-names
+                            intern-state)))]
+                    [(Err diag)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish
+                            lower-state
+                            "macro_expand"))
+                        (Err
+                          (box
+                            (cdiag.compiler-diagnostic-copy
+                              (lower-diagnostic-with-fallback-path
+                                (deref diag)
+                                macro-entry-path)))))]))))]
+          [(Err diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish lower-state "macro_handoff"))
+              (Err
+                (box
+                  (lower-diagnostic-with-fallback-path (deref diag) entry-path))))])))))
 
 ;; Serial/test compatibility adapter for callers that already provide the
 ;; explicit loader/prefix/job state but still rely on the active interner.
@@ -71906,9 +71100,8 @@
         [_ (lower-source-decls-define-module? rest module)])]))
 
 (define (lower-source-language-cfgs) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (cfg_core.compiler-cfg-empty)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (cfg_core.compiler-cfg-empty))
 
 (define (lower-source-load [src : String]) : load.ResultCompilerLoadWithPaths
   (let
@@ -72058,58 +71251,55 @@
   [src : String]
   [mode : CompilerLowerMode]
   [package-name : String]) : ResultCompilerLower
-  (begin
-    (when
-      (lower-resetting-entry-in-live-session?)
-      (return
-        (lower-resetting-entry-live-session-error
-          "lower-compiler-source-with-path-mode"
-          path)))
-    ;; Each standalone single-source compile (smoke self-tests, emit-source,
-    ;; check tools) runs in a fresh arena, so interned name strings from a
-    ;; previous compile are freed. Reset the persistent intern table here so a
-    ;; later compile never probes a dangling key. The multi-file driver compiles
-    ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
-    (lower-reset-file-state!)
-    (compiler-lower-state-reset! lower-state)
-    (compiler-lower-state-set-spmd-package! lower-state package-name)
-    (tc_core.compiler-typecheck-reset-file-state!)
-    (ci.intern-reset!)
-    (lower-reset-intern-owned-state!)
-    (cbi.compiler-builtin-reset!)
-    (match (parser.parse-ast-source (lower-global-shared-view src))
-      [(Ok program)
-        (if (lower-source-program-needs-loader?
-          (lower-global-shared-view program))
-          (let
-            [stdlib-roots : svec.Vec (svec.new)]
-            [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
-            (match (lower-source-load src)
-              [(Ok decls paths _ _)
-                (lower-compiler-program-with-decl-paths-mode-cache-and-state
-                  lower-state
-                  path
-                  (ast.ast-program decls)
-                  paths
-                  mode
-                  (lower-global-shared-view stdlib-roots)
-                  cfgs
-                  (load.compiler-load-prelude-cache-key
-                    "typecheck-prefix-lower"
-                    stdlib-roots
-                    cfgs))]
-              [(Err diag) (Err diag)]))
-          (lower-compiler-program-with-path-mode-and-state
-            lower-state
-            path
-            program
-            mode))]
-      [(Err message)
-        (Err
-          (box
-            (lower-diagnostic-with-fallback-path
-              (lower-diagnostic message)
-              path)))])))
+  (when
+    (lower-resetting-entry-in-live-session?)
+    (return
+      (lower-resetting-entry-live-session-error
+        "lower-compiler-source-with-path-mode"
+        path)))
+  ;; Each standalone single-source compile (smoke self-tests, emit-source,
+  ;; check tools) runs in a fresh arena, so interned name strings from a
+  ;; previous compile are freed. Reset the persistent intern table here so a
+  ;; later compile never probes a dangling key. The multi-file driver compiles
+  ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
+  (lower-reset-file-state!)
+  (compiler-lower-state-reset! lower-state)
+  (compiler-lower-state-set-spmd-package! lower-state package-name)
+  (tc_core.compiler-typecheck-reset-file-state!)
+  (ci.intern-reset!)
+  (lower-reset-intern-owned-state!)
+  (cbi.compiler-builtin-reset!)
+  (match (parser.parse-ast-source (lower-global-shared-view src))
+    [(Ok program)
+      (if (lower-source-program-needs-loader?
+        (lower-global-shared-view program))
+        (let
+          [stdlib-roots : svec.Vec (svec.new)]
+          [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
+          (match (lower-source-load src)
+            [(Ok decls paths _ _)
+              (lower-compiler-program-with-decl-paths-mode-cache-and-state
+                lower-state
+                path
+                (ast.ast-program decls)
+                paths
+                mode
+                (lower-global-shared-view stdlib-roots)
+                cfgs
+                (load.compiler-load-prelude-cache-key
+                  "typecheck-prefix-lower"
+                  stdlib-roots
+                  cfgs))]
+            [(Err diag) (Err diag)]))
+        (lower-compiler-program-with-path-mode-and-state
+          lower-state
+          path
+          program
+          mode))]
+    [(Err message)
+      (Err
+        (box
+          (lower-diagnostic-with-fallback-path (lower-diagnostic message) path)))]))
 
 (define (lower-compiler-source-with-path-mode-and-state
   [lower-state : CompilerLowerState]
@@ -72142,43 +71332,37 @@
   [request : CompilerLowerRequest]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
-    (begin
-      (compiler-lower-state-use-request!
-        state
-        (lower-global-shared-view request))
-      (match request.pointer-proof
-        [(Disabled) unit]
-        [(Requested input)
-          (let
-            [error : String
-              (pointer_proof.pointer-proof-input-begin-error input)]
-            (begin
-              (when
-                (> (string.string-length (& error)) 0)
-                (return
-                  (Err
-                    (box
-                      (cdiag.compiler-diagnostic-at-start
-                        (lower-global-shared-view path)
-                        error)))))
-              (pointer_proof.pointer-proof-input-use-default-path!
+    (compiler-lower-state-use-request! state (lower-global-shared-view request))
+    (match request.pointer-proof
+      [(Disabled) unit]
+      [(Requested input)
+        (let
+          [error : String (pointer_proof.pointer-proof-input-begin-error input)]
+          (when
+            (> (string.string-length (& error)) 0)
+            (return
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-at-start
+                    (lower-global-shared-view path)
+                    error)))))
+          (pointer_proof.pointer-proof-input-use-default-path!
+            input
+            (lower-global-shared-view path)))])
+    (let
+      [result : ResultCompilerLower
+        (lower-compiler-source-with-path-mode-and-state
+          state
+          path
+          src
+          request.mode)]
+      (match (lower-global-shared-view result)
+        [(Err _)
+          (match request.pointer-proof
+            [(Requested input)
+              (pointer_proof.pointer-proof-input-fail!
                 input
-                (lower-global-shared-view path))))])
-      (let
-        [result : ResultCompilerLower
-          (lower-compiler-source-with-path-mode-and-state
-            state
-            path
-            src
-            request.mode)]
-        (begin
-          (match (lower-global-shared-view result)
-            [(Err _)
-              (match request.pointer-proof
-                [(Requested input)
-                  (pointer_proof.pointer-proof-input-fail!
-                    input
-                    "pointer proof: requested source lowering did not complete")]
-                [_ unit])]
-            [_ unit])
-          result)))))
+                "pointer proof: requested source lowering did not complete")]
+            [_ unit])]
+        [_ unit])
+      result)))

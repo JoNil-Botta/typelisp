@@ -12229,21 +12229,22 @@
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (array-length values))
     (Ok)
-    (match (opt-verify-value-use
-      defs
-      doms
-      (compiler-opt-global-array-element-shared-view values index)
-      use-block
-      use-pos)
-      [(Ok)
-        (opt-verify-call-args-array-uses
-          defs
-          doms
-          values
-          use-block
-          use-pos
-          (+ index 1))]
-      [(Err message) (Err message)])))
+    (let
+      [_
+        (try
+          (opt-verify-value-use
+            defs
+            doms
+            (compiler-opt-global-array-element-shared-view values index)
+            use-block
+            use-pos))]
+      (opt-verify-call-args-array-uses
+        defs
+        doms
+        values
+        use-block
+        use-pos
+        (+ index 1)))))
 
 (define (opt-verify-call-args-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12313,17 +12314,17 @@
             (- phi-inputs-at-12652-3.len 1))]
         (match value
           [(Var var)
-            (match (opt-verify-var-use-on-edge defs doms var pred-label)
-              [(Ok) (opt-verify-phi-input-uses defs doms rest)]
-              [(Err message) (Err message)])]
+            (let
+              [_ (try (opt-verify-var-use-on-edge defs doms var pred-label))]
+              (opt-verify-phi-input-uses defs doms rest))]
           [_ (opt-verify-phi-input-uses defs doms rest)])))))
 
 (define (opt-verify-two
   [a : ResultCompilerOptimizeVerify]
   [b : ResultCompilerOptimizeVerify]) : ResultCompilerOptimizeVerify
-  (match a
-    [(Ok) b]
-    [(Err message) (Err message)]))
+  (let
+    [_ (try a)]
+    b))
 
 (define (opt-verify-use
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12447,14 +12448,16 @@
     [i : i64 index]
     [p : i64 pos]
     (while (< i count)
-      (match (opt-verify-instr-uses
-        defs
-        doms
-        block-id
-        p
-        (ir.compiler-ir-instr-seq-ref instrs i))
-        [(Ok) unit]
-        [(Err message) (return (Err message))])
+      (let
+        [_
+          (try
+            (opt-verify-instr-uses
+              defs
+              doms
+              block-id
+              p
+              (ir.compiler-ir-instr-seq-ref instrs i)))]
+        unit)
       (set! i (+ i 1))
       (set! p (+ p 1)))
     (Ok)))
@@ -12641,13 +12644,15 @@
     [(slice block & rest)
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(Block label instrs)
-          (match (opt-verify-phi-predecessors-instr-seq-from
-            pred-map
-            label
-            instrs
-            0)
-            [(Ok) (opt-verify-phi-predecessors-by-label pred-map rest)]
-            [(Err message) (Err message)])])]))
+          (let
+            [_
+              (try
+                (opt-verify-phi-predecessors-instr-seq-from
+                  pred-map
+                  label
+                  instrs
+                  0))]
+            (opt-verify-phi-predecessors-by-label pred-map rest))])]))
 
 (define (opt-verify-block-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12659,9 +12664,11 @@
     [(slice block & rest)
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(Block _ instrs)
-          (match (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1)
-            [(Ok) (opt-verify-block-uses defs doms rest (+ block-id 1))]
-            [(Err message) (Err message)])])]))
+          (let
+            [_
+              (try
+                (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1))]
+            (opt-verify-block-uses defs doms rest (+ block-id 1)))])]))
 
 (define (opt-verify-instr-seq-uses-contextual
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -12707,16 +12714,17 @@
     [(slice block & rest)
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(Block _ instrs)
-          (match (opt-verify-instr-seq-uses-contextual
-            defs
-            doms
-            block-id
-            instrs
-            0
-            1)
-            [(Ok)
-              (opt-verify-block-uses-contextual defs doms rest (+ block-id 1))]
-            [(Err message) (Err message)])])]))
+          (let
+            [_
+              (try
+                (opt-verify-instr-seq-uses-contextual
+                  defs
+                  doms
+                  block-id
+                  instrs
+                  0
+                  1))]
+            (opt-verify-block-uses-contextual defs doms rest (+ block-id 1)))])]))
 
 (define (opt-verify-function-body-with-context
   [func : ir.CompilerIrFunction]
@@ -12729,14 +12737,12 @@
           (let
             [doms (& context.doms)]
             [pred-map (& context.pred-map)]
-            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-              [(Ok)
-                (opt-verify-block-uses
-                  defs
-                  doms
-                  (ir.compiler-ir-block-list-view blocks)
-                  0)]
-              [(Err message) (Err message)]))])]))
+            [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+            (opt-verify-block-uses
+              defs
+              doms
+              (ir.compiler-ir-block-list-view blocks)
+              0))])]))
 
 ;; The caller derived the index (and with it the single-definition proof) for
 ;; exactly this function; final IR that fails that proof is not checked here at
@@ -12750,14 +12756,12 @@
       (let
         [doms : OptDomInfo context.doms]
         [pred-map : OptPredMap context.pred-map]
-        (match (opt-verify-phi-predecessors-blocks pred-map blocks)
-          [(Ok)
-            (opt-verify-block-uses-contextual
-              defs
-              doms
-              (ir.compiler-ir-block-list-view blocks)
-              0)]
-          [(Err message) (Err message)]))]))
+        [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+        (opt-verify-block-uses-contextual
+          defs
+          doms
+          (ir.compiler-ir-block-list-view blocks)
+          0))]))
 
 ;; The structural CFG contract, read off the context's index rather than
 ;; recomputed. `context` must be valid for the function's blocks, which is the
@@ -12778,9 +12782,8 @@
   (let
     [func : ir.CompilerIrFunction
       (owned_view.compiler-owned-reference-shared-view func)]
-    (match (opt-verify-structure context)
-      [(Ok) (opt-verify-function-body-with-context func context)]
-      [(Err message) (Err message)])))
+    [_ (try (opt-verify-structure context))]
+    (opt-verify-function-body-with-context func context)))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -12811,17 +12814,15 @@
       (let
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-        (match (opt-verify-structure context)
-          [(Ok)
-            ;; Final backend IR is not required to be SSA. Apply dominance/use
-            ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-            ;; are the valid final-IR contract. The SSA-shape decision and the
-            ;; index the dominance checks read are one derivation.
-            (match (opt-var-defs-index-checked params vars blocks)
-              [(Index defs)
-                (opt-verify-final-function-body-with-defs defs func context)]
-              [(Duplicate) (Ok)])]
-          [(Err message) (Err message)]))]))
+        [_ (try (opt-verify-structure context))]
+        ;; Final backend IR is not required to be SSA. Apply dominance/use
+        ;; checks when it is SSA-shaped; otherwise the structural CFG checks
+        ;; are the valid final-IR contract. The SSA-shape decision and the
+        ;; index the dominance checks read are one derivation.
+        (match (opt-var-defs-index-checked params vars blocks)
+          [(Index defs)
+            (opt-verify-final-function-body-with-defs defs func context)]
+          [(Duplicate) (Ok)]))]))
 
 (define (opt-verify-function-seq-from
   [functions : ir.CompilerIrFunctionSeq]

@@ -587,54 +587,49 @@
             [id : i64 (byte_le.read-u32 bytes (+ at 4))]
             (set! at end)
             (if (= id 0)
-              (match (compiler-eh-frame-decode-cie
-                bytes
-                input
-                record
-                end
-                limits)
-                [(Err error) (return (Err error))]
-                [(Ok parsed)
-                  (let
-                    [check : CompilerEhFrameProgramCheck
-                      (compiler-eh-frame-check-program
-                        bytes
-                        parsed.program-start
-                        end
-                        parsed.code-alignment
-                        -1
-                        limits.max-state-depth)]
-                    [program-length : i64 (- check.end parsed.program-start)]
-                    (when
-                      (not (string.eq check.message ""))
-                      (return
-                        (Err
-                          (compiler-eh-frame-error
-                            compiler-eh-frame-error-cfa
-                            input
-                            record
-                            check.offset
-                            check.message))))
-                    (set! work (+ work check.work))
-                    (compiler-eh-frame-copy-program!
-                      (&mut programs)
-                      program-bytes
-                      bytes
-                      parsed.program-start
-                      program-length)
-                    (set!
-                      (array-ref cies cie-count)
-                      (CompilerEhFrameCie
+              (let
+                [parsed
+                  (try
+                    (compiler-eh-frame-decode-cie bytes input record end limits))]
+                [check : CompilerEhFrameProgramCheck
+                  (compiler-eh-frame-check-program
+                    bytes
+                    parsed.program-start
+                    end
+                    parsed.code-alignment
+                    -1
+                    limits.max-state-depth)]
+                [program-length : i64 (- check.end parsed.program-start)]
+                (when
+                  (not (string.eq check.message ""))
+                  (return
+                    (Err
+                      (compiler-eh-frame-error
+                        compiler-eh-frame-error-cfa
                         input
                         record
-                        parsed.code-alignment
-                        parsed.data-alignment
-                        parsed.return-register
-                        compiler-eh-frame-pe-pcrel-sdata4
-                        program-bytes
-                        program-length))
-                    (set! program-bytes (+ program-bytes program-length))
-                    (set! cie-count (+ cie-count 1)))])
+                        check.offset
+                        check.message))))
+                (set! work (+ work check.work))
+                (compiler-eh-frame-copy-program!
+                  (&mut programs)
+                  program-bytes
+                  bytes
+                  parsed.program-start
+                  program-length)
+                (set!
+                  (array-ref cies cie-count)
+                  (CompilerEhFrameCie
+                    input
+                    record
+                    parsed.code-alignment
+                    parsed.data-alignment
+                    parsed.return-register
+                    compiler-eh-frame-pe-pcrel-sdata4
+                    program-bytes
+                    program-length))
+                (set! program-bytes (+ program-bytes program-length))
+                (set! cie-count (+ cie-count 1)))
               (let
                 [cie-offset : i64 (- (+ record 4) id)]
                 [cie : i64
@@ -1472,13 +1467,12 @@
       (byte_le.push-u32! (&mut out) 0)
       ;; Two FDEs claiming one code address leave an unwinder no way to
       ;; choose, whether or not a search header is built.
-      (match (compiler-eh-frame-sorted-rows (& rows))
-        [(Err error) (Err error)]
-        [(Ok _)
-          (Ok
-            (CompilerEhFrameOutput
-              (byte_buf_core.byte-buf-builder-finish-array (& out))
-              rows))]))))
+      (let
+        [_ (try (compiler-eh-frame-sorted-rows (& rows)))]
+        (Ok
+          (CompilerEhFrameOutput
+            (byte_buf_core.byte-buf-builder-finish-array (& out))
+            rows))))))
 
 ;; --- .eh_frame_hdr -----------------------------------------------------------
 (define (compiler-eh-frame-header-error

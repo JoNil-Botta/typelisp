@@ -34,6 +34,7 @@
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 (import compiler_owned_view as owned_view)
+(import stdlib.runtime)
 
 ;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
 ;; allocation plan per candidate to price the caller's prologue and spill
@@ -8663,54 +8664,173 @@
 ;; alone. On any instruction that defines var `v`, both the mapping for `v` and
 ;; any mapping whose source is `CompilerIrValue.Var v` are dropped, so a reused var id in
 ;; the non-SSA IR never triggers a stale rewrite.
-(defenum OptCopyEnv
-  (Nil)
-  (Cons i64 ir.CompilerIrValue (Box OptCopyEnv))
-  (PackWordCons i64 i64 ir.CompilerIrValue (Box OptCopyEnv)))
+(defenum OptCopyEntry
+  (Copy i64 ir.CompilerIrValue)
+  (PackWord i64 i64 ir.CompilerIrValue))
+
+;; Snapshots keep slots[0..len) immutable. A lineage's arena-allocated top
+;; cell is live whenever capacity is nonzero; zeroed empty snapshots never
+;; read it. Push appends only at that top, otherwise it copies the live prefix.
+;; Entry values belong to compiler arenas and have no cleanup, so growth may
+;; shallow-copy their inline storage into a fresh typed array.
+(defstruct OptCopyEnv
+  (slots (__tl_dyn-array OptCopyEntry))
+  (len i64)
+  (top (MutPtr i64)))
+
+(define opt-copy-env-empty-slots : (__tl_dyn-array OptCopyEntry)
+  (__tl_make-array OptCopyEntry 0))
+(define opt-copy-env-empty-top : (MutPtr i64)
+  (unsafe
+    (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64))))
+
+(define (opt-copy-env-empty) : OptCopyEnv
+  (OptCopyEnv
+    (unsafe
+      (ptr-read (ptr-addr-of opt-copy-env-empty-slots)))
+    0
+    opt-copy-env-empty-top))
+
+(define (opt-copy-env-with-capacity [capacity : i64]) : OptCopyEnv
+  (let
+    [top : (MutPtr i64)
+      (unsafe
+        (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64)))]
+    (unsafe
+      (ptr-write! top 0))
+    (OptCopyEnv
+      (__tl_make-array
+        OptCopyEntry
+        (if (< capacity 1)
+          1
+          capacity))
+      0
+      top)))
+
+(define (opt-copy-env-empty? [s : (& s OptCopyEnv)]) : bool
+  (= s.len 0))
+
+(define (opt-copy-env-push [s : OptCopyEnv] [value : OptCopyEntry]) : OptCopyEnv
+  (let
+    [n : i64 s.len]
+    [slots : (__tl_dyn-array OptCopyEntry) s.slots]
+    [top : (MutPtr i64) s.top]
+    (if (and
+      (< n (array-length slots))
+      (=
+        (unsafe
+          (ptr-read top))
+        n))
+      (begin
+        (set! (array-ref slots n) value)
+        (unsafe
+          (ptr-write! top (+ n 1)))
+        (OptCopyEnv slots (+ n 1) top))
+      (opt-copy-env-push-copy slots n value))))
+
+(define (opt-copy-env-push-copy
+  [slots : (__tl_dyn-array OptCopyEntry)]
+  [n : i64]
+  [value : OptCopyEntry]) : OptCopyEnv
+  (let
+    [fresh : (__tl_dyn-array OptCopyEntry)
+      (__tl_make-array
+        OptCopyEntry
+        (if (< n 2)
+          4
+          (* 2 n)))]
+    [fresh-top : (MutPtr i64)
+      (unsafe
+        (ptr-cast (__tl_array-data (__tl_make-array i64 1)) : (MutPtr i64)))]
+    (unsafe
+      (runtime.runtime-copy-bytes!
+        (ptr-cast (__tl_array-data fresh) : (MutPtr u8))
+        (ptr-cast (__tl_array-data slots) : (Ptr u8))
+        (* n (comptime (size-of (type OptCopyEntry))))))
+    (set! (array-ref fresh n) value)
+    (unsafe
+      (ptr-write! fresh-top (+ n 1)))
+    (OptCopyEnv fresh (+ n 1) fresh-top)))
+
+;; Truncation declares every longer snapshot of this lineage dead. Callers
+;; clear only a consumed block-local environment; retained GVN/phi snapshots
+;; use ordinary pushes and invalidation, which preserve their live prefixes.
+(define (opt-copy-env-truncate [s : OptCopyEnv] [mark : i64]) : OptCopyEnv
+  (let
+    [n : i64
+      (if (< mark 0)
+        0
+        (if (> mark s.len)
+          s.len
+          mark))]
+    [slots : (__tl_dyn-array OptCopyEntry) s.slots]
+    [top : (MutPtr i64) s.top]
+    (if (> (array-length slots) 0)
+      (unsafe
+        (ptr-write! top n))
+      unit)
+    (OptCopyEnv slots n top)))
 
 (define (opt-copy-lookup [env : (& env OptCopyEnv)] [var : i64]) : ir.CompilerIrMaybeValue
   (let
-    [cur : OptCopyEnv (owned_view.compiler-owned-reference-shared-view env)]
-    (while true
-      (match cur
-        [(Nil) (return (No))]
-        [(Cons id value rest)
-          (if (= id var)
-            (return (Some value))
-            (set! cur (deref rest)))]
-        [(PackWordCons _ _ _ rest) (set! cur (deref rest))]))
+    [index : i64 (- env.len 1)]
+    (while (>= index 0)
+      (match (compiler-opt-global-array-element-shared-view env.slots index)
+        [(Copy id value) (when (= id var) (return (Some value)))]
+        [(PackWord _ _ _) unit])
+      (set! index (- index 1)))
     (No)))
 
 (define (opt-copy-pack-word-lookup
   [env : (& env OptCopyEnv)]
   [group : i64]
   [index : i64]) : ir.CompilerIrMaybeValue
-  (match (owned_view.compiler-owned-reference-shared-view env)
-    [(Nil) (No)]
-    [(Cons _ _ rest) (opt-copy-pack-word-lookup (deref rest) group index)]
-    [(PackWordCons found-group found-index value rest)
-      (if (and (= found-group group) (= found-index index))
-        (Some value)
-        (opt-copy-pack-word-lookup (deref rest) group index))]))
+  (let
+    [at : i64 (- env.len 1)]
+    (while (>= at 0)
+      (match (compiler-opt-global-array-element-shared-view env.slots at)
+        [(Copy _ _) unit]
+        [(PackWord found-group found-index value)
+          (when
+            (and (= found-group group) (= found-index index))
+            (return (Some value)))])
+      (set! at (- at 1)))
+    (No)))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `CompilerIrValue.Var
 ;; var`, so redefining either a copied destination or a copied source clears the
 ;; stale copy fact.
+(define (opt-copy-entry-mentions-var?
+  [entry : (& entry OptCopyEntry)]
+  [var : i64]) : bool
+  (match entry
+    [(Copy id value) (or (= (deref id) var) (opt-value-is-var? value var))]
+    [(PackWord group _ value)
+      (or (= (deref group) var) (opt-value-is-var? value var))]))
+
 (define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
-  (match env
-    [(Nil) (Nil)]
-    [(Cons id value rest)
+  (let
+    [count : i64 env.len]
+    [first : i64 0]
+    (while (and
+      (< first count)
+      (not (opt-copy-entry-mentions-var? (& (array-ref env.slots first)) var)))
+      (set! first (+ first 1)))
+    (if (>= first count)
+      env
       (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var (deref rest) var)]
-        (if (or (= id var) (opt-value-is-var? value var))
-          rest2
-          (Cons id value (box rest2))))]
-    [(PackWordCons group index value rest)
-      (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var (deref rest) var)]
-        (if (or (= group var) (opt-value-is-var? value var))
-          rest2
-          (PackWordCons group index value (box rest2))))]))
+        [kept : OptCopyEnv (opt-copy-env-with-capacity count)]
+        [index : i64 0]
+        (while (< index count)
+          (if (opt-copy-entry-mentions-var? (& (array-ref env.slots index)) var)
+            unit
+            (set!
+              kept
+              (opt-copy-env-push
+                kept
+                (compiler-opt-global-array-element-shared-view env.slots index))))
+          (set! index (+ index 1)))
+        kept))))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
 ;; slice; F64/String/global sources stay put until their backend paths exist.
@@ -8736,7 +8856,7 @@
   [index : i64]
   [value : ir.CompilerIrValue]) : OptCopyEnv
   (if (and (opt-copy-safe-source? value) (not (opt-value-is-var? value group)))
-    (PackWordCons group index value (box env))
+    (opt-copy-env-push env (OptCopyEntry.PackWord group index value))
     env))
 
 (define (opt-copy-add-pack-words-from
@@ -9184,7 +9304,7 @@
           (not (opt-value-is-var? src dst))
           (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
           (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) src)))
-          (Cons dst src (box e1))
+          (opt-copy-env-push e1 (OptCopyEntry.Copy dst src))
           e1))]
     [(AddrOf dst src)
       (opt-copy-invalidate-var (opt-copy-invalidate-var env dst) src)]
@@ -9196,7 +9316,7 @@
           (opt-copy-mask-source? lhs dst)
           (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
           (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) lhs)))
-          (Cons dst lhs (box e1))
+          (opt-copy-env-push e1 (OptCopyEntry.Copy dst lhs))
           e1))]
     [(Pack dst words _)
       (if (or
@@ -9204,9 +9324,9 @@
         (opt-addr-taken-value-seq? (& opt-function-addr-taken.marks) (& words)))
         (opt-copy-invalidate-var env dst)
         (opt-copy-update-pack-env env dst words))]
-    [(StorePtr _ _ _) (Nil)]
-    [(StoreOwned _ _ _) (Nil)]
-    [(CopyBytes _ _ _) (Nil)]
+    [(StorePtr _ _ _) (opt-copy-env-truncate env 0)]
+    [(StoreOwned _ _ _) (opt-copy-env-truncate env 0)]
+    [(CopyBytes _ _ _) (opt-copy-env-truncate env 0)]
     [_
       (match (opt-instr-def-var
         (owned_view.compiler-owned-reference-shared-view instr))
@@ -19478,19 +19598,22 @@
   [recs : (& recs OptRotateSsaPhiRecs)]
   [use-init : bool]) : OptCopyEnv
   (match recs
-    [(Nil) (Nil)]
+    [(Nil) (opt-copy-env-empty)]
     [(Dense _ _)
       (match (opt-rotate-ssa-phi-rec-ref recs 0)
         [(Rec dst init back _)
-          (Cons
-            dst
-            (if use-init
-              init
-              back)
-            (box
+          (let
+            [pushed
+              (OptCopyEntry.Copy
+                dst
+                (if use-init
+                  init
+                  back))]
+            (opt-copy-env-push
               (let
                 [recs-2 (opt-rotate-ssa-phi-recs-tail recs)]
-                (opt-rotate-ssa-edge-env recs-2 use-init))))])]))
+                (opt-rotate-ssa-edge-env recs-2 use-init))
+              pushed))])]))
 
 (define (opt-rotate-ssa-clone-guard-instr
   [env : (& env OptCopyEnv)]
@@ -19569,7 +19692,9 @@
           (opt-rotate-ssa-clone-guard-instr out-env out-var instr))
         (set!
           out-env
-          (Cons (opt-rotate-ssa-instr-dst instr) (Var out-var) (box out-env)))
+          (opt-copy-env-push
+            out-env
+            (OptCopyEntry.Copy (opt-rotate-ssa-instr-dst instr) (Var out-var))))
         (set! out-var (+ out-var 1))
         (set! index (+ index 1))))
     (set!
@@ -19640,7 +19765,8 @@
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [write : i64]) : OptRotateSsaExitPhis
   (match recs
-    [(Nil) (Result (ir.CompilerIrInstrSeq slots write) (Nil) next-var)]
+    [(Nil)
+      (Result (ir.CompilerIrInstrSeq slots write) (opt-copy-env-empty) next-var)]
     [(Dense _ _)
       (match (opt-rotate-ssa-phi-rec-ref recs 0)
         [(Rec dst init back ty)
@@ -19669,7 +19795,12 @@
                   slots
                   (+ write 1))
                   [(Result phis env out-var)
-                    (Result phis (Cons dst (Var next-var) (box env)) out-var)]))
+                    (Result
+                      phis
+                      (opt-copy-env-push
+                        env
+                        (OptCopyEntry.Copy dst (Var next-var)))
+                      out-var)]))
               (opt-rotate-ssa-exit-phis-from
                 rest
                 outside-uses
@@ -19845,9 +19976,9 @@
     (= label plan.exit-label)
     (and
       (not (opt-label-contains plan.body label))
-      (match plan.exit-env
-        [(Nil) false]
-        [_ true]))))
+      (if (opt-copy-env-empty? plan.exit-env)
+        false
+        true))))
 
 (define (opt-rotate-ssa-rewrite-instrs
   [plan : OptRotateSsaPlan]
@@ -26241,7 +26372,12 @@
           subst)
           [(OptLicmDupVar canon)
             (match (opt-instr-def-var instr)
-              [(Some dst) (set! next-env (Cons dst (Var canon) (box next-env)))]
+              [(Some dst)
+                (set!
+                  next-env
+                  (opt-copy-env-push
+                    next-env
+                    (OptCopyEntry.Copy dst (Var canon))))]
               [(None) unit])]
           [(OptLicmDupNone)
             (ir.compiler-ir-instr-builder-push! (&mut selected) subst)])
@@ -28316,40 +28452,41 @@
                 ;; duplicates -- skip the rewrite.
                 (let
                   [dedup-env : OptCopyEnv
-                    (opt-licm-dedup-env type-segment-bases hoisted (Nil))]
-                  (match (compiler-opt-global-shared-view dedup-env)
-                    [(Nil)
-                      (Result
+                    (opt-licm-dedup-env
+                      type-segment-bases
+                      hoisted
+                      (opt-copy-env-empty))]
+                  (if (opt-copy-env-empty? dedup-env)
+                    (Result
+                      (opt-blocks-build
                         (opt-blocks-build
+                          blocks
+                          opt-licm-replace-body-blocks!
+                          (ir.compiler-ir-block-list-view promoted-body))
+                        opt-licm-insert-preheader-blocks!
+                        preheader
+                        (opt-licm-preheader-instrs hoisted preheader-loads))
+                      true)
+                    (Result
+                      (opt-blocks-build
+                        (let
+                          [substituted : ir.CompilerIrBlockList
+                            (opt-blocks-build
+                              promoted-body
+                              opt-licm-subst-body-blocks!
+                              (compiler-opt-global-shared-view dedup-env))]
                           (opt-blocks-build
                             blocks
                             opt-licm-replace-body-blocks!
-                            (ir.compiler-ir-block-list-view promoted-body))
-                          opt-licm-insert-preheader-blocks!
-                          preheader
-                          (opt-licm-preheader-instrs hoisted preheader-loads))
-                        true)]
-                    [_
-                      (Result
-                        (opt-blocks-build
-                          (let
-                            [substituted : ir.CompilerIrBlockList
-                              (opt-blocks-build
-                                promoted-body
-                                opt-licm-subst-body-blocks!
-                                (compiler-opt-global-shared-view dedup-env))]
-                            (opt-blocks-build
-                              blocks
-                              opt-licm-replace-body-blocks!
-                              (ir.compiler-ir-block-list-view substituted)))
-                          opt-licm-insert-preheader-blocks!
-                          preheader
-                          (opt-licm-preheader-instrs
-                            (opt-licm-subst-instr-seq
-                              (compiler-opt-global-shared-view dedup-env)
-                              hoisted)
-                            preheader-loads))
-                        true)]))
+                            (ir.compiler-ir-block-list-view substituted)))
+                        opt-licm-insert-preheader-blocks!
+                        preheader
+                        (opt-licm-preheader-instrs
+                          (opt-licm-subst-instr-seq
+                            (compiler-opt-global-shared-view dedup-env)
+                            hoisted)
+                          preheader-loads))
+                      true)))
                 (Result blocks false)))]))]
     [(No) (Result blocks false)]))
 
@@ -35884,7 +36021,9 @@
         [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
         (opt-flag-exit-mint-env
           (opt-flag-exit-mints-tail mints)
-          (Cons mint.source (Var mint.fresh) (box env))))]))
+          (opt-copy-env-push
+            env
+            (OptCopyEntry.Copy mint.source (Var mint.fresh)))))]))
 
 ;; --- C7's alternate-exit clause, for an alternate exit that lands ON X --------
 ;;
@@ -36704,9 +36843,9 @@
 ;; A plan with nothing minted leaves every read outside the loop alone, which is
 ;; the shape this pass has always had; the walks below then cost nothing.
 (define (opt-flag-exit-minted? [plan : (& plan OptFlagExitPlan)]) : bool
-  (match plan.mint-env
-    [(Nil) false]
-    [_ true]))
+  (if (opt-copy-env-empty? plan.mint-env)
+    false
+    true))
 
 ;; A phi input evaluated on an edge X dominates reads the minted exit phi, the
 ;; same rule the non-phi reads under X follow.
@@ -37163,7 +37302,7 @@
                         clears
                         fixes
                         (compiler-opt-global-shared-view mints)
-                        (opt-flag-exit-mint-env mints (Nil))
+                        (opt-flag-exit-mint-env mints (opt-copy-env-empty))
                         doms))])])])])))
 
 (define (opt-flag-exit-plan-gated
@@ -59764,7 +59903,7 @@
     ;; renames, and building one per instruction is pure allocation.
     [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [load-state : OptLoadCseState state]
-    [copy-state : OptCopyEnv (Nil)]
+    [copy-state : OptCopyEnv (opt-copy-env-empty)]
     [word-state : OptExprTable (opt-expr-table-clear words)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (while (< index count)
@@ -68255,12 +68394,12 @@
   [fast-label : i64]
   [cell : (&mut cell (__tl_dyn-array i64))]) : OptUceExitBuild
   (match (compiler-opt-global-shared-view recs)
-    [(Nil) (Result (ir.compiler-ir-instr-seq-empty) (Nil))]
+    [(Nil) (Result (ir.compiler-ir-instr-seq-empty) (opt-copy-env-empty))]
     [(Dense _ len)
       (let
         [slots : (__tl_dyn-array ir.CompilerIrInstr)
           (__tl_make-array ir.CompilerIrInstr len)]
-        [env : OptCopyEnv (Nil)]
+        [env : OptCopyEnv (opt-copy-env-empty)]
         [index : i64 0]
         ;; Records are visited newest-first to preserve destination allocation;
         ;; write them from the far end so the final phi order stays unchanged.
@@ -68285,7 +68424,9 @@
                         loop-label
                         (ir.compiler-ir-phi-input-seq-empty)))
                     ty))
-                (set! env (Cons dst (Var merged) (box env))))])
+                (set!
+                  env
+                  (opt-copy-env-push env (OptCopyEntry.Copy dst (Var merged)))))])
           (set! index (+ index 1)))
         (Result (ir.CompilerIrInstrSeq slots len) env))]))
 
@@ -78299,7 +78440,7 @@
           preds
           instrs
           cell
-          (Cons var (Var existing) (box env))
+          (opt-copy-env-push env (OptCopyEntry.Copy var (Var existing)))
           phis)
         (match (opt-bce-mb-find-def
           (ir.compiler-ir-block-list-view all-blocks)
@@ -78318,7 +78459,7 @@
                     preds
                     instrs
                     cell
-                    (Cons var (Var pv) (box env))
+                    (opt-copy-env-push env (OptCopyEntry.Copy var (Var pv)))
                     (opt-bce-version-builder-push
                       phis
                       (Phi pv (opt-bce-mb-wire-phi-inputs preds (Var var)) ty))))])])))))
@@ -78450,7 +78591,7 @@
                   preds
                   instrs
                   cell
-                  (Nil))
+                  (opt-copy-env-empty))
                   [(No) (No)]
                   [(Some env new-phis)
                     (Some
@@ -79342,7 +79483,7 @@
                     (compiler-opt-global-shared-view instrs)
                     (opt-unroll-phi-prefix-count instrs 0)
                     (compiler-opt-global-shared-view phis)
-                    (Nil)))]
+                    (opt-copy-env-empty)))]
               [(opt-label-contains far-labels label)
                 (ir.CompilerIrBlock.Block
                   label
@@ -79447,7 +79588,7 @@
             (ir.compiler-ir-block-list-view blocks)
             plan.wire)
           cell
-          (Nil))
+          (opt-copy-env-empty))
           [(No) (No)]
           [(Some env phis)
             (Some
@@ -92471,7 +92612,7 @@
               (opt-uniform-phi-literal? value)
               (opt-used-contains outside dst))
               (opt-uniform-phi-collect-seq
-                (Cons dst value (box env))
+                (opt-copy-env-push env (OptCopyEntry.Copy dst value))
                 outside
                 instrs
                 (+ at 1))
@@ -92659,15 +92800,14 @@
       (let
         [natural-loops (opt-cfg-natural-loops blocks)]
         (opt-uniform-phi-collect-loops
-          (Nil)
+          (opt-copy-env-empty)
           blocks
           (opt_natural_loop_vec.view natural-loops)))]
-    (match (compiler-opt-global-shared-view env)
-      [(Nil) (Result blocks false)]
-      [_
-        (Result
-          (opt-blocks-build blocks opt-uniform-phi-rewrite-blocks! env)
-          true)])))
+    (if (opt-copy-env-empty? env)
+      (Result blocks false)
+      (Result
+        (opt-blocks-build blocks opt-uniform-phi-rewrite-blocks! env)
+        true))))
 
 (define (opt-uniform-phi-rounds
   [blocks : ir.CompilerIrBlockList]
@@ -94315,7 +94455,10 @@
             (ir.compiler-ir-instr-seq-ref instrs source-index)
             clone)])]
     [source-label : i64 (opt-cfg-index-label st.index source-id)]
-    [env : OptCopyEnv (Cons var (Var clone) (box (OptCopyEnv.Nil)))]
+    [env : OptCopyEnv
+      (opt-copy-env-push
+        (opt-copy-env-empty)
+        (OptCopyEntry.Copy var (Var clone)))]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock st.count)]
     [id : i64 0]
@@ -128454,11 +128597,10 @@
   (match state
     [(State _ _ _ _ _ bases _)
       (if (< bases.cell 0)
-        (Nil)
-        (Cons
-          (opt-copy-global-key bases.cell)
-          bases.cell-value
-          (box (OptCopyEnv.Nil))))]))
+        (opt-copy-env-empty)
+        (opt-copy-env-push
+          (opt-copy-env-with-capacity 1)
+          (OptCopyEntry.Copy (opt-copy-global-key bases.cell) bases.cell-value)))]))
 
 ;; An eligible scalar/pure instruction with every read of the known cell
 ;; replaced by its contents. A phi is left alone: its inputs are the
@@ -128468,12 +128610,11 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (let
     [env : OptCopyEnv (opt-load-cse-state-cell-env state)]
-    (match (compiler-opt-global-shared-view env)
-      [(Nil) instr]
-      [_
-        (match (compiler-opt-global-shared-view instr)
-          [(Phi _ _ _) instr]
-          [_ (opt-copy-subst-instr env instr)])])))
+    (if (opt-copy-env-empty? env)
+      instr
+      (match (compiler-opt-global-shared-view instr)
+        [(Phi _ _ _) instr]
+        [_ (opt-copy-subst-instr env instr)]))))
 
 (define (opt-load-cse-state-global-store
   [type-segment-bases : i64]
@@ -136323,11 +136464,15 @@
   [count : i64]
   [slot : i64]) : OptCopyEnv
   (if (>= slot count)
-    (Nil)
-    (Cons
-      (array-ref pairs (* slot 2))
-      (Var (array-ref pairs (+ (* slot 2) 1)))
-      (box (opt-guard-dedup-subst-env pairs count (+ slot 1))))))
+    (opt-copy-env-empty)
+    (let
+      [pushed
+        (OptCopyEntry.Copy
+          (array-ref pairs (* slot 2))
+          (Var (array-ref pairs (+ (* slot 2) 1))))]
+      (opt-copy-env-push
+        (opt-guard-dedup-subst-env pairs count (+ slot 1))
+        pushed))))
 
 ;; Does this function have a block that ends in a two-way branch AND a second
 ;; block that could decide it? One pass over the CFG index answers it, so a
@@ -136969,7 +137114,7 @@
             load-id
             resolved)
             env
-            (Cons mov-dst resolved (box env))))]
+            (opt-copy-env-push env (OptCopyEntry.Copy mov-dst resolved))))]
       [_ env])))
 
 ;; Record where each var is defined, as block id + 1. The walk is in RPO, and a
@@ -137122,7 +137267,7 @@
     [def-blocks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [reach-count : i64 index.reach-count]
     [slot : i64 0]
-    [env : OptCopyEnv (Nil)]
+    [env : OptCopyEnv (opt-copy-env-empty)]
     (while (< slot reach-count)
       (let
         [id : i64 (opt-cfg-index-rpo-id index slot)]
@@ -137440,7 +137585,7 @@
         [subst : OptCopyEnv
           (if subst-any?
             (opt-load-gvn-subst-env index sources subst-masks frame out)
-            (Nil))]
+            (opt-copy-env-empty))]
         [promoted : i64 (opt-load-cell-promote-count promote)]
         [_inserts : unit
           (if (> promoted 0)
@@ -137466,9 +137611,9 @@
         [materialized : ir.CompilerIrBlockList
           (opt-gvn-materialize-blocks context.doms out work)]
         (Result
-          (match (compiler-opt-global-shared-view subst)
-            [(Nil) materialized]
-            [_ (opt-load-gvn-substitute next-frame subst materialized)])
+          (if (opt-copy-env-empty? subst)
+            materialized
+            (opt-load-gvn-substitute next-frame subst materialized))
           next-frame)))))
 
 (cfg

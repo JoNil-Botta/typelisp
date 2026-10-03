@@ -622,6 +622,19 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Copy environments use a dense `OptCopyEntry` array, a snapshot length and
+an arena-allocated lineage top cell. Slots beneath every retained snapshot
+remain immutable. Push appends at the current top with spare capacity; extending
+an older snapshot copies its live prefix. Growth shallow-copies compiler arena
+values using their inline layout size. Zeroed empty snapshots skip their null
+top until allocating storage. Truncate clamps its mark and declares every
+longer snapshot dead; only consumed block-local clears use it. Invalidation
+first checks for a retired destination/source, returns unchanged snapshots when
+none exists, and otherwise copies retained facts in order. Lookups stay newest
+first and preserve local IDs, negative global keys and pack-word keys. The copy
+environment smoke covers growth, wide entries, forks, zeroed storage, clears,
+source invalidation and retained snapshots.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before

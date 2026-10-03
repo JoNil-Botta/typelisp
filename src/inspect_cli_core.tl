@@ -18,8 +18,8 @@ Summary:
 (define (tlci-inspect-classification-name
   [image : (& image tlci_core.TlciImage)]) : String
   (match (tlci_core.tlci-image-classify image)
-    [(tlci_core.TlciImageClassification.MetadataOnly) "metadata-only"]
-    [(tlci_core.TlciImageClassification.CodeBearing) "code-bearing"]))
+    [(MetadataOnly) "metadata-only"]
+    [(CodeBearing) "code-bearing"]))
 
 (define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
   (str_cat.str-cat
@@ -126,7 +126,7 @@ Summary:
 
 (define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)]) : String
   (match (tlci_core.tlci-package-source-binding-read rodata)
-    [(tlci_core.TlciPackageSourceBindingRead.Bound digest)
+    [(Bound digest)
       (str_cat.str-cat
         "source-set-binding-schema: "
         (string.int->string
@@ -135,15 +135,15 @@ Summary:
         "source-set-digest: "
         (string.int->string digest)
         "\n")]
-    [(tlci_core.TlciPackageSourceBindingRead.MissingOrLegacy)
+    [(MissingOrLegacy)
       "source-set-binding-schema: missing-or-legacy\nsource-set-digest: unavailable\n"]
-    [(tlci_core.TlciPackageSourceBindingRead.UnsupportedSchema schema)
+    [(UnsupportedSchema schema)
       (str_cat.str-cat
         "source-set-binding-schema: unsupported ("
         (string.int->string schema)
         ")\n"
         "source-set-digest: unavailable\n")]
-    [(tlci_core.TlciPackageSourceBindingRead.Malformed message)
+    [(Malformed message)
       (str_cat.str-cat
         "source-set-binding-schema: malformed\n"
         "source-set-digest: unavailable\n"
@@ -156,9 +156,8 @@ Summary:
   [rodata : (& rodata (__tl_dyn-array u8))]
   [kind : i64]) : String
   (match (tlci_core.tlci-aux-find rodata kind)
-    [(tlci_core.ResultTlciAuxLookup.Missing)
-      (str_cat.str-cat name ": missing\n")]
-    [(tlci_core.ResultTlciAuxLookup.Err message)
+    [(Missing) (str_cat.str-cat name ": missing\n")]
+    [(Err message)
       (str_cat.str-cat
         (owned_view.compiler-owned-shared-view name)
         ": malformed\n"
@@ -166,7 +165,7 @@ Summary:
         "-error: "
         message
         "\n")]
-    [(tlci_core.ResultTlciAuxLookup.Ok schema payload)
+    [(Ok schema payload)
       (str_cat.str-cat
         name
         ": present schema-version="
@@ -292,11 +291,11 @@ Summary:
   [bytes : (__tl_dyn-array u8)]) : i64
   (match (tlci_core.tlci-parse-image
     (owned_view.compiler-owned-shared-view bytes))
-    [(tlci_core.ResultTlciImage.Err message)
+    [(Err message)
       (begin
         (io.print-error (tlci-inspect-error path message))
         1)]
-    [(tlci_core.ResultTlciImage.Ok image)
+    [(Ok image)
       (begin
         (io.print-format "{}" (tlci-inspect-render bytes image))
         0)]))
@@ -315,13 +314,11 @@ Summary:
   embedded-stdlib-tlci
   (define (tlci-inspect-embedded-stdlib) : i64
     (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
-      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Err
-          message)
+      [(Err message)
         (begin
           (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
           1)]
-      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
-          count)
+      [(Ok count)
         (begin
           (io.print-format
             "{}"
@@ -343,10 +340,10 @@ Summary:
       (if (string.eq path "embedded:stdlib.tlci")
         (tlci-inspect-embedded-stdlib)
         (match (io.try-read-file (& path))
-          [(io.ErrIoBytes error)
+          [(ErrIoBytes error)
             (begin
               (io.print-error
                 (tlci-inspect-error path (io.error-message error)))
               1)]
-          [(io.OkIoBytes contents)
+          [(OkIoBytes contents)
             (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))

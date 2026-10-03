@@ -152,14 +152,14 @@
 
 (define (package-source-discover-manifest-up [prefix : String] [fuel : i64]) : compiler_load.CompilerLoadMaybePath
   (if (<= fuel 0)
-    (compiler_load.CompilerLoadNoPath)
+    (CompilerLoadNoPath)
     (let
       [candidate : String
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view prefix)
           "typelisp.pkg")]
       (if (io.file-exists? (owned_view.compiler-owned-shared-view candidate))
-        (compiler_load.CompilerLoadSomePath candidate)
+        (CompilerLoadSomePath candidate)
         (package-source-discover-manifest-up
           (str_cat.str-cat prefix "../")
           (- fuel 1))))))
@@ -170,23 +170,22 @@
       (owned_view.compiler-owned-shared-view path)
       (byte_buf.to-string
         (io.read-file (owned_view.compiler-owned-shared-view path))))
-      [(compiler_load.ResultCompilerPkgManifestDiagnostic.Err diag)
-        (ResultPackageSourceSet.Err
+      [(Err diag)
+        (Err
           (str_cat.str-cat
             "invalid package manifest '"
             (compiler_diagnostic.compiler-diagnostic-path (__tl-box-place diag))
             "': "
             (compiler_diagnostic.compiler-diagnostic-message
               (__tl-box-place diag))))]
-      [(compiler_load.ResultCompilerPkgManifestDiagnostic.Ok manifest)
-        (ResultPackageSourceSet.Ok
+      [(Ok manifest)
+        (Ok
           (PackageSourceSet
             (owned_view.compiler-owned-shared-view path)
             (package-source-manifest-dir path)
             manifest
             (svec.new)))])
-    (ResultPackageSourceSet.Err
-      (str_cat.str-cat "cannot read package manifest '" path "'"))))
+    (Err (str_cat.str-cat "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
   [command : String]
@@ -195,16 +194,15 @@
   (let
     [resolved : compiler_load.CompilerLoadMaybePath
       (if has-manifest
-        (compiler_load.CompilerLoadSomePath manifest-path)
+        (CompilerLoadSomePath manifest-path)
         (package-source-discover-manifest-up "" 256))]
     (match resolved
-      [(compiler_load.CompilerLoadNoPath)
-        (ResultPackageSourceSet.Err
+      [(CompilerLoadNoPath)
+        (Err
           (str_cat.str-cat
             command
             ": could not find typelisp.pkg from '.' or any parent directory"))]
-      [(compiler_load.CompilerLoadSomePath path)
-        (package-source-load-manifest path)])))
+      [(CompilerLoadSomePath path) (package-source-load-manifest path)])))
 
 (define (package-source-relative-join
   [prefix : (& prefix str)]
@@ -244,10 +242,9 @@
   [kind : fs.FsFileKind]
   [expected : PackageSourceConfinedPathKind]) : bool
   (match expected
-    [(PackageSourceConfinedPathKind.File) (fs.file-kind-regular? kind)]
-    [(PackageSourceConfinedPathKind.Directory) (fs.file-kind-directory? kind)]
-    [(PackageSourceConfinedPathKind.Any)
-      (or (fs.file-kind-regular? kind) (fs.file-kind-directory? kind))]))
+    [(File) (fs.file-kind-regular? kind)]
+    [(Directory) (fs.file-kind-directory? kind)]
+    [(Any) (or (fs.file-kind-regular? kind) (fs.file-kind-directory? kind))]))
 
 (define (package-source-confined-existing-path-from
   [package-name : String]
@@ -266,19 +263,19 @@
     [candidate : String (package-source-root-join checkout-root next-prefix)]
     [last : bool (>= separator n)]
     (match (fs.try-file-kind-no-follow (& candidate))
-      [(fs.ErrFsFileKind _)
-        (ResultPackageSourceConfinedPath.Err
+      [(ErrFsFileKind _)
+        (Err
           (package-source-fetched-boundary-message
             package-name
             field
             requested
             checkout-root))]
-      [(fs.OkFsFileKind kind)
+      [(OkFsFileKind kind)
         (if (if last
           (package-source-confined-kind-ok? kind expected)
           (fs.file-kind-directory? kind))
           (if last
-            (ResultPackageSourceConfinedPath.Ok candidate)
+            (Ok candidate)
             (package-source-confined-existing-path-from
               package-name
               field
@@ -288,7 +285,7 @@
               (+ separator 1)
               next-prefix
               expected))
-          (ResultPackageSourceConfinedPath.Err
+          (Err
             (package-source-fetched-boundary-message
               package-name
               field
@@ -310,21 +307,21 @@
       (compiler_load.compiler-load-normalize-path checkout-root)]
     [normalized-request : String (fs.path-normalize (& requested))]
     (if (not (fs.path-safe-relative? (& requested)))
-      (ResultPackageSourceConfinedPath.Err
+      (Err
         (package-source-fetched-boundary-message
           package-name
           field
           requested
           normalized-root))
       (match (fs.try-file-kind-no-follow (& normalized-root))
-        [(fs.ErrFsFileKind _)
-          (ResultPackageSourceConfinedPath.Err
+        [(ErrFsFileKind _)
+          (Err
             (package-source-fetched-boundary-message
               package-name
               field
               requested
               normalized-root))]
-        [(fs.OkFsFileKind root-kind)
+        [(OkFsFileKind root-kind)
           (if (fs.file-kind-directory? root-kind)
             (package-source-confined-existing-path-from
               package-name
@@ -335,7 +332,7 @@
               0
               ""
               expected)
-            (ResultPackageSourceConfinedPath.Err
+            (Err
               (package-source-fetched-boundary-message
                 package-name
                 field
@@ -352,7 +349,7 @@
     field
     requested
     checkout-root
-    (PackageSourceConfinedPathKind.File)))
+    (File)))
 
 (define (package-source-fetched-checkout-audit-entry
   [package-name : String]
@@ -362,27 +359,27 @@
   ;; The checkout implementation owns the root `.git` directory; it is not a
   ;; package-controlled input. A nested `.git` remains subject to the audit.
   (if (and (string.eq relative "") (string.eq name ".git"))
-    (ResultPackageSourceConfinedPath.Ok checkout-root)
+    (Ok checkout-root)
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child : String (package-source-root-join checkout-root child-relative)]
       (match (fs.try-file-kind-no-follow (& child))
-        [(fs.ErrFsFileKind _)
-          (ResultPackageSourceConfinedPath.Err
+        [(ErrFsFileKind _)
+          (Err
             (package-source-fetched-boundary-message
               package-name
               "checkout path"
               child-relative
               checkout-root))]
-        [(fs.OkFsFileKind kind)
+        [(OkFsFileKind kind)
           (if (fs.file-kind-directory? kind)
             (package-source-fetched-checkout-audit-dir
               package-name
               checkout-root
               child-relative)
             (if (fs.file-kind-regular? kind)
-              (ResultPackageSourceConfinedPath.Ok child)
-              (ResultPackageSourceConfinedPath.Err
+              (Ok child)
+              (Err
                 (package-source-fetched-boundary-message
                   package-name
                   "checkout path"
@@ -396,15 +393,14 @@
   [entries : svec.Vec]
   [index : i64]) : ResultPackageSourceConfinedPath
   (if (>= index (svec.len (& entries)))
-    (ResultPackageSourceConfinedPath.Ok checkout-root)
+    (Ok checkout-root)
     (match (package-source-fetched-checkout-audit-entry
       (owned_view.compiler-owned-shared-view package-name)
       (owned_view.compiler-owned-shared-view checkout-root)
       relative
       (svec.get (& entries) index ""))
-      [(ResultPackageSourceConfinedPath.Err message)
-        (ResultPackageSourceConfinedPath.Err message)]
-      [(ResultPackageSourceConfinedPath.Ok _)
+      [(Err message) (Err message)]
+      [(Ok _)
         (package-source-fetched-checkout-audit-entries-from
           package-name
           checkout-root
@@ -419,8 +415,8 @@
   (let
     [dir : String (package-source-root-join checkout-root relative)]
     (match (fs.try-read-dir (& dir))
-      [(fs.ErrIoStringVector _)
-        (ResultPackageSourceConfinedPath.Err
+      [(ErrIoStringVector _)
+        (Err
           (package-source-fetched-boundary-message
             package-name
             "checkout path"
@@ -428,7 +424,7 @@
               "."
               relative)
             checkout-root))]
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (package-source-fetched-checkout-audit-entries-from
           package-name
           checkout-root
@@ -447,20 +443,20 @@
     [normalized-root : String
       (compiler_load.compiler-load-normalize-path checkout-root)]
     (match (fs.try-file-kind-no-follow (& normalized-root))
-      [(fs.ErrFsFileKind _)
-        (ResultPackageSourceConfinedPath.Err
+      [(ErrFsFileKind _)
+        (Err
           (package-source-fetched-boundary-message
             package-name
             "checkout root"
             "."
             normalized-root))]
-      [(fs.OkFsFileKind kind)
+      [(OkFsFileKind kind)
         (if (fs.file-kind-directory? kind)
           (package-source-fetched-checkout-audit-dir
             package-name
             normalized-root
             "")
-          (ResultPackageSourceConfinedPath.Err
+          (Err
             (package-source-fetched-boundary-message
               package-name
               "checkout root"
@@ -513,7 +509,7 @@
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
-  (ResultPackageSourceList.Err
+  (Err
     (str_cat.str-cat
       command
       ": failed to inspect package path '"
@@ -525,7 +521,7 @@
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
-  (ResultPackageSourceList.Err
+  (Err
     (str_cat.str-cat
       command
       ": failed to read package directory '"
@@ -552,9 +548,9 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
-      [(fs.ErrIoStringVector error)
+      [(ErrIoStringVector error)
         (package-source-read-dir-error command dir error)]
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (package-source-scan-entries
           command
           root
@@ -570,13 +566,13 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
-      [(fs.ErrIoStringVector error)
+      [(ErrIoStringVector error)
         (if (or
           (io.error-not-found? (owned_view.compiler-owned-shared-view error))
           (io.error-unsupported? (owned_view.compiler-owned-shared-view error)))
           (ResultPackageSourceList.Ok acc)
           (package-source-read-dir-error command dir error))]
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (package-source-scan-entries
           command
           root
@@ -591,12 +587,12 @@
     [root : String
       (owned_view.compiler-owned-shared-view source-set.manifest-dir)]
     (match (fs.try-read-dir (& root))
-      [(fs.ErrIoStringVector error)
+      [(ErrIoStringVector error)
         (if (io.error-unsupported?
           (owned_view.compiler-owned-shared-view error))
           (ResultPackageSourceList.Ok (package-source-entry-list source-set))
           (package-source-read-dir-error command root error))]
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (package-source-scan-entries
           command
           root
@@ -618,11 +614,11 @@
   [inspected : fs.ResultFsFileKind]
   [acc : svec.Vec]) : ResultPackageSourceList
   (match inspected
-    [(fs.ErrFsFileKind error)
+    [(ErrFsFileKind error)
       (if (io.error-not-found? (owned_view.compiler-owned-shared-view error))
         (ResultPackageSourceList.Ok acc)
         (package-source-entry-error command child-path error))]
-    [(fs.OkFsFileKind kind)
+    [(OkFsFileKind kind)
       (if (fs.file-kind-directory? kind)
         (if (package-source-dir-has-manifest? child-path)
           (ResultPackageSourceList.Ok acc)
@@ -677,9 +673,8 @@
       relative
       (svec.get (& entries) index "")
       acc)
-      [(ResultPackageSourceList.Err message)
-        (ResultPackageSourceList.Err message)]
-      [(ResultPackageSourceList.Ok next)
+      [(Err message) (Err message)]
+      [(Ok next)
         (package-source-scan-entries-from
           command
           root
@@ -707,9 +702,9 @@
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (match (fs.try-read-dir (& normalized-root))
-      [(fs.ErrIoStringVector error)
+      [(ErrIoStringVector error)
         (package-source-read-dir-error command normalized-root error)]
-      [(fs.OkIoStringVector entries)
+      [(OkIoStringVector entries)
         (package-source-scan-entries
           command
           normalized-root
@@ -763,8 +758,8 @@
                   ;; Match recursive discovery: every parent must be a real
                   ;; directory, never a symlink or Windows reparse point.
                   (match (fs.try-file-kind-no-follow (& parent))
-                    [(fs.ErrFsFileKind _) (set! eligible false)]
-                    [(fs.OkFsFileKind kind)
+                    [(ErrFsFileKind _) (set! eligible false)]
+                    [(OkFsFileKind kind)
                       (if (and
                         (fs.file-kind-directory? kind)
                         (not (package-source-dir-has-manifest? parent)))
@@ -802,9 +797,9 @@
     (and
       (package-source-path-location-eligible-for-root? root normalized-path)
       (match (fs.try-file-kind-no-follow (& normalized-path))
-        [(fs.OkFsFileKind kind)
+        [(OkFsFileKind kind)
           (package-source-include-kind? normalized-path kind)]
-        [(fs.ErrFsFileKind _) false]))))
+        [(ErrFsFileKind _) false]))))
 
 (define (package-source-discover-for
   [command : String]
@@ -814,22 +809,21 @@
     (owned_view.compiler-owned-shared-view command)
     manifest-path
     has-manifest)
-    [(ResultPackageSourceSet.Err message) (ResultPackageSourceSet.Err message)]
-    [(ResultPackageSourceSet.Ok base)
+    [(Err message) (Err message)]
+    [(Ok base)
       (match (package-source-scan-root
         (owned_view.compiler-owned-shared-view command)
         (owned_view.compiler-owned-shared-view base))
-        [(ResultPackageSourceList.Err message)
-          (ResultPackageSourceSet.Err message)]
-        [(ResultPackageSourceList.Ok sources)
+        [(Err message) (Err message)]
+        [(Ok sources)
           (if (= (svec.len (& sources)) 0)
-            (ResultPackageSourceSet.Err
+            (Err
               (str_cat.str-cat
                 command
                 ": no TypeLisp source files found in package '"
                 base.manifest-path
                 "'"))
-            (ResultPackageSourceSet.Ok
+            (Ok
               (PackageSourceSet
                 base.manifest-path
                 base.manifest-dir
@@ -1033,14 +1027,14 @@
                 "source is excluded by package discovery policy"))]
           [else
             (match (fs.try-file-kind-no-follow (& path))
-              [(fs.ErrFsFileKind io-error)
+              [(ErrFsFileKind io-error)
                 (set!
                   error
                   (package-source-binding-read-error
                     (owned_view.compiler-owned-shared-view source-set)
                     path
                     io-error))]
-              [(fs.OkFsFileKind kind)
+              [(OkFsFileKind kind)
                 (if (not (package-source-include-kind? path kind))
                   (set!
                     error
@@ -1049,14 +1043,14 @@
                       path
                       "source is no longer a regular TypeLisp file"))
                   (match (io.try-read-file (& path))
-                    [(io.ErrIoBytes io-error)
+                    [(ErrIoBytes io-error)
                       (set!
                         error
                         (package-source-binding-read-error
                           (owned_view.compiler-owned-shared-view source-set)
                           path
                           io-error))]
-                    [(io.OkIoBytes contents)
+                    [(OkIoBytes contents)
                       (let
                         [bytes : (__tl_dyn-array u8)
                           (byte_buf.to-array contents)]
@@ -1069,29 +1063,23 @@
                         (set! previous-relative relative))]))])])
         (set! index (+ index 1))))
     (if (> (string.string-length error) 0)
-      (ResultPackageSourceDigest.Err error)
-      (ResultPackageSourceDigest.Ok hash))))
+      (Err error)
+      (Ok hash))))
 
 (define (package-source-binding-verification-from-admission
   [admission : tlci.TlciPackageSourceBindingAdmission]) : PackageSourceBindingVerification
   (match admission
-    [(tlci.TlciPackageSourceBindingAdmission.Match digest)
-      (PackageSourceBindingVerification.Match digest)]
-    [(tlci.TlciPackageSourceBindingAdmission.Mismatch expected actual)
-      (PackageSourceBindingVerification.Mismatch expected actual)]
-    [(tlci.TlciPackageSourceBindingAdmission.MissingOrLegacy)
-      (PackageSourceBindingVerification.MissingOrLegacy)]
-    [(tlci.TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
-      (PackageSourceBindingVerification.UnsupportedSchema schema)]
-    [(tlci.TlciPackageSourceBindingAdmission.Malformed message)
-      (PackageSourceBindingVerification.Malformed message)]))
+    [(Match digest) (Match digest)]
+    [(Mismatch expected actual) (Mismatch expected actual)]
+    [(MissingOrLegacy) (MissingOrLegacy)]
+    [(UnsupportedSchema schema) (UnsupportedSchema schema)]
+    [(Malformed message) (Malformed message)]))
 
 (define (package-source-verify-binding
   [source-set : PackageSourceSet]
   [rodata : (__tl_dyn-array u8)]) : PackageSourceBindingVerification
   (match (package-source-set-digest source-set)
-    [(ResultPackageSourceDigest.Err message)
-      (PackageSourceBindingVerification.Unreadable message)]
-    [(ResultPackageSourceDigest.Ok expected)
+    [(Err message) (Unreadable message)]
+    [(Ok expected)
       (package-source-binding-verification-from-admission
         (tlci.tlci-package-source-binding-admit rodata expected))]))

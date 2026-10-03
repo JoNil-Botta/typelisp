@@ -231,10 +231,7 @@
     [row : CompilerX64ExecutableTemplateGate
       (compiler-x64-template-registry-gate id)]
     (begin
-      (compiler-x64-template-require-kind!
-        row
-        target
-        (x64.CompilerX64TemplateRenderKind.Assembly))
+      (compiler-x64-template-require-kind! row target (Assembly))
       (compiler-x64-template-require-rendered-payload! row (& rendered))
       rendered)))
 
@@ -246,10 +243,7 @@
     [row : CompilerX64ExecutableTemplateGate
       (compiler-x64-template-registry-gate id)]
     (begin
-      (compiler-x64-template-require-kind!
-        row
-        target
-        (x64.CompilerX64TemplateRenderKind.OpaqueBytes))
+      (compiler-x64-template-require-kind! row target (OpaqueBytes))
       (compiler-x64-template-require-rendered-payload! row (& rendered))
       rendered)))
 
@@ -259,10 +253,7 @@
   (let
     [row : CompilerX64ExecutableTemplateGate
       (compiler-x64-template-registry-gate id)]
-    (compiler-x64-template-require-kind!
-      row
-      target
-      (x64.CompilerX64TemplateRenderKind.StructuredObject))))
+    (compiler-x64-template-require-kind! row target (StructuredObject))))
 
 (define (compiler-x64-template-select-four
   [plain : x64.CompilerX64ExecutableTemplateId]

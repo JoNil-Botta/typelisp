@@ -262,8 +262,8 @@
 
 (define (compiler-sframe-v3-fallback-rule [fixed : i64]) : CompilerSframeV3Rule
   (if (= fixed 0)
-    (CompilerSframeV3Rule.Unavailable)
-    (CompilerSframeV3Rule.Fixed fixed)))
+    (Unavailable)
+    (Fixed fixed)))
 
 (define (compiler-sframe-v3-decode-flex-rule
   [control : i64]
@@ -275,19 +275,19 @@
     [register : i64 (shr control 3)]
     (cond
       [(= control 0)
-        (ResultCompilerSframeV3Rule.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-row
             byte-offset
             "sframe v3: zero flexible control is padding, not a rule"))]
       [(!= (bit-and control 4) 0)
-        (ResultCompilerSframeV3Rule.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-row
             byte-offset
             "sframe v3: reserved flexible control bit is set"))]
       [(and (not register-present?) (!= register 0))
-        (ResultCompilerSframeV3Rule.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-row
             byte-offset
@@ -295,17 +295,13 @@
       [(and
           register-present?
           (not (compiler-sframe-v3-supported-register? register)))
-        (ResultCompilerSframeV3Rule.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-row
             byte-offset
             "sframe v3: unsupported AMD64 DWARF register"))]
-      [register-present?
-        (ResultCompilerSframeV3Rule.Ok
-          (CompilerSframeV3Rule.Register register deref? offset))]
-      [else
-        (ResultCompilerSframeV3Rule.Ok
-          (CompilerSframeV3Rule.Implicit deref? offset))])))
+      [register-present? (Ok (Register register deref? offset))]
+      [else (Ok (Implicit deref? offset))])))
 
 (define (compiler-sframe-v3-row-start-width [function-size : i64]) : i64
   (cond [(< function-size 256) 1] [(< function-size 65536) 2] [else 4]))
@@ -364,11 +360,11 @@
 
 (define (compiler-sframe-v3-rule-control [rule : (& rule CompilerSframeV3Rule)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Implicit deref? _)
+    [(Implicit deref? _)
       (if deref?
         2
         0)]
-    [(CompilerSframeV3Rule.Register register deref? _)
+    [(Register register deref? _)
       (+
         (shl register 3)
         (+
@@ -380,17 +376,17 @@
 
 (define (compiler-sframe-v3-rule-offset [rule : (& rule CompilerSframeV3Rule)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Implicit _ offset) offset]
-    [(CompilerSframeV3Rule.Register _ _ offset) offset]
-    [(CompilerSframeV3Rule.Fixed offset) offset]
+    [(Implicit _ offset) offset]
+    [(Register _ _ offset) offset]
+    [(Fixed offset) offset]
     [_ 0]))
 
 (define (compiler-sframe-v3-rule-omitted-valid?
   [rule : (& rule CompilerSframeV3Rule)]
   [fixed : i64]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Unavailable) (= fixed 0)]
-    [(CompilerSframeV3Rule.Fixed value) (and (!= fixed 0) (= value fixed))]
+    [(Unavailable) (= fixed 0)]
+    [(Fixed value) (and (!= fixed 0) (= value fixed))]
     [_ false]))
 
 ;: Decode one exact `.sframe` section into caller-independent owned records.
@@ -404,7 +400,7 @@
       (when
         (not (compiler-sframe-v3-limits-valid? limits))
         (return
-          (ResultCompilerSframeV3Image.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-invalid-limits
               0
@@ -412,7 +408,7 @@
       (when
         (> length limits.max-input-bytes)
         (return
-          (ResultCompilerSframeV3Image.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-input-limit
               0
@@ -420,7 +416,7 @@
       (when
         (< length compiler-sframe-v3-header-size)
         (return
-          (ResultCompilerSframeV3Image.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-truncated
               length
@@ -430,7 +426,7 @@
           (!= (byte_le.read-u16 bytes 0) compiler-sframe-v3-magic)
           (!= (byte_le.byte-le-at bytes 2) compiler-sframe-v3-version))
         (return
-          (ResultCompilerSframeV3Image.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-preamble
               0
@@ -455,7 +451,7 @@
               (bit-and flags (bit-xor compiler-sframe-v3-supported-flags 255))
               0)
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-preamble
                   3
@@ -463,7 +459,7 @@
           (when
             (!= abi compiler-sframe-v3-abi-amd64-le)
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-preamble
                   4
@@ -471,7 +467,7 @@
           (when
             (!= aux-length 0)
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-preamble
                   7
@@ -479,7 +475,7 @@
           (when
             (> function-count limits.max-functions)
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-function-limit
                   8
@@ -487,7 +483,7 @@
           (when
             (> declared-row-count limits.max-rows)
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-row-limit
                   12
@@ -497,7 +493,7 @@
               (> function-count limits.max-work)
               (> declared-row-count (/ (- limits.max-work function-count) 8)))
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-work-limit
                   8
@@ -509,7 +505,7 @@
                 declared-row-count
                 limits.max-owned-bytes))
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-allocation-limit
                   8
@@ -526,7 +522,7 @@
                 (compiler-sframe-v3-range-present? length fre-start fre-bytes))
               (!= (+ fre-start fre-bytes) length))
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-layout
                   20
@@ -536,7 +532,7 @@
               (< section-address 0)
               (not (compiler-sframe-v3-safe-address? section-address)))
             (return
-              (ResultCompilerSframeV3Image.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-address
                   0
@@ -574,7 +570,7 @@
                     (when
                       (!= function-fre-offset fre-cursor)
                       (return
-                        (ResultCompilerSframeV3Image.Err
+                        (Err
                           (compiler-sframe-v3-error
                             compiler-sframe-v3-error-layout
                             (+ index-offset 12)
@@ -582,7 +578,7 @@
                     (when
                       (= function-size 0)
                       (return
-                        (ResultCompilerSframeV3Image.Err
+                        (Err
                           (compiler-sframe-v3-error
                             compiler-sframe-v3-error-function
                             (+ index-offset 8)
@@ -598,7 +594,7 @@
                             (+ section-address start-base-offset)
                             raw-start)))
                       (return
-                        (ResultCompilerSframeV3Image.Err
+                        (Err
                           (compiler-sframe-v3-error
                             compiler-sframe-v3-error-address
                             index-offset
@@ -616,7 +612,7 @@
                                 function-start
                                 function-size)))
                           (return
-                            (ResultCompilerSframeV3Image.Err
+                            (Err
                               (compiler-sframe-v3-error
                                 compiler-sframe-v3-error-address
                                 index-offset
@@ -627,7 +623,7 @@
                             (> function-index 0)
                             (<= function-start previous-function-start))
                           (return
-                            (ResultCompilerSframeV3Image.Err
+                            (Err
                               (compiler-sframe-v3-error
                                 compiler-sframe-v3-error-function
                                 index-offset
@@ -639,7 +635,7 @@
                               attribute-offset
                               compiler-sframe-v3-attribute-size))
                           (return
-                            (ResultCompilerSframeV3Image.Err
+                            (Err
                               (compiler-sframe-v3-error
                                 compiler-sframe-v3-error-truncated
                                 attribute-offset
@@ -664,7 +660,7 @@
                                 function-row-count
                                 (- declared-row-count decoded-rows))
                               (return
-                                (ResultCompilerSframeV3Image.Err
+                                (Err
                                   (compiler-sframe-v3-error
                                     compiler-sframe-v3-error-row-limit
                                     attribute-offset
@@ -676,7 +672,7 @@
                                 (> fde-type 1)
                                 (!= (bit-and info2 224) 0))
                               (return
-                                (ResultCompilerSframeV3Image.Err
+                                (Err
                                   (compiler-sframe-v3-error
                                     compiler-sframe-v3-error-attribute
                                     (+ attribute-offset 2)
@@ -688,7 +684,7 @@
                                   (> repetition-size function-size))
                                 (!= repetition-size 0))
                               (return
-                                (ResultCompilerSframeV3Image.Err
+                                (Err
                                   (compiler-sframe-v3-error
                                     compiler-sframe-v3-error-attribute
                                     (+ attribute-offset 4)
@@ -696,7 +692,7 @@
                             (when
                               (and (= function-row-count 0) (or flex? mask-pc?))
                               (return
-                                (ResultCompilerSframeV3Image.Err
+                                (Err
                                   (compiler-sframe-v3-error
                                     compiler-sframe-v3-error-attribute
                                     attribute-offset
@@ -721,7 +717,7 @@
                                             row-byte-offset
                                             (+ start-width 1)))
                                         (return
-                                          (ResultCompilerSframeV3Image.Err
+                                          (Err
                                             (compiler-sframe-v3-error
                                               compiler-sframe-v3-error-truncated
                                               row-byte-offset
@@ -756,7 +752,7 @@
                                               (= word-type 3)
                                               (!= (bit-and row-info 128) 0))
                                             (return
-                                              (ResultCompilerSframeV3Image.Err
+                                              (Err
                                                 (compiler-sframe-v3-error
                                                   compiler-sframe-v3-error-row
                                                   (+
@@ -770,7 +766,7 @@
                                                 data-offset
                                                 (* word-count word-width)))
                                             (return
-                                              (ResultCompilerSframeV3Image.Err
+                                              (Err
                                                 (compiler-sframe-v3-error
                                                   compiler-sframe-v3-error-truncated
                                                   data-offset
@@ -786,7 +782,7 @@
                                                   row-start
                                                   previous-row-start)))
                                             (return
-                                              (ResultCompilerSframeV3Image.Err
+                                              (Err
                                                 (compiler-sframe-v3-error
                                                   compiler-sframe-v3-error-row
                                                   row-byte-offset
@@ -796,7 +792,7 @@
                                               (>= row-start repetition-size)
                                               (>= row-start function-size))
                                             (return
-                                              (ResultCompilerSframeV3Image.Err
+                                              (Err
                                                 (compiler-sframe-v3-error
                                                   compiler-sframe-v3-error-row
                                                   row-byte-offset
@@ -827,7 +823,7 @@
                                                           (= word-count 5)
                                                           (= word-count 6))))
                                                     (return
-                                                      (ResultCompilerSframeV3Image.Err
+                                                      (Err
                                                         (compiler-sframe-v3-error
                                                           compiler-sframe-v3-error-row
                                                           (+
@@ -851,15 +847,11 @@
                                                       cfa-control
                                                       cfa-data
                                                       data-offset)
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
-                                                        (return
-                                                          (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
+                                                      [(Err error)
+                                                        (return (Err error))]
+                                                      [(Ok rule)
                                                         (match rule
-                                                          [(CompilerSframeV3Rule.Register
+                                                          [(Register
                                                               register
                                                               deref?
                                                               offset)
@@ -875,7 +867,7 @@
                                                                 offset))]
                                                           [_
                                                             (return
-                                                              (ResultCompilerSframeV3Image.Err
+                                                              (Err
                                                                 (compiler-sframe-v3-error
                                                                   compiler-sframe-v3-error-row
                                                                   data-offset
@@ -900,13 +892,9 @@
                                                       (+
                                                         data-offset
                                                         (* 2 word-width)))
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
-                                                        (return
-                                                          (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
+                                                      [(Err error)
+                                                        (return (Err error))]
+                                                      [(Ok rule)
                                                         (set! ra-rule rule)]))
                                                   (when
                                                     (= word-count 5)
@@ -921,7 +909,7 @@
                                                             word-width)
                                                           0)
                                                         (return
-                                                          (ResultCompilerSframeV3Image.Err
+                                                          (Err
                                                             (compiler-sframe-v3-error
                                                               compiler-sframe-v3-error-row
                                                               (+
@@ -944,13 +932,9 @@
                                                         (+
                                                           data-offset
                                                           (* 3 word-width)))
-                                                        [(ResultCompilerSframeV3Rule.Err
-                                                            error)
-                                                          (return
-                                                            (ResultCompilerSframeV3Image.Err
-                                                              error))]
-                                                        [(ResultCompilerSframeV3Rule.Ok
-                                                            rule)
+                                                        [(Err error)
+                                                          (return (Err error))]
+                                                        [(Ok rule)
                                                           (set! fp-rule rule)])))
                                                   (when
                                                     (= word-count 6)
@@ -970,20 +954,16 @@
                                                       (+
                                                         data-offset
                                                         (* 4 word-width)))
-                                                      [(ResultCompilerSframeV3Rule.Err
-                                                          error)
-                                                        (return
-                                                          (ResultCompilerSframeV3Image.Err
-                                                            error))]
-                                                      [(ResultCompilerSframeV3Rule.Ok
-                                                          rule)
+                                                      [(Err error)
+                                                        (return (Err error))]
+                                                      [(Ok rule)
                                                         (set! fp-rule rule)])))
                                                 (if (= word-count 0)
                                                   (begin
                                                     (when
                                                       (!= row-info 0)
                                                       (return
-                                                        (ResultCompilerSframeV3Image.Err
+                                                        (Err
                                                           (compiler-sframe-v3-error
                                                             compiler-sframe-v3-error-row
                                                             (+
@@ -991,19 +971,15 @@
                                                               start-width)
                                                             "sframe v3: non-canonical outermost marker"))))
                                                     (set! outermost? true)
-                                                    (set!
-                                                      ra-rule
-                                                      (CompilerSframeV3Rule.Unavailable))
-                                                    (set!
-                                                      fp-rule
-                                                      (CompilerSframeV3Rule.Unavailable)))
+                                                    (set! ra-rule (Unavailable))
+                                                    (set! fp-rule (Unavailable)))
                                                   (begin
                                                     (when
                                                       (or
                                                         (> word-count 2)
                                                         (= fixed-ra 0))
                                                       (return
-                                                        (ResultCompilerSframeV3Image.Err
+                                                        (Err
                                                           (compiler-sframe-v3-error
                                                             compiler-sframe-v3-error-row
                                                             (+
@@ -1027,7 +1003,7 @@
                                                       (= word-count 2)
                                                       (set!
                                                         fp-rule
-                                                        (CompilerSframeV3Rule.Implicit
+                                                        (Implicit
                                                           true
                                                           (compiler-sframe-v3-read-signed-word
                                                             bytes
@@ -1082,12 +1058,12 @@
                   (!= decoded-rows declared-row-count)
                   (!= fre-cursor fre-bytes))
                 (return
-                  (ResultCompilerSframeV3Image.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-layout
                       (+ fre-start fre-cursor)
                       "sframe v3: FRE records do not exactly tile the subsection"))))
-              (ResultCompilerSframeV3Image.Ok
+              (Ok
                 (CompilerSframeV3Image
                   fixed-fp
                   fixed-ra
@@ -1127,12 +1103,12 @@
 (define (compiler-sframe-v3-rule-data-width
   [rule : (& rule CompilerSframeV3Rule)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Implicit _ offset)
+    [(Implicit _ offset)
       (compiler-sframe-v3-max
         (compiler-sframe-v3-unsigned-word-width
           (compiler-sframe-v3-rule-control rule))
         (compiler-sframe-v3-signed-word-width offset))]
-    [(CompilerSframeV3Rule.Register register _ offset)
+    [(Register register _ offset)
       (if (not (compiler-sframe-v3-supported-register? register))
         0
         (compiler-sframe-v3-max
@@ -1144,8 +1120,8 @@
 (define (compiler-sframe-v3-rule-has-row-data?
   [rule : (& rule CompilerSframeV3Rule)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(CompilerSframeV3Rule.Implicit _ _) true]
-    [(CompilerSframeV3Rule.Register _ _ _) true]
+    [(Implicit _ _) true]
+    [(Register _ _ _) true]
     [_ false]))
 
 (define (compiler-sframe-v3-flex-data-rule-valid?
@@ -1153,9 +1129,8 @@
   (match (owned_view.compiler-owned-reference-shared-view rule)
     ;; Control zero is reserved for an omitted/padding word, so CFA-relative
     ;; rules carried as a control/offset pair must set the dereference bit.
-    [(CompilerSframeV3Rule.Implicit deref? _) deref?]
-    [(CompilerSframeV3Rule.Register register _ _)
-      (compiler-sframe-v3-supported-register? register)]
+    [(Implicit deref? _) deref?]
+    [(Register register _ _) (compiler-sframe-v3-supported-register? register)]
     [_ false]))
 
 (define (compiler-sframe-v3-row-plan
@@ -1205,13 +1180,13 @@
               0)))]
       (cond
         [row.outermost?
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
               "sframe v3: flexible rows cannot use the default outermost marker"))]
         [(not (compiler-sframe-v3-supported-register? row.cfa-register))
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
@@ -1219,7 +1194,7 @@
         [(and
             ra-data?
             (not (compiler-sframe-v3-flex-data-rule-valid? (& row.ra-rule))))
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
@@ -1227,7 +1202,7 @@
         [(and
             fp-data?
             (not (compiler-sframe-v3-flex-data-rule-valid? (& row.fp-rule))))
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
@@ -1236,7 +1211,7 @@
             (not ra-data?)
             (not
               (compiler-sframe-v3-rule-omitted-valid? (& row.ra-rule) fixed-ra)))
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
@@ -1245,19 +1220,19 @@
             (not fp-data?)
             (not
               (compiler-sframe-v3-rule-omitted-valid? (& row.fp-rule) fixed-fp)))
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
               "sframe v3: invalid omitted flexible FP rule"))]
         [(= width 0)
-          (ResultCompilerSframeV3RowPlan.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
               "sframe v3: flexible rule data does not fit four bytes"))]
         [else
-          (ResultCompilerSframeV3RowPlan.Ok
+          (Ok
             (CompilerSframeV3RowPlan
               word-count
               width
@@ -1268,14 +1243,13 @@
         (not row.cfa-deref?)
         (= row.cfa-offset 0)
         (match (owned_view.compiler-owned-reference-shared-view (& row.ra-rule))
-          [(CompilerSframeV3Rule.Unavailable) true]
+          [(Unavailable) true]
           [_ false])
         (match (owned_view.compiler-owned-reference-shared-view (& row.fp-rule))
-          [(CompilerSframeV3Rule.Unavailable) true]
+          [(Unavailable) true]
           [_ false]))
-        (ResultCompilerSframeV3RowPlan.Ok
-          (CompilerSframeV3RowPlan 0 1 (+ start-width 1)))
-        (ResultCompilerSframeV3RowPlan.Err
+        (Ok (CompilerSframeV3RowPlan 0 1 (+ start-width 1)))
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-row
             -1
@@ -1299,7 +1273,7 @@
               (and
                 (!= row.cfa-register compiler-sframe-v3-dwarf-rbp)
                 (!= row.cfa-register compiler-sframe-v3-dwarf-rsp)))
-            (ResultCompilerSframeV3RowPlan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-row
                 -1
@@ -1310,7 +1284,7 @@
                 (compiler-sframe-v3-rule-omitted-valid?
                   (& row.ra-rule)
                   fixed-ra)))
-            (ResultCompilerSframeV3RowPlan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-row
                 -1
@@ -1318,25 +1292,25 @@
           [(if fp-data?
               (match (owned_view.compiler-owned-reference-shared-view
                 (& row.fp-rule))
-                [(CompilerSframeV3Rule.Implicit deref? _) (not deref?)]
+                [(Implicit deref? _) (not deref?)]
                 [_ true])
               (not
                 (compiler-sframe-v3-rule-omitted-valid?
                   (& row.fp-rule)
                   fixed-fp)))
-            (ResultCompilerSframeV3RowPlan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-row
                 -1
                 "sframe v3: invalid AMD64 default FP rule"))]
           [(= width 0)
-            (ResultCompilerSframeV3RowPlan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-row
                 -1
                 "sframe v3: default row data does not fit four bytes"))]
           [else
-            (ResultCompilerSframeV3RowPlan.Ok
+            (Ok
               (CompilerSframeV3RowPlan
                 word-count
                 width
@@ -1350,7 +1324,7 @@
     (when
       (not (compiler-sframe-v3-limits-valid? limits))
       (return
-        (ResultCompilerSframeV3Plan.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-invalid-limits
             -1
@@ -1362,7 +1336,7 @@
         (< image.fixed-ra-offset -128)
         (> image.fixed-ra-offset 127))
       (return
-        (ResultCompilerSframeV3Plan.Err
+        (Err
           (compiler-sframe-v3-error
             compiler-sframe-v3-error-preamble
             -1
@@ -1377,7 +1351,7 @@
         (when
           (> function-count limits.max-functions)
           (return
-            (ResultCompilerSframeV3Plan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-function-limit
                 -1
@@ -1402,7 +1376,7 @@
                       function.start-address
                       function.size)))
                 (return
-                  (ResultCompilerSframeV3Plan.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-function
                       -1
@@ -1413,7 +1387,7 @@
                   (> function-index 0)
                   (<= function.start-address previous-function-start))
                 (return
-                  (ResultCompilerSframeV3Plan.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-function
                       -1
@@ -1428,7 +1402,7 @@
                     (= function-row-count 0)
                     (or function.flex? function.mask-pc?)))
                 (return
-                  (ResultCompilerSframeV3Plan.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-row-limit
                       -1
@@ -1441,7 +1415,7 @@
                     (> function.repetition-size function.size))
                   (!= function.repetition-size 0))
                 (return
-                  (ResultCompilerSframeV3Plan.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-attribute
                       -1
@@ -1449,7 +1423,7 @@
               (when
                 (> function-row-count (- limits.max-rows row-count))
                 (return
-                  (ResultCompilerSframeV3Plan.Err
+                  (Err
                     (compiler-sframe-v3-error
                       compiler-sframe-v3-error-row-limit
                       -1
@@ -1467,7 +1441,7 @@
                           (> row-index 0)
                           (<= row.start-offset previous-row-start)))
                       (return
-                        (ResultCompilerSframeV3Plan.Err
+                        (Err
                           (compiler-sframe-v3-error
                             compiler-sframe-v3-error-row
                             -1
@@ -1477,7 +1451,7 @@
                         (>= row.start-offset function.repetition-size)
                         (>= row.start-offset function.size))
                       (return
-                        (ResultCompilerSframeV3Plan.Err
+                        (Err
                           (compiler-sframe-v3-error
                             compiler-sframe-v3-error-row
                             -1
@@ -1488,9 +1462,8 @@
                       image.fixed-fp-offset
                       image.fixed-ra-offset
                       start-width)
-                      [(ResultCompilerSframeV3RowPlan.Err error)
-                        (return (ResultCompilerSframeV3Plan.Err error))]
-                      [(ResultCompilerSframeV3RowPlan.Ok row-plan)
+                      [(Err error) (return (Err error))]
+                      [(Ok row-plan)
                         (set! fre-bytes (+ fre-bytes row-plan.encoded-size))])
                     (set! previous-row-start row.start-offset)
                     (set! row-index (+ row-index 1)))))
@@ -1504,7 +1477,7 @@
             (> function-count limits.max-work)
             (> row-count (/ (- limits.max-work function-count) 8)))
           (return
-            (ResultCompilerSframeV3Plan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-work-limit
                 -1
@@ -1516,7 +1489,7 @@
               row-count
               limits.max-owned-bytes))
           (return
-            (ResultCompilerSframeV3Plan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-allocation-limit
                 -1
@@ -1527,18 +1500,18 @@
               compiler-sframe-v3-header-size
               (+ (* function-count compiler-sframe-v3-index-size) fre-bytes))]
           (if (> total-bytes limits.max-owned-bytes)
-            (ResultCompilerSframeV3Plan.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-allocation-limit
                 -1
                 "sframe v3: encoded buffer allocation limit exceeded"))
             (if (> total-bytes limits.max-output-bytes)
-              (ResultCompilerSframeV3Plan.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-output-limit
                   -1
                   "sframe v3: output byte limit exceeded"))
-              (ResultCompilerSframeV3Plan.Ok
+              (Ok
                 (CompilerSframeV3Plan
                   function-count
                   row-count
@@ -1553,9 +1526,8 @@
   [fixed-ra : i64]
   [start-width : i64]) : ResultCompilerSframeV3RowPlan
   (match (compiler-sframe-v3-row-plan row flex? fixed-fp fixed-ra start-width)
-    [(ResultCompilerSframeV3RowPlan.Err error)
-      (ResultCompilerSframeV3RowPlan.Err error)]
-    [(ResultCompilerSframeV3RowPlan.Ok plan)
+    [(Err error) (Err error)]
+    [(Ok plan)
       (let
         [base : i64
           (if (and
@@ -1626,7 +1598,7 @@
                     out
                     (compiler-sframe-v3-rule-offset (& row.fp-rule))
                     plan.word-width)))))
-          (ResultCompilerSframeV3RowPlan.Ok plan)))]))
+          (Ok plan)))]))
 
 ;: Canonically encode final records using field-PC-relative function starts.
 (define (compiler-sframe-v3-encode
@@ -1634,16 +1606,15 @@
   [section-address : i64]
   [limits : (& limits CompilerSframeV3Limits)]) : ResultCompilerSframeV3Bytes
   (match (compiler-sframe-v3-plan image limits)
-    [(ResultCompilerSframeV3Plan.Err error)
-      (ResultCompilerSframeV3Bytes.Err error)]
-    [(ResultCompilerSframeV3Plan.Ok plan)
+    [(Err error) (Err error)]
+    [(Ok plan)
       (begin
         (when
           (or
             (< section-address 0)
             (not (compiler-sframe-v3-safe-address? section-address)))
           (return
-            (ResultCompilerSframeV3Bytes.Err
+            (Err
               (compiler-sframe-v3-error
                 compiler-sframe-v3-error-address
                 -1
@@ -1693,7 +1664,7 @@
                         section-address
                         index-offset))
                     (return
-                      (ResultCompilerSframeV3Bytes.Err
+                      (Err
                         (compiler-sframe-v3-error
                           compiler-sframe-v3-error-address
                           index-offset
@@ -1705,7 +1676,7 @@
                       (when
                         (not (compiler-sframe-v3-safe-address? raw-start))
                         (return
-                          (ResultCompilerSframeV3Bytes.Err
+                          (Err
                             (compiler-sframe-v3-error
                               compiler-sframe-v3-error-address
                               index-offset
@@ -1734,9 +1705,8 @@
                             image.fixed-fp-offset
                             image.fixed-ra-offset
                             start-width)
-                            [(ResultCompilerSframeV3RowPlan.Err error)
-                              (return (ResultCompilerSframeV3Bytes.Err error))]
-                            [(ResultCompilerSframeV3RowPlan.Ok row-plan)
+                            [(Err error) (return (Err error))]
+                            [(Ok row-plan)
                               (set!
                                 fre-cursor
                                 (+ fre-cursor row-plan.encoded-size))])
@@ -1789,21 +1759,19 @@
                         image.fixed-fp-offset
                         image.fixed-ra-offset
                         start-width)
-                        [(ResultCompilerSframeV3RowPlan.Err error)
-                          (return (ResultCompilerSframeV3Bytes.Err error))]
-                        [(ResultCompilerSframeV3RowPlan.Ok _) unit])
+                        [(Err error) (return (Err error))]
+                        [(Ok _) unit])
                       (set! row-index (+ row-index 1))))
                   (set! function-index (+ function-index 1)))))
             (if (!=
               (byte_buf_core.byte-buf-builder-len (& out))
               plan.total-bytes)
-              (ResultCompilerSframeV3Bytes.Err
+              (Err
                 (compiler-sframe-v3-error
                   compiler-sframe-v3-error-layout
                   -1
                   "sframe v3: internal encoder size-plan mismatch"))
-              (ResultCompilerSframeV3Bytes.Ok
-                (byte_buf_core.byte-buf-builder-finish-array (& out)))))))]))
+              (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))))))]))
 
 ;: Find the semantic row for an absolute PC.  MASK lookup first subtracts the
 ;; relocated function start and then applies general modulo, including for
@@ -1820,7 +1788,7 @@
     (< function.row-count 0)
     (> function.row-start (array-length rows))
     (> function.row-count (- (array-length rows) function.row-start)))
-    (ResultCompilerSframeV3RowIndex.Err
+    (Err
       (compiler-sframe-v3-error
         compiler-sframe-v3-error-address
         -1
@@ -1847,12 +1815,12 @@
                 (set! row-index row-count))
               (when (< row-index row-count) (set! row-index (+ row-index 1))))))
         (if (< selected 0)
-          (ResultCompilerSframeV3RowIndex.Err
+          (Err
             (compiler-sframe-v3-error
               compiler-sframe-v3-error-row
               -1
               "sframe v3: function has no applicable row"))
-          (ResultCompilerSframeV3RowIndex.Ok selected))))))
+          (Ok selected))))))
 
 ;: Decode through an explicit persisted dialect policy.
 (define (compiler-sframe-v3-decode-with-policy
@@ -1862,7 +1830,7 @@
   [limits : (& limits CompilerSframeV3Limits)]) : ResultCompilerSframeV3Image
   (if (compiler-sframe-v3-policy-valid? policy)
     (compiler-sframe-v3-decode bytes section-address limits)
-    (ResultCompilerSframeV3Image.Err
+    (Err
       (compiler-sframe-v3-error
         compiler-sframe-v3-error-dialect
         0
@@ -1875,7 +1843,7 @@
   [limits : (& limits CompilerSframeV3Limits)]) : ResultCompilerSframeV3Plan
   (if (compiler-sframe-v3-policy-valid? policy)
     (compiler-sframe-v3-plan image limits)
-    (ResultCompilerSframeV3Plan.Err
+    (Err
       (compiler-sframe-v3-error
         compiler-sframe-v3-error-dialect
         -1
@@ -1889,7 +1857,7 @@
   [limits : (& limits CompilerSframeV3Limits)]) : ResultCompilerSframeV3Bytes
   (if (compiler-sframe-v3-policy-valid? policy)
     (compiler-sframe-v3-encode image section-address limits)
-    (ResultCompilerSframeV3Bytes.Err
+    (Err
       (compiler-sframe-v3-error
         compiler-sframe-v3-error-dialect
         -1

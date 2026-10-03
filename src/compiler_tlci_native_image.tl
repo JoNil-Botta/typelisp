@@ -44,13 +44,13 @@
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
   (match (cobj.compiler-object-section-list-find image.sections kind)
-    [(cobj.CompilerObjectSection.Section _ _ instrs) instrs]))
+    [(Section _ _ instrs) instrs]))
 
 (define (compiler-tlci-native-section-data
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
   (match (cobj.compiler-object-section-list-find image.sections kind)
-    [(cobj.CompilerObjectSection.Section _ data _) data]))
+    [(Section _ data _) data]))
 
 ;; Every absolute SymbolAddress data record becomes exactly one load-base
 ;; fixup. Size the output from the object rather than imposing a fixed ceiling:
@@ -66,8 +66,7 @@
       (while (< index count)
         (begin
           (match (cobj.compiler-object-data-record-list-ref records index)
-            [(cobj.CompilerObjectDataRecord.SymbolAddress _)
-              (set! fixups (+ fixups 1))]
+            [(SymbolAddress _) (set! fixups (+ fixups 1))]
             [_ unit])
           (set! index (+ index 1))))
       fixups)))
@@ -111,7 +110,7 @@
           (cobj.compiler-object-data-record-list-ref records index)]
         (begin
           (match (owned_view.compiler-owned-shared-view record)
-            [(cobj.CompilerObjectDataRecord.Label name)
+            [(Label name)
               (begin
                 (tlci_native_string_i64_map.insert-if-absent-ref!
                   offsets
@@ -131,7 +130,7 @@
     [instrs : cobj.CompilerObjectX64InstrList
       (compiler-tlci-native-section-instrs
         (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Text))]
+        (Text))]
     [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
@@ -150,7 +149,7 @@
             (cobj.compiler-object-instr-list-ref instrs instr-index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
-              [(cobj.CompilerObjectX64Instr.Label name)
+              [(Label name)
                 (begin
                   (tlci_native_string_i64_map.insert-if-absent-ref!
                     (&mut offsets)
@@ -166,26 +165,24 @@
         (&mut offsets)
         (compiler-tlci-native-section-data
           (owned_view.compiler-owned-shared-view image)
-          (cobj.CompilerObjectSectionKind.Rodata))
+          (Rodata))
         bases.rodata)
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
         (compiler-tlci-native-section-data
           (owned_view.compiler-owned-shared-view image)
-          (cobj.CompilerObjectSectionKind.Data))
+          (Data))
         bases.data)
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
-        (compiler-tlci-native-section-data
-          image
-          (cobj.CompilerObjectSectionKind.Bss))
+        (compiler-tlci-native-section-data image (Bss))
         bases.bss)
       (while (< symbol-index symbol-count)
         (begin
           (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
-            [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
+            [(Symbol name binding _ _)
               (match binding
-                [(cobj.CompilerObjectSymbolBinding.Extern)
+                [(Extern)
                   (tlci_native_string_i64_map.insert-ref! (&mut externs) name 1)]
                 [_ unit])])
           (set! symbol-index (+ symbol-index 1))))
@@ -256,8 +253,8 @@
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [name : (& name str)]) : i64
   (match (tlci_native_string_i64_map.get-borrowed (& symbols.offsets) name)
-    [(tlci_native_string_i64_map.LookupFound offset) offset]
-    [(tlci_native_string_i64_map.LookupMissing) -1]))
+    [(LookupFound offset) offset]
+    [(LookupMissing) -1]))
 
 (define (compiler-tlci-native-index-extern?
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
@@ -354,9 +351,7 @@
   [bytes : (__tl_dyn-array u8)]) : bool
   (let
     [instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs
-        image
-        (cobj.CompilerObjectSectionKind.Text))]
+      (compiler-tlci-native-section-instrs image (Text))]
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [offset : i64 bases.text]
@@ -368,7 +363,7 @@
             (cobj.compiler-object-instr-list-ref instrs index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
-              [(cobj.CompilerObjectX64Instr.Call target)
+              [(Call target)
                 (if (compiler-tlci-native-index-extern? symbols (& target))
                   (begin
                     (compiler-tlci-native-fail!
@@ -389,7 +384,7 @@
                       (&mut bytes)
                       (+ offset 1)
                       target)))]
-              [(cobj.CompilerObjectX64Instr.TailCall target)
+              [(TailCall target)
                 (if (compiler-tlci-native-index-extern? symbols (& target))
                   (begin
                     (compiler-tlci-native-fail!
@@ -410,7 +405,7 @@
                       (&mut bytes)
                       (+ offset 1)
                       target)))]
-              [(cobj.CompilerObjectX64Instr.Jump target)
+              [(Jump target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -423,7 +418,7 @@
                     (&mut bytes)
                     (+ offset 1)
                     target))]
-              [(cobj.CompilerObjectX64Instr.Ja target)
+              [(Ja target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -436,7 +431,7 @@
                     (&mut bytes)
                     (+ offset 2)
                     target))]
-              [(cobj.CompilerObjectX64Instr.Jcc cc target)
+              [(Jcc cc target)
                 (if (cobj.compiler-object-condition-code-valid? cc)
                   (set!
                     ok
@@ -455,7 +450,7 @@
                       error
                       "tlci native image: condition code must be between 0 and 15")
                     (set! ok false)))]
-              [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
+              [(Branch true-target false-target)
                 (begin
                   (set!
                     ok
@@ -483,7 +478,7 @@
                         (+ offset 10)
                         false-target))
                     unit))]
-              [(cobj.CompilerObjectX64Instr.LoadRip target)
+              [(LoadRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -496,7 +491,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.LoadRipAddress target)
+              [(LoadRipAddress target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -509,7 +504,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 target)
+              [(LoadRipAddressR11 target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -522,7 +517,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.StoreRip target)
+              [(StoreRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -535,7 +530,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.MovRcxRip target)
+              [(MovRcxRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -548,7 +543,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.MovRdxRip target)
+              [(MovRdxRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -561,7 +556,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx target)
+              [(LoadRipAddressRdx target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -574,7 +569,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.StoreR14Rip target)
+              [(StoreR14Rip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -587,7 +582,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.StoreR15Rip target)
+              [(StoreR15Rip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -600,7 +595,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.AddRcxRip target)
+              [(AddRcxRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -613,7 +608,7 @@
                     (&mut bytes)
                     (+ offset 3)
                     target))]
-              [(cobj.CompilerObjectX64Instr.XorpdRip target)
+              [(XorpdRip target)
                 (set!
                   ok
                   (compiler-tlci-native-patch-rel32!
@@ -663,7 +658,7 @@
             (cobj.compiler-object-data-record-list-ref records index)]
           (begin
             (match (owned_view.compiler-owned-shared-view record)
-              [(cobj.CompilerObjectDataRecord.SymbolAddress target)
+              [(SymbolAddress target)
                 (let
                   [value : i64
                     (compiler-tlci-native-symbol-offset!
@@ -689,7 +684,7 @@
                           (compiler-tlci-native-patch-i32! bytes (+ offset 4) 0)
                           (set! (array-ref fixup-offsets slot) offset)
                           (set! (array-ref fixup-count 0) (+ slot 1)))))))]
-              [(cobj.CompilerObjectDataRecord.SymbolRva32 _)
+              [(SymbolRva32 _)
                 (begin
                   (compiler-tlci-native-fail!
                     error
@@ -711,14 +706,14 @@
     [text-instrs : cobj.CompilerObjectX64InstrList
       (compiler-tlci-native-section-instrs
         (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Text))]
+        (Text))]
     [text-size : i64
       (layout.compiler-object-layout-instrs-size
         (owned_view.compiler-owned-shared-view text-instrs))]
     [rodata-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Rodata))]
+        (Rodata))]
     [rodata-base : i64 (compiler-tlci-native-align text-size 16)]
     [rodata-size : i64
       (layout.compiler-object-layout-data-records-size-from
@@ -727,7 +722,7 @@
     [data-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Data))]
+        (Data))]
     [data-base : i64 (compiler-tlci-native-align rodata-size 16)]
     [data-size : i64
       (layout.compiler-object-layout-data-records-size-from
@@ -738,7 +733,7 @@
     [bss-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
         (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Bss))]
+        (Bss))]
     [bss-base : i64 (compiler-tlci-native-align (+ got-base got-size) 16)]
     [bss-size : i64
       (-
@@ -809,7 +804,7 @@
               (& symbols-index)
               (owned_view.compiler-owned-shared-view image)
               (&mut bytes)
-              (cobj.CompilerObjectSectionKind.Rodata)
+              (Rodata)
               rodata-base
               (&mut fixup-offsets)
               (owned_view.compiler-owned-shared-view fixup-count))
@@ -825,20 +820,20 @@
               (& symbols-index)
               (owned_view.compiler-owned-shared-view image)
               (&mut bytes)
-              (cobj.CompilerObjectSectionKind.Data)
+              (Data)
               data-base
               (&mut fixup-offsets)
               (owned_view.compiler-owned-shared-view fixup-count))
             false)]
         (if (not data-ok)
-          (ResultCompilerTlciNativeLayout.Err
+          (Err
             (let
               [message : String
                 (owned_view.compiler-owned-array-element-shared-view error 0)]
               (if (= (string.string-length message) 0)
                 "tlci native image: layout failed"
                 message)))
-          (ResultCompilerTlciNativeLayout.Ok
+          (Ok
             (CompilerTlciNativeLayout
               bytes
               bss-base
@@ -876,10 +871,9 @@
   [entry-offsets : (__tl_dyn-array i64)]
   [macro-count : i64]) : ResultCompilerTlciNativeBytes
   (match (tlci_core.tlci-metadata-parse metadata-text)
-    [(tlci_core.ResultTlciMetadata.Err message)
-      (ResultCompilerTlciNativeBytes.Err
-        (str_cat.str-cat "package metadata rejected: " message))]
-    [(tlci_core.ResultTlciMetadata.Ok metadata)
+    [(Err message)
+      (Err (str_cat.str-cat "package metadata rejected: " message))]
+    [(Ok metadata)
       (match (tlci_core.tlci-emit-native-package-image
         metadata
         build-hash
@@ -893,18 +887,14 @@
           identities
           entry-offsets
           macro-count))
-        [(tlci_core.ResultTlciBytes.Err message)
-          (ResultCompilerTlciNativeBytes.Err message)]
-        [(tlci_core.ResultTlciBytes.Ok bytes)
-          (ResultCompilerTlciNativeBytes.Ok bytes)])]))
+        [(Err message) (Err message)]
+        [(Ok bytes) (Ok bytes)])]))
 
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
   (layout.compiler-object-layout-instr-label-offset-from
-    (compiler-tlci-native-section-instrs
-      image
-      (cobj.CompilerObjectSectionKind.Text))
+    (compiler-tlci-native-section-instrs image (Text))
     name
     0))
 
@@ -1013,7 +1003,7 @@
               (set! index (+ index 1))))))
       (if (= (string.string-length error) 0)
         (if (= count 0)
-          (ResultCompilerTlciNativeImports.Ok (__tl_make-array u8 0))
+          (Ok (__tl_make-array u8 0))
           (let
             [records-end : i64
               (+
@@ -1049,5 +1039,5 @@
                     (tlci_core.tlci-put-string! (&mut out) name-offset name)
                     (set! name-offset (+ name-offset name-len))
                     (set! index (+ index 1)))))
-              (ResultCompilerTlciNativeImports.Ok out))))
-        (ResultCompilerTlciNativeImports.Err error)))))
+              (Ok out))))
+        (Err error)))))

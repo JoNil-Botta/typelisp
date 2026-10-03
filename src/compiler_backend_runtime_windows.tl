@@ -2018,10 +2018,7 @@ tl_tlci_call_macro_entry:
   [id : x64_template.CompilerX64ExecutableTemplateId]
   [text : String]) : String
   (if enabled
-    (x64_catalog.compiler-x64-template-render-assembly
-      id
-      (x64_template.CompilerX64TemplateTarget.WindowsX64)
-      text)
+    (x64_catalog.compiler-x64-template-render-assembly id (WindowsX64) text)
     ""))
 
 (define (compiler-backend-runtime-functions
@@ -2034,53 +2031,53 @@ tl_tlci_call_macro_entry:
     (str_cat.str-cat
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemcpy)
+        (WindowsRuntimeMemcpy)
         (compiler-backend-runtime-memcpy-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemchr)
+        (WindowsRuntimeMemchr)
         (compiler-backend-runtime-memchr-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArrayZero)
+        (WindowsRuntimeArrayZero)
         (compiler-backend-runtime-array-zero-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeMemFill8)
+        (WindowsRuntimeMemFill8)
         (compiler-backend-runtime-mem-fill8-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciImage)
+        (WindowsRuntimeTlciImage)
         (compiler-backend-runtime-tlci-entry-functions))
       (compiler-backend-runtime-windows-render
         features.tlci-macro-entry
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciMacro)
+        (WindowsRuntimeTlciMacro)
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-windows-render
         true
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileDebug)
+          (WindowsRuntimeArena)
+          (WindowsRuntimeArenaDebug)
+          (WindowsRuntimeArenaProfile)
+          (WindowsRuntimeArenaProfileDebug)
           profile
           arena-debug)
         (compiler-backend-runtime-windows-arena-functions profile debug-text))
       (compiler-backend-runtime-windows-render
         profile
-        (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
+        (CommonProfile)
         (runtime_common.compiler-backend-runtime-profile-functions))
       (compiler-backend-runtime-windows-render
         features.startup-profile
-        (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
+        (CommonStartupProfile)
         (runtime_common.compiler-backend-runtime-startup-profile-functions true))
       (compiler-backend-runtime-windows-render
         features.alloc
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAlloc)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfileDebug)
+          (WindowsRuntimeAlloc)
+          (WindowsRuntimeAllocDebug)
+          (WindowsRuntimeAllocProfile)
+          (WindowsRuntimeAllocProfileDebug)
           profile
           arena-debug)
         (str_cat.str-cat
@@ -2092,15 +2089,15 @@ tl_tlci_call_macro_entry:
             debug-text)))
       (compiler-backend-runtime-windows-render
         features.region-mark
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionMark)
+        (WindowsRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-windows-render
         features.region-reset
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionReset)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebug)
+          (WindowsRuntimeRegionReset)
+          (WindowsRuntimeRegionResetDebug)
+          (WindowsRuntimeRegionResetProfile)
+          (WindowsRuntimeRegionResetProfileDebug)
           profile
           arena-debug)
         (compiler-backend-runtime-windows-region-reset-functions
@@ -2108,17 +2105,17 @@ tl_tlci_call_macro_entry:
           debug-text))
       (compiler-backend-runtime-windows-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeThread)
+        (WindowsRuntimeThread)
         (compiler-backend-runtime-windows-thread-functions))
       (compiler-backend-runtime-windows-render
         features.backtrace
-        (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeBacktrace)
+        (WindowsRuntimeBacktrace)
         (compiler-backend-runtime-windows-backtrace-functions))
       (compiler-backend-runtime-windows-render
         true
         (if features.startup-profile
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShimStartupProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShim))
+          (WindowsRuntimeLibcShimStartupProfile)
+          (WindowsRuntimeLibcShim))
         (compiler-backend-runtime-windows-libc-shim-functions
           features.startup-profile)))))
 

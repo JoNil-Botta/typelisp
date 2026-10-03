@@ -386,28 +386,28 @@
 (define (compiler-incremental-query-kind-tag
   [kind : (& kind CompilerIncrementalQueryKind)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.Parse) 1]
-    [(CompilerIncrementalQueryKind.Typecheck) 2]
-    [(CompilerIncrementalQueryKind.Lower) 3]
-    [(CompilerIncrementalQueryKind.Optimize) 4]
-    [(CompilerIncrementalQueryKind.Assembly) 5]
-    [(CompilerIncrementalQueryKind.Object) 6]
-    [(CompilerIncrementalQueryKind.IrSummary) 7]
-    [(CompilerIncrementalQueryKind.IrDump _) 8]))
+    [(Parse) 1]
+    [(Typecheck) 2]
+    [(Lower) 3]
+    [(Optimize) 4]
+    [(Assembly) 5]
+    [(Object) 6]
+    [(IrSummary) 7]
+    [(IrDump _) 8]))
 
 (define (compiler-incremental-input-tag
   [input : (& input CompilerIncrementalInput)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent _ _) 1]
-    [(CompilerIncrementalInput.LogicalName _ _) 2]
-    [(CompilerIncrementalInput.ImportedSurface _ _ _) 3]
-    [(CompilerIncrementalInput.ImportedArtifact _ _ _ _) 4]
-    [(CompilerIncrementalInput.PackageProvenance _ _ _) 5]
-    [(CompilerIncrementalInput.StdlibProvenance _ _) 6]
-    [(CompilerIncrementalInput.Configuration _) 7]
-    [(CompilerIncrementalInput.MacroComptime _ _ _) 8]
-    [(CompilerIncrementalInput.CodegenTarget _ _ _) 9]
-    [(CompilerIncrementalInput.OrderedChild _ _ _) 10]))
+    [(SourceContent _ _) 1]
+    [(LogicalName _ _) 2]
+    [(ImportedSurface _ _ _) 3]
+    [(ImportedArtifact _ _ _ _) 4]
+    [(PackageProvenance _ _ _) 5]
+    [(StdlibProvenance _ _) 6]
+    [(Configuration _) 7]
+    [(MacroComptime _ _ _) 8]
+    [(CodegenTarget _ _ _) 9]
+    [(OrderedChild _ _ _) 10]))
 
 (define (compiler-incremental-push-digest!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -460,7 +460,7 @@
       (compiler-incremental-add-size material-size material-size)]
     (cond
       [(not (compiler-incremental-limits-valid? limits))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-invalid-limits
             0
@@ -472,13 +472,13 @@
               (& domain)
               limits.max-string-bytes))
           (> material-size limits.max-transcript-bytes))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-value
             0
             "content identity domain or byte length is invalid"))]
       [(or (< owned-size 0) (> owned-size limits.max-owned-bytes))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-owned-limit
             0
@@ -498,14 +498,14 @@
               [material : (__tl_dyn-array u8)
                 (byte_buf_core.byte-buf-builder-finish-array (& out))]
               (match (compiler-incremental-digest-array (& material))
-                [(sha256.Sha256FinalizeErr _)
-                  (ResultCompilerIncrementalContentIdentity.Err
+                [(Sha256FinalizeErr _)
+                  (Err
                     (compiler-incremental-error
                       compiler-incremental-error-fingerprint
                       0
                       "SHA-256 rejected content identity material"))]
-                [(sha256.Sha256FinalizeOk digest)
-                  (ResultCompilerIncrementalContentIdentity.Ok
+                [(Sha256FinalizeOk digest)
+                  (Ok
                     (CompilerIncrementalContentIdentity
                       domain
                       1
@@ -642,14 +642,14 @@
   [input : (& input CompilerIncrementalInput)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path content)
+    [(SourceContent path content)
       (and
         (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         (compiler-incremental-content-valid? (& content) limits)
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.source-content"))]
-    [(CompilerIncrementalInput.LogicalName module declaration)
+    [(LogicalName module declaration)
       (and
         (compiler-incremental-text-valid?
           (& module)
@@ -659,7 +659,7 @@
           (& declaration)
           true
           limits.max-string-bytes))]
-    [(CompilerIncrementalInput.ImportedSurface package module semantic)
+    [(ImportedSurface package module semantic)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -673,11 +673,7 @@
         (compiler-incremental-string-eq?
           (& semantic.identity.domain)
           (& compiler-incremental-semantic-output-domain)))]
-    [(CompilerIncrementalInput.ImportedArtifact
-        package
-        path
-        artifact-kind
-        child)
+    [(ImportedArtifact package path artifact-kind child)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -688,7 +684,7 @@
           (& artifact-kind)
           limits.max-string-bytes)
         (compiler-incremental-child-valid? (& child) limits))]
-    [(CompilerIncrementalInput.PackageProvenance package version content)
+    [(PackageProvenance package version content)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -702,7 +698,7 @@
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.package-content"))]
-    [(CompilerIncrementalInput.StdlibProvenance distribution content)
+    [(StdlibProvenance distribution content)
       (and
         (compiler-incremental-text-valid?
           (& distribution)
@@ -712,14 +708,14 @@
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.stdlib-content"))]
-    [(CompilerIncrementalInput.Configuration config)
+    [(Configuration config)
       (compiler-incremental-config-valid? (& config) limits)]
-    [(CompilerIncrementalInput.MacroComptime phase request result)
+    [(MacroComptime phase request result)
       (and
         (compiler-incremental-domain-valid? (& phase) limits.max-string-bytes)
         (compiler-incremental-child-valid? (& request) limits)
         (compiler-incremental-child-valid? (& result) limits))]
-    [(CompilerIncrementalInput.CodegenTarget target backend feature-set)
+    [(CodegenTarget target backend feature-set)
       (and
         (compiler-incremental-text-valid?
           (& target)
@@ -733,7 +729,7 @@
           (& feature-set)
           false
           limits.max-string-bytes))]
-    [(CompilerIncrementalInput.OrderedChild sequence ordinal child)
+    [(OrderedChild sequence ordinal child)
       (and
         (compiler-incremental-domain-valid?
           (& sequence)
@@ -744,51 +740,47 @@
 (define (compiler-incremental-input-payload-size
   [input : (& input CompilerIncrementalInput)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path content)
+    [(SourceContent path content)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& path))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.LogicalName module declaration)
+    [(LogicalName module declaration)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& module))
         (compiler-incremental-string-frame-size (& declaration)))]
-    [(CompilerIncrementalInput.ImportedSurface package module semantic)
+    [(ImportedSurface package module semantic)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& module))
         (compiler-incremental-child-size (& semantic.identity)))]
-    [(CompilerIncrementalInput.ImportedArtifact
-        package
-        path
-        artifact-kind
-        child)
+    [(ImportedArtifact package path artifact-kind child)
       (compiler-incremental-size-chain4
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& path))
         (compiler-incremental-string-frame-size (& artifact-kind))
         (compiler-incremental-child-size (& child)))]
-    [(CompilerIncrementalInput.PackageProvenance package version content)
+    [(PackageProvenance package version content)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& version))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.StdlibProvenance distribution content)
+    [(StdlibProvenance distribution content)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& distribution))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.Configuration config)
+    [(Configuration config)
       (compiler-incremental-config-payload-size (& config))]
-    [(CompilerIncrementalInput.MacroComptime phase request result)
+    [(MacroComptime phase request result)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& phase))
         (compiler-incremental-child-size (& request))
         (compiler-incremental-child-size (& result)))]
-    [(CompilerIncrementalInput.CodegenTarget target backend feature-set)
+    [(CodegenTarget target backend feature-set)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& target))
         (compiler-incremental-string-frame-size (& backend))
         (compiler-incremental-string-frame-size (& feature-set)))]
-    [(CompilerIncrementalInput.OrderedChild sequence _ child)
+    [(OrderedChild sequence _ child)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& sequence))
         8
@@ -850,7 +842,7 @@
             (set! duplicate? true)
             (set! index (+ index 1)))))
       (if duplicate?
-        (ResultCompilerIncrementalConfigBytes.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-order
             0
@@ -874,18 +866,17 @@
                     (&mut out)
                     record.bytes)
                   (set! record-index (+ record-index 1)))))
-            (ResultCompilerIncrementalConfigBytes.Ok
-              (byte_buf_core.byte-buf-builder-finish-string (& out)))))))))
+            (Ok (byte_buf_core.byte-buf-builder-finish-string (& out)))))))))
 
 (define (compiler-incremental-input-invalid-code
   [input : (& input CompilerIncrementalInput)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path _)
+    [(SourceContent path _)
       (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         compiler-incremental-error-value
         compiler-incremental-error-path)]
-    [(CompilerIncrementalInput.ImportedArtifact _ path _ _)
+    [(ImportedArtifact _ path _ _)
       (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         compiler-incremental-error-value
         compiler-incremental-error-path)]
@@ -898,7 +889,7 @@
     [payload-size : i64 (compiler-incremental-input-payload-size input)]
     [tag : i64 (compiler-incremental-input-tag input)]
     (if (not (compiler-incremental-input-valid? input limits))
-      (ResultCompilerIncrementalEncodedRecord.Err
+      (Err
         (compiler-incremental-error
           (compiler-incremental-input-invalid-code input limits)
           0
@@ -907,7 +898,7 @@
         (< payload-size 0)
         (> payload-size limits.max-record-bytes)
         (> payload-size 4294967295))
-        (ResultCompilerIncrementalEncodedRecord.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-input-limit
             0
@@ -922,13 +913,13 @@
             (binary.compiler-incremental-binary-push-u8! (&mut out) tag)
             (byte_le.push-u32! (&mut out) payload-size)
             (match (owned_view.compiler-owned-reference-shared-view input)
-              [(CompilerIncrementalInput.SourceContent path content)
+              [(SourceContent path content)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& path))
                   (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.LogicalName module declaration)
+              [(LogicalName module declaration)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -936,10 +927,7 @@
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& declaration)))]
-              [(CompilerIncrementalInput.ImportedSurface
-                  package
-                  module
-                  semantic)
+              [(ImportedSurface package module semantic)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -950,11 +938,7 @@
                   (compiler-incremental-push-child!
                     (&mut out)
                     (& semantic.identity)))]
-              [(CompilerIncrementalInput.ImportedArtifact
-                  package
-                  path
-                  artifact-kind
-                  child)
+              [(ImportedArtifact package path artifact-kind child)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -966,10 +950,7 @@
                     (&mut out)
                     (& artifact-kind))
                   (compiler-incremental-push-child! (&mut out) (& child)))]
-              [(CompilerIncrementalInput.PackageProvenance
-                  package
-                  version
-                  content)
+              [(PackageProvenance package version content)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -978,13 +959,13 @@
                     (&mut out)
                     (& version))
                   (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.StdlibProvenance distribution content)
+              [(StdlibProvenance distribution content)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& distribution))
                   (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.Configuration config)
+              [(Configuration config)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -1009,24 +990,19 @@
                     (& config.generated-source-policy))
                   (match (compiler-incremental-encode-config-extensions
                     (& config))
-                    [(ResultCompilerIncrementalConfigBytes.Err error)
-                      (return
-                        (ResultCompilerIncrementalEncodedRecord.Err error))]
-                    [(ResultCompilerIncrementalConfigBytes.Ok extension-bytes)
+                    [(Err error) (return (Err error))]
+                    [(Ok extension-bytes)
                       (byte_buf_core.byte-buf-builder-append-string
                         (&mut out)
                         extension-bytes)]))]
-              [(CompilerIncrementalInput.MacroComptime phase request result)
+              [(MacroComptime phase request result)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& phase))
                   (compiler-incremental-push-child! (&mut out) (& request))
                   (compiler-incremental-push-child! (&mut out) (& result)))]
-              [(CompilerIncrementalInput.CodegenTarget
-                  target
-                  backend
-                  feature-set)
+              [(CodegenTarget target backend feature-set)
                 (begin
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
@@ -1037,10 +1013,7 @@
                   (binary.compiler-incremental-binary-push-string!
                     (&mut out)
                     (& feature-set)))]
-              [(CompilerIncrementalInput.OrderedChild
-                  actual-sequence
-                  actual-ordinal
-                  child)
+              [(OrderedChild actual-sequence actual-ordinal child)
                 (begin
                   (set! ordered? true)
                   (set! sequence actual-sequence)
@@ -1050,7 +1023,7 @@
                     (& sequence))
                   (byte_le.push-u64! (&mut out) ordinal)
                   (compiler-incremental-push-child! (&mut out) (& child)))])
-            (ResultCompilerIncrementalEncodedRecord.Ok
+            (Ok
               (CompilerIncrementalEncodedRecord
                 tag
                 (byte_buf_core.byte-buf-builder-finish-string (& out))
@@ -1062,14 +1035,14 @@
   [kind : (& kind CompilerIncrementalQueryKind)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.IrDump pass)
+    [(IrDump pass)
       (compiler-incremental-text-valid? (& pass) false limits.max-string-bytes)]
     [_ true]))
 
 (define (compiler-incremental-query-kind-size
   [kind : (& kind CompilerIncrementalQueryKind)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.IrDump pass)
+    [(IrDump pass)
       (compiler-incremental-add-size
         1
         (compiler-incremental-string-frame-size (& pass)))]
@@ -1083,15 +1056,15 @@
       out
       (compiler-incremental-query-kind-tag kind))
     (match (owned_view.compiler-owned-reference-shared-view kind)
-      [(CompilerIncrementalQueryKind.IrDump pass)
+      [(IrDump pass)
         (binary.compiler-incremental-binary-push-string! out (& pass))]
       [_ unit])))
 
 (define (compiler-incremental-build-available
   [build : (& build CompilerIncrementalBuildIdentity)]) : CompilerIncrementalChildIdentity
   (match (owned_view.compiler-owned-reference-shared-view build)
-    [(CompilerIncrementalBuildIdentity.Available child) child]
-    [(CompilerIncrementalBuildIdentity.Unavailable _)
+    [(Available child) child]
+    [(Unavailable _)
       (CompilerIncrementalChildIdentity
         "invalid"
         0
@@ -1102,8 +1075,8 @@
   [build : (& build CompilerIncrementalBuildIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view build)
-    [(CompilerIncrementalBuildIdentity.Unavailable _) false]
-    [(CompilerIncrementalBuildIdentity.Available child)
+    [(Unavailable _) false]
+    [(Available child)
       (and
         (compiler-incremental-child-valid? (& child) limits)
         (compiler-incremental-string-eq?
@@ -1162,7 +1135,7 @@
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalIdentity
   (cond
     [(not (compiler-incremental-limits-valid? limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-invalid-limits
           0
@@ -1172,25 +1145,25 @@
         (if (> (array-length query.inputs) 0)
           3
           2))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-depth-limit
           0
           "incremental query exceeds the nesting-depth limit"))]
     [(> (array-length query.inputs) limits.max-records)
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-record-limit
           0
           "incremental query has too many input records"))]
     [(not (compiler-incremental-query-kind-valid? (& query.kind) limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-value
           0
           "incremental query kind payload is invalid"))]
     [(not (compiler-incremental-build-valid? (& query.compiler-build) limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-build-unavailable
           0
@@ -1202,7 +1175,7 @@
           (< planned-size 0)
           (> planned-size limits.max-transcript-bytes)
           (not (compiler-incremental-owned-plan-valid? planned-size limits)))
-          (ResultCompilerIncrementalIdentity.Err
+          (Err
             (compiler-incremental-error
               (if (> planned-size limits.max-transcript-bytes)
                 compiler-incremental-error-input-limit
@@ -1221,9 +1194,8 @@
                       query.inputs
                       index)]
                   (match (compiler-incremental-encode-input (& input) limits)
-                    [(ResultCompilerIncrementalEncodedRecord.Err error)
-                      (return (ResultCompilerIncrementalIdentity.Err error))]
-                    [(ResultCompilerIncrementalEncodedRecord.Ok record)
+                    [(Err error) (return (Err error))]
+                    [(Ok record)
                       (begin
                         (incremental_record_vec.push-ref! (&mut records) record)
                         (set! index (+ index 1)))])))
@@ -1246,7 +1218,7 @@
                         (& previous)
                         (& current))
                       (return
-                        (ResultCompilerIncrementalIdentity.Err
+                        (Err
                           (compiler-incremental-error
                             compiler-incremental-error-order
                             0
@@ -1259,7 +1231,7 @@
                           (& previous.sequence)
                           (& current.sequence)))
                       (return
-                        (ResultCompilerIncrementalIdentity.Err
+                        (Err
                           (compiler-incremental-error
                             compiler-incremental-error-order
                             0
@@ -1301,20 +1273,20 @@
                     [transcript : (__tl_dyn-array u8)
                       (byte_buf_core.byte-buf-builder-finish-array (& out))]
                     (if (!= (array-length transcript) planned-size)
-                      (ResultCompilerIncrementalIdentity.Err
+                      (Err
                         (compiler-incremental-error
                           compiler-incremental-error-layout
                           0
                           "incremental identity size plan disagrees with encoder"))
                       (match (compiler-incremental-digest-array (& transcript))
-                        [(sha256.Sha256FinalizeErr _)
-                          (ResultCompilerIncrementalIdentity.Err
+                        [(Sha256FinalizeErr _)
+                          (Err
                             (compiler-incremental-error
                               compiler-incremental-error-fingerprint
                               0
                               "SHA-256 rejected incremental transcript"))]
-                        [(sha256.Sha256FinalizeOk digest)
-                          (ResultCompilerIncrementalIdentity.Ok
+                        [(Sha256FinalizeOk digest)
+                          (Ok
                             (CompilerIncrementalIdentity
                               compiler-incremental-identity-schema
                               (compiler-incremental-query-kind-tag
@@ -1458,16 +1430,15 @@
     [tag-offset : i64 reader.cursor.offset]
     [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
     (cond
-      [(= tag 1) (CompilerIncrementalQueryKind.Parse)]
-      [(= tag 2) (CompilerIncrementalQueryKind.Typecheck)]
-      [(= tag 3) (CompilerIncrementalQueryKind.Lower)]
-      [(= tag 4) (CompilerIncrementalQueryKind.Optimize)]
-      [(= tag 5) (CompilerIncrementalQueryKind.Assembly)]
-      [(= tag 6) (CompilerIncrementalQueryKind.Object)]
-      [(= tag 7) (CompilerIncrementalQueryKind.IrSummary)]
+      [(= tag 1) (Parse)]
+      [(= tag 2) (Typecheck)]
+      [(= tag 3) (Lower)]
+      [(= tag 4) (Optimize)]
+      [(= tag 5) (Assembly)]
+      [(= tag 6) (Object)]
+      [(= tag 7) (IrSummary)]
       [(= tag 8)
-        (CompilerIncrementalQueryKind.IrDump
-          (binary.compiler-incremental-binary-read-string! reader false))]
+        (IrDump (binary.compiler-incremental-binary-read-string! reader false))]
       [else
         (begin
           (binary.compiler-incremental-binary-fail!
@@ -1475,7 +1446,7 @@
             compiler-incremental-error-unknown-tag
             tag-offset
             "unknown incremental query-kind tag")
-          (CompilerIncrementalQueryKind.Parse))])))
+          (Parse))])))
 
 (define (compiler-incremental-reader-reserve-owned-records!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1628,49 +1599,48 @@
     [input : CompilerIncrementalInput
       (cond
         [(= tag 1)
-          (CompilerIncrementalInput.SourceContent
+          (SourceContent
             (binary.compiler-incremental-binary-read-string! reader true)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 2)
-          (CompilerIncrementalInput.LogicalName
+          (LogicalName
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false))]
         [(= tag 3)
-          (CompilerIncrementalInput.ImportedSurface
+          (ImportedSurface
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (CompilerIncrementalSemanticOutputIdentity
               (compiler-incremental-read-child! reader limits)))]
         [(= tag 4)
-          (CompilerIncrementalInput.ImportedArtifact
+          (ImportedArtifact
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader true)
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-child! reader limits))]
         [(= tag 5)
-          (CompilerIncrementalInput.PackageProvenance
+          (PackageProvenance
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 6)
-          (CompilerIncrementalInput.StdlibProvenance
+          (StdlibProvenance
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 7)
-          (CompilerIncrementalInput.Configuration
-            (compiler-incremental-read-config! reader limits))]
+          (Configuration (compiler-incremental-read-config! reader limits))]
         [(= tag 8)
-          (CompilerIncrementalInput.MacroComptime
+          (MacroComptime
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-child! reader limits)
             (compiler-incremental-read-child! reader limits))]
         [(= tag 9)
-          (CompilerIncrementalInput.CodegenTarget
+          (CodegenTarget
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false))]
         [(= tag 10)
-          (CompilerIncrementalInput.OrderedChild
+          (OrderedChild
             (binary.compiler-incremental-binary-read-string! reader false)
             (byte_reader.read-u64! (&mut reader.cursor))
             (compiler-incremental-read-child! reader limits))]
@@ -1681,7 +1651,7 @@
               compiler-incremental-error-unknown-tag
               (- reader.cursor.offset 5)
               "unknown incremental input tag")
-            (CompilerIncrementalInput.LogicalName "invalid" ""))])]
+            (LogicalName "invalid" ""))])]
     (begin
       (if (if reader.cursor.ok?
         (not (compiler-incremental-input-valid? (& input) limits))
@@ -1698,9 +1668,9 @@
   [left : (& left CompilerIncrementalInput)]
   [right : (& right CompilerIncrementalInput)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view left)
-    [(CompilerIncrementalInput.OrderedChild left-sequence left-ordinal _)
+    [(OrderedChild left-sequence left-ordinal _)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalInput.OrderedChild right-sequence right-ordinal _)
+        [(OrderedChild right-sequence right-ordinal _)
           (and
             (= left-ordinal right-ordinal)
             (compiler-incremental-string-eq?
@@ -1713,13 +1683,13 @@
   [transcript : (& transcript (__tl_dyn-array u8))]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalDecodedQuery
   (if (not (compiler-incremental-limits-valid? limits))
-    (ResultCompilerIncrementalDecodedQuery.Err
+    (Err
       (compiler-incremental-error
         compiler-incremental-error-invalid-limits
         0
         "incremental identity limits are invalid"))
     (if (> (array-length transcript) limits.max-transcript-bytes)
-      (ResultCompilerIncrementalDecodedQuery.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-input-limit
           0
@@ -1910,10 +1880,8 @@
               "incremental transcript has trailing bytes")
             unit)
           (if reader.cursor.ok?
-            (ResultCompilerIncrementalDecodedQuery.Ok
-              (CompilerIncrementalDecodedQuery kind build inputs))
-            (ResultCompilerIncrementalDecodedQuery.Err
-              (compiler-incremental-reader-error (& reader)))))))))
+            (Ok (CompilerIncrementalDecodedQuery kind build inputs))
+            (Err (compiler-incremental-reader-error (& reader)))))))))
 
 (define (compiler-incremental-child-eq?
   [left : (& left CompilerIncrementalChildIdentity)]
@@ -1928,37 +1896,37 @@
   [left : (& left CompilerIncrementalQueryKind)]
   [right : (& right CompilerIncrementalQueryKind)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view left)
-    [(CompilerIncrementalQueryKind.Parse)
+    [(Parse)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Parse) true]
+        [(Parse) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Typecheck)
+    [(Typecheck)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Typecheck) true]
+        [(Typecheck) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Lower)
+    [(Lower)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Lower) true]
+        [(Lower) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Optimize)
+    [(Optimize)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Optimize) true]
+        [(Optimize) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Assembly)
+    [(Assembly)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Assembly) true]
+        [(Assembly) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Object)
+    [(Object)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Object) true]
+        [(Object) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.IrSummary)
+    [(IrSummary)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.IrSummary) true]
+        [(IrSummary) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.IrDump left-pass)
+    [(IrDump left-pass)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.IrDump right-pass)
+        [(IrDump right-pass)
           (compiler-incremental-string-eq? (& left-pass) (& right-pass))]
         [_ false])]))
 
@@ -1975,20 +1943,19 @@
 (define (compiler-incremental-identity-fingerprint-valid?
   [identity : (& identity CompilerIncrementalIdentity)]) : bool
   (match (compiler-incremental-digest-array (& identity.transcript))
-    [(sha256.Sha256FinalizeErr _) false]
-    [(sha256.Sha256FinalizeOk actual)
+    [(Sha256FinalizeErr _) false]
+    [(Sha256FinalizeOk actual)
       (sha256.digest-eq? (& actual) (& identity.fingerprint))]))
 
 (define (compiler-incremental-decode-identity-metadata
   [identity : (& identity CompilerIncrementalIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalDecodedQuery
   (match (compiler-incremental-identity-decode (& identity.transcript) limits)
-    [(ResultCompilerIncrementalDecodedQuery.Err error)
-      (ResultCompilerIncrementalDecodedQuery.Err error)]
-    [(ResultCompilerIncrementalDecodedQuery.Ok query)
+    [(Err error) (Err error)]
+    [(Ok query)
       (if (compiler-incremental-identity-metadata-valid? identity (& query))
-        (ResultCompilerIncrementalDecodedQuery.Ok query)
-        (ResultCompilerIncrementalDecodedQuery.Err
+        (Ok query)
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-fingerprint
             0
@@ -2005,24 +1972,21 @@
   [record-index : i64]
   [path : String]
   [explanation : String]) : CompilerIncrementalCompareResult
-  (CompilerIncrementalCompareResult.Miss
-    (CompilerIncrementalMiss category record-index path explanation)))
+  (Miss (CompilerIncrementalMiss category record-index path explanation)))
 
 (define (compiler-incremental-input-miss-path
   [input : (& input CompilerIncrementalInput)]) : String
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent _ _) "inputs.source-content"]
-    [(CompilerIncrementalInput.LogicalName _ _) "inputs.logical-name"]
-    [(CompilerIncrementalInput.ImportedSurface _ _ _) "inputs.imported-surface"]
-    [(CompilerIncrementalInput.ImportedArtifact _ _ _ _)
-      "inputs.imported-artifact"]
-    [(CompilerIncrementalInput.PackageProvenance _ _ _)
-      "inputs.package-provenance"]
-    [(CompilerIncrementalInput.StdlibProvenance _ _) "inputs.stdlib-provenance"]
-    [(CompilerIncrementalInput.Configuration _) "inputs.configuration"]
-    [(CompilerIncrementalInput.MacroComptime _ _ _) "inputs.macro-comptime"]
-    [(CompilerIncrementalInput.CodegenTarget _ _ _) "inputs.codegen-target"]
-    [(CompilerIncrementalInput.OrderedChild _ _ _) "inputs.ordered-child"]))
+    [(SourceContent _ _) "inputs.source-content"]
+    [(LogicalName _ _) "inputs.logical-name"]
+    [(ImportedSurface _ _ _) "inputs.imported-surface"]
+    [(ImportedArtifact _ _ _ _) "inputs.imported-artifact"]
+    [(PackageProvenance _ _ _) "inputs.package-provenance"]
+    [(StdlibProvenance _ _) "inputs.stdlib-provenance"]
+    [(Configuration _) "inputs.configuration"]
+    [(MacroComptime _ _ _) "inputs.macro-comptime"]
+    [(CodegenTarget _ _ _) "inputs.codegen-target"]
+    [(OrderedChild _ _ _) "inputs.ordered-child"]))
 
 (define (compiler-incremental-decoded-inputs-miss
   [left : (& left CompilerIncrementalDecodedQuery)]
@@ -2060,15 +2024,13 @@
                   different-path
                   (compiler-incremental-input-miss-path (& left-input))))
               (match (compiler-incremental-encode-input (& left-input) limits)
-                [(ResultCompilerIncrementalEncodedRecord.Err error)
-                  (return (CompilerIncrementalCompareResult.Corrupt error))]
-                [(ResultCompilerIncrementalEncodedRecord.Ok left-record)
+                [(Err error) (return (Corrupt error))]
+                [(Ok left-record)
                   (match (compiler-incremental-encode-input
                     (& right-input)
                     limits)
-                    [(ResultCompilerIncrementalEncodedRecord.Err error)
-                      (return (CompilerIncrementalCompareResult.Corrupt error))]
-                    [(ResultCompilerIncrementalEncodedRecord.Ok right-record)
+                    [(Err error) (return (Corrupt error))]
+                    [(Ok right-record)
                       (if (compiler-incremental-record-bytes-eq?
                         (& left-record)
                         (& right-record))
@@ -2089,7 +2051,7 @@
             (if different-kind?
               "first canonical input record kind differs"
               "first canonical input record value differs"))
-          (CompilerIncrementalCompareResult.Corrupt
+          (Corrupt
             (compiler-incremental-error
               compiler-incremental-error-layout
               0
@@ -2103,13 +2065,11 @@
   [right : (& right CompilerIncrementalIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : CompilerIncrementalCompareResult
   (match (compiler-incremental-decode-identity-metadata left limits)
-    [(ResultCompilerIncrementalDecodedQuery.Err error)
-      (CompilerIncrementalCompareResult.Corrupt error)]
-    [(ResultCompilerIncrementalDecodedQuery.Ok left-query)
+    [(Err error) (Corrupt error)]
+    [(Ok left-query)
       (match (compiler-incremental-decode-identity-metadata right limits)
-        [(ResultCompilerIncrementalDecodedQuery.Err error)
-          (CompilerIncrementalCompareResult.Corrupt error)]
-        [(ResultCompilerIncrementalDecodedQuery.Ok right-query)
+        [(Err error) (Corrupt error)]
+        [(Ok right-query)
           (let
             [same-transcript? : bool
               (binary.compiler-incremental-binary-bytes-eq?
@@ -2125,18 +2085,18 @@
                   "fingerprint"
                   "equal SHA-256 fingerprints name distinct canonical transcripts")]
               [(not (compiler-incremental-identity-fingerprint-valid? left))
-                (CompilerIncrementalCompareResult.Corrupt
+                (Corrupt
                   (compiler-incremental-error
                     compiler-incremental-error-fingerprint
                     0
                     "left incremental identity fingerprint is corrupt"))]
               [(not (compiler-incremental-identity-fingerprint-valid? right))
-                (CompilerIncrementalCompareResult.Corrupt
+                (Corrupt
                   (compiler-incremental-error
                     compiler-incremental-error-fingerprint
                     0
                     "right incremental identity fingerprint is corrupt"))]
-              [same-transcript? (CompilerIncrementalCompareResult.Hit)]
+              [same-transcript? (Hit)]
               [(not
                   (compiler-incremental-query-kind-eq?
                     (& left-query.kind)

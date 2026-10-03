@@ -82,28 +82,23 @@
 ;: Stable credential-free diagnostic for a parse/encoding rejection.
 (define (git-ssh-remote-error-message [error : GitSshRemoteError]) : String
   (match error
-    [(GitSshRemoteError.UnsupportedSyntax) "git ssh remote: unsupported syntax"]
-    [(GitSshRemoteError.AmbiguousSyntax)
-      "git ssh remote: ambiguous URI or scp-like syntax"]
-    [(GitSshRemoteError.ControlByte)
-      "git ssh remote: control byte is forbidden"]
-    [(GitSshRemoteError.PasswordUserinfo)
+    [(UnsupportedSyntax) "git ssh remote: unsupported syntax"]
+    [(AmbiguousSyntax) "git ssh remote: ambiguous URI or scp-like syntax"]
+    [(ControlByte) "git ssh remote: control byte is forbidden"]
+    [(PasswordUserinfo)
       "git ssh remote: password-bearing userinfo is forbidden"]
-    [(GitSshRemoteError.InvalidUser) "git ssh remote: invalid SSH user"]
-    [(GitSshRemoteError.EmptyHost) "git ssh remote: host is empty"]
-    [(GitSshRemoteError.InvalidHost)
+    [(InvalidUser) "git ssh remote: invalid SSH user"]
+    [(EmptyHost) "git ssh remote: host is empty"]
+    [(InvalidHost)
       "git ssh remote: host must be a deterministic ASCII name or bracketed IPv6 literal"]
-    [(GitSshRemoteError.InvalidIpv6Literal)
-      "git ssh remote: invalid bracketed IPv6 literal"]
-    [(GitSshRemoteError.InvalidPort)
+    [(InvalidIpv6Literal) "git ssh remote: invalid bracketed IPv6 literal"]
+    [(InvalidPort)
       "git ssh remote: port must be an integer from 1 through 65535"]
-    [(GitSshRemoteError.EmptyPath) "git ssh remote: repository path is empty"]
-    [(GitSshRemoteError.UnsafePercentEncoding)
-      "git ssh remote: unsafe percent encoding"]
-    [(GitSshRemoteError.LeadingDashPath)
+    [(EmptyPath) "git ssh remote: repository path is empty"]
+    [(UnsafePercentEncoding) "git ssh remote: unsafe percent encoding"]
+    [(LeadingDashPath)
       "git ssh remote: relative repository path must not begin with '-'"]
-    [(GitSshRemoteError.InvalidStructuredRemote)
-      "git ssh remote: inconsistent structured remote"]
+    [(InvalidStructuredRemote) "git ssh remote: inconsistent structured remote"]
     [_ "git ssh remote: unknown rejection"]))
 
 (define (git-ssh-byte [text : (& text str)] [index : i64]) : i64
@@ -382,8 +377,8 @@
                   (set! value (+ (* value 10) digit)))))
             (set! index (+ index 1)))))
       (if (and valid (>= value 1) (<= value 65535))
-        (ResultGitSshPort.Ok value)
-        (ResultGitSshPort.Err (GitSshRemoteError.InvalidPort))))))
+        (Ok value)
+        (Err (InvalidPort))))))
 
 (define (git-ssh-name-endpoint
   [has-user : bool]
@@ -394,10 +389,8 @@
     [colon-count : i64 (git-ssh-count-byte hostport 58)]
     [colon : i64 (git-ssh-find-byte hostport 0 58)]
     (cond
-      [(> colon-count 1)
-        (ResultGitSshEndpoint.Err (GitSshRemoteError.AmbiguousSyntax))]
-      [(and (= colon-count 1) (not allow-port))
-        (ResultGitSshEndpoint.Err (GitSshRemoteError.AmbiguousSyntax))]
+      [(> colon-count 1) (Err (AmbiguousSyntax))]
+      [(and (= colon-count 1) (not allow-port)) (Err (AmbiguousSyntax))]
       [else
         (let
           [host-raw : String
@@ -406,13 +399,10 @@
               (string.copy hostport))]
           [host : String (git-ssh-normalize-ascii (& host-raw))]
           (cond
-            [(= (string.string-length (& host)) 0)
-              (ResultGitSshEndpoint.Err (GitSshRemoteError.EmptyHost))]
-            [(not (git-ssh-host-name-valid? (& host)))
-              (ResultGitSshEndpoint.Err (GitSshRemoteError.InvalidHost))]
+            [(= (string.string-length (& host)) 0) (Err (EmptyHost))]
+            [(not (git-ssh-host-name-valid? (& host))) (Err (InvalidHost))]
             [(= colon-count 0)
-              (ResultGitSshEndpoint.Ok
-                (GitSshEndpoint has-user user host (GitSshHostKind.Name) 22))]
+              (Ok (GitSshEndpoint has-user user host (Name) 22))]
             [else
               (let
                 [port-text : String
@@ -421,16 +411,9 @@
                     (+ colon 1)
                     (- (string.string-length hostport) (+ colon 1)))]
                 (match (git-ssh-port-parse (& port-text))
-                  [(ResultGitSshPort.Err error)
-                    (ResultGitSshEndpoint.Err error)]
-                  [(ResultGitSshPort.Ok port)
-                    (ResultGitSshEndpoint.Ok
-                      (GitSshEndpoint
-                        has-user
-                        user
-                        host
-                        (GitSshHostKind.Name)
-                        port))]))]))])))
+                  [(Err error) (Err error)]
+                  [(Ok port)
+                    (Ok (GitSshEndpoint has-user user host (Name) port))]))]))])))
 
 (define (git-ssh-ipv6-endpoint
   [has-user : bool]
@@ -441,27 +424,20 @@
     [close : i64 (git-ssh-find-byte hostport 1 93)]
     [hostport-length : i64 (string.string-length hostport)]
     (if (< close 0)
-      (ResultGitSshEndpoint.Err (GitSshRemoteError.InvalidIpv6Literal))
+      (Err (InvalidIpv6Literal))
       (let
         [host-raw : String (string.substring hostport 1 (- close 1))]
         [host : String (git-ssh-normalize-ascii (& host-raw))]
         [tail-start : i64 (+ close 1)]
         (cond
-          [(not (git-ssh-ipv6-valid? (& host)))
-            (ResultGitSshEndpoint.Err (GitSshRemoteError.InvalidIpv6Literal))]
+          [(not (git-ssh-ipv6-valid? (& host))) (Err (InvalidIpv6Literal))]
           [(= tail-start hostport-length)
-            (ResultGitSshEndpoint.Ok
-              (GitSshEndpoint
-                has-user
-                user
-                host
-                (GitSshHostKind.Ipv6Literal)
-                22))]
+            (Ok (GitSshEndpoint has-user user host (Ipv6Literal) 22))]
           [(or
               (not allow-port)
               (!= (git-ssh-byte hostport tail-start) 58)
               (= (+ tail-start 1) hostport-length))
-            (ResultGitSshEndpoint.Err (GitSshRemoteError.AmbiguousSyntax))]
+            (Err (AmbiguousSyntax))]
           [else
             (let
               [port-text : String
@@ -470,15 +446,9 @@
                   (+ tail-start 1)
                   (- hostport-length (+ tail-start 1)))]
               (match (git-ssh-port-parse (& port-text))
-                [(ResultGitSshPort.Err error) (ResultGitSshEndpoint.Err error)]
-                [(ResultGitSshPort.Ok port)
-                  (ResultGitSshEndpoint.Ok
-                    (GitSshEndpoint
-                      has-user
-                      user
-                      host
-                      (GitSshHostKind.Ipv6Literal)
-                      port))]))])))))
+                [(Err error) (Err error)]
+                [(Ok port)
+                  (Ok (GitSshEndpoint has-user user host (Ipv6Literal) port))]))])))))
 
 (define (git-ssh-parse-authority
   [authority : (& authority str)]
@@ -488,9 +458,8 @@
     [at-count : i64 (git-ssh-count-byte authority 64)]
     [at : i64 (git-ssh-find-byte authority 0 64)]
     (cond
-      [(= length 0) (ResultGitSshEndpoint.Err (GitSshRemoteError.EmptyHost))]
-      [(> at-count 1)
-        (ResultGitSshEndpoint.Err (GitSshRemoteError.AmbiguousSyntax))]
+      [(= length 0) (Err (EmptyHost))]
+      [(> at-count 1) (Err (AmbiguousSyntax))]
       [else
         (let
           [has-user : bool (= at-count 1)]
@@ -509,11 +478,10 @@
               (- length hostport-start))]
           (cond
             [(and has-user (git-ssh-userinfo-password-marker? (& user)))
-              (ResultGitSshEndpoint.Err (GitSshRemoteError.PasswordUserinfo))]
+              (Err (PasswordUserinfo))]
             [(and has-user (not (git-ssh-user-valid? (& user))))
-              (ResultGitSshEndpoint.Err (GitSshRemoteError.InvalidUser))]
-            [(= (string.string-length (& hostport)) 0)
-              (ResultGitSshEndpoint.Err (GitSshRemoteError.EmptyHost))]
+              (Err (InvalidUser))]
+            [(= (string.string-length (& hostport)) 0) (Err (EmptyHost))]
             [(= (git-ssh-byte (& hostport) 0) 91)
               (git-ssh-ipv6-endpoint has-user user (& hostport) allow-port)]
             [else (git-ssh-name-endpoint has-user user (& hostport) allow-port)]))])))
@@ -525,7 +493,7 @@
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity length)]
     [valid : bool (> length 0)]
-    [error : GitSshRemoteError (GitSshRemoteError.UnsafePercentEncoding)]
+    [error : GitSshRemoteError (UnsafePercentEncoding)]
     (begin
       (while (and valid (< index length))
         (let
@@ -553,65 +521,54 @@
                           (set! index (+ index 2))))))))]
             [(or (= code 63) (= code 35) (= code 92))
               (begin
-                (set! error (GitSshRemoteError.AmbiguousSyntax))
+                (set! error (AmbiguousSyntax))
                 (set! valid false))]
             [else (git-ssh-builder-push! (&mut out) code)])
           (set! index (+ index 1))))
       (if (not valid)
-        (ResultGitSshPath.Err error)
+        (Err error)
         (let
           [decoded : String (byte_buf.byte-buf-builder-finish-string (& out))]
           [decoded-length : i64 (string.string-length (& decoded))]
           (if (= decoded-length 0)
-            (ResultGitSshPath.Err (GitSshRemoteError.EmptyPath))
+            (Err (EmptyPath))
             (if (and
               (> decoded-length 1)
               (= (git-ssh-byte (& decoded) 0) 47)
               (= (git-ssh-byte (& decoded) 1) 126))
-              (ResultGitSshPath.Ok
-                (string.substring (& decoded) 1 (- decoded-length 1))
-                (GitSshPathKind.Tilde))
-              (ResultGitSshPath.Ok decoded (GitSshPathKind.Absolute)))))))))
+              (Ok (string.substring (& decoded) 1 (- decoded-length 1)) (Tilde))
+              (Ok decoded (Absolute)))))))))
 
 (define (git-ssh-scp-path [raw : (& raw str)]) : ResultGitSshPath
   (let
     [length : i64 (string.string-length raw)]
     (if (= length 0)
-      (ResultGitSshPath.Err (GitSshRemoteError.EmptyPath))
+      (Err (EmptyPath))
       (let
         [first : i64 (git-ssh-byte raw 0)]
         (cond
-          [(= first 45)
-            (ResultGitSshPath.Err (GitSshRemoteError.LeadingDashPath))]
-          [(= first 47)
-            (ResultGitSshPath.Ok (string.copy raw) (GitSshPathKind.Absolute))]
-          [(= first 126)
-            (ResultGitSshPath.Ok (string.copy raw) (GitSshPathKind.Tilde))]
-          [else
-            (ResultGitSshPath.Ok (string.copy raw) (GitSshPathKind.Relative))])))))
+          [(= first 45) (Err (LeadingDashPath))]
+          [(= first 47) (Ok (string.copy raw) (Absolute))]
+          [(= first 126) (Ok (string.copy raw) (Tilde))]
+          [else (Ok (string.copy raw) (Relative))])))))
 
 (define (git-ssh-parse-uri [remote : (& remote str)]) : ResultGitSshRemote
   (let
     [length : i64 (string.string-length remote)]
     [path-start : i64 (git-ssh-find-byte remote 6 47)]
     (if (< path-start 0)
-      (ResultGitSshRemote.Err (GitSshRemoteError.EmptyPath))
+      (Err (EmptyPath))
       (let
         [authority : String (string.substring remote 6 (- path-start 6))]
         [raw-path : String
           (string.substring remote path-start (- length path-start))]
         (match (git-ssh-parse-authority (& authority) true)
-          [(ResultGitSshEndpoint.Err error) (ResultGitSshRemote.Err error)]
-          [(ResultGitSshEndpoint.Ok endpoint)
+          [(Err error) (Err error)]
+          [(Ok endpoint)
             (match (git-ssh-uri-path-decode (& raw-path))
-              [(ResultGitSshPath.Err error) (ResultGitSshRemote.Err error)]
-              [(ResultGitSshPath.Ok path path-kind)
-                (ResultGitSshRemote.Ok
-                  (GitSshRemote
-                    (GitSshRemoteSyntax.Uri)
-                    endpoint
-                    path
-                    path-kind))])])))))
+              [(Err error) (Err error)]
+              [(Ok path path-kind)
+                (Ok (GitSshRemote (Uri) endpoint path path-kind))])])))))
 
 (define (git-ssh-scp-delimiter [remote : (& remote str)]) : i64
   (let
@@ -687,7 +644,7 @@
     [length : i64 (string.string-length remote)]
     [delimiter : i64 (git-ssh-scp-delimiter remote)]
     (if (< delimiter 0)
-      (ResultGitSshRemote.Err (GitSshRemoteError.AmbiguousSyntax))
+      (Err (AmbiguousSyntax))
       (let
         [authority : String (string.substring remote 0 delimiter)]
         [raw-path : String
@@ -699,19 +656,14 @@
             (= (string.string-length (& authority)) 1)
             (git-ssh-ascii-alpha? (git-ssh-byte (& authority) 0)))
           (git-ssh-scp-unbracketed-ipv6-ambiguous? remote delimiter))
-          (ResultGitSshRemote.Err (GitSshRemoteError.AmbiguousSyntax))
+          (Err (AmbiguousSyntax))
           (match (git-ssh-parse-authority (& authority) false)
-            [(ResultGitSshEndpoint.Err error) (ResultGitSshRemote.Err error)]
-            [(ResultGitSshEndpoint.Ok endpoint)
+            [(Err error) (Err error)]
+            [(Ok endpoint)
               (match (git-ssh-scp-path (& raw-path))
-                [(ResultGitSshPath.Err error) (ResultGitSshRemote.Err error)]
-                [(ResultGitSshPath.Ok path path-kind)
-                  (ResultGitSshRemote.Ok
-                    (GitSshRemote
-                      (GitSshRemoteSyntax.Scp)
-                      endpoint
-                      path
-                      path-kind))])]))))))
+                [(Err error) (Err error)]
+                [(Ok path path-kind)
+                  (Ok (GitSshRemote (Scp) endpoint path path-kind))])]))))))
 
 ;: Parse one supported SSH Git remote without retaining the input authority.
 ;:
@@ -723,26 +675,23 @@
 ;: same way. The normalized default port is always 22.
 (define (git-ssh-remote-parse [remote : (& remote str)]) : ResultGitSshRemote
   (cond
-    [(= (string.string-length remote) 0)
-      (ResultGitSshRemote.Err (GitSshRemoteError.UnsupportedSyntax))]
-    [(git-ssh-has-control? remote)
-      (ResultGitSshRemote.Err (GitSshRemoteError.ControlByte))]
+    [(= (string.string-length remote) 0) (Err (UnsupportedSyntax))]
+    [(git-ssh-has-control? remote) (Err (ControlByte))]
     [(git-ssh-uri-prefix? remote) (git-ssh-parse-uri remote)]
-    [(git-ssh-has-scheme-separator? remote)
-      (ResultGitSshRemote.Err (GitSshRemoteError.UnsupportedSyntax))]
+    [(git-ssh-has-scheme-separator? remote) (Err (UnsupportedSyntax))]
     [else (git-ssh-parse-scp remote)]))
 
 (define (git-ssh-syntax-uri? [syntax : (& syntax GitSshRemoteSyntax)]) : bool
   (match syntax
-    [(GitSshRemoteSyntax.Uri) true]
+    [(Uri) true]
     [_ false]))
 
 (define (git-ssh-host-kind-valid?
   [host : (& host str)]
   [kind : (& kind GitSshHostKind)]) : bool
   (match kind
-    [(GitSshHostKind.Name) (git-ssh-host-name-valid? host)]
-    [(GitSshHostKind.Ipv6Literal) (git-ssh-ipv6-valid? host)]
+    [(Name) (git-ssh-host-name-valid? host)]
+    [(Ipv6Literal) (git-ssh-ipv6-valid? host)]
     [_ false]))
 
 (define (git-ssh-path-kind-valid?
@@ -755,10 +704,9 @@
       (let
         [first : i64 (git-ssh-byte path 0)]
         (match kind
-          [(GitSshPathKind.Absolute) (= first 47)]
-          [(GitSshPathKind.Relative)
-            (and (!= first 47) (!= first 126) (!= first 45))]
-          [(GitSshPathKind.Tilde) (= first 126)]
+          [(Absolute) (= first 47)]
+          [(Relative) (and (!= first 47) (!= first 126) (!= first 45))]
+          [(Tilde) (= first 126)]
           [_ false])))))
 
 (define (git-ssh-host-normalized? [host : (& host str)]) : bool
@@ -793,7 +741,7 @@
     (not (git-ssh-has-control? (& remote.path)))
     (if (git-ssh-syntax-uri? (& remote.syntax))
       (match remote.path-kind
-        [(GitSshPathKind.Relative) false]
+        [(Relative) false]
         [_ true])
       (= remote.endpoint.port 22))))
 
@@ -829,18 +777,16 @@
 ;: invariant instead of rewritten.
 (define (git-ssh-upload-pack-command [remote : (& remote GitSshRemote)]) : ResultGitSshCommand
   (cond
-    [(= (string.string-length (& remote.path)) 0)
-      (ResultGitSshCommand.Err (GitSshRemoteError.EmptyPath))]
-    [(git-ssh-has-control? (& remote.path))
-      (ResultGitSshCommand.Err (GitSshRemoteError.ControlByte))]
+    [(= (string.string-length (& remote.path)) 0) (Err (EmptyPath))]
+    [(git-ssh-has-control? (& remote.path)) (Err (ControlByte))]
     [(and
         (match remote.path-kind
-          [(GitSshPathKind.Relative) true]
+          [(Relative) true]
           [_ false])
         (= (git-ssh-byte (& remote.path) 0) 45))
-      (ResultGitSshCommand.Err (GitSshRemoteError.LeadingDashPath))]
+      (Err (LeadingDashPath))]
     [(not (git-ssh-structured-remote-valid? remote))
-      (ResultGitSshCommand.Err (GitSshRemoteError.InvalidStructuredRemote))]
+      (Err (InvalidStructuredRemote))]
     [else
       (let
         [out : byte_buf.ByteBufBuilder
@@ -849,38 +795,34 @@
         (begin
           (git-ssh-builder-append! (&mut out) "git-upload-pack ")
           (git-ssh-quote-repository! (&mut out) (& remote.path))
-          (ResultGitSshCommand.Ok
-            (byte_buf.byte-buf-builder-finish-string (& out)))))]))
+          (Ok (byte_buf.byte-buf-builder-finish-string (& out)))))]))
 
 ;: Parse a remote and return the sole structured endpoint/service handoff.
 (define (git-ssh-upload-pack-request [remote-text : (& remote-text str)]) : ResultGitSshUploadPackRequest
   (match (git-ssh-remote-parse remote-text)
-    [(ResultGitSshRemote.Err error) (ResultGitSshUploadPackRequest.Err error)]
-    [(ResultGitSshRemote.Ok remote)
+    [(Err error) (Err error)]
+    [(Ok remote)
       (match (git-ssh-upload-pack-command (& remote))
-        [(ResultGitSshCommand.Err error)
-          (ResultGitSshUploadPackRequest.Err error)]
-        [(ResultGitSshCommand.Ok command)
-          (ResultGitSshUploadPackRequest.Ok
-            (GitSshUploadPackRequest remote command))])]))
+        [(Err error) (Err error)]
+        [(Ok command) (Ok (GitSshUploadPackRequest remote command))])]))
 
 (define (git-ssh-syntax-name [syntax : (& syntax GitSshRemoteSyntax)]) : String
   (match syntax
-    [(GitSshRemoteSyntax.Uri) "uri"]
-    [(GitSshRemoteSyntax.Scp) "scp"]
+    [(Uri) "uri"]
+    [(Scp) "scp"]
     [_ "unknown"]))
 
 (define (git-ssh-host-kind-name [kind : (& kind GitSshHostKind)]) : String
   (match kind
-    [(GitSshHostKind.Name) "name"]
-    [(GitSshHostKind.Ipv6Literal) "ipv6"]
+    [(Name) "name"]
+    [(Ipv6Literal) "ipv6"]
     [_ "unknown"]))
 
 (define (git-ssh-path-kind-name [kind : (& kind GitSshPathKind)]) : String
   (match kind
-    [(GitSshPathKind.Absolute) "absolute"]
-    [(GitSshPathKind.Relative) "relative"]
-    [(GitSshPathKind.Tilde) "tilde"]
+    [(Absolute) "absolute"]
+    [(Relative) "relative"]
+    [(Tilde) "tilde"]
     [_ "unknown"]))
 
 ;: Credential-free structured summary. It never contains a raw URI authority,

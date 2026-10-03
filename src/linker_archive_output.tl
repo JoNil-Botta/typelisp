@@ -86,16 +86,14 @@
       (unless
         (archive.valid-limits? (& limits))
         (return
-          (OutputFailed
-            (archive.ArchiveError (archive.InvalidLimits) identity -1 0))))
+          (OutputFailed (archive.ArchiveError (InvalidLimits) identity -1 0))))
       (when
         (> total limits.max-input-bytes)
         (return
-          (OutputFailed
-            (archive.ArchiveError (archive.InputLimit) identity -1 0))))
+          (OutputFailed (archive.ArchiveError (InputLimit) identity -1 0))))
       (match (archive.check-profile profile work)
-        [(archive.ProfileReady remaining) (set! work remaining)]
-        [(archive.ProfileFailed kind offset)
+        [(ProfileReady remaining) (set! work remaining)]
+        [(ProfileFailed kind offset)
           (return (OutputFailed (archive.ArchiveError kind identity -1 offset)))])
       ;; Validate the entire plan and reserve all output work before allocating.
       (while (< index count)
@@ -109,37 +107,25 @@
               (>= index limits.max-members)
               (return
                 (OutputFailed
-                  (archive.ArchiveError
-                    (archive.MemberLimit)
-                    identity
-                    index
-                    total))))
+                  (archive.ArchiveError (MemberLimit) identity index total))))
             (when
               (>=
                 index
                 (/ limits.max-retained-bytes archive.retained-member-bytes))
               (return
                 (OutputFailed
-                  (archive.ArchiveError
-                    (archive.RetainedLimit)
-                    identity
-                    index
-                    total))))
+                  (archive.ArchiveError (RetainedLimit) identity index total))))
             (when
               (or (< work 120) (> patterns (/ (- work 120) 16)))
               (return
                 (OutputFailed
-                  (archive.ArchiveError
-                    (archive.WorkLimit)
-                    identity
-                    index
-                    total))))
+                  (archive.ArchiveError (WorkLimit) identity index total))))
             (set! work (- (- work 120) (* patterns 16)))
             (unless
               (archive.valid-name? (& member.raw-name) profile.ascii-names)
               (return
                 (OutputFailed
-                  (archive.ArchiveError (archive.BadName) identity index total))))
+                  (archive.ArchiveError (BadName) identity index total))))
             (while (< field 5)
               (begin
                 (unless
@@ -152,7 +138,7 @@
                   (return
                     (OutputFailed
                       (archive.ArchiveError
-                        (archive.InvalidEncoder)
+                        (InvalidEncoder)
                         identity
                         index
                         (+ total (array-ref archive.field-starts field))))))
@@ -164,11 +150,7 @@
                   (>= specials limits.max-special-members)
                   (return
                     (OutputFailed
-                      (archive.ArchiveError
-                        (archive.SpecialLimit)
-                        identity
-                        index
-                        total))))
+                      (archive.ArchiveError (SpecialLimit) identity index total))))
                 (set! specials (+ specials 1))))
             ;; Subtraction checks make each subsequent addition representable.
             (when
@@ -177,29 +159,20 @@
                 (> size (- (- limits.max-input-bytes total) 60)))
               (return
                 (OutputFailed
-                  (archive.ArchiveError
-                    (archive.InputLimit)
-                    identity
-                    index
-                    total))))
+                  (archive.ArchiveError (InputLimit) identity index total))))
             (set! total (+ (+ total 60) size))
             (when
               (> pad (- limits.max-input-bytes total))
               (return
                 (OutputFailed
-                  (archive.ArchiveError
-                    (archive.InputLimit)
-                    identity
-                    index
-                    total))))
+                  (archive.ArchiveError (InputLimit) identity index total))))
             (set! total (+ total pad))
             (set! index (+ index 1)))))
       ;; Zero-initialization, writes and the final String copy are all bounded.
       (when
         (> total (/ work 3))
         (return
-          (OutputFailed
-            (archive.ArchiveError (archive.WorkLimit) identity -1 total))))
+          (OutputFailed (archive.ArchiveError (WorkLimit) identity -1 total))))
       (let
         [output : buf.ByteBuf (buf.with-capacity total)]
         [member-index : i64 0]
@@ -276,21 +249,18 @@
     [count : i64 (array-length directory.members)]
     (begin
       (match (archive.check-session directory (& session))
-        [(archive.InvalidId kind)
+        [(InvalidId kind)
           (return (OutputFailed (archive.ArchiveError kind identity -1 0)))]
-        [(archive.ValidId) unit])
+        [(ValidId) unit])
       (when
         (>= count session.limits.max-diagnostic-rows)
         (return
-          (OutputFailed
-            (archive.ArchiveError (archive.DiagnosticLimit) identity -1 0))))
+          (OutputFailed (archive.ArchiveError (DiagnosticLimit) identity -1 0))))
       (when
         (or
           (< session.work-left 126)
           (> count (/ (- session.work-left 126) 309)))
-        (return
-          (OutputFailed
-            (archive.ArchiveError (archive.WorkLimit) identity -1 0))))
+        (return (OutputFailed (archive.ArchiveError (WorkLimit) identity -1 0))))
       (let
         [total : i64 (+ 42 (* count 103))]
         [output : buf.ByteBuf (buf.with-capacity total)]

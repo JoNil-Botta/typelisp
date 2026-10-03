@@ -334,7 +334,7 @@
           (arena.Arena scratch)
           (compiler-graph-query-shape (& transcript) limits)))]
     (if (< shape 0)
-      (ResultCompilerIncrementalGraphQuery.Err
+      (Err
         (compiler-graph-error
           compiler-graph-error-query
           root
@@ -343,15 +343,15 @@
       (match (with-escape
         (arena.Arena scratch)
         (identity.compiler-incremental-digest-array (& transcript)))
-        [(sha256.Sha256FinalizeErr _)
-          (ResultCompilerIncrementalGraphQuery.Err
+        [(Sha256FinalizeErr _)
+          (Err
             (compiler-graph-error
               compiler-graph-error-query
               root
               node
               "query identity fingerprint failed"))]
-        [(sha256.Sha256FinalizeOk digest)
-          (ResultCompilerIncrementalGraphQuery.Ok
+        [(Sha256FinalizeOk digest)
+          (Ok
             (identity.CompilerIncrementalIdentity
               identity.compiler-incremental-identity-schema
               (/ shape 4294967296)
@@ -375,8 +375,8 @@
 (define (compiler-graph-decoded-shape
   [decoded : (& decoded identity.ResultCompilerIncrementalDecodedQuery)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view decoded)
-    [(identity.ResultCompilerIncrementalDecodedQuery.Err _) -1]
-    [(identity.ResultCompilerIncrementalDecodedQuery.Ok query)
+    [(Err _) -1]
+    [(Ok query)
       (if (identity.compiler-incremental-string-eq?
         (& query.compiler-build.domain)
         (& identity.compiler-incremental-build-domain))
@@ -408,8 +408,8 @@
       (= query.query-kind-tag (/ shape 4294967296))
       (= query.record-count (- shape (* (/ shape 4294967296) 4294967296)))
       (match (compiler-graph-transcript-digest (& query.transcript))
-        [(sha256.Sha256FinalizeErr _) false]
-        [(sha256.Sha256FinalizeOk digest)
+        [(Sha256FinalizeErr _) false]
+        [(Sha256FinalizeOk digest)
           (sha256.digest-eq? (& query.fingerprint) (& digest))]))))
 
 (define (compiler-graph-root-name-valid?
@@ -512,13 +512,13 @@
 
 (define (compiler-graph-begin [limits : CompilerIncrementalGraphLimits]) : ResultCompilerIncrementalGraphBuilder
   (if (not (compiler-graph-limits-valid? (& limits)))
-    (ResultCompilerIncrementalGraphBuilder.Err
+    (Err
       (compiler-graph-error
         compiler-graph-error-limit-config
         -1
         -1
         "graph limits are invalid"))
-    (ResultCompilerIncrementalGraphBuilder.Ok
+    (Ok
       (CompilerIncrementalGraphBuilder
         1
         limits
@@ -614,8 +614,8 @@
     (>= node.trace.edge-count 0)
     (<= node.trace.edge-count limits.trace.max-edges)
     (match (compiler-graph-transcript-digest (& node.trace.transcript))
-      [(sha256.Sha256FinalizeErr _) false]
-      [(sha256.Sha256FinalizeOk digest)
+      [(Sha256FinalizeErr _) false]
+      [(Sha256FinalizeOk digest)
         (sha256.digest-eq? (& node.trace.fingerprint) (& digest))])))
 
 ;; Full #7267 validation of a trace. Callers run it in a scratch arena.
@@ -623,8 +623,8 @@
   [value : (& value trace.CompilerIncrementalTrace)]
   [limits : (& limits CompilerIncrementalGraphLimits)]) : bool
   (match (trace.compiler-trace-decode value (& limits.trace))
-    [(trace.ResultCompilerIncrementalTraceRecords.Ok _) true]
-    [(trace.ResultCompilerIncrementalTraceRecords.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-graph-add-node!
   [builder : (&mut builder CompilerIncrementalGraphBuilder)]
@@ -689,9 +689,9 @@
 ;; ones, and publish only what the canonical decoder accepts.
 (define (compiler-graph-finalize [builder : CompilerIncrementalGraphBuilder]) : ResultCompilerIncrementalGraph
   (cond
-    [(= builder.state 3) (ResultCompilerIncrementalGraph.Err builder.error)]
+    [(= builder.state 3) (Err builder.error)]
     [(!= builder.state 1)
-      (ResultCompilerIncrementalGraph.Err
+      (Err
         (compiler-graph-error
           compiler-graph-error-state
           -1
@@ -740,7 +740,7 @@
                   (&mut out)
                   (& builder.roots.slots)
                   (& root-order)))
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-conflict
                   -1
@@ -751,7 +751,7 @@
                   (&mut out)
                   (& builder.nodes.slots)
                   (& node-order)))
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-conflict
                   -1
@@ -1160,7 +1160,7 @@
       (compiler-graph-u32-at (& transcript) (+ parent-start parent-length))]
     (cond
       [(or (< domain-length 0) (< parent-length 0) (< count 0))
-        (ResultCompilerIncrementalGraphTrace.Err
+        (Err
           (compiler-graph-error
             compiler-graph-error-trace
             -1
@@ -1175,7 +1175,7 @@
             0
             (array-length parent.transcript))
           0)
-        (ResultCompilerIncrementalGraphTrace.Err
+        (Err
           (compiler-graph-error
             compiler-graph-error-trace-parent
             -1
@@ -1185,14 +1185,14 @@
         (match (with-escape
           (arena.Arena scratch)
           (compiler-graph-transcript-digest (& transcript)))
-          [(sha256.Sha256FinalizeErr _)
-            (ResultCompilerIncrementalGraphTrace.Err
+          [(Sha256FinalizeErr _)
+            (Err
               (compiler-graph-error
                 compiler-graph-error-trace
                 -1
                 node
                 "node trace fingerprint failed"))]
-          [(sha256.Sha256FinalizeOk digest)
+          [(Sha256FinalizeOk digest)
             (let
               [first-record : i64 (+ (+ parent-start parent-length) 4)]
               [value : trace.CompilerIncrementalTrace
@@ -1214,7 +1214,7 @@
                     (with-escape
                       (arena.Arena scratch)
                       (compiler-graph-trace-valid? (& value) limits)))
-                  (ResultCompilerIncrementalGraphTrace.Err
+                  (Err
                     (compiler-graph-error
                       compiler-graph-error-trace
                       -1
@@ -1228,13 +1228,13 @@
                       node
                       limits
                       edges))
-                  (ResultCompilerIncrementalGraphTrace.Err
+                  (Err
                     (compiler-graph-error
                       compiler-graph-error-limit
                       -1
                       node
                       "graph exceeds its edge limit"))]
-                [else (ResultCompilerIncrementalGraphTrace.Ok value)]))])])))
+                [else (Ok value)]))])])))
 
 ;; Decode and validate canonical graph bytes. Validation's transient decodes
 ;; run in one scratch arena that is released before the graph is returned.
@@ -1255,14 +1255,14 @@
   [scratch : i64]) : ResultCompilerIncrementalGraph
   (cond
     [(not (compiler-graph-limits-valid? limits))
-      (ResultCompilerIncrementalGraph.Err
+      (Err
         (compiler-graph-error
           compiler-graph-error-limit-config
           -1
           -1
           "graph limits are invalid"))]
     [(> (array-length bytes) limits.max-bytes)
-      (ResultCompilerIncrementalGraph.Err
+      (Err
         (compiler-graph-error
           compiler-graph-error-limit
           -1
@@ -1283,9 +1283,7 @@
         (begin
           (when
             (not reader.cursor.ok?)
-            (return
-              (ResultCompilerIncrementalGraph.Err
-                (compiler-graph-reader-error (& reader) -1 -1))))
+            (return (Err (compiler-graph-reader-error (& reader) -1 -1))))
           (when
             (or
               (not
@@ -1294,7 +1292,7 @@
                   (& compiler-incremental-graph-domain)))
               (!= schema compiler-incremental-graph-schema))
             (return
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-schema
                   -1
@@ -1303,7 +1301,7 @@
           (when
             (> root-count limits.max-roots)
             (return
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-limit
                   -1
@@ -1316,7 +1314,7 @@
                 (- reader.cursor.end reader.cursor.offset)
                 compiler-graph-min-root-bytes))
             (return
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-framing
                   -1
@@ -1353,9 +1351,7 @@
           (begin
             (when
               (not reader.cursor.ok?)
-              (return
-                (ResultCompilerIncrementalGraph.Err
-                  (compiler-graph-reader-error reader index -1))))
+              (return (Err (compiler-graph-reader-error reader index -1))))
             (when
               (and
                 (> index 0)
@@ -1369,7 +1365,7 @@
                     key-length)
                   0))
               (return
-                (ResultCompilerIncrementalGraph.Err
+                (Err
                   (compiler-graph-error
                     compiler-graph-error-order
                     index
@@ -1378,7 +1374,7 @@
             (when
               (not (compiler-graph-root-name-valid? (& root-name) limits))
               (return
-                (ResultCompilerIncrementalGraph.Err
+                (Err
                   (compiler-graph-error
                     compiler-graph-error-root
                     index
@@ -1390,9 +1386,8 @@
               scratch
               index
               -1)
-              [(ResultCompilerIncrementalGraphQuery.Err error)
-                (return (ResultCompilerIncrementalGraph.Err error))]
-              [(ResultCompilerIncrementalGraphQuery.Ok query)
+              [(Err error) (return (Err error))]
+              [(Ok query)
                 (set!
                   (array-ref roots index)
                   (CompilerIncrementalGraphRoot root-name query))])
@@ -1404,13 +1399,11 @@
         (begin
           (when
             (not reader.cursor.ok?)
-            (return
-              (ResultCompilerIncrementalGraph.Err
-                (compiler-graph-reader-error reader -1 -1))))
+            (return (Err (compiler-graph-reader-error reader -1 -1))))
           (when
             (> node-count limits.max-nodes)
             (return
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-limit
                   -1
@@ -1423,7 +1416,7 @@
                 (- reader.cursor.end reader.cursor.offset)
                 compiler-graph-min-node-bytes))
             (return
-              (ResultCompilerIncrementalGraph.Err
+              (Err
                 (compiler-graph-error
                   compiler-graph-error-framing
                   -1
@@ -1469,14 +1462,13 @@
                     (when
                       (not reader.cursor.ok?)
                       (return
-                        (ResultCompilerIncrementalGraph.Err
-                          (compiler-graph-reader-error reader -1 index))))
+                        (Err (compiler-graph-reader-error reader -1 index))))
                     (when
                       (or
                         (!= output-tag compiler-graph-output-tag)
                         (!= key-tag compiler-graph-key-tag))
                       (return
-                        (ResultCompilerIncrementalGraph.Err
+                        (Err
                           (compiler-graph-error
                             compiler-graph-error-framing
                             -1
@@ -1495,7 +1487,7 @@
                             query-length)
                           0))
                       (return
-                        (ResultCompilerIncrementalGraph.Err
+                        (Err
                           (compiler-graph-error
                             compiler-graph-error-order
                             -1
@@ -1504,7 +1496,7 @@
                     (when
                       (not (compiler-graph-output-valid? (& output) limits))
                       (return
-                        (ResultCompilerIncrementalGraph.Err
+                        (Err
                           (compiler-graph-error
                             compiler-graph-error-output
                             -1
@@ -1514,7 +1506,7 @@
                       (not
                         (compiler-graph-stored-key-valid? (& stored-key) limits))
                       (return
-                        (ResultCompilerIncrementalGraph.Err
+                        (Err
                           (compiler-graph-error
                             compiler-graph-error-key
                             -1
@@ -1526,9 +1518,8 @@
                       scratch
                       -1
                       index)
-                      [(ResultCompilerIncrementalGraphQuery.Err error)
-                        (return (ResultCompilerIncrementalGraph.Err error))]
-                      [(ResultCompilerIncrementalGraphQuery.Ok query)
+                      [(Err error) (return (Err error))]
+                      [(Ok query)
                         (match (compiler-graph-read-trace
                           (& query)
                           trace-bytes
@@ -1536,9 +1527,8 @@
                           index
                           limits
                           (&mut edges))
-                          [(ResultCompilerIncrementalGraphTrace.Err error)
-                            (return (ResultCompilerIncrementalGraph.Err error))]
-                          [(ResultCompilerIncrementalGraphTrace.Ok value)
+                          [(Err error) (return (Err error))]
+                          [(Ok value)
                             (set!
                               (array-ref nodes index)
                               (CompilerIncrementalGraphNode
@@ -1550,7 +1540,7 @@
                     (set! previous-length query-length)
                     (set! index (+ index 1)))))
               (if (!= reader.cursor.offset reader.cursor.end)
-                (ResultCompilerIncrementalGraph.Err
+                (Err
                   (compiler-graph-error
                     compiler-graph-error-trailing
                     -1
@@ -1794,7 +1784,7 @@
             (when
               (< target 0)
               (return
-                (ResultCompilerIncrementalGraph.Err
+                (Err
                   (compiler-graph-error
                     compiler-graph-error-absent-child
                     -1
@@ -1811,7 +1801,7 @@
                     (& published)
                     (& edge.observation)))
                 (return
-                  (ResultCompilerIncrementalGraph.Err
+                  (Err
                     (compiler-graph-error
                       compiler-graph-error-child-output
                       -1
@@ -1873,7 +1863,7 @@
             (when
               (< target 0)
               (return
-                (ResultCompilerIncrementalGraph.Err
+                (Err
                   (compiler-graph-error
                     compiler-graph-error-absent-root
                     index
@@ -1997,7 +1987,7 @@
         (while (= (array-ref remaining node) 0)
           (set! node (+ node 1)))
         (return
-          (ResultCompilerIncrementalGraph.Err
+          (Err
             (compiler-graph-error
               compiler-graph-error-cycle
               -1
@@ -2043,7 +2033,7 @@
               (unless
                 (array-ref visited node)
                 (return
-                  (ResultCompilerIncrementalGraph.Err
+                  (Err
                     (compiler-graph-error
                       compiler-graph-error-unreachable
                       -1
@@ -2051,15 +2041,15 @@
                       "a node is not reachable from any root"))))
               (set! node (+ node 1))))))
       (match (identity.compiler-incremental-digest-array (& transcript))
-        [(sha256.Sha256FinalizeErr _)
-          (ResultCompilerIncrementalGraph.Err
+        [(Sha256FinalizeErr _)
+          (Err
             (compiler-graph-error
               compiler-graph-error-framing
               -1
               -1
               "graph fingerprint failed"))]
-        [(sha256.Sha256FinalizeOk digest)
-          (ResultCompilerIncrementalGraph.Ok
+        [(Sha256FinalizeOk digest)
+          (Ok
             (CompilerIncrementalGraph
               compiler-incremental-graph-schema
               roots

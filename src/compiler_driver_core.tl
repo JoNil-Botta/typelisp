@@ -172,7 +172,7 @@
     [surface-state : CompilerDriverSurfaceState
       (in-arena
         (arena.Arena surface-arena)
-        (CompilerDriverSurfaceState.State
+        (State
           (cfg
             (any compile-profile test)
             (compiler_typecheck_core.tc-job-state-new-with-profile-metrics-address
@@ -188,10 +188,7 @@
             (owned_view.compiler-owned-shared-view intern-state)
             (profile_state.compiler-profile-state-metrics profile-state))))]
     (match surface-state
-      [(CompilerDriverSurfaceState.State
-          typecheck-state
-          lower-state-address
-          backend-state)
+      [(State typecheck-state lower-state-address backend-state)
         (begin
           (set! (array-ref expr-cell 0) expr-pool)
           (set! (array-ref type-cell 0) type-pool)
@@ -942,7 +939,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [profile-state : profile_state.CompilerProfileState]
   [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverLowered
-  (ResultCompilerDriverLowered.Ok
+  (Ok
     program
     spans
     (compiler_ast_types.ast-node-pool-context-capture-active)
@@ -972,7 +969,7 @@
   [profile-state : profile_state.CompilerProfileState]
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverLowered
-  (ResultCompilerDriverLowered.Ok
+  (Ok
     program
     spans
     (compiler_ast_types.ast-node-pool-context-snapshot pools)
@@ -1958,24 +1955,18 @@
   [target : compiler_backend.CompilerBackendTarget]
   [mode : compiler_backend.CompilerBackendMode]) : compiler_lower.CompilerLowerMode
   (match mode
-    [(compiler_backend.CompilerBackendMode.Avx2)
+    [(Avx2)
       (match target
-        [(compiler_backend.CompilerBackendTarget.Linux)
-          (compiler_lower.CompilerLowerMode.LinuxAvx2)]
-        [(compiler_backend.CompilerBackendTarget.Windows)
-          (compiler_lower.CompilerLowerMode.WindowsAvx2)])]
-    [(compiler_backend.CompilerBackendMode.Avx512)
+        [(Linux) (LinuxAvx2)]
+        [(Windows) (WindowsAvx2)])]
+    [(Avx512)
       (match target
-        [(compiler_backend.CompilerBackendTarget.Linux)
-          (compiler_lower.CompilerLowerMode.LinuxAvx512)]
-        [(compiler_backend.CompilerBackendTarget.Windows)
-          (compiler_lower.CompilerLowerMode.WindowsAvx512)])]
+        [(Linux) (LinuxAvx512)]
+        [(Windows) (WindowsAvx512)])]
     [_
       (match target
-        [(compiler_backend.CompilerBackendTarget.Linux)
-          (compiler_lower.CompilerLowerMode.LinuxScalar)]
-        [(compiler_backend.CompilerBackendTarget.Windows)
-          (compiler_lower.CompilerLowerMode.WindowsScalar)])]))
+        [(Linux) (LinuxScalar)]
+        [(Windows) (WindowsScalar)])]))
 
 (define (compiler-driver-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-enable-linux-cfgs cfgs))
@@ -2005,10 +1996,8 @@
     (let
       [target-cfgs : sym_i64_env.SymI64Env
         (match target
-          [(compiler_backend.CompilerBackendTarget.Linux)
-            (compiler-driver-enable-linux-cfgs cfgs)]
-          [(compiler_backend.CompilerBackendTarget.Windows)
-            (compiler-driver-enable-windows-cfgs cfgs)])]
+          [(Linux) (compiler-driver-enable-linux-cfgs cfgs)]
+          [(Windows) (compiler-driver-enable-windows-cfgs cfgs)])]
       [backtrace-id : i64 (ci.intern "compiler-backtrace")]
       [public-cfgs : sym_i64_env.SymI64Env
         (cfg_core.compiler-cfg-remove-id target-cfgs backtrace-id)]
@@ -2023,11 +2012,11 @@
   (let
     [target-cfgs : sym_i64_env.SymI64Env
       (match target
-        [(compiler_backend.CompilerBackendTarget.Linux)
+        [(Linux)
           (compiler-driver-enable-linux-cfgs-with-intern-state
             cfgs
             (&mut (array-ref state.intern-state 0)))]
-        [(compiler_backend.CompilerBackendTarget.Windows)
+        [(Windows)
           (compiler-driver-enable-windows-cfgs-with-intern-state
             cfgs
             (&mut (array-ref state.intern-state 0)))])]
@@ -2094,7 +2083,7 @@
     spans
     target
     has-target
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     opt-level))
 
 ;; The lowered IR functions live in a dedicated arena
@@ -2163,7 +2152,7 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriver.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -2183,16 +2172,14 @@
             pools
             program
             backend-state)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriver.Err
+              (Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
                 (compiler-driver-advisories-for-job typecheck-state))
@@ -2218,30 +2205,30 @@
                     backend-state
                     pools
                     optimized
-                    (compiler_backend.CompilerBackendTarget.Linux)
+                    (Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry
                     profile-state))
-                  [(compiler_backend.ResultCompilerBackend.Ok asm)
+                  [(Ok asm)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (ResultCompilerDriver.Ok
+                      (Ok
                         asm
                         (compiler-driver-advisories-for-job typecheck-state)))]
-                  [(compiler_backend.ResultCompilerBackend.Err diag)
+                  [(Err diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (ResultCompilerDriver.Err
+                      (Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (deref diag)
@@ -2263,7 +2250,7 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverBuffer
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriverBuffer.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -2283,9 +2270,7 @@
             pools
             program
             backend-state)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -2295,7 +2280,7 @@
               "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriverBuffer.Err
+              (Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
                 (compiler-driver-advisories-for-job typecheck-state))
@@ -2321,13 +2306,13 @@
                     backend-state
                     pools
                     optimized
-                    (compiler_backend.CompilerBackendTarget.Linux)
+                    (Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry
                     profile-state))
-                  [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
+                  [(Ok asm)
                     (begin
                       (cfg
                         compile-profile
@@ -2339,10 +2324,10 @@
                         "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
                         backend-state)
-                      (ResultCompilerDriverBuffer.Ok
+                      (Ok
                         asm
                         (compiler-driver-advisories-for-job typecheck-state)))]
-                  [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
+                  [(Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -2354,7 +2339,7 @@
                         "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
                         backend-state)
-                      (ResultCompilerDriverBuffer.Err
+                      (Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (deref diag)
@@ -2376,7 +2361,7 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverObject
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriverObject.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -2396,9 +2381,7 @@
             pools
             program
             backend-state)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -2406,7 +2389,7 @@
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (begin
                 (compiler-driver-release-lowered-ir! opt-level)
-                (ResultCompilerDriverObject.Err
+                (Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
@@ -2421,17 +2404,16 @@
                   (owned_view.compiler-owned-shared-view optimized)
                   (if has-target
                     target
-                    (compiler_backend.CompilerBackendTarget.Linux))
+                    (Linux))
                   profile-state)
-                  [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
-                      category)
+                  [(Unsupported category)
                     ;; Preserve the original lowered program for the caller's
                     ;; assembly fallback. At optimized levels the release must
                     ;; happen only after object eligibility is established.
-                    (ResultCompilerDriverObject.Unavailable
+                    (Unavailable
                       category
                       (compiler-driver-advisories-for-job typecheck-state))]
-                  [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
+                  [(Eligible)
                     (begin
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
@@ -2452,31 +2434,31 @@
                           backend-state
                           pools
                           optimized
-                          (compiler_backend.CompilerBackendTarget.Linux)
+                          (Linux)
                           mode
                           optimized-spans
                           emit-entry
                           crt-entry
                           profile-state))
-                        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                        [(Ok image)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
                                 profile-state
                                 "backend"))
-                            (ResultCompilerDriverObject.Ok
+                            (Ok
                               image
                               (compiler-driver-advisories-for-job
                                 typecheck-state)))]
-                        [(compiler_backend.ResultCompilerBackendObject.Err diag)
+                        [(Err diag)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
                                 profile-state
                                 "backend"))
-                            (ResultCompilerDriverObject.Err
+                            (Err
                               (box
                                 (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                   (deref diag)
@@ -2535,7 +2517,7 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverPackageRuntime
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriverPackageRuntime.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -2555,9 +2537,7 @@
             pools
             program
             backend-state)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -2565,7 +2545,7 @@
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (begin
                 (compiler-driver-release-lowered-ir! opt-level)
-                (ResultCompilerDriverPackageRuntime.Err
+                (Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
@@ -2580,8 +2560,7 @@
                   (owned_view.compiler-owned-shared-view optimized)
                   target
                   profile-state)
-                  [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
-                      category)
+                  [(Unsupported category)
                     (begin
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
@@ -2597,33 +2576,33 @@
                         emit-entry
                         crt-entry
                         profile-state)
-                        [(compiler_backend.ResultCompilerBackend.Ok asm)
+                        [(Ok asm)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
                                 profile-state
                                 "backend"))
-                            (ResultCompilerDriverPackageRuntime.Assembly
+                            (Assembly
                               asm
                               category
                               (compiler-driver-advisories-for-job
                                 typecheck-state)))]
-                        [(compiler_backend.ResultCompilerBackend.Err diag)
+                        [(Err diag)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
                                 profile-state
                                 "backend"))
-                            (ResultCompilerDriverPackageRuntime.Err
+                            (Err
                               (box
                                 (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                   (deref diag)
                                   input-path))
                               (compiler-driver-advisories-for-job
                                 typecheck-state)))]))]
-                  [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
+                  [(Eligible)
                     (begin
                       (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
@@ -2639,7 +2618,7 @@
                         emit-entry
                         crt-entry
                         profile-state)
-                        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                        [(Ok image)
                           (begin
                             (cfg
                               compile-profile
@@ -2680,42 +2659,40 @@
                                     (compiler_backend.compiler-backend-state-release-final-arenas!
                                       side-backend-state)]
                                   (match side-result
-                                    [(compiler_backend.ResultCompilerBackend.Ok
-                                        asm)
+                                    [(Ok asm)
                                       (begin
                                         (cfg
                                           compile-profile
                                           (compiler-driver-profile-finish-phase
                                             profile-state
                                             "backend.side-assembly"))
-                                        (ResultCompilerDriverPackageRuntime.Object
+                                        (Object
                                           image
                                           asm
                                           (compiler-driver-advisories-for-job
                                             typecheck-state)))]
-                                    [(compiler_backend.ResultCompilerBackend.Err
-                                        diag)
+                                    [(Err diag)
                                       (begin
                                         (cfg
                                           compile-profile
                                           (compiler-driver-profile-finish-phase
                                             profile-state
                                             "backend.side-assembly"))
-                                        (ResultCompilerDriverPackageRuntime.Err
+                                        (Err
                                           (box
                                             (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                               (deref diag)
                                               input-path))
                                           (compiler-driver-advisories-for-job
                                             typecheck-state)))])))))]
-                        [(compiler_backend.ResultCompilerBackendObject.Err diag)
+                        [(Err diag)
                           (begin
                             (cfg
                               compile-profile
                               (compiler-driver-profile-finish-phase
                                 profile-state
                                 "backend"))
-                            (ResultCompilerDriverPackageRuntime.Err
+                            (Err
                               (box
                                 (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                                   (deref diag)
@@ -2738,7 +2715,7 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverPic
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriverPic.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -2758,16 +2735,14 @@
             pools
             program
             backend-state)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriverPic.Err
+              (Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
                 (compiler-driver-advisories-for-job typecheck-state))
@@ -2793,30 +2768,30 @@
                     backend-state
                     pools
                     optimized
-                    (compiler_backend.CompilerBackendTarget.Linux)
+                    (Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry
                     profile-state))
-                  [(compiler_backend.ResultCompilerBackendPic.Ok output)
+                  [(Ok output)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (ResultCompilerDriverPic.Ok
+                      (Ok
                         output
                         (compiler-driver-advisories-for-job typecheck-state)))]
-                  [(compiler_backend.ResultCompilerBackendPic.Err diag)
+                  [(Err diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (ResultCompilerDriverPic.Err
+                      (Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-fallback-path
                             (deref diag)
@@ -2930,13 +2905,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -3008,10 +2977,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriver.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
   [input-path : String]
@@ -3022,13 +2991,7 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [_profile-program-start : unit
           (cfg
@@ -3100,10 +3063,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriverBuffer.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
   [input-path : String]
@@ -3115,13 +3078,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3158,10 +3115,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriverObject.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
   [input-path : String]
@@ -3172,13 +3129,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPackageRuntime
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3214,10 +3165,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriverPackageRuntime.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
   [input-path : String]
@@ -3229,13 +3180,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3272,10 +3217,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriverPic.Err diag advisories))]))
+        (Err diag advisories))]))
 
 ;; The implicit prelude prepended before every entry program. Its runtime and
 ;; macro roots are loaded as files:
@@ -3309,8 +3254,8 @@
       (begin
         (while true
           (match (sym_i64_env.sym-i64-view cursor)
-            [(sym_i64_env.SymI64ViewNil) (return true)]
-            [(sym_i64_env.SymI64ViewBind key value rest)
+            [(SymI64ViewNil) (return true)]
+            [(SymI64ViewBind key value rest)
               (if (= key compiler_parse_core.compiler-parse-state-marker-id)
                 (set! cursor rest)
                 (if (and
@@ -3339,14 +3284,8 @@
   (define (compiler-driver-prelude-surface-configuration
     [cfgs : sym_i64_env.SymI64Env]) : String
     (cond
-      [(compiler-driver-cfgs-match-default?
-          cfgs
-          (compiler_backend.CompilerBackendTarget.Linux))
-        "linux-default"]
-      [(compiler-driver-cfgs-match-default?
-          cfgs
-          (compiler_backend.CompilerBackendTarget.Windows))
-        "windows-default"]
+      [(compiler-driver-cfgs-match-default? cfgs (Linux)) "linux-default"]
+      [(compiler-driver-cfgs-match-default? cfgs (Windows)) "windows-default"]
       [else ""])))
 
 (cfg
@@ -3375,48 +3314,37 @@
     (match (tlci.tlci-producer-identity-admit
       outer-build
       (build_identity.compiler-build-git-hash-shared-view))
-      [(tlci.TlciProducerIdentityAdmission.ExactMatch)
+      [(ExactMatch)
         (match (compiler_surface_hydrate.compiler-surface-key
           (owned_view.compiler-owned-shared-view rodata))
-          [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Missing)
-            CompilerDriverPreludeSurface.Missing]
-          [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Err _)
-            CompilerDriverPreludeSurface.Missing]
-          [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Ok key)
+          [(Missing) Missing]
+          [(Err _) Missing]
+          [(Ok key)
             (if (not
               (compiler-driver-prelude-surface-key-valid?
                 key
                 outer-build
                 expected-source-hash
                 configuration))
-              CompilerDriverPreludeSurface.Missing
+              Missing
               (match (compiler_surface_hydrate.compiler-surface-hydrate
                 rodata
                 key
                 (compiler_load.compiler-load-session-state-structural-session
                   load-state)
                 pools)
-                [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Missing)
-                  CompilerDriverPreludeSurface.Missing]
-                [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.KeyMismatch
-                    _)
-                  CompilerDriverPreludeSurface.Missing]
-                [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Err _)
-                  CompilerDriverPreludeSurface.Missing]
-                [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Ok
-                    hydration)
+                [(Missing) Missing]
+                [(KeyMismatch _) Missing]
+                [(Err _) Missing]
+                [(Ok hydration)
                   (let
                     [ast : surface_ast.SurfaceAstHydration hydration.ast]
                     [facts : surface_facts.SurfaceTypecheckFacts
                       hydration.facts]
                     (if (surface_facts.surface-typecheck-facts-publish! facts)
-                      (CompilerDriverPreludeSurface.Ok
-                        ast.decls
-                        ast.paths
-                        ast.modules
-                        ast.seen)
-                      CompilerDriverPreludeSurface.Missing))]))])]
-      [_ CompilerDriverPreludeSurface.Missing])))
+                      (Ok ast.decls ast.paths ast.modules ast.seen)
+                      Missing))]))])]
+      [_ Missing])))
 
 (cfg
   embedded-stdlib-tlci
@@ -3433,17 +3361,13 @@
         (= surface-arena 0)
         (compiler_load.compiler-load-stdlib-root-configured? stdlib-roots)
         (= (string.string-length configuration) 0))
-        CompilerDriverPreludeSurface.Missing
+        Missing
         (in-arena
           (arena.Arena surface-arena)
           (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface
             surface-arena)
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
-              CompilerDriverPreludeSurface.Missing]
-            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
-                outer-build
-                source-hash
-                rodata)
+            [(Unavailable _) Missing]
+            [(Ok outer-build source-hash rodata)
               (compiler-driver-hydrate-prelude-rodata
                 load-state
                 outer-build
@@ -3463,21 +3387,13 @@
       (sym_i64_env.sym-i64-empty)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       cfgs)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          runtime-decls
-          runtime-paths
-          runtime-modules
-          runtime-seen)
+      [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
         (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
           runtime-seen
           stdlib-roots
           cfgs)
-          [(compiler_load.ResultCompilerLoadWithPaths.Ok
-              macro-decls
-              macro-paths
-              macro-modules
-              macro-seen)
-            (compiler_load.ResultCompilerLoadWithPaths.Ok
+          [(Ok macro-decls macro-paths macro-modules macro-seen)
+            (Ok
               (compiler_load.compiler-load-decl-list-append
                 runtime-decls
                 macro-decls)
@@ -3488,10 +3404,8 @@
                 runtime-modules
                 macro-modules)
               macro-seen)]
-          [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-            (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-        (compiler_load.ResultCompilerLoadWithPaths.Err diag)])))
+          [(Err diag) (Err diag)])]
+      [(Err diag) (Err diag)])))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
   [key : compiler_load.CompilerLoadPreludeCacheKey]
@@ -3510,18 +3424,14 @@
           profile-state)]
       (begin
         (match (owned_view.compiler-owned-shared-view cold)
-          [(compiler_load.ResultCompilerLoadWithPaths.Ok
-              decls
-              paths
-              modules
-              seen)
+          [(Ok decls paths modules seen)
             (compiler-driver-runtime-prelude-cache-store
               persistent-key
               decls
               paths
               modules
               seen)]
-          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+          [(Err _) unit])
         cold))))
 
 (define (compiler-driver-load-runtime-prelude-and-profile-state
@@ -3536,11 +3446,7 @@
           cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
-            decls
-            paths
-            modules
-            seen)]
+          (Ok decls paths modules seen)]
         [(CompilerLoadPreludeCacheMiss)
           (compiler-driver-load-runtime-prelude-cache-miss-and-profile-state
             key
@@ -3562,22 +3468,14 @@
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs
     profile-state)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
+    [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-entry-file-with-paths-and-roots-cfg
         input-path
         prelude-seen
         stdlib-roots
         cfgs)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
+        [(Ok entry-decls entry-paths entry-modules seen)
+          (Ok
             (compiler_load.compiler-load-decl-list-append
               prelude-decls
               entry-decls)
@@ -3588,10 +3486,8 @@
               prelude-modules
               entry-modules)
             seen)]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-          (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
@@ -3611,22 +3507,14 @@
     (sym_i64_env.sym-i64-empty)
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
+    [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-entry-file-with-paths-and-roots-cfg
         input-path
         prelude-seen
         stdlib-roots
         cfgs)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
+        [(Ok entry-decls entry-paths entry-modules seen)
+          (Ok
             (compiler_load.compiler-load-decl-list-append
               prelude-decls
               entry-decls)
@@ -3637,10 +3525,8 @@
               prelude-modules
               entry-modules)
             seen)]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-          (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3657,23 +3543,15 @@
       (owned_view.compiler-owned-shared-view stdlib-roots)
       cfgs
       pools)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          runtime-decls
-          runtime-paths
-          runtime-modules
-          runtime-seen)
+      [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
         (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
           load-state
           runtime-seen
           stdlib-roots
           cfgs
           pools)
-          [(compiler_load.ResultCompilerLoadWithPaths.Ok
-              macro-decls
-              macro-paths
-              macro-modules
-              macro-seen)
-            (compiler_load.ResultCompilerLoadWithPaths.Ok
+          [(Ok macro-decls macro-paths macro-modules macro-seen)
+            (Ok
               (compiler_load.compiler-load-decl-list-append
                 runtime-decls
                 macro-decls)
@@ -3684,10 +3562,8 @@
                 runtime-modules
                 macro-modules)
               macro-seen)]
-          [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-            (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-        (compiler_load.ResultCompilerLoadWithPaths.Err diag)])))
+          [(Err diag) (Err diag)])]
+      [(Err diag) (Err diag)])))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3710,11 +3586,7 @@
           profile-state)]
       (begin
         (match (owned_view.compiler-owned-shared-view cold)
-          [(compiler_load.ResultCompilerLoadWithPaths.Ok
-              decls
-              paths
-              modules
-              seen)
+          [(Ok decls paths modules seen)
             (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
               load-state
               persistent-key
@@ -3723,7 +3595,7 @@
               modules
               seen
               pools)]
-          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+          [(Err _) unit])
         cold))))
 
 (define (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
@@ -3743,11 +3615,7 @@
         (owned_view.compiler-owned-shared-view load-state)
         key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
-            decls
-            paths
-            modules
-            seen)]
+          (Ok decls paths modules seen)]
         [(CompilerLoadPreludeCacheMiss)
           (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
             load-state
@@ -3792,14 +3660,14 @@
           (startup_profile.compiler-startup-profile-mark-surface-end!)
           unit)]
       (match surface
-        [(CompilerDriverPreludeSurface.Missing)
+        [(Missing)
           (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
             load-state
             stdlib-roots
             cfgs
             pools
             profile-state)]
-        [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
+        [(Ok decls paths modules seen)
           (begin
             ;; Hydration bypasses the ordinary stdlib source loader, so record
             ;; the embedded provenance that loader would have attached. Macro
@@ -3875,11 +3743,7 @@
         (startup_profile.compiler-startup-profile-mark-prelude-end!)
         unit)]
     (match prelude
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
+      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (begin
           (cfg
             compile-startup-profile
@@ -3892,12 +3756,8 @@
             stdlib-roots
             cfgs
             pools)
-            [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                entry-decls
-                entry-paths
-                entry-modules
-                seen)
-              (compiler_load.ResultCompilerLoadWithPaths.Ok
+            [(Ok entry-decls entry-paths entry-modules seen)
+              (Ok
                 (compiler_load.compiler-load-decl-list-append
                   prelude-decls
                   entry-decls)
@@ -3908,10 +3768,8 @@
                   prelude-modules
                   entry-modules)
                 seen)]
-            [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-              (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-        (compiler_load.ResultCompilerLoadWithPaths.Err diag)])))
+            [(Err diag) (Err diag)]))]
+      [(Err diag) (Err diag)])))
 
 (define (compiler-driver-load-source-with-runtime-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3927,26 +3785,18 @@
     cfgs
     pools
     profile-state)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
+    [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         load-state
         input-path
         source
         prelude-seen
         stdlib-roots
-        compiler_ast_types.AstMaybeModuleName.No
+        No
         cfgs
         pools)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
+        [(Ok entry-decls entry-paths entry-modules seen)
+          (Ok
             (compiler_load.compiler-load-decl-list-append
               prelude-decls
               entry-decls)
@@ -3957,10 +3807,8 @@
               prelude-modules
               entry-modules)
             seen)]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-          (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-driver-load-source-with-runtime-with-pools
   [input-path : String]
@@ -3989,11 +3837,7 @@
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs
     pools)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
+    [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
         load-state
         input-path
@@ -4001,12 +3845,8 @@
         stdlib-roots
         cfgs
         pools)
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (compiler_load.ResultCompilerLoadWithPaths.Ok
+        [(Ok entry-decls entry-paths entry-modules seen)
+          (Ok
             (compiler_load.compiler-load-decl-list-append
               prelude-decls
               entry-decls)
@@ -4017,10 +3857,8 @@
               prelude-modules
               entry-modules)
             seen)]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-          (compiler_load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-driver-load-and-lower-escaping-and-profile-state
   [input-path : String]
@@ -4033,7 +3871,7 @@
     (owned_view.compiler-owned-shared-view input-path)
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+    [(Ok decls paths modules _)
       (begin
         (cfg
           compile-profile
@@ -4052,13 +3890,13 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(compiler_lower.ResultCompilerLower.Ok program spans)
+          [(Ok program spans)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
-                (ResultCompilerDriverLowered.Err
+                (Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
@@ -4067,22 +3905,18 @@
                   program
                   spans
                   profile-state)))]
-          [(compiler_lower.ResultCompilerLower.Err diag)
+          [(Err diag)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
-              (ResultCompilerDriverLowered.Err
-                diag
-                (compiler-driver-serial-advisories)))]))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+              (Err diag (compiler-driver-serial-advisories)))]))]
+    [(Err diag)
       (begin
         (cfg
           compile-profile
           (compiler-driver-profile-finish-phase profile-state "load"))
-        (ResultCompilerDriverLowered.Err
-          diag
-          (compiler-driver-serial-advisories)))]))
+        (Err diag (compiler-driver-serial-advisories)))]))
 
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
@@ -4109,7 +3943,7 @@
     (owned_view.compiler-owned-shared-view input-path)
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+    [(Ok decls paths modules _)
       (begin
         (cfg
           compile-profile
@@ -4128,13 +3962,13 @@
             "typecheck-prefix-lower"
             stdlib-roots
             cfgs))
-          [(compiler_lower.ResultCompilerLower.Ok program spans)
+          [(Ok program spans)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
-                (ResultCompilerDriverLowered.Err
+                (Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
@@ -4143,22 +3977,18 @@
                   program
                   spans
                   profile-state)))]
-          [(compiler_lower.ResultCompilerLower.Err diag)
+          [(Err diag)
             (begin
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
-              (ResultCompilerDriverLowered.Err
-                diag
-                (compiler-driver-serial-advisories)))]))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+              (Err diag (compiler-driver-serial-advisories)))]))]
+    [(Err diag)
       (begin
         (cfg
           compile-profile
           (compiler-driver-profile-finish-phase profile-state "load"))
-        (ResultCompilerDriverLowered.Err
-          diag
-          (compiler-driver-serial-advisories)))]))
+        (Err diag (compiler-driver-serial-advisories)))]))
 
 (define (compiler-driver-load-and-lower-pic-image
   [input-path : String]
@@ -4254,10 +4084,9 @@
     [source-pools-arena : i64 handoff.source-pools-arena]
     [lowered : compiler_lower.ResultCompilerLower
       (match lowered-raw
-        [(compiler_lower.ResultCompilerLower.Ok program spans)
-          (compiler_lower.ResultCompilerLower.Ok program spans)]
-        [(compiler_lower.ResultCompilerLower.Err diag)
-          (compiler_lower.ResultCompilerLower.Err
+        [(Ok program spans) (Ok program spans)]
+        [(Err diag)
+          (Err
             (compiler-driver-diagnostic-copy-to-state-surface
               (owned_view.compiler-owned-shared-view state)
               diag))])]
@@ -4302,7 +4131,7 @@
     ;; or release the state again. Refs #5448.
     [_own-error-pools : unit
       (match (& lowered)
-        [(compiler_lower.ResultCompilerLower.Err _)
+        [(Err _)
           (if release-source-pools?
             (begin
               ;; Before first commit the original source is live; after final
@@ -4318,7 +4147,7 @@
                   (compiler-driver-state-new-checked-lower-pools)))
               (set! result-pools (compiler-driver-state-pool-context state)))
             unit)]
-        [(compiler_lower.ResultCompilerLower.Ok _ _) unit])]
+        [(Ok _ _) unit])]
     (in-arena
       (arena.Arena (compiler-driver-state-surface-arena state))
       (CompilerDriverCheckedLowerResult
@@ -4376,7 +4205,7 @@
       pools
       (compiler-driver-state-surface-arena state)
       (compiler-driver-state-profile state))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+      [(Ok decls paths modules _)
         (begin
           (cfg
             compile-profile
@@ -4480,7 +4309,7 @@
             [frontend-released? : bool checked.frontend-released]
             [result-pools : compiler_ast_types.AstNodePoolContext checked.pools]
             (match lowered
-              [(compiler_lower.ResultCompilerLower.Ok program spans)
+              [(Ok program spans)
                 (begin
                   (cfg
                     compile-profile
@@ -4512,7 +4341,7 @@
                     "lower")
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)
-                    (ResultCompilerDriverLowered.Err
+                    (Err
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path))
@@ -4548,7 +4377,7 @@
                         (compiler-driver-state-profile state)
                         (compiler-driver-state-backend state)
                         (compiler-driver-state-typecheck state)))))]
-              [(compiler_lower.ResultCompilerLower.Err diag)
+              [(Err diag)
                 (begin
                   (cfg
                     compile-profile
@@ -4561,10 +4390,8 @@
                   (compiler-driver-allocation-profile-snapshot-for-job!
                     (compiler-driver-state-typecheck state)
                     "lower")
-                  (ResultCompilerDriverLowered.Err
-                    diag
-                    (compiler-driver-state-advisories state)))])))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+                  (Err diag (compiler-driver-state-advisories state)))])))]
+      [(Err diag)
         (begin
           (cfg
             compile-profile
@@ -4581,9 +4408,7 @@
           (compiler-driver-allocation-profile-snapshot-for-job!
             (compiler-driver-state-typecheck state)
             "load")
-          (ResultCompilerDriverLowered.Err
-            diag
-            (compiler-driver-state-advisories state)))])))
+          (Err diag (compiler-driver-state-advisories state)))])))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
   [state : CompilerDriverState]
@@ -4615,7 +4440,7 @@
       (owned_view.compiler-owned-shared-view stdlib-roots)
       parse-cfgs
       pools)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+      [(Ok decls paths modules _)
         (begin
           (cfg
             compile-profile
@@ -4709,7 +4534,7 @@
             [dest-committed? : bool checked.committed]
             [result-pools : compiler_ast_types.AstNodePoolContext checked.pools]
             (match lowered
-              [(compiler_lower.ResultCompilerLower.Ok program spans)
+              [(Ok program spans)
                 (begin
                   (cfg
                     compile-profile
@@ -4731,7 +4556,7 @@
                     unit)
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)
-                    (ResultCompilerDriverLowered.Err
+                    (Err
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path))
@@ -4749,17 +4574,15 @@
                         (compiler-driver-state-profile state)
                         (compiler-driver-state-backend state)
                         (compiler-driver-state-typecheck state)))))]
-              [(compiler_lower.ResultCompilerLower.Err diag)
+              [(Err diag)
                 (begin
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase
                       (compiler-driver-state-profile state)
                       "lower"))
-                  (ResultCompilerDriverLowered.Err
-                    diag
-                    (compiler-driver-state-advisories state)))])))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+                  (Err diag (compiler-driver-state-advisories state)))])))]
+      [(Err diag)
         (begin
           (cfg
             compile-profile
@@ -4773,9 +4596,7 @@
             (compiler-driver-profile-finish-phase
               (compiler-driver-state-profile state)
               "load"))
-          (ResultCompilerDriverLowered.Err
-            diag
-            (compiler-driver-state-advisories state)))])))
+          (Err diag (compiler-driver-state-advisories state)))])))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state
   [state : CompilerDriverState]
@@ -5216,16 +5037,13 @@
         (unsafe
           (arena.tl_arena_set compiler-driver-pending-frontend-return-arena)))]
     (match checked.lowered
-      [(compiler_lower.ResultCompilerLower.Ok program spans)
+      [(Ok program spans)
         (compiler-driver-state-retain-lowered-types!
           state
           program
           spans
           checked.pools)]
-      [(compiler_lower.ResultCompilerLower.Err diag)
-        (ResultCompilerDriverLowered.Err
-          diag
-          (compiler-driver-state-advisories state))])))
+      [(Err diag) (Err diag (compiler-driver-state-advisories state))])))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
@@ -5268,9 +5086,8 @@
 (define (compiler-driver-copy-package-discovery-paths
   [paths : compiler_ast_types.AstDeclPathList]) : compiler_ast_types.AstDeclPathList
   (match (compiler_ast_types.ast-decl-path-list-step paths)
-    [(compiler_ast_types.AstDeclPathListStep.Nil)
-      (compiler_ast_types.ast-decl-path-list-new)]
-    [(compiler_ast_types.AstDeclPathListStep.Cons path rest)
+    [(Nil) (compiler_ast_types.ast-decl-path-list-new)]
+    [(Cons path rest)
       (compiler_ast_types.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         (string.copy path)
         -1
@@ -5328,15 +5145,14 @@
             manifest-dir
             deps
             emit-entry)
-            [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+            [(Ok _ paths _ _)
               (in-arena
                 home
-                (ResultCompilerDriverPackagePaths.Ok
-                  (compiler-driver-copy-package-discovery-paths paths)))]
-            [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+                (Ok (compiler-driver-copy-package-discovery-paths paths)))]
+            [(Err diag)
               (in-arena
                 home
-                (ResultCompilerDriverPackagePaths.Err
+                (Err
                   (box
                     (compiler_diagnostic.compiler-diagnostic-copy (deref diag)))))])]
         [retired-pools : compiler_ast_types.AstNodePoolContext
@@ -5380,8 +5196,8 @@
     deps
     emit-entry
     cfgs)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-      (compiler_load.ResultCompilerLoadWithPaths.Ok
+    [(Ok decls paths modules seen)
+      (Ok
         (owned_view.compiler-owned-shared-view decls)
         (compiler_load.compiler-load-package-owned-paths-for-decls
           package-owner
@@ -5392,8 +5208,7 @@
           paths)
         modules
         seen)]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
+    [(Err diag) (Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
   (str_cat.str-cat name " " (string.int->string value) "\n"))
@@ -5508,7 +5323,7 @@
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriver.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -5524,14 +5339,14 @@
           profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
+        [(Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriver.Err
+              (Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
                 (compiler-driver-advisories-for-job typecheck-state))
-              (ResultCompilerDriver.Ok
+              (Ok
                 (compiler-driver-ir-summary-render
                   (compiler_ir_types.compiler-ir-program-summary optimized))
                 (compiler-driver-advisories-for-job typecheck-state))))]))))
@@ -5540,13 +5355,7 @@
   [lowered : ResultCompilerDriverLowered]
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        _backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state _backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5576,10 +5385,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriver.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
@@ -5627,7 +5436,7 @@
     [verify-error : String
       (compiler_optimize.compiler-opt-debug-verification-error)]
     (if (> (string.string-length verify-error) 0)
-      (ResultCompilerDriver.Err
+      (Err
         (box
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
@@ -5644,13 +5453,13 @@
         (if (and
           (> (string.string-length dump-pass) 0)
           (= (string.string-length text) 0))
-          (ResultCompilerDriver.Err
+          (Err
             (box
               (compiler_diagnostic.compiler-diagnostic-at-start
                 ""
                 (str_cat.str-cat "optimizer pass '" dump-pass "' did not run")))
             advisories)
-          (ResultCompilerDriver.Ok text advisories))))))
+          (Ok text advisories))))))
 
 (define (compiler-driver-emit-ir-text-lowered-with-level
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -5661,7 +5470,7 @@
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriver
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerDriver.Err
+    (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
       (compiler-driver-advisories-for-job typecheck-state))
     (begin
@@ -5677,11 +5486,11 @@
           profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
+        [(Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriver.Err
+              (Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
                 (compiler-driver-advisories-for-job typecheck-state))
               (compiler-driver-ir-text-result
@@ -5700,13 +5509,7 @@
   [opt-level : i64]
   [dump-pass : String]) : ResultCompilerDriver
   (match lowered
-    [(ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        _backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state _backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5737,10 +5540,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerDriver.Err diag advisories))]))
+        (Err diag advisories))]))
 
 (define (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -5798,8 +5601,8 @@
     (if (string.eq path "")
       ""
       (match (io.try-read-file path)
-        [(io.OkIoBytes source) (byte_buf.to-string source)]
-        [(io.ErrIoBytes _) ""]))))
+        [(OkIoBytes source) (byte_buf.to-string source)]
+        [(ErrIoBytes _) ""]))))
 
 ;; The slot holding `path`'s indexed text, reading and indexing it first when
 ;; no earlier diagnostic named it.
@@ -5893,7 +5696,7 @@
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
   (match result
-    [(ResultCompilerDriver.Ok asm advisories)
+    [(Ok asm advisories)
       (begin
         (compiler-driver-print-advisories (& advisories))
         (cfg
@@ -5908,7 +5711,7 @@
           (compiler-driver-profile-finish-total _profile-state))
         (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
         0)]
-    [(ResultCompilerDriver.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-print-advisories (& advisories))
         (cfg
@@ -5923,7 +5726,7 @@
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (match result
-    [(ResultCompilerDriverBuffer.Ok buf advisories)
+    [(Ok buf advisories)
       (let
         [status : i64
           (begin
@@ -5949,7 +5752,7 @@
               (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
               0)
             status)))]
-    [(ResultCompilerDriverBuffer.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-print-advisories (& advisories))
         (compiler-driver-allocation-profile-snapshot-for-job!
@@ -5969,7 +5772,7 @@
   [result : ResultCompilerDriverPic]
   [output-path : String]) : i64
   (match result
-    [(ResultCompilerDriverPic.Ok output advisories)
+    [(Ok output advisories)
       (let
         [fixups-path : String
           (compiler-driver-pic-fixups-path
@@ -5994,7 +5797,7 @@
           (io.print-format "{}" (str_cat.str-cat "Wrote " output-path "\n"))
           (io.print-format "{}" (str_cat.str-cat "Wrote " fixups-path "\n"))
           0))]
-    [(ResultCompilerDriverPic.Err diag advisories)
+    [(Err diag advisories)
       (begin
         (compiler-driver-print-advisories (& advisories))
         (cfg

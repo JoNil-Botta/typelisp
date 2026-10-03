@@ -85,8 +85,7 @@
     [prefix-len : i64 (string.string-length prefix)]
     [lzss-len : i64 (string.string-length lzss)]
     (if (not (compiler-embedded-stdlib-tlci-encoder-prefix? lzss (& prefix)))
-      (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-        "embedded stdlib tlci encoder: bad lzss prefix")
+      (Err "embedded stdlib tlci encoder: bad lzss prefix")
       (let
         [index : i64 prefix-len]
         [raw-len : i64 0]
@@ -110,16 +109,14 @@
                 (set! index (+ index 1)))))
           (cond
             [overflow
-              (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+              (Err
                 "embedded stdlib tlci encoder: lzss raw length overflows i64")]
             [(= digits 0)
-              (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                "embedded stdlib tlci encoder: missing lzss raw length")]
+              (Err "embedded stdlib tlci encoder: missing lzss raw length")]
             [(or
                 (>= index lzss-len)
                 (!= (compiler-embedded-stdlib-tlci-encoder-byte lzss index) 10))
-              (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                "embedded stdlib tlci encoder: malformed lzss raw length")]
+              (Err "embedded stdlib tlci encoder: malformed lzss raw length")]
             [else
               (let
                 [token-start : i64 (+ index 1)]
@@ -143,7 +140,7 @@
                       (when
                         (>= token-index lzss-len)
                         (return
-                          (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+                          (Err
                             "embedded stdlib tlci encoder: truncated lzss flags")))
                       (let
                         [flags : i64
@@ -160,7 +157,7 @@
                                   (when
                                     (>= token-index lzss-len)
                                     (return
-                                      (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+                                      (Err
                                         "embedded stdlib tlci encoder: truncated lzss literal")))
                                   (let
                                     [literal : i64
@@ -177,7 +174,7 @@
                                   (when
                                     (> (+ token-index 2) lzss-len)
                                     (return
-                                      (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+                                      (Err
                                         "embedded stdlib tlci encoder: truncated lzss match")))
                                   (let
                                     [packed : i64
@@ -197,12 +194,12 @@
                                       (when
                                         (> (+ distance-symbol 1) out-index)
                                         (return
-                                          (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+                                          (Err
                                             "embedded stdlib tlci encoder: lzss match before output")))
                                       (when
                                         (> (+ out-index match-length) raw-len)
                                         (return
-                                          (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
+                                          (Err
                                             "embedded stdlib tlci encoder: lzss match exceeds output")))
                                       (set!
                                         (array-ref main 256)
@@ -221,9 +218,8 @@
                                         (+ out-index match-length))))))
                               (set! bit (+ bit 1))))))))
                   (if (!= token-index lzss-len)
-                    (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err
-                      "embedded stdlib tlci encoder: trailing lzss tokens")
-                    (ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Ok
+                    (Err "embedded stdlib tlci encoder: trailing lzss tokens")
+                    (Ok
                       (CompilerEmbeddedStdlibTlciEncoderFrequencies
                         raw-len
                         token-start
@@ -395,8 +391,7 @@
           (set! symbol (+ symbol 1))))
       (cond
         [(= active 0)
-          (ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok
-            (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths))]
+          (Ok (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths))]
         [(= active 1)
           (let
             [dummy : i64
@@ -406,7 +401,7 @@
             (begin
               (set! (array-ref lengths only) 1)
               (set! (array-ref lengths dummy) 1)
-              (ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok
+              (Ok
                 (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths))))]
         [else
           (let
@@ -461,12 +456,12 @@
                             bits
                             (compiler-embedded-stdlib-tlci-encoder-max-code-bits))
                           (return
-                            (ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err
+                            (Err
                               "embedded stdlib tlci encoder: huffman code exceeds 31 bits")))
                         (set! (array-ref lengths symbol) bits)))
                     unit)
                   (set! symbol (+ symbol 1))))
-              (ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok
+              (Ok
                 (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths))))]))))
 
 (define (compiler-embedded-stdlib-tlci-encoder-write-code!
@@ -635,25 +630,20 @@
   (let
     [lzss : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes source)]
     (match (compiler-embedded-stdlib-tlci-encoder-count (& lzss))
-      [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Err message)
-        (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-      [(ResultCompilerEmbeddedStdlibTlciEncoderFrequencies.Ok frequencies)
+      [(Err message) (Err message)]
+      [(Ok frequencies)
         (match (compiler-embedded-stdlib-tlci-encoder-build-codes
           frequencies.main)
-          [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-            (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-          [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok main-codes)
+          [(Err message) (Err message)]
+          [(Ok main-codes)
             (match (compiler-embedded-stdlib-tlci-encoder-build-codes
               frequencies.distance)
-              [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-                (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-              [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok distance-codes)
+              [(Err message) (Err message)]
+              [(Ok distance-codes)
                 (match (compiler-embedded-stdlib-tlci-encoder-build-codes
                   frequencies.length)
-                  [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Err message)
-                    (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err message)]
-                  [(ResultCompilerEmbeddedStdlibTlciEncoderCodes.Ok
-                      length-codes)
+                  [(Err message) (Err message)]
+                  [(Ok length-codes)
                     (let
                       [writer : CompilerEmbeddedStdlibTlciEncoderBitWriter
                         (compiler-embedded-stdlib-tlci-encoder-encode-tokens
@@ -662,7 +652,7 @@
                           (& main-codes)
                           (& distance-codes)
                           (& length-codes))]
-                      (ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok
+                      (Ok
                         (compiler-embedded-stdlib-tlci-encoder-finish
                           (& frequencies)
                           (& main-codes)

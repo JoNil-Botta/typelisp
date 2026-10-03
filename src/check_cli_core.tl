@@ -68,11 +68,11 @@
                 "selfhost-check: --target was provided more than once")
               (match (target_cfg.compiler-target-cfg-parse
                 (cli_option.cli-args-value (& args)))
-                [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                [(Ok parsed-target)
                   (begin
                     (set! target parsed-target)
                     (set! has-target true))]
-                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                [(Err message)
                   (cli_option.cli-args-fail!
                     (&mut args)
                     (str_cat.str-cat "selfhost-check: " message))]))]
@@ -97,15 +97,14 @@
               (set! input-path (string.copy (& args.arg)))
               (set! has-input true))]))
       (cond
-        [args.failed (ResultSelfhostCheckConfig.Err args.error)]
+        [args.failed (Err args.error)]
         [(and has-input has-manifest)
-          (ResultSelfhostCheckConfig.Err
-            "selfhost-check: cannot combine input path with --manifest-path")]
+          (Err "selfhost-check: cannot combine input path with --manifest-path")]
         [has-input
-          (ResultSelfhostCheckConfig.Ok
+          (Ok
             (SelfhostCheckConfig.File input-path stdlib-roots target cfg-names))]
         [else
-          (ResultSelfhostCheckConfig.Ok
+          (Ok
             (SelfhostCheckConfig.Package
               manifest-path
               has-manifest
@@ -171,7 +170,7 @@
       (owned_view.compiler-owned-shared-view input-path)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       check-cfgs)
-      [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
+      [(Ok _ advisories)
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (let
@@ -196,7 +195,7 @@
                   (selfhost-check-print-passed)
                   doctest-status))
               inline-test-status)))]
-      [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
+      [(Err diag advisories)
         (begin
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (selfhost-check-report-diagnostics (deref diag))
@@ -248,11 +247,11 @@
     "check"
     manifest-path
     has-manifest)
-    [(package_source_core.ResultPackageSourceSet.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
+    [(Ok source-set)
       (let
         [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
         [manifest-dir : String source-set.manifest-dir]
@@ -274,10 +273,7 @@
             target
             (owned_view.compiler-owned-shared-view cfg-names))
           (tc.tc-serial-job-state))
-          [(compiler_check_core.ResultCompilerCheckWithPaths.Ok
-              _
-              paths
-              advisories)
+          [(Ok _ paths advisories)
             (begin
               (compiler_driver_core.compiler-driver-print-advisories
                 (& advisories))
@@ -319,9 +315,7 @@
                       (selfhost-check-print-passed)
                       doctest-status))
                   inline-test-status)))]
-          [(compiler_check_core.ResultCompilerCheckWithPaths.Err
-              diag
-              advisories)
+          [(Err diag advisories)
             (begin
               (compiler_driver_core.compiler-driver-print-advisories
                 (& advisories))
@@ -332,23 +326,18 @@
 ;; Run the `check` command over arguments starting at `start`.
 (define (selfhost-check-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-check-config-from start count)
-    [(ResultSelfhostCheckConfig.Ok config)
+    [(Ok config)
       (match config
-        [(SelfhostCheckConfig.File input-path stdlib-roots target cfg-names)
+        [(File input-path stdlib-roots target cfg-names)
           (selfhost-check-file input-path stdlib-roots target cfg-names)]
-        [(SelfhostCheckConfig.Package
-            manifest-path
-            has-manifest
-            stdlib-roots
-            target
-            cfg-names)
+        [(Package manifest-path has-manifest stdlib-roots target cfg-names)
           (selfhost-check-package
             manifest-path
             has-manifest
             stdlib-roots
             target
             cfg-names)])]
-    [(ResultSelfhostCheckConfig.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]))

@@ -571,7 +571,7 @@
       (when
         (not (compiler-eh-frame-limits-valid? limits))
         (return
-          (ResultCompilerEhFrameImage.Err
+          (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-invalid-limits
               input
@@ -581,7 +581,7 @@
       (when
         (> length limits.max-input-bytes)
         (return
-          (ResultCompilerEhFrameImage.Err
+          (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-input-limit
               input
@@ -595,7 +595,7 @@
           (when
             (!= framing.error-code 0)
             (return
-              (ResultCompilerEhFrameImage.Err
+              (Err
                 (compiler-eh-frame-error
                   framing.error-code
                   input
@@ -628,9 +628,8 @@
                         record
                         end
                         limits)
-                        [(ResultCompilerEhFrameCieParse.Err error)
-                          (return (ResultCompilerEhFrameImage.Err error))]
-                        [(ResultCompilerEhFrameCieParse.Ok parsed)
+                        [(Err error) (return (Err error))]
+                        [(Ok parsed)
                           (let
                             [check : CompilerEhFrameProgramCheck
                               (compiler-eh-frame-check-program
@@ -646,7 +645,7 @@
                               (when
                                 (not (string.eq check.message ""))
                                 (return
-                                  (ResultCompilerEhFrameImage.Err
+                                  (Err
                                     (compiler-eh-frame-error
                                       compiler-eh-frame-error-cfa
                                       input
@@ -688,7 +687,7 @@
                           (when
                             (< cie 0)
                             (return
-                              (ResultCompilerEhFrameImage.Err
+                              (Err
                                 (compiler-eh-frame-error
                                   compiler-eh-frame-error-cie-reference
                                   input
@@ -698,7 +697,7 @@
                           (when
                             (< (- end record) 17)
                             (return
-                              (ResultCompilerEhFrameImage.Err
+                              (Err
                                 (compiler-eh-frame-error
                                   compiler-eh-frame-error-truncated
                                   input
@@ -722,7 +721,7 @@
                               (when
                                 (<= range 0)
                                 (return
-                                  (ResultCompilerEhFrameImage.Err
+                                  (Err
                                     (compiler-eh-frame-error
                                       compiler-eh-frame-error-fde
                                       input
@@ -732,7 +731,7 @@
                               (when
                                 (not augmentation.ok?)
                                 (return
-                                  (ResultCompilerEhFrameImage.Err
+                                  (Err
                                     (compiler-eh-frame-error
                                       compiler-eh-frame-error-leb
                                       input
@@ -742,7 +741,7 @@
                               (when
                                 (!= augmentation.value 0)
                                 (return
-                                  (ResultCompilerEhFrameImage.Err
+                                  (Err
                                     (compiler-eh-frame-error
                                       compiler-eh-frame-error-fde
                                       input
@@ -754,7 +753,7 @@
                                   (- end augmentation.next)
                                   limits.max-program-bytes)
                                 (return
-                                  (ResultCompilerEhFrameImage.Err
+                                  (Err
                                     (compiler-eh-frame-error
                                       compiler-eh-frame-error-cfa
                                       input
@@ -776,7 +775,7 @@
                                   (when
                                     (not (string.eq check.message ""))
                                     (return
-                                      (ResultCompilerEhFrameImage.Err
+                                      (Err
                                         (compiler-eh-frame-error
                                           compiler-eh-frame-error-cfa
                                           input
@@ -809,14 +808,14 @@
                     (when
                       (> work limits.max-work)
                       (return
-                        (ResultCompilerEhFrameImage.Err
+                        (Err
                           (compiler-eh-frame-error
                             compiler-eh-frame-error-work-limit
                             input
                             record
                             record
                             "eh_frame: work limit exceeded")))))))
-              (ResultCompilerEhFrameImage.Ok
+              (Ok
                 (CompilerEhFrameImage
                   input
                   cies
@@ -850,7 +849,7 @@
       (when
         (> (+ at 9) end)
         (return
-          (ResultCompilerEhFrameCieParse.Err
+          (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-truncated
               input
@@ -860,7 +859,7 @@
       (when
         (!= (byte_le.byte-le-at bytes at) 1)
         (return
-          (ResultCompilerEhFrameCieParse.Err
+          (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-cie
               input
@@ -873,7 +872,7 @@
           (!= (byte_le.byte-le-at bytes (+ at 2)) 82)
           (!= (byte_le.byte-le-at bytes (+ at 3)) 0))
         (return
-          (ResultCompilerEhFrameCieParse.Err
+          (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-cie
               input
@@ -887,7 +886,7 @@
           (when
             (or (not code.ok?) (not data.ok?))
             (return
-              (ResultCompilerEhFrameCieParse.Err
+              (Err
                 (compiler-eh-frame-error
                   compiler-eh-frame-error-leb
                   input
@@ -904,7 +903,7 @@
               (< data.value -4294967296)
               (> data.value 4294967295))
             (return
-              (ResultCompilerEhFrameCieParse.Err
+              (Err
                 (compiler-eh-frame-error
                   compiler-eh-frame-error-cie
                   input
@@ -914,7 +913,7 @@
           (when
             (> (+ data.next 3) end)
             (return
-              (ResultCompilerEhFrameCieParse.Err
+              (Err
                 (compiler-eh-frame-error
                   compiler-eh-frame-error-truncated
                   input
@@ -929,7 +928,7 @@
               (when
                 (> return-register compiler-eh-frame-max-register)
                 (return
-                  (ResultCompilerEhFrameCieParse.Err
+                  (Err
                     (compiler-eh-frame-error
                       compiler-eh-frame-error-cie
                       input
@@ -942,7 +941,7 @@
                   (!= augmentation.value 1)
                   (>= augmentation.next end))
                 (return
-                  (ResultCompilerEhFrameCieParse.Err
+                  (Err
                     (compiler-eh-frame-error
                       compiler-eh-frame-error-cie
                       input
@@ -954,7 +953,7 @@
                   (byte_le.byte-le-at bytes augmentation.next)
                   compiler-eh-frame-pe-pcrel-sdata4)
                 (return
-                  (ResultCompilerEhFrameCieParse.Err
+                  (Err
                     (compiler-eh-frame-error
                       compiler-eh-frame-error-cie
                       input
@@ -964,14 +963,14 @@
               (when
                 (> (- end (+ augmentation.next 1)) limits.max-program-bytes)
                 (return
-                  (ResultCompilerEhFrameCieParse.Err
+                  (Err
                     (compiler-eh-frame-error
                       compiler-eh-frame-error-cfa
                       input
                       record
                       (+ augmentation.next 1)
                       "eh_frame: CFA program byte limit exceeded"))))
-              (ResultCompilerEhFrameCieParse.Ok
+              (Ok
                 (CompilerEhFrameCieParse
                   code.value
                   data.value
@@ -1267,8 +1266,7 @@
     (compiler-eh-frame-push-u8! out 0)))
 
 (define (compiler-eh-frame-encode-error [code : i64] [message : String]) : ResultCompilerEhFrameOutput
-  (ResultCompilerEhFrameOutput.Err
-    (compiler-eh-frame-error code -1 -1 -1 message)))
+  (Err (compiler-eh-frame-error code -1 -1 -1 message)))
 
 ;; Canonically encode the selected FDEs, and the CIEs they use, as a final
 ;; `.eh_frame` at `section-address`.  Each retained CIE is followed by its FDEs;
@@ -1570,10 +1568,9 @@
           ;; Two FDEs claiming one code address leave an unwinder no way to
           ;; choose, whether or not a search header is built.
           (match (compiler-eh-frame-sorted-rows (& rows))
-            [(ResultCompilerEhFrameRows.Err error)
-              (ResultCompilerEhFrameOutput.Err error)]
-            [(ResultCompilerEhFrameRows.Ok _)
-              (ResultCompilerEhFrameOutput.Ok
+            [(Err error) (Err error)]
+            [(Ok _)
+              (Ok
                 (CompilerEhFrameOutput
                   (byte_buf_core.byte-buf-builder-finish-array (& out))
                   rows))]))))))
@@ -1665,7 +1662,7 @@
                     (+ row.initial-location row.range)))
                 (not (compiler-eh-frame-address? row.fde-address)))
               (return
-                (ResultCompilerEhFrameRows.Err
+                (Err
                   (compiler-eh-frame-header-error
                     compiler-eh-frame-error-address
                     -1
@@ -1702,7 +1699,7 @@
             (when
               (= previous.initial-location current.initial-location)
               (return
-                (ResultCompilerEhFrameRows.Err
+                (Err
                   (compiler-eh-frame-header-error
                     compiler-eh-frame-error-header-order
                     -1
@@ -1712,13 +1709,13 @@
                 (+ previous.initial-location previous.range)
                 current.initial-location)
               (return
-                (ResultCompilerEhFrameRows.Err
+                (Err
                   (compiler-eh-frame-header-error
                     compiler-eh-frame-error-header-order
                     -1
                     "eh_frame: FDE code ranges overlap"))))
             (set! index (+ index 1)))))
-      (ResultCompilerEhFrameRows.Ok sorted))))
+      (Ok sorted))))
 
 ;; Encode the version-1 search header at `header-address` for `rows` of a
 ;; final `.eh_frame` at `eh-frame-address`.  The eh_frame pointer is relative
@@ -1738,16 +1735,16 @@
       (when
         (not (compiler-eh-frame-limits-valid? limits))
         (return
-          (ResultCompilerEhFrameHeaderBytes.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-invalid-limits
               -1
               "eh_frame_hdr: invalid codec limits"))))
-      (when (= count 0) (return ResultCompilerEhFrameHeaderBytes.NoHeader))
+      (when (= count 0) (return NoHeader))
       (when
         (or (> count 4294967295) (> count limits.max-records))
         (return
-          (ResultCompilerEhFrameHeaderBytes.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-record-limit
               -1
@@ -1755,7 +1752,7 @@
       (when
         (> size limits.max-output-bytes)
         (return
-          (ResultCompilerEhFrameHeaderBytes.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-output-limit
               -1
@@ -1765,15 +1762,14 @@
           (not (compiler-eh-frame-address? header-address))
           (not (compiler-eh-frame-address? eh-frame-address)))
         (return
-          (ResultCompilerEhFrameHeaderBytes.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-address
               -1
               "eh_frame_hdr: section address outside the supported range"))))
       (match (compiler-eh-frame-sorted-rows rows)
-        [(ResultCompilerEhFrameRows.Err error)
-          (ResultCompilerEhFrameHeaderBytes.Err error)]
-        [(ResultCompilerEhFrameRows.Ok sorted)
+        [(Err error) (Err error)]
+        [(Ok sorted)
           (let
             [index : i64 0]
             [out : byte_buf_core.ByteBufBuilder
@@ -1783,7 +1779,7 @@
               (when
                 (not (compiler-eh-frame-i32? pointer))
                 (return
-                  (ResultCompilerEhFrameHeaderBytes.Err
+                  (Err
                     (compiler-eh-frame-header-error
                       compiler-eh-frame-error-address
                       4
@@ -1814,7 +1810,7 @@
                         (not (compiler-eh-frame-i32? location))
                         (not (compiler-eh-frame-i32? fde)))
                       (return
-                        (ResultCompilerEhFrameHeaderBytes.Err
+                        (Err
                           (compiler-eh-frame-header-error
                             compiler-eh-frame-error-address
                             (+ compiler-eh-frame-header-size (* index 8))
@@ -1822,8 +1818,7 @@
                     (byte_le.push-u32! (&mut out) location)
                     (byte_le.push-u32! (&mut out) fde)
                     (set! index (+ index 1)))))
-              (ResultCompilerEhFrameHeaderBytes.Ok
-                (byte_buf_core.byte-buf-builder-finish-array (& out)))))]))))
+              (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))))]))))
 
 ;; Decode a version-1 search header at `header-address`: the eh_frame pointer
 ;; against its own field, each row against the header start.  The table must
@@ -1839,7 +1834,7 @@
       (when
         (not (compiler-eh-frame-limits-valid? limits))
         (return
-          (ResultCompilerEhFrameHeader.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-invalid-limits
               -1
@@ -1847,7 +1842,7 @@
       (when
         (> length limits.max-input-bytes)
         (return
-          (ResultCompilerEhFrameHeader.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-input-limit
               0
@@ -1855,7 +1850,7 @@
       (when
         (not (compiler-eh-frame-address? header-address))
         (return
-          (ResultCompilerEhFrameHeader.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-address
               -1
@@ -1863,7 +1858,7 @@
       (when
         (< length compiler-eh-frame-header-size)
         (return
-          (ResultCompilerEhFrameHeader.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-truncated
               length
@@ -1875,7 +1870,7 @@
           (!= (byte_le.byte-le-at bytes 2) compiler-eh-frame-pe-udata4)
           (!= (byte_le.byte-le-at bytes 3) compiler-eh-frame-pe-datarel-sdata4))
         (return
-          (ResultCompilerEhFrameHeader.Err
+          (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-header
               0
@@ -1886,7 +1881,7 @@
           (when
             (> count limits.max-records)
             (return
-              (ResultCompilerEhFrameHeader.Err
+              (Err
                 (compiler-eh-frame-header-error
                   compiler-eh-frame-error-record-limit
                   8
@@ -1894,7 +1889,7 @@
           (when
             (!= length (+ compiler-eh-frame-header-size (* count 8)))
             (return
-              (ResultCompilerEhFrameHeader.Err
+              (Err
                 (compiler-eh-frame-header-error
                   compiler-eh-frame-error-header
                   8
@@ -1917,7 +1912,7 @@
                           location
                           (array-ref rows (- index 1)).initial-location))
                       (return
-                        (ResultCompilerEhFrameHeader.Err
+                        (Err
                           (compiler-eh-frame-header-error
                             compiler-eh-frame-error-header-order
                             at
@@ -1931,7 +1926,7 @@
                           header-address
                           (compiler-eh-frame-read-i32 bytes (+ at 4)))))
                     (set! index (+ index 1)))))
-              (ResultCompilerEhFrameHeader.Ok
+              (Ok
                 (CompilerEhFrameHeader
                   (+ (+ header-address 4) (compiler-eh-frame-read-i32 bytes 4))
                   rows)))))))))

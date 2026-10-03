@@ -76,8 +76,7 @@
   [events : (& events CompilerX64TemplateEventSeq)]
   [index : i64]) : ResultCompilerX64TemplateEvent
   (if (or (< index 0) (>= index events.count))
-    (ResultCompilerX64TemplateEvent.Err
-      "x64 executable template: event index out of bounds")
+    (Err "x64 executable template: event index out of bounds")
     (let
       [text : String events.transcript]
       [n : i64 (string.string-length text)]
@@ -110,12 +109,11 @@
           [detail : String
             (string.substring text detail-start (- end detail-start))]
           (if (not (compiler-x64-template-event-code-known? code))
-            (ResultCompilerX64TemplateEvent.Err
-              "x64 executable template: unknown event family")
+            (Err "x64 executable template: unknown event family")
             (if (and (= code 'O') (= (string.string-length detail) 0))
-              (ResultCompilerX64TemplateEvent.Err
+              (Err
                 "x64 executable template: unsupported event needs provenance")
-              (ResultCompilerX64TemplateEvent.Ok
+              (Ok
                 (CompilerX64TemplateEvent
                   (compiler-x64-template-event-kind-from-code code)
                   detail)))))))))

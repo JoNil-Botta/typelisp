@@ -148,10 +148,10 @@
   [value : diag.CompilerDiagnosticApplicability]
   [policy : LintFixPolicy]) : bool
   (match value
-    [(diag.CompilerDiagnosticMachineApplicable) true]
-    [(diag.CompilerDiagnosticMaybeIncorrect) policy.maybe-incorrect]
-    [(diag.CompilerDiagnosticHasPlaceholders) policy.has-placeholders]
-    [(diag.CompilerDiagnosticUnspecified) policy.unspecified]))
+    [(CompilerDiagnosticMachineApplicable) true]
+    [(CompilerDiagnosticMaybeIncorrect) policy.maybe-incorrect]
+    [(CompilerDiagnosticHasPlaceholders) policy.has-placeholders]
+    [(CompilerDiagnosticUnspecified) policy.unspecified]))
 
 ;: The compiler's edit columns count UTF-8 bytes. Reject a continuation byte
 ;: boundary and the middle of CRLF; neither is an editable character boundary.

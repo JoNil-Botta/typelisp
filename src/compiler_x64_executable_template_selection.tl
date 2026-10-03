@@ -80,177 +80,173 @@
         0)]
     (begin
       (match target
-        [(x64.CompilerX64TemplateTarget.LinuxX64)
+        [(LinuxX64)
           (begin
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy))
+              (LinuxRuntimeMemcpy))
             (when
               (!= (bit-and features.leaf-mask 4) 0)
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)))
+                (LinuxRuntimeCopyFwd)))
             (when
               (!= (bit-and features.leaf-mask 8) 0)
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)))
+                (LinuxRuntimeCopy8Fwd)))
             (when
               (!= (bit-and features.leaf-mask 1) 0)
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)))
+                (LinuxRuntimeMemchr)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero))
+              (LinuxRuntimeArrayZero))
             (when
               (!= (bit-and features.leaf-mask 16) 0)
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)))
+                (LinuxRuntimeMemFill8)))
             (when
               (!= (bit-and features.leaf-mask 2) 0)
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)))
+                (LinuxRuntimeTlciImage)))
             (when
               features.tlci-macro-entry
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciMacro)))
+                (LinuxRuntimeTlciMacro)))
             (when
               features.backtrace
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeBacktrace)))
+                (LinuxRuntimeBacktrace)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
               (compiler-x64-template-select-four
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArena)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebug)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfile)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebug)
+                (LinuxRuntimeArena)
+                (LinuxRuntimeArenaDebug)
+                (LinuxRuntimeArenaProfile)
+                (LinuxRuntimeArenaProfileDebug)
                 features.profile
                 features.arena-debug))
             (when
               features.profile
-              (compiler-x64-template-id-list-push!
-                (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.CommonProfile)))
+              (compiler-x64-template-id-list-push! (&mut ids) (CommonProfile)))
             (when
               features.startup-profile
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.CommonStartupProfile)))
+                (CommonStartupProfile)))
             (when
               features.alloc
               (compiler-x64-template-id-list-push!
                 (&mut ids)
                 (compiler-x64-template-select-four
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeAlloc)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocDebug)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfile)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfileDebug)
+                  (LinuxRuntimeAlloc)
+                  (LinuxRuntimeAllocDebug)
+                  (LinuxRuntimeAllocProfile)
+                  (LinuxRuntimeAllocProfileDebug)
                   features.profile
                   features.arena-debug)))
             (when
               features.region-mark
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionMark)))
+                (LinuxRuntimeRegionMark)))
             (when
               features.region-reset
               (compiler-x64-template-id-list-push!
                 (&mut ids)
                 (compiler-x64-template-select-four
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
-                  (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
+                  (LinuxRuntimeRegionReset)
+                  (LinuxRuntimeRegionResetDebug)
+                  (LinuxRuntimeRegionResetProfile)
+                  (LinuxRuntimeRegionResetProfileDebug)
                   features.profile
                   features.arena-debug))))]
-        [(x64.CompilerX64TemplateTarget.WindowsX64)
+        [(WindowsX64)
           (begin
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeMemcpy))
+              (WindowsRuntimeMemcpy))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeMemchr))
+              (WindowsRuntimeMemchr))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArrayZero))
+              (WindowsRuntimeArrayZero))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeMemFill8))
+              (WindowsRuntimeMemFill8))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciImage))
+              (WindowsRuntimeTlciImage))
             (when
               features.tlci-macro-entry
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeTlciMacro)))
+                (WindowsRuntimeTlciMacro)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
               (compiler-x64-template-select-four
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaDebug)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfile)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileDebug)
+                (WindowsRuntimeArena)
+                (WindowsRuntimeArenaDebug)
+                (WindowsRuntimeArenaProfile)
+                (WindowsRuntimeArenaProfileDebug)
                 features.profile
                 features.arena-debug))
             (when
               features.profile
-              (compiler-x64-template-id-list-push!
-                (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.CommonProfile)))
+              (compiler-x64-template-id-list-push! (&mut ids) (CommonProfile)))
             (when
               features.startup-profile
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.CommonStartupProfile)))
+                (CommonStartupProfile)))
             (when
               features.alloc
               (compiler-x64-template-id-list-push!
                 (&mut ids)
                 (compiler-x64-template-select-four
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeAlloc)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocDebug)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfile)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeAllocProfileDebug)
+                  (WindowsRuntimeAlloc)
+                  (WindowsRuntimeAllocDebug)
+                  (WindowsRuntimeAllocProfile)
+                  (WindowsRuntimeAllocProfileDebug)
                   features.profile
                   features.arena-debug)))
             (when
               features.region-mark
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionMark)))
+                (WindowsRuntimeRegionMark)))
             (when
               features.region-reset
               (compiler-x64-template-id-list-push!
                 (&mut ids)
                 (compiler-x64-template-select-four
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionReset)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebug)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfile)
-                  (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebug)
+                  (WindowsRuntimeRegionReset)
+                  (WindowsRuntimeRegionResetDebug)
+                  (WindowsRuntimeRegionResetProfile)
+                  (WindowsRuntimeRegionResetProfileDebug)
                   features.profile
                   features.arena-debug)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
-              (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeThread))
+              (WindowsRuntimeThread))
             (when
               features.backtrace
               (compiler-x64-template-id-list-push!
                 (&mut ids)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeBacktrace)))
+                (WindowsRuntimeBacktrace)))
             (compiler-x64-template-id-list-push!
               (&mut ids)
               (if features.startup-profile
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShimStartupProfile)
-                (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeLibcShim))))]
-        [(x64.CompilerX64TemplateTarget.AnyX64) unit])
+                (WindowsRuntimeLibcShimStartupProfile)
+                (WindowsRuntimeLibcShim))))]
+        [(AnyX64) unit])
       ids)))
 
 (define (compiler-x64-template-selection-unique?

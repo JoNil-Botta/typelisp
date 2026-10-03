@@ -16,9 +16,8 @@
 
 (define (compiler-cfg-env-binding-count [cfgs : sym_i64_env.SymI64Env]) : i64
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) 0]
-    [(sym_i64_env.SymI64ViewBind _ _ rest)
-      (+ 1 (compiler-cfg-env-binding-count rest))]))
+    [(SymI64ViewNil) 0]
+    [(SymI64ViewBind _ _ rest) (+ 1 (compiler-cfg-env-binding-count rest))]))
 
 (define (compiler-cfg-snapshot-fill!
   [cfgs : sym_i64_env.SymI64Env]
@@ -26,8 +25,8 @@
   [values : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) unit]
-    [(sym_i64_env.SymI64ViewBind key value rest)
+    [(SymI64ViewNil) unit]
+    [(SymI64ViewBind key value rest)
       (begin
         ;; Snapshot names outlive the originating interner and its persistent arena.
         (set! (array-ref slots index) (string.copy (compiler-cfg-name key)))
@@ -145,8 +144,8 @@
     [remove-key : i64
       (compiler-cfg-key-id (compiler-cfg-key-from-name-id name-id))]
     (match (sym_i64_env.sym-i64-view cfgs)
-      [(sym_i64_env.SymI64ViewNil) (compiler-cfg-empty)]
-      [(sym_i64_env.SymI64ViewBind key value rest)
+      [(SymI64ViewNil) (compiler-cfg-empty)]
+      [(SymI64ViewBind key value rest)
         (let
           [clean-rest : sym_i64_env.SymI64Env
             (compiler-cfg-remove-id rest name-id)]
@@ -198,8 +197,8 @@
   [base : sym_i64_env.SymI64Env]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) base]
-    [(sym_i64_env.SymI64ViewBind name-id value rest)
+    [(SymI64ViewNil) base]
+    [(SymI64ViewBind name-id value rest)
       (sym_i64_env.sym-i64-bind-id (compiler-cfg-merge base rest) name-id value)]))
 
 (define (compiler-cfg-enabled?

@@ -222,30 +222,24 @@
 (define (check-plain-byte [source : (& s str)] [byte : i64] [cursor : Cursor]) : Step
   (cond
     [(= byte 0)
-      (Step.Err
-        (script-error
-          source
-          (LinkerScriptErrorKind.NulByte)
-          cursor.line
-          cursor.column
-          "NUL byte"))]
+      (Err (script-error source (NulByte) cursor.line cursor.column "NUL byte"))]
     [(>= byte 128)
-      (Step.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.NonAscii)
+          (NonAscii)
           cursor.line
           cursor.column
           "non-ASCII byte outside a quoted path"))]
     [(or (= byte 127) (and (< byte 32) (not (space? byte))))
-      (Step.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.ControlByte)
+          (ControlByte)
           cursor.line
           cursor.column
           (cat.str-cat "control byte " (string.int->string byte))))]
-    [else (Step.Ok)]))
+    [else (Ok)]))
 
 (define (tokenize
   [source : (& s str)]
@@ -255,8 +249,7 @@
     [size : i64 (array-length data)]
     [tokens : token_vec.Vec (token_vec.new)]
     [cursor : Cursor (Cursor 0 1 1)]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
     (begin
       (while (and (not failed) (< cursor.pos size))
@@ -283,11 +276,11 @@
                             (set! closed true))]
                         [else
                           (match (check-plain-byte source inner cursor)
-                            [(Step.Err error)
+                            [(Err error)
                               (begin
                                 (set! failed true)
                                 (set! failure error))]
-                            [(Step.Ok) (set! cursor (advance cursor inner))])])))
+                            [(Ok) (set! cursor (advance cursor inner))])])))
                   (when
                     (and (not failed) (not closed))
                     (set! failed true)
@@ -295,7 +288,7 @@
                       failure
                       (script-error
                         source
-                        (LinkerScriptErrorKind.UnterminatedComment)
+                        (UnterminatedComment)
                         start.line
                         start.column
                         "unterminated comment")))))]
@@ -307,7 +300,7 @@
                     failure
                     (script-error
                       source
-                      (LinkerScriptErrorKind.TooManyTokens)
+                      (TooManyTokens)
                       cursor.line
                       cursor.column
                       (cat.str-cat
@@ -342,7 +335,7 @@
                                       failure
                                       (script-error
                                         source
-                                        (LinkerScriptErrorKind.NulByte)
+                                        (NulByte)
                                         cursor.line
                                         cursor.column
                                         "NUL byte")))]
@@ -356,7 +349,7 @@
                                       failure
                                       (script-error
                                         source
-                                        (LinkerScriptErrorKind.TokenTooLong)
+                                        (TokenTooLong)
                                         start.line
                                         start.column
                                         (cat.str-cat
@@ -376,7 +369,7 @@
                               (token_vec.push-ref!
                                 (&mut tokens)
                                 (Token
-                                  (TokenKind.Quoted)
+                                  (Quoted)
                                   (bytes.byte-buf-builder-to-string (& text))
                                   start.line
                                   start.column))]
@@ -387,7 +380,7 @@
                                   failure
                                   (script-error
                                     source
-                                    (LinkerScriptErrorKind.UnterminatedQuote)
+                                    (UnterminatedQuote)
                                     start.line
                                     start.column
                                     "unterminated quote")))])))]
@@ -403,10 +396,10 @@
                           (&mut tokens)
                           (Token
                             (cond
-                              [(= byte (cast '(' : i64)) (TokenKind.Open)]
-                              [(= byte (cast ')' : i64)) (TokenKind.Close)]
-                              [(= byte (cast ',' : i64)) (TokenKind.Comma)]
-                              [else (TokenKind.Punct)])
+                              [(= byte (cast '(' : i64)) (Open)]
+                              [(= byte (cast ')' : i64)) (Close)]
+                              [(= byte (cast ',' : i64)) (Comma)]
+                              [else (Punct)])
                             (punct-text byte)
                             start.line
                             start.column))
@@ -428,11 +421,11 @@
                                 (comment-start? data cursor.pos size))
                                 (set! done true)
                                 (match (check-plain-byte source inner cursor)
-                                  [(Step.Err error)
+                                  [(Err error)
                                     (begin
                                       (set! failed true)
                                       (set! failure error))]
-                                  [(Step.Ok)
+                                  [(Ok)
                                     (if (>=
                                       (bytes.byte-buf-builder-len (& text))
                                       limits.max-token-bytes)
@@ -442,7 +435,7 @@
                                           failure
                                           (script-error
                                             source
-                                            (LinkerScriptErrorKind.TokenTooLong)
+                                            (TokenTooLong)
                                             start.line
                                             start.column
                                             (cat.str-cat
@@ -460,12 +453,12 @@
                             (token_vec.push-ref!
                               (&mut tokens)
                               (Token
-                                (TokenKind.Word)
+                                (Word)
                                 (bytes.byte-buf-builder-to-string (& text))
                                 start.line
                                 start.column)))))])))])))
       (if failed
-        (ResultTokens.Err failure)
+        (Err failure)
         (ResultTokens.Ok tokens)))))
 
 ;; --- commands ---------------------------------------------------------------
@@ -560,12 +553,12 @@
   (let
     [token : (& p Token) (token-at parser index)]
     (match token.kind
-      [(TokenKind.Word) (TokenKind.Word)]
-      [(TokenKind.Quoted) (TokenKind.Quoted)]
-      [(TokenKind.Open) (TokenKind.Open)]
-      [(TokenKind.Close) (TokenKind.Close)]
-      [(TokenKind.Comma) (TokenKind.Comma)]
-      [(TokenKind.Punct) (TokenKind.Punct)])))
+      [(Word) (Word)]
+      [(Quoted) (Quoted)]
+      [(Open) (Open)]
+      [(Close) (Close)]
+      [(Comma) (Comma)]
+      [(Punct) (Punct)])))
 
 (define (token-has-byte? [parser : (& p Parser)] [index : i64] [byte : i64]) : bool
   (let
@@ -604,15 +597,15 @@
   (if (and
     (< parser.index (token-count parser))
     (match (token-kind-at parser parser.index)
-      [(TokenKind.Open) true]
+      [(Open) true]
       [_ false]))
     (begin
       (set! parser.index (+ parser.index 1))
-      (Step.Ok))
-    (Step.Err
+      (Ok))
+    (Err
       (script-error
         source
-        (LinkerScriptErrorKind.MissingParen)
+        (MissingParen)
         keyword.line
         keyword.column
         (cat.str-cat (string.copy keyword.text) " without its `(`")))))
@@ -629,8 +622,7 @@
     [listed : i64 0]
     [separated : bool true]
     [closed : bool false]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
     (begin
       (while (and
@@ -642,7 +634,7 @@
           (begin
             (set! parser.index (+ parser.index 1))
             (match token.kind
-              [(TokenKind.Close)
+              [(Close)
                 (if (and (= listed 0) separated)
                   (begin
                     (set! failed true)
@@ -650,12 +642,12 @@
                       failure
                       (script-error
                         source
-                        (LinkerScriptErrorKind.EmptyArgument)
+                        (EmptyArgument)
                         token.line
                         token.column
                         "empty file list")))
                   (set! closed true))]
-              [(TokenKind.Comma)
+              [(Comma)
                 (if separated
                   (begin
                     (set! failed true)
@@ -663,12 +655,12 @@
                       failure
                       (script-error
                         source
-                        (LinkerScriptErrorKind.EmptyArgument)
+                        (EmptyArgument)
                         token.line
                         token.column
                         "empty entry before `,`")))
                   (set! separated true))]
-              [(TokenKind.Quoted)
+              [(Quoted)
                 (if (= (string.string-length token.text) 0)
                   (begin
                     (set! failed true)
@@ -676,7 +668,7 @@
                       failure
                       (script-error
                         source
-                        (LinkerScriptErrorKind.EmptyArgument)
+                        (EmptyArgument)
                         token.line
                         token.column
                         "empty quoted name")))
@@ -684,7 +676,7 @@
                     (input_vec.push-ref!
                       (&mut parser.inputs)
                       (LinkerScriptInput
-                        (LinkerScriptInputKind.Path)
+                        (Path)
                         (string.copy token.text)
                         true
                         as-needed
@@ -692,7 +684,7 @@
                         token.column))
                     (set! listed (+ listed 1))
                     (set! separated false)))]
-              [(TokenKind.Word)
+              [(Word)
                 (cond
                   [(string.eq token.text "AS_NEEDED")
                     (cond
@@ -703,7 +695,7 @@
                             failure
                             (script-error
                               source
-                              (LinkerScriptErrorKind.TooDeep)
+                              (TooDeep)
                               token.line
                               token.column
                               (cat.str-cat
@@ -712,22 +704,22 @@
                                 " parentheses"))))]
                       [else
                         (match (expect-open source parser (& token))
-                          [(Step.Err error)
+                          [(Err error)
                             (begin
                               (set! failed true)
                               (set! failure error))]
-                          [(Step.Ok)
+                          [(Ok)
                             (match (parse-files
                               source
                               parser
                               limits
                               (+ depth 1)
                               true)
-                              [(Step.Err error)
+                              [(Err error)
                                 (begin
                                   (set! failed true)
                                   (set! failure error))]
-                              [(Step.Ok)
+                              [(Ok)
                                 (begin
                                   (set! listed (+ listed 1))
                                   (set! separated false))])])])]
@@ -739,7 +731,7 @@
                           failure
                           (script-error
                             source
-                            (LinkerScriptErrorKind.EmptyLibrary)
+                            (EmptyLibrary)
                             token.line
                             token.column
                             "`-l` without a library name")))
@@ -747,7 +739,7 @@
                         (input_vec.push-ref!
                           (&mut parser.inputs)
                           (LinkerScriptInput
-                            (LinkerScriptInputKind.Library)
+                            (Library)
                             (string.substring
                               token.text
                               2
@@ -765,7 +757,7 @@
                         failure
                         (script-error
                           source
-                          (LinkerScriptErrorKind.Option)
+                          (Option)
                           token.line
                           token.column
                           (cat.str-cat
@@ -777,7 +769,7 @@
                       (input_vec.push-ref!
                         (&mut parser.inputs)
                         (LinkerScriptInput
-                          (LinkerScriptInputKind.Path)
+                          (Path)
                           (string.copy token.text)
                           false
                           as-needed
@@ -785,25 +777,25 @@
                           token.column))
                       (set! listed (+ listed 1))
                       (set! separated false))])]
-              [(TokenKind.Open)
+              [(Open)
                 (begin
                   (set! failed true)
                   (set!
                     failure
                     (script-error
                       source
-                      (LinkerScriptErrorKind.UnbalancedParen)
+                      (UnbalancedParen)
                       token.line
                       token.column
                       "`(` without AS_NEEDED before it")))]
-              [(TokenKind.Punct)
+              [(Punct)
                 (begin
                   (set! failed true)
                   (set!
                     failure
                     (script-error
                       source
-                      (LinkerScriptErrorKind.UnexpectedToken)
+                      (UnexpectedToken)
                       token.line
                       token.column
                       (cat.str-cat
@@ -811,14 +803,14 @@
                         (string.copy token.text)
                         "` in a file list"))))]))))
       (cond
-        [failed (Step.Err failure)]
-        [closed (Step.Ok)]
+        [failed (Err failure)]
+        [closed (Ok)]
         [else
-          (Step.Err
+          (Err
             (end-of-script-error
               source
               parser
-              (LinkerScriptErrorKind.UnbalancedParen)
+              (UnbalancedParen)
               "file list without its `)`"))]))))
 
 ;; One name for OUTPUT_FORMAT or SEARCH_DIR.
@@ -827,36 +819,36 @@
   [parser : (&mut p Parser)]
   [keyword : (& k Token)]) : ResultName
   (if (>= parser.index (token-count parser))
-    (ResultName.Err
+    (Err
       (end-of-script-error
         source
         parser
-        (LinkerScriptErrorKind.UnbalancedParen)
+        (UnbalancedParen)
         (cat.str-cat (string.copy keyword.text) " without its `)`")))
     (let
       [token : Token (token-copy-at parser parser.index)]
       (match token.kind
-        [(TokenKind.Word)
+        [(Word)
           (begin
             (set! parser.index (+ parser.index 1))
-            (ResultName.Ok (string.copy token.text)))]
-        [(TokenKind.Quoted)
+            (Ok (string.copy token.text)))]
+        [(Quoted)
           (if (= (string.string-length token.text) 0)
-            (ResultName.Err
+            (Err
               (script-error
                 source
-                (LinkerScriptErrorKind.EmptyArgument)
+                (EmptyArgument)
                 token.line
                 token.column
                 "empty quoted name"))
             (begin
               (set! parser.index (+ parser.index 1))
-              (ResultName.Ok (string.copy token.text))))]
+              (Ok (string.copy token.text))))]
         [_
-          (ResultName.Err
+          (Err
             (script-error
               source
-              (LinkerScriptErrorKind.ArgumentCount)
+              (ArgumentCount)
               token.line
               token.column
               (cat.str-cat
@@ -870,8 +862,8 @@
   (if (and
     (< parser.index (token-count parser))
     (match (token-kind-at parser parser.index)
-      [(TokenKind.Comma) comma?]
-      [(TokenKind.Close) (not comma?)]
+      [(Comma) comma?]
+      [(Close) (not comma?)]
       [_ false]))
     (begin
       (set! parser.index (+ parser.index 1))
@@ -891,7 +883,7 @@
       [token : (& p Token) (token-at parser parser.index)]
       (script-error
         source
-        (LinkerScriptErrorKind.ArgumentCount)
+        (ArgumentCount)
         token.line
         token.column
         (cat.str-cat
@@ -906,7 +898,7 @@
     (end-of-script-error
       source
       parser
-      (LinkerScriptErrorKind.UnbalancedParen)
+      (UnbalancedParen)
       (cat.str-cat (string.copy keyword.text) " without its `)`"))))
 
 (define (parse-output-format
@@ -916,18 +908,17 @@
   (let
     [names : (__tl_dyn-array String) (__tl_make-array String 3)]
     [count : i64 0]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
     [done : bool false]
     (begin
       (while (and (not failed) (not done))
         (match (parse-name source parser keyword)
-          [(ResultName.Err error)
+          [(Err error)
             (begin
               (set! failed true)
               (set! failure error))]
-          [(ResultName.Ok name)
+          [(Ok name)
             (begin
               (set! (array-ref names count) name)
               (set! count (+ count 1))
@@ -939,21 +930,19 @@
                     (set! failed true)
                     (set! failure (close-error source parser keyword)))]))]))
       (cond
-        [failed (ResultCommand.Err failure)]
+        [failed (Err failure)]
         [(= count 2)
-          (ResultCommand.Err
+          (Err
             (script-error
               source
-              (LinkerScriptErrorKind.ArgumentCount)
+              (ArgumentCount)
               keyword.line
               keyword.column
               "OUTPUT_FORMAT takes one or three names, not two"))]
-        [(= count 1)
-          (ResultCommand.Ok
-            (LinkerScriptCommand.OutputFormat (string.copy (array-ref names 0))))]
+        [(= count 1) (Ok (OutputFormat (string.copy (array-ref names 0))))]
         [else
-          (ResultCommand.Ok
-            (LinkerScriptCommand.OutputFormatEndian
+          (Ok
+            (OutputFormatEndian
               (string.copy (array-ref names 0))
               (string.copy (array-ref names 1))
               (string.copy (array-ref names 2))))]))))
@@ -963,11 +952,11 @@
   [parser : (&mut p Parser)]
   [keyword : (& k Token)]) : ResultCommand
   (match (parse-name source parser keyword)
-    [(ResultName.Err error) (ResultCommand.Err error)]
-    [(ResultName.Ok name)
+    [(Err error) (Err error)]
+    [(Ok name)
       (if (accept? parser false)
-        (ResultCommand.Ok (LinkerScriptCommand.SearchDir name))
-        (ResultCommand.Err (close-error source parser keyword)))]))
+        (Ok (SearchDir name))
+        (Err (close-error source parser keyword)))]))
 
 ;; The diagnostic for a top-level word that is not one of the subset's commands.
 (define (refused-word-error
@@ -978,7 +967,7 @@
     [(string.eq word.text "AS_NEEDED")
       (script-error
         source
-        (LinkerScriptErrorKind.UnexpectedToken)
+        (UnexpectedToken)
         word.line
         word.column
         "AS_NEEDED outside INPUT or GROUP")]
@@ -987,11 +976,11 @@
         (and
           (< parser.index (token-count parser))
           (match (token-kind-at parser parser.index)
-            [(TokenKind.Word) (token-has-byte? parser parser.index 61)]
+            [(Word) (token-has-byte? parser parser.index 61)]
             [_ false])))
       (script-error
         source
-        (LinkerScriptErrorKind.Assignment)
+        (Assignment)
         word.line
         word.column
         (cat.str-cat
@@ -1001,7 +990,7 @@
     [(expression-word? word.text)
       (script-error
         source
-        (LinkerScriptErrorKind.Expression)
+        (Expression)
         word.line
         word.column
         (cat.str-cat
@@ -1011,7 +1000,7 @@
     [(unsupported-command? word.text)
       (script-error
         source
-        (LinkerScriptErrorKind.UnsupportedCommand)
+        (UnsupportedCommand)
         word.line
         word.column
         (cat.str-cat
@@ -1020,7 +1009,7 @@
     [else
       (script-error
         source
-        (LinkerScriptErrorKind.UnknownCommand)
+        (UnknownCommand)
         word.line
         word.column
         (cat.str-cat "unknown command `" (string.copy word.text) "`"))]))
@@ -1032,8 +1021,7 @@
   (let
     [parser : Parser (Parser tokens 0 (input_vec.new))]
     [items : item_vec.Vec (item_vec.new)]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
     (begin
       (while (and (not failed) (< parser.index (token-count (& parser))))
@@ -1044,7 +1032,7 @@
             (let
               [result : ResultCommand
                 (match token.kind
-                  [(TokenKind.Word)
+                  [(Word)
                     (cond
                       [(or
                           (string.eq token.text "OUTPUT_FORMAT")
@@ -1052,8 +1040,8 @@
                           (string.eq token.text "GROUP")
                           (string.eq token.text "SEARCH_DIR"))
                         (match (expect-open source (&mut parser) (& token))
-                          [(Step.Err error) (ResultCommand.Err error)]
-                          [(Step.Ok)
+                          [(Err error) (Err error)]
+                          [(Ok)
                             (cond
                               [(string.eq token.text "OUTPUT_FORMAT")
                                 (parse-output-format
@@ -1075,37 +1063,32 @@
                                     limits
                                     1
                                     false)
-                                    [(Step.Err error) (ResultCommand.Err error)]
-                                    [(Step.Ok)
+                                    [(Err error) (Err error)]
+                                    [(Ok)
                                       (let
                                         [count : i64
                                           (-
                                             (input_vec.len (& parser.inputs))
                                             first)]
-                                        (ResultCommand.Ok
+                                        (Ok
                                           (if (string.eq token.text "INPUT")
-                                            (LinkerScriptCommand.Input
-                                              first
-                                              count)
-                                            (LinkerScriptCommand.Group
-                                              first
-                                              count))))]))])])]
+                                            (Input first count)
+                                            (Group first count))))]))])])]
                       [else
-                        (ResultCommand.Err
-                          (refused-word-error source (& parser) (& token)))])]
-                  [(TokenKind.Close)
-                    (ResultCommand.Err
+                        (Err (refused-word-error source (& parser) (& token)))])]
+                  [(Close)
+                    (Err
                       (script-error
                         source
-                        (LinkerScriptErrorKind.UnbalancedParen)
+                        (UnbalancedParen)
                         token.line
                         token.column
                         "`)` without its `(`"))]
                   [_
-                    (ResultCommand.Err
+                    (Err
                       (script-error
                         source
-                        (LinkerScriptErrorKind.UnexpectedToken)
+                        (UnexpectedToken)
                         token.line
                         token.column
                         (cat.str-cat
@@ -1113,17 +1096,17 @@
                           (string.copy token.text)
                           "` where a command is expected")))])]
               (match result
-                [(ResultCommand.Err error)
+                [(Err error)
                   (begin
                     (set! failed true)
                     (set! failure error))]
-                [(ResultCommand.Ok command)
+                [(Ok command)
                   (item_vec.push-ref!
                     (&mut items)
                     (LinkerScriptItem command token.line token.column))])))))
       (if failed
-        (ResultLinkerScript.Err failure)
-        (ResultLinkerScript.Ok (LinkerScript items parser.inputs))))))
+        (Err failure)
+        (Ok (LinkerScript items parser.inputs))))))
 
 ;: Read `data`, the bytes of a linker-script input named `source` in
 ;: diagnostics, into its ordered commands. Every limit must be positive.
@@ -1137,18 +1120,18 @@
         (<= limits.max-tokens 0)
         (<= limits.max-token-bytes 0)
         (<= limits.max-depth 0))
-      (ResultLinkerScript.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.InvalidLimits)
+          (InvalidLimits)
           0
           0
           "every linker-script limit must be positive"))]
     [(> (array-length data) limits.max-bytes)
-      (ResultLinkerScript.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.TooLarge)
+          (TooLarge)
           1
           1
           (cat.str-cat
@@ -1158,5 +1141,5 @@
             (string.int->string limits.max-bytes))))]
     [else
       (match (tokenize source data limits)
-        [(ResultTokens.Err error) (ResultLinkerScript.Err error)]
-        [(ResultTokens.Ok tokens) (parse-tokens source tokens limits)])]))
+        [(Err error) (Err error)]
+        [(Ok tokens) (parse-tokens source tokens limits)])]))

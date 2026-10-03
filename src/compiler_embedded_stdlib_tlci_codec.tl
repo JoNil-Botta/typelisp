@@ -101,20 +101,15 @@
     [payload-len : i64 (array-length payload)]
     (cond
       [(< raw-limit 0)
-        (CompilerEmbeddedStdlibTlciCodecFrame.Err
-          "embedded stdlib tlci envelope: invalid raw length limit")]
+        (Err "embedded stdlib tlci envelope: invalid raw length limit")]
       [(not (compiler-embedded-stdlib-tlci-codec-prefix? payload prefix))
-        (CompilerEmbeddedStdlibTlciCodecFrame.Err
-          "embedded stdlib tlci envelope: bad prefix or version")]
+        (Err "embedded stdlib tlci envelope: bad prefix or version")]
       [(< payload-len header-len)
-        (CompilerEmbeddedStdlibTlciCodecFrame.Err
-          "embedded stdlib tlci envelope: truncated header")]
+        (Err "embedded stdlib tlci envelope: truncated header")]
       [(>= (array-ref payload (+ prefix-len 7)) (cast 128 : u8))
-        (CompilerEmbeddedStdlibTlciCodecFrame.Err
-          "embedded stdlib tlci envelope: raw length overflows i64")]
+        (Err "embedded stdlib tlci envelope: raw length overflows i64")]
       [(>= (array-ref payload (+ prefix-len 15)) (cast 128 : u8))
-        (CompilerEmbeddedStdlibTlciCodecFrame.Err
-          "embedded stdlib tlci envelope: bit length overflows i64")]
+        (Err "embedded stdlib tlci envelope: bit length overflows i64")]
       [else
         (let
           [raw-len : i64 (byte_le.read-u64 payload prefix-len)]
@@ -128,14 +123,12 @@
           [available : i64 (- payload-len header-len)]
           (cond
             [(> raw-len raw-limit)
-              (CompilerEmbeddedStdlibTlciCodecFrame.Err
+              (Err
                 "embedded stdlib tlci envelope: raw length exceeds consumer limit")]
             [(> bit-bytes available)
-              (CompilerEmbeddedStdlibTlciCodecFrame.Err
-                "embedded stdlib tlci envelope: truncated bitstream")]
+              (Err "embedded stdlib tlci envelope: truncated bitstream")]
             [(< bit-bytes available)
-              (CompilerEmbeddedStdlibTlciCodecFrame.Err
-                "embedded stdlib tlci envelope: trailing compressed bytes")]
+              (Err "embedded stdlib tlci envelope: trailing compressed bytes")]
             [(and
                 (> bit-bytes 0)
                 (!= (% bit-len 8) 0)
@@ -144,13 +137,8 @@
                     (cast (array-ref payload (- payload-len 1)) : i64)
                     (- (shl 1 (- 8 (% bit-len 8))) 1))
                   0))
-              (CompilerEmbeddedStdlibTlciCodecFrame.Err
-                "embedded stdlib tlci envelope: nonzero padding bits")]
-            [else
-              (CompilerEmbeddedStdlibTlciCodecFrame.Ok
-                raw-len
-                bit-len
-                header-len)]))])))
+              (Err "embedded stdlib tlci envelope: nonzero padding bits")]
+            [else (Ok raw-len bit-len header-len)]))])))
 
 (define (compiler-embedded-stdlib-tlci-codec-build-table
   [payload : (& payload (__tl_dyn-array u8))]
@@ -172,7 +160,7 @@
             (when
               (> bits (compiler-embedded-stdlib-tlci-codec-max-code-bits))
               (return
-                (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
+                (Err
                   "embedded stdlib tlci envelope: invalid huffman code length")))
             (when
               (> bits 0)
@@ -181,7 +169,7 @@
               (when (> bits max-bits) (set! max-bits bits)))
             (set! symbol (+ symbol 1)))))
       (if (= active 0)
-        (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok
+        (Ok
           (CompilerEmbeddedStdlibTlciHuffmanTable
             counts
             first-codes
@@ -202,12 +190,11 @@
                 (when
                   (< left 0)
                   (return
-                    (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
+                    (Err
                       "embedded stdlib tlci envelope: oversubscribed huffman table")))
                 (set! bits (+ bits 1))))
             (if (!= left 0)
-              (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err
-                "embedded stdlib tlci envelope: incomplete huffman table")
+              (Err "embedded stdlib tlci envelope: incomplete huffman table")
               (let
                 [code : i64 0]
                 [ordered : i64 0]
@@ -283,7 +270,7 @@
                                   (set! repeat (+ repeat 1))))
                               (set! offset (+ offset 1)))))
                         (set! code-bits (+ code-bits 1)))))
-                  (ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok
+                  (Ok
                     (CompilerEmbeddedStdlibTlciHuffmanTable
                       counts
                       first-codes
@@ -299,8 +286,7 @@
   [reader : (&mut reader CompilerEmbeddedStdlibTlciBitReader)]
   [table : (& table CompilerEmbeddedStdlibTlciHuffmanTable)]) : ResultCompilerEmbeddedStdlibTlciHuffmanSymbol
   (if (= table.active 0)
-    (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-      "embedded stdlib tlci envelope: missing huffman table")
+    (Err "embedded stdlib tlci envelope: missing huffman table")
     (begin
       (if (>=
         (- bit-len reader.consumed)
@@ -336,8 +322,7 @@
                 (begin
                   (set! reader.available remaining)
                   (set! reader.consumed (+ reader.consumed length))
-                  (return
-                    (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok symbol)))))))
+                  (return (Ok symbol)))))))
         unit)
       (let
         [code : i64 0]
@@ -348,8 +333,7 @@
               (when
                 (>= reader.consumed bit-len)
                 (return
-                  (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                    "embedded stdlib tlci envelope: truncated huffman code")))
+                  (Err "embedded stdlib tlci envelope: truncated huffman code")))
               (let
                 [bit : i64 0]
                 (begin
@@ -373,13 +357,12 @@
                 (when
                   (and (>= offset 0) (< offset count))
                   (return
-                    (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
+                    (Ok
                       (array-ref
                         table.symbols
                         (+ (array-ref table.first-symbols bits) offset))))))
               (set! bits (+ bits 1))))
-          (ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-            "embedded stdlib tlci envelope: invalid huffman code"))))))
+          (Err "embedded stdlib tlci envelope: invalid huffman code"))))))
 
 (define (compiler-embedded-stdlib-tlci-codec-decode-with-tables
   [payload : (& payload (__tl_dyn-array u8))]
@@ -395,29 +378,24 @@
       (> (array-ref payload (+ main-start 256)) (cast 0 : u8))]
     (cond
       [(and (= raw-len 0) (!= bit-len 0))
-        (CompilerEmbeddedStdlibTlciCodecBytes.Err
-          "embedded stdlib tlci envelope: nonempty stream for empty output")]
+        (Err "embedded stdlib tlci envelope: nonempty stream for empty output")]
       [(and
           (= raw-len 0)
           (or
             (> main-table.active 0)
             (> distance-table.active 0)
             (> length-table.active 0)))
-        (CompilerEmbeddedStdlibTlciCodecBytes.Err
-          "embedded stdlib tlci envelope: nonempty tables for empty output")]
+        (Err "embedded stdlib tlci envelope: nonempty tables for empty output")]
       [(and (> raw-len 0) (= main-table.active 0))
-        (CompilerEmbeddedStdlibTlciCodecBytes.Err
-          "embedded stdlib tlci envelope: missing main huffman table")]
+        (Err "embedded stdlib tlci envelope: missing main huffman table")]
       [(and
           match-present
           (or (= distance-table.active 0) (= length-table.active 0)))
-        (CompilerEmbeddedStdlibTlciCodecBytes.Err
-          "embedded stdlib tlci envelope: missing match huffman table")]
+        (Err "embedded stdlib tlci envelope: missing match huffman table")]
       [(and
           (not match-present)
           (or (> distance-table.active 0) (> length-table.active 0)))
-        (CompilerEmbeddedStdlibTlciCodecBytes.Err
-          "embedded stdlib tlci envelope: unexpected match huffman table")]
+        (Err "embedded stdlib tlci envelope: unexpected match huffman table")]
       [else
         ;; The bit reader lives in locals and a symbol whose 16-bit prefix hits
         ;; its table's direct entry is decoded right here, exactly as the first
@@ -619,13 +597,8 @@
                             bit-len
                             (&mut reader)
                             (& main-table))
-                            [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                                message)
-                              (return
-                                (CompilerEmbeddedStdlibTlciCodecBytes.Err
-                                  message))]
-                            [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
-                                value)
+                            [(Err message) (return (Err message))]
+                            [(Ok value)
                               (begin
                                 (set! symbol value)
                                 (set! next-byte reader.next-byte)
@@ -699,13 +672,8 @@
                                       (if (= stage 1)
                                         (& distance-table)
                                         (& length-table)))
-                                      [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Err
-                                          message)
-                                        (return
-                                          (CompilerEmbeddedStdlibTlciCodecBytes.Err
-                                            message))]
-                                      [(ResultCompilerEmbeddedStdlibTlciHuffmanSymbol.Ok
-                                          v)
+                                      [(Err message) (return (Err message))]
+                                      [(Ok v)
                                         (begin
                                           (set! value v)
                                           (set! next-byte reader.next-byte)
@@ -724,11 +692,11 @@
                                       (cond
                                         [(> distance out-index)
                                           (return
-                                            (CompilerEmbeddedStdlibTlciCodecBytes.Err
+                                            (Err
                                               "embedded stdlib tlci envelope: backreference before output"))]
                                         [(> length (- raw-len out-index))
                                           (return
-                                            (CompilerEmbeddedStdlibTlciCodecBytes.Err
+                                            (Err
                                               "embedded stdlib tlci envelope: backreference exceeds output"))]
                                         [else
                                           (begin
@@ -742,18 +710,16 @@
                                               out-index
                                               (+ out-index length)))]))))))))))))))
             (if (!= consumed bit-len)
-              (CompilerEmbeddedStdlibTlciCodecBytes.Err
-                "embedded stdlib tlci envelope: trailing huffman bits")
-              (CompilerEmbeddedStdlibTlciCodecBytes.Ok out))))])))
+              (Err "embedded stdlib tlci envelope: trailing huffman bits")
+              (Ok out))))])))
 
 ;: Decode one complete embedded-image envelope after fail-closed validation.
 (define (compiler-embedded-stdlib-tlci-codec-decode
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : CompilerEmbeddedStdlibTlciCodecBytes
   (match (compiler-embedded-stdlib-tlci-codec-frame payload raw-limit)
-    [(CompilerEmbeddedStdlibTlciCodecFrame.Err message)
-      (CompilerEmbeddedStdlibTlciCodecBytes.Err message)]
-    [(CompilerEmbeddedStdlibTlciCodecFrame.Ok raw-len bit-len bit-start)
+    [(Err message) (Err message)]
+    [(Ok raw-len bit-len bit-start)
       (let
         [prefix-len : i64
           (string.string-length (compiler-embedded-stdlib-tlci-codec-prefix))]
@@ -768,24 +734,20 @@
           payload
           main-start
           (compiler-embedded-stdlib-tlci-codec-main-symbols))
-          [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err message)
-            (CompilerEmbeddedStdlibTlciCodecBytes.Err message)]
-          [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok main-table)
+          [(Err message) (Err message)]
+          [(Ok main-table)
             (match (compiler-embedded-stdlib-tlci-codec-build-table
               payload
               distance-start
               (compiler-embedded-stdlib-tlci-codec-distance-symbols))
-              [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err message)
-                (CompilerEmbeddedStdlibTlciCodecBytes.Err message)]
-              [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok distance-table)
+              [(Err message) (Err message)]
+              [(Ok distance-table)
                 (match (compiler-embedded-stdlib-tlci-codec-build-table
                   payload
                   length-start
                   (compiler-embedded-stdlib-tlci-codec-length-symbols))
-                  [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Err message)
-                    (CompilerEmbeddedStdlibTlciCodecBytes.Err message)]
-                  [(ResultCompilerEmbeddedStdlibTlciHuffmanTable.Ok
-                      length-table)
+                  [(Err message) (Err message)]
+                  [(Ok length-table)
                     (compiler-embedded-stdlib-tlci-codec-decode-with-tables
                       payload
                       raw-len

@@ -75,11 +75,10 @@
           (process.args-empty))
         (process.args-empty))]
     (match (build_cli_core.build-config-from idx separator)
-      [(build_cli_core.ResultBuildConfig.Err message)
-        (ResultRunCliConfig.Err (run-cli-rewrite-build-error message))]
-      [(build_cli_core.ResultBuildConfig.Ok config)
+      [(Err message) (Err (run-cli-rewrite-build-error message))]
+      [(Ok config)
         (match config
-          [(build_cli_core.BuildConfig.Package
+          [(Package
               manifest-path
               has-manifest
               target-text
@@ -90,8 +89,8 @@
               opt-level
               lock-policy
               stdlib-roots)
-            (ResultRunCliConfig.Ok
-              (RunCliConfig.Package
+            (Ok
+              (Package
                 (build_cli_core.BuildConfig.Package
                   manifest-path
                   has-manifest
@@ -104,8 +103,8 @@
                   lock-policy
                   stdlib-roots)
                 runtime-args))]
-          [(build_cli_core.BuildConfig.Source)
-            (ResultRunCliConfig.Err
+          [(Source)
+            (Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
@@ -123,7 +122,7 @@
           count)]
       [target : backend.CompilerBackendTarget
         (build_run_core.source-tool-default-target)]
-      [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+      [mode : backend.CompilerBackendMode (Scalar)]
       [stdlib-roots : cli_svec.Vec (cli_svec.new)]
       [cfgs : cli_svec.Vec (cli_svec.new)]
       [runtime-args : process.ProcessStringList (process.args-empty)]
@@ -146,9 +145,8 @@
                 [value : String (cli_option.cli-args-value (& args))]
                 (match (build_run_core.source-tool-target
                   (string.copy (& value)))
-                  [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-                    (set! target parsed-target)]
-                  [(build_run_core.ResultSourceToolTarget.Err _)
+                  [(Ok parsed-target) (set! target parsed-target)]
+                  [(Err _)
                     (cli_option.cli-args-fail!
                       (&mut args)
                       (run-cli-unknown-target value))]))]
@@ -167,10 +165,8 @@
               (match (build_run_core.source-tool-backend-mode
                 "run"
                 (cli_option.cli-args-value (& args)))
-                [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                  (set! mode parsed-mode)]
-                [(build_run_core.ResultSourceToolBackendMode.Err message)
-                  (cli_option.cli-args-fail! (&mut args) message)])]
+                [(Ok parsed-mode) (set! mode parsed-mode)]
+                [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
             [(string.eq args.name "--link-lib")
               (set!
                 link-inputs
@@ -203,8 +199,8 @@
                     runtime-args))
                 (cli_option.cli-args-stop! (&mut args)))]))
         (if args.failed
-          (ResultRunCliConfig.Err args.error)
-          (ResultRunCliConfig.Ok
+          (Err args.error)
+          (Ok
             (RunCliConfig.Config
               source
               target
@@ -275,11 +271,11 @@
     (string.copy (& bin-path))
     target
     runtime-args)
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (let
         [status : i64 (process.output-status output)]
         status)]
-    [(process.ErrProcessOutput error)
+    [(ErrProcessOutput error)
       (begin
         (io.print-error
           (str_cat.str-cat
@@ -321,18 +317,18 @@
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match (build_cli_core.build-parse-target (string.copy (& target-text)))
-    [(build_cli_core.ResultBuildTarget.Err message)
+    [(Err message)
       (begin
         (io.print-error (run-cli-rewrite-build-error message))
         1)]
-    [(build_cli_core.ResultBuildTarget.Ok target)
+    [(Ok target)
       (match (build_cli_core.build-load-manifest
         (string.copy (& manifest-path)))
-        [(build_cli_core.ResultBuildManifest.Err message)
+        [(Err message)
           (begin
             (io.print-error (str_cat.str-cat "Error: " message))
             1)]
-        [(build_cli_core.ResultBuildManifest.Ok manifest)
+        [(Ok manifest)
           (if (not (build_cli_core.build-package-kind-entry? manifest.kind))
             (begin
               (io.print-error
@@ -371,7 +367,7 @@
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match config
-    [(build_cli_core.BuildConfig.Package
+    [(Package
         manifest-path
         has-manifest
         target-text
@@ -409,9 +405,9 @@
 
 (define (run-direct-from [idx : i64] [count : i64] [producer-identity : String]) : i64
   (match (run-cli-config-from idx count)
-    [(ResultRunCliConfig.Ok config)
+    [(Ok config)
       (match config
-        [(RunCliConfig.Config
+        [(Config
             source
             target
             mode
@@ -429,9 +425,9 @@
             opt-level
             mode
             link-inputs)]
-        [(RunCliConfig.Package package-config runtime-args)
+        [(Package package-config runtime-args)
           (run-cli-run-package package-config producer-identity runtime-args)])]
-    [(ResultRunCliConfig.Err message)
+    [(Err message)
       (begin
         (io.print-error message)
         1)]))

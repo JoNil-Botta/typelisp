@@ -139,7 +139,7 @@
 ; the same bounds invariant without paying a dynamic check on every parent hop.
 (define (sym-i64-lookup-id [e : (& e SymI64Env)] [k : i64]) : option_i64.Option
   (if (= e.store-address 0)
-    option_i64.None
+    None
     (let
       [store : SymI64Store (sym-i64-store-read e.store-address)]
       [cursor : i64 e.head]
@@ -151,9 +151,9 @@
               (unsafe
                 (ptr-read (ptr-offset bindings cursor)))]
             (if (= binding.key k)
-              (return (option_i64.Some binding.value))
+              (return (Some binding.value))
               (set! cursor binding.parent))))
-        option_i64.None))))
+        None))))
 
 (define (sym-i64-lookup-id-or [e : (& e SymI64Env)] [k : i64] [fallback : i64]) : i64
   (if (= e.store-address 0)

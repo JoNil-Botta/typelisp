@@ -460,7 +460,7 @@
                   (set! j (+ j 1)))))
             (set! i (+ i 1)))))
       (if (not (string.eq error ""))
-        (ResultCoffImportMembers.Err error)
+        (Err error)
         (let
           [members : (__tl_dyn-array CoffImportMember)
             (__tl_make-array CoffImportMember (+ count 3))]
@@ -506,7 +506,7 @@
                         (coff-import-symbol (clone p) 1)
                         "")))
                   (set! index (+ index 1)))))
-            (ResultCoffImportMembers.Ok members)))))))
+            (Ok members)))))))
 
 (define (coff-import-members-with-limits
   [dll : String]
@@ -523,32 +523,30 @@
         (> limits.max-payload coff-import-max-payload)
         (< limits.max-work 1)
         (> limits.max-work coff-import-max-work))
-      (ResultCoffImportMembers.Err "invalid import member limits")]
+      (Err "invalid import member limits")]
     [(> (array-length plans) limits.max-exports)
-      (ResultCoffImportMembers.Err "import member count limit")]
-    [(not (coff-import-valid-dll-part? (& dll)))
-      (ResultCoffImportMembers.Err "invalid DLL basename")]
-    [(not (coff-import-valid-dll-part? (& stem)))
-      (ResultCoffImportMembers.Err "invalid DLL stem")]
+      (Err "import member count limit")]
+    [(not (coff-import-valid-dll-part? (& dll))) (Err "invalid DLL basename")]
+    [(not (coff-import-valid-dll-part? (& stem))) (Err "invalid DLL stem")]
     [(or
         (= (coff-import-char dll 0) '.')
         (= (coff-import-char dll (- (coff-import-len dll) 1)) '.'))
-      (ResultCoffImportMembers.Err "invalid DLL basename")]
+      (Err "invalid DLL basename")]
     [(or
         (= (coff-import-char stem 0) '.')
         (= (coff-import-char stem (- (coff-import-len stem) 1)) '.'))
-      (ResultCoffImportMembers.Err "invalid DLL stem")]
+      (Err "invalid DLL stem")]
     [(not (coff-import-stem-matches? (clone dll) (clone stem)))
-      (ResultCoffImportMembers.Err "DLL basename/stem mismatch")]
+      (Err "DLL basename/stem mismatch")]
     [(or
         (> (coff-import-len dll) limits.max-string)
         (> (coff-import-len stem) limits.max-string)
         (> (+ 20 (coff-import-len stem)) limits.max-string)
         (> (+ 17 (coff-import-len stem)) limits.max-string)
         (> 24 limits.max-string))
-      (ResultCoffImportMembers.Err "support symbol length limit")]
+      (Err "support symbol length limit")]
     [(not (coff-import-plan-strings-fit? plans limits.max-string))
-      (ResultCoffImportMembers.Err "import symbol length limit")]
+      (Err "import symbol length limit")]
     [else (coff-import-members-validated dll stem plans limits)]))
 
 (define (coff-import-members
@@ -627,8 +625,8 @@
     [plans : (& plans (__tl_dyn-array CoffImportPlan))]
     [expected : String]) : bool
     (match (coff-import-members dll stem plans)
-      [(ResultCoffImportMembers.Err message) (string.eq message expected)]
-      [(ResultCoffImportMembers.Ok _) false])))
+      [(Err message) (string.eq message expected)]
+      [(Ok _) false])))
 
 (cfg
   test
@@ -643,9 +641,8 @@
         (set! (array-ref plans 2) (CoffImportPlan "Const" "Const" 0 0 2 1))
         (set! (array-ref plans 3) (CoffImportPlan "Ord" "" 7 0 0 0))
         (match (coff-import-members "example.dll" "example" (& plans))
-          [(ResultCoffImportMembers.Err _)
-            (test.assert-true false "oracle plan accepts")]
-          [(ResultCoffImportMembers.Ok members)
+          [(Err _) (test.assert-true false "oracle plan accepts")]
+          [(Ok members)
             (begin
               (test.assert-true
                 (= (array-length members) 7)
@@ -729,9 +726,8 @@
       [one : (__tl_dyn-array CoffImportPlan) (__tl_make-array CoffImportPlan 1)]
       (begin
         (match (coff-import-members "example.dll" "example" (& none))
-          [(ResultCoffImportMembers.Err _)
-            (test.assert-true false "empty export set accepts")]
-          [(ResultCoffImportMembers.Ok members)
+          [(Err _) (test.assert-true false "empty export set accepts")]
+          [(Ok members)
             (begin
               (test.assert-true
                 (= (array-length members) 3)
@@ -766,7 +762,7 @@
             "invalid DLL basename")
           "drive-relative DLL rejected")
         (match (coff-import-members "example.DLL" "example" (& none))
-          [(ResultCoffImportMembers.Ok members)
+          [(Ok members)
             (test.assert-true
               (= (array-length members) 3)
               "case-preserved extension accepts")]
@@ -786,16 +782,15 @@
             "DLL basename/stem mismatch")
           "stem cannot retain the DLL extension")
         (match (coff-import-members "example" "example" (& none))
-          [(ResultCoffImportMembers.Ok members)
+          [(Ok members)
             (test.assert-true
               (= (array-length members) 3)
               "extensionless DLL keeps its complete stem")]
           [_ (test.assert-true false "extensionless DLL accepts")])
         (set! (array-ref one 0) (CoffImportPlan "_Func@8" "Func" 0 9 0 3))
         (match (coff-import-members "example.dll" "example" (& one))
-          [(ResultCoffImportMembers.Err _)
-            (test.assert-true false "undecorated name accepts")]
-          [(ResultCoffImportMembers.Ok members)
+          [(Err _) (test.assert-true false "undecorated name accepts")]
+          [(Ok members)
             (begin
               (test.assert-true
                 (=
@@ -821,7 +816,7 @@
         (set! (array-ref one 0) (CoffImportPlan "_Func" "Func" 0 0 0 2))
         (test.assert-true
           (match (coff-import-members "example.dll" "example" (& one))
-            [(ResultCoffImportMembers.Ok _) true]
+            [(Ok _) true]
             [_ false])
           "no-prefix mode accepts")
         (set! (array-ref one 0) (CoffImportPlan "Func" "Alias" 0 0 0 1))
@@ -877,7 +872,7 @@
           "example"
           (& none)
           (CoffImportLimits 0 4096 1 100))
-          [(ResultCoffImportMembers.Err message)
+          [(Err message)
             (test.assert-true
               (string.eq message "import member work/byte limit")
               "whole-set byte budget fails before member allocation")]
@@ -917,7 +912,7 @@
           "example"
           (& plans)
           (CoffImportLimits 1 4096 16777216 4194304))
-          [(ResultCoffImportMembers.Err message)
+          [(Err message)
             (test.assert-true
               (string.eq message "import member count limit")
               "configured member cap rejects atomically")]
@@ -927,7 +922,7 @@
           "example"
           (& plans)
           (CoffImportLimits 2 4096 16777216 1))
-          [(ResultCoffImportMembers.Err message)
+          [(Err message)
             (test.assert-true
               (string.eq message "import member work/byte limit")
               "configured work cap rejects atomically")]
@@ -946,7 +941,7 @@
           "example"
           (& one)
           (CoffImportLimits 1 29 16777216 4194304))
-          [(ResultCoffImportMembers.Err message)
+          [(Err message)
             (test.assert-true
               (string.eq message "import symbol length limit")
               "configured symbol cap checks imp name")]
@@ -1036,9 +1031,8 @@
           (array-ref plans 2)
           (CoffImportPlan "_Decorated@8" "_Decorated@8" 0 0 0 1))
         (match (coff-import-members "example.dll" "example" (& plans))
-          [(ResultCoffImportMembers.Err _)
-            (test.assert-true false "alias and forwarder plans accept")]
-          [(ResultCoffImportMembers.Ok members)
+          [(Err _) (test.assert-true false "alias and forwarder plans accept")]
+          [(Ok members)
             (let
               [i : i64 0]
               (while (< i 3)

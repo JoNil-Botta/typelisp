@@ -52199,8 +52199,6 @@
         blocks)]
     [seq : ir.CompilerIrInstrSeq instrs]
     [words : opt.OptExprTable (opt.opt-expr-table-new)]
-    [copies : opt.OptCopyEnv (opt.opt-copy-env-empty)]
-    [loads : opt.OptLoadTable (Nil)]
     (opt.opt-load-copy-instr-seq-rewrite!
       type-segment-bases
       hs
@@ -52213,7 +52211,6 @@
           (ir.compiler-ir-instr-seq-count seq))
         (opt.opt-alias-seed-params type-segment-bases params))
       (&mut words)
-      (&mut loads)
       (opt.compiler-opt-global-shared-view seq))
     seq))
 

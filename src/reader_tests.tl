@@ -10,6 +10,7 @@
 (import token)
 (import read as reader)
 (import stdlib.result)
+(cfg test (import compiler_allocation_profile as allocation_profile))
 (import (result.result i64 String) as result_lex_i64)
 
 ;; A pool grow preserves its source rows, so aggregate relocation must use an
@@ -1043,6 +1044,13 @@
 ;; A list never straddles a segment: one that would cross a boundary starts at
 ;; the next segment, the skipped rows hold the filler, and a list longer than a
 ;; segment still reads back in order. Growth never moves a row.
+(define (sp-node-pool-test-row-address [id : i64]) : i64
+  (+
+    (array-ref
+      reader.sp-node-pool-segment-bases
+      (shr id reader.sp-node-segment-bits))
+    (* id (comptime (size-of (type reader.SpannedSexpr))))))
+
 ;; Builds a list of `count` Int rows and returns its first row id (-1 when the
 ;; list does not have `count` rows).
 (define (sp-node-pool-test-list [count : i64] [span : token.SourceSpan]) : i64
@@ -1080,7 +1088,7 @@
         (reader.sp-node-pool-fill!
           (reader.sp-node-pool-reserve! 1)
           (Int 7 "__tl_pool_placement" span)))]
-    [first-address : i64 (reader.sp-node-pool-row-address 0)]
+    [first-address : i64 (sp-node-pool-test-row-address 0)]
     [straddler : i64 (sp-node-pool-test-list 10 span)]
     [long : i64 (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
     [after : i64 (sp-node-pool-test-list 3 span)]
@@ -1092,12 +1100,16 @@
         (match (reader.sp-node-get (- rows 1))
           [(Int value text _) (and (= value 0) (string.eq text ""))]
           [_ false]))]
+    [_grow-directory : unit
+      (while (<= (reader.sp-node-pool-capacity) (* 64 rows))
+        (reader.sp-node-push (Int 7 "" span))
+        unit)]
     [reads : bool
       (and
         (sp-node-pool-test-list-reads? straddler 10)
         (sp-node-pool-test-list-reads? long (+ (* 2 rows) 5))
         (sp-node-pool-test-list-reads? after 3))]
-    [stable : bool (= (reader.sp-node-pool-row-address 0) first-address)]
+    [stable : bool (= (sp-node-pool-test-row-address 0) first-address)]
     (reader.sp-node-pool-reset!)
     (and placed reads stable)))
 
@@ -1106,3 +1118,81 @@
   (if (sp-node-pool-segment-placement-ok?)
     unit
     (io.panic "reader: segmented pool placement self-test failed")))
+
+(test
+  reader-long-list-storage-reuse
+  (reader.sp-node-pool-reset!)
+  (reader.sp-node-pool-compact-retained!)
+  (let
+    [rows : i64 reader.sp-node-segment-rows]
+    [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+    [length : i64 (+ (* 2 rows) 5)]
+    [start : i64 (sp-node-pool-test-list length span)]
+    [address : i64 (sp-node-pool-test-row-address start)]
+    [bytes : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        (reader.sp-node-pool-base-arena-handle-value))]
+    [round : i64 0]
+    (while (< round 32)
+      (reader.sp-node-pool-truncate! 0)
+      (unless
+        (and
+          (= (sp-node-pool-test-list length span) start)
+          (sp-node-pool-test-list-reads? start length)
+          (= (sp-node-pool-test-row-address start) address)
+          (=
+            bytes
+            (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+              (reader.sp-node-pool-base-arena-handle-value))))
+        (io.panic "reader: repeated long lists must reuse dead storage"))
+      (set! round (+ round 1)))
+    ;; Reuse a suffix while the first segment remains live.
+    (reader.sp-node-pool-truncate! rows)
+    (unless
+      (and
+        (= (sp-node-pool-test-list (+ rows 5) span) rows)
+        (sp-node-pool-test-list-reads? 0 rows)
+        (sp-node-pool-test-list-reads? rows (+ rows 5))
+        (= (sp-node-pool-test-row-address 0) address)
+        (=
+          bytes
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            (reader.sp-node-pool-base-arena-handle-value))))
+      (io.panic "reader: long-list suffix reuse changed live rows"))
+    ;; A larger suffix replaces only some mappings of the first array. The
+    ;; next prefix list must restore its mappings when reusing that array, or
+    ;; its row writes and the directory's row reads disagree. Alternating the
+    ;; two shapes must also reuse the suffix array found in a later slot.
+    (reader.sp-node-pool-truncate! rows)
+    (sp-node-pool-test-list (+ (* 3 rows) 5) span)
+    (unless
+      (and
+        (sp-node-pool-test-list-reads? 0 rows)
+        (= (sp-node-pool-test-row-address 0) address))
+      (io.panic "reader: replacing a dead suffix moved the live prefix"))
+    (set!
+      bytes
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        (reader.sp-node-pool-base-arena-handle-value)))
+    (set! round 0)
+    (while (< round 32)
+      (reader.sp-node-pool-truncate! 0)
+      (unless
+        (and
+          (= (sp-node-pool-test-list length span) 0)
+          (sp-node-pool-test-list-reads? 0 length))
+        (io.panic "reader: long-list reuse did not restore fragmented mappings"))
+      (reader.sp-node-pool-truncate! rows)
+      (unless
+        (and
+          (= (sp-node-pool-test-list (+ (* 3 rows) 5) span) rows)
+          (sp-node-pool-test-list-reads? 0 rows)
+          (sp-node-pool-test-list-reads? rows (+ (* 3 rows) 5))
+          (=
+            bytes
+            (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+              (reader.sp-node-pool-base-arena-handle-value))))
+        (io.panic "reader: alternating long-list shapes did not reuse storage"))
+      (set! round (+ round 1))))
+  (reader.sp-node-pool-reset!)
+  (reader.sp-node-pool-compact-retained!))

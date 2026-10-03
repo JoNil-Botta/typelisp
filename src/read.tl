@@ -359,18 +359,44 @@
 
 ;; One array for a list of `length` rows starting at slot boundary `start`,
 ;; mapped from every slot it covers. Rows at and above the pool count are dead,
-;; so slots that already had storage are simply repointed.
+;; so slots that already had storage may be reused or repointed. Search the
+;; covered slots for an array spanning the complete range, then restore all
+;; its mappings. A prior suffix replacement may have fragmented the directory
+;; without changing the backing arrays or the live prefix's addresses.
 (define (sp-node-pool-install-long! [start : i64] [length : i64]) : unit
   (let
     [rows : i64 sp-node-segment-rows]
     [first : i64 (shr start sp-node-segment-bits)]
     [slots : i64 (/ (+ length (- rows 1)) rows)]
     [end-slot : i64 (+ first slots)]
+    [reuse-slot : i64 -1]
+    [candidate : i64 first]
+    (while (and
+      (= reuse-slot -1)
+      (< candidate end-slot)
+      (< candidate sp-node-pool-slot-count))
+      (let
+        [candidate-start : i64
+          (array-ref sp-node-pool-segment-starts candidate)]
+        [segment : (__tl_dyn-array SpannedSexpr)
+          (sp-node-pool-segment candidate)]
+        (when
+          (and
+            (<= candidate-start start)
+            (<= (+ (- start candidate-start) length) (array-length segment)))
+          (set! reuse-slot candidate)))
+      (set! candidate (+ candidate 1)))
     (in-arena
       (arena.Arena (sp-node-pool-storage-root))
       (let
         [long : (__tl_dyn-array SpannedSexpr)
-          (__tl_make-array SpannedSexpr (* slots rows))]
+          (if (= reuse-slot -1)
+            (__tl_make-array SpannedSexpr (* slots rows))
+            (sp-node-pool-segment reuse-slot))]
+        [long-start : i64
+          (if (= reuse-slot -1)
+            start
+            (array-ref sp-node-pool-segment-starts reuse-slot))]
         [slot : i64 first]
         (sp-node-pool-ensure! start)
         (sp-node-pool-directory-reserve! end-slot)
@@ -379,7 +405,7 @@
             slot
             (unsafe
               (ptr-read (ptr-addr-of long)))
-            start)
+            long-start)
           (set! slot (+ slot 1)))
         (when
           (< sp-node-pool-slot-count end-slot)
@@ -401,12 +427,6 @@
               (shr id sp-node-segment-bits)))
           : (Ptr SpannedSexpr))
         id))))
-
-;; Where row `id` lives (white-box tests check that growth leaves it there).
-(define (sp-node-pool-row-address [id : i64]) : i64
-  (+
-    (array-ref sp-node-pool-segment-bases (shr id sp-node-segment-bits))
-    (* id (comptime (size-of (type SpannedSexpr))))))
 
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
   (unsafe

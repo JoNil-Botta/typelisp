@@ -234,6 +234,7 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [decoy : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [retained-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [first : i64 (ast.ast-node-pool-context-type-push pools (I64))]
     [collision-a : i64 (ast.ast-node-pool-context-type-push pools (Var 0))]
     [collision-b : i64 (ast.ast-node-pool-context-type-push pools (Var 131072))]
@@ -270,6 +271,12 @@
           (= dedup-at-hit 65536)
           (= capacity-at-hit 262144)
           (= new-id 65536)
+          (=
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            retained-bases)
+          (match (ast.ast-type-segment-bases-get retained-bases 65535)
+            [(Array elem count) (and (= elem first) (= count 65532))]
+            [_ false])
           (= (ast.ast-node-pool-context-type-push pools (Var 0)) collision-a)
           (=
             (ast.ast-node-pool-context-type-push pools (Var 131072))

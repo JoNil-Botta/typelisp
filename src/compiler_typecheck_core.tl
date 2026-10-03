@@ -19384,36 +19384,40 @@
   [session : cis.InternStructuralSessionHandle]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
-  [target-id : i64]
-  [module-id : i64]) : bool
+  [target-id : i64]) : bool
+  ;; Only the current module's own import rows can match. The module decl
+  ;; index lists them in program order, so a miss reads those rows instead of
+  ;; walking every declaration of the program: a miss recurs for each
+  ;; (module, target) pair after every splice resets the answer cache, and bare
+  ;; names reach this query on lookups qualified names answer from the symbol
+  ;; table. The projection match loads the tag and only the fields an arm binds.
   (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
-    [current-module : i64 module-id]
-    [found : bool false]
-    ;; One match on the backing slot. The old shape tested the tag through a
-    ;; borrow and then re-read the row with `ast-decl-list-ref`, which returns
-    ;; `AstDecl` through an SRET pointer and so copied all 104 B; the projection
-    ;; match loads the tag and only the fields an arm binds.
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [decl-offset : i64 decls.offset]
-    (begin
-      (while (and (not found) (< index count))
+    [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
+    [slot : i64 (tc-module-decl-index-slot current-module-id)]
+    (if (< slot 0)
+      false
+      (let
+        [j : i64 (array-ref tc-module-import-index-starts slot)]
+        [end : i64 (array-ref tc-module-import-index-ends slot)]
+        [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+        [decl-offset : i64 decls.offset]
+        [found : bool false]
         (begin
-          (match (array-ref decl-slots (+ decl-offset index))
-            [(Module next-module) (set! current-module next-module)]
-            [(Import decl-meta (Spec _ _ expected _ _))
-              (if (= current-module current-module-id)
-                (match expected
-                  [(Some target)
-                    (if (tc-module-identity-id-eq? session target target-id)
-                      (set! found true)
-                      unit)]
-                  [(No) unit])
-                unit)]
-            [_ unit])
-          (set! index (+ index 1))))
-      found)))
+          (while (and (not found) (< j end))
+            (begin
+              (match (array-ref
+                decl-slots
+                (+ decl-offset (array-ref tc-module-import-index-positions j)))
+                [(Import decl-meta (Spec _ _ expected _ _))
+                  (match expected
+                    [(Some target)
+                      (if (tc-module-identity-id-eq? session target target-id)
+                        (set! found true)
+                        unit)]
+                    [(No) unit])]
+                [_ unit])
+              (set! j (+ j 1))))
+          found)))))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
   (let
@@ -19442,8 +19446,7 @@
                       (tc-context-structural-session ctx)
                       (ast.ast-decl-list-box-shared-view decls-box)
                       current-module-id
-                      target-id
-                      cbi.compiler-builtin-id-fix-empty))]
+                      target-id))]
                 (begin
                   (tc-imported-module-identity-cache-put!
                     current-module-id
